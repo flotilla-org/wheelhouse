@@ -18,7 +18,7 @@ if([string]::IsNullOrWhiteSpace($Exe)) {
   $Exe = Join-Path $RepoRoot "build\wheelhouse.exe"
 }
 if(-not (Test-Path $Exe)) {
-  throw "Wheelhouse executable not found: $Exe (run build.bat wheelhouse first)"
+  throw "Wheelhouse executable not found: $Exe (run native\build.bat wheelhouse first)"
 }
 $Exe = (Resolve-Path $Exe).Path
 

@@ -1,6 +1,6 @@
 # Native sidebar snapshot performance
 
-Measured on Linux/Xvfb with a release (`-O2`) Wheelhouse build, Andamento
+Measured on Linux/Xvfb with a release (`-O2`) Wheelhouse build, the core
 `9718ba1`, Cleat `e3465d7` (no Ghostty feature), and Jackstay `91156bf`.
 The recovered starting point is Wheelhouse `e44e280`.
 
@@ -36,7 +36,7 @@ effective worker/stripe CPU count; the runner stops if it differs from one. GPU 
 ## Method
 
 The production daily-driver configuration and `data/sidebar/fixture.jsonl` are
-loaded through the real Andamento ABI, then ten projects and the stated number
+loaded through the real core ABI, then ten projects and the stated number
 of synthetic attention-bearing issues are added. The resulting snapshots have
 229, 629, and 2,029 nodes. Four docked sections render through the production
 control-surface/panel host. The merged arrangement pairs Projects/Sessions and
@@ -206,16 +206,16 @@ on the fresh revision; old actions are rejected before snapshot replacement.
 
 The host lookup mutates snapshots on the UI thread. Borrowed heap-backed text
 survives detail appends until snapshot release, as guaranteed and tested by the
-Andamento ABI. Missing identities return error-free `NONE` and append no cards.
+the core ABI. Missing identities return error-free `NONE` and append no cards.
 The core detail cache holds hits and misses per revision, sharing a 64-identity
 bound: its `BTreeMap` lookup is O(log n), and a cached miss does not repeat
 catalog evaluation. More
 than 64 identities can evict entries. Measure before adding frontend negative
 caching. ABI errors are copied into a fixed host status buffer and freed with
-`andamento_string_free`; repeated failures overwrite that buffer without emitting
+`wheelhouse_string_free`; repeated failures overwrite that buffer without emitting
 logs or appending status entries.
 
-Shared-core release C-ABI measurements are in Andamento's
+Shared-core release C-ABI measurements are in the core's
 [report](https://github.com/flotilla-org/andamento/blob/db12903517c90de645793560c3b53642b00ebe0a/docs/snapshot-evaluation-performance.md).
 For the scripted 1,000-entity stream, plain acquisition medians were 74.687 ms
 before and 63.503 ms after; detailed acquisition was 113.890 ms before and

@@ -14,7 +14,7 @@ visible Attention alias does not take selection from its outlined tree ancestor.
 
 ## Evidence
 
-The native `--sidebar_diagnostics` scenarios exercise the real Andamento ABI,
+The native `--sidebar_diagnostics` scenarios exercise the real core ABI,
 font metrics, UI builder and emitted box colors/flags. They cover both current
 subjects with both workspaces open, all project/convoy/section collapse states,
 row and inline-chip layouts, aggregate and docked section rendering, and widths
@@ -54,7 +54,7 @@ content is a placeholder. The evidence concerns sidebar selection, not VT output
 
 ## Validation
 
-- Andamento: 119 core unit tests and 47 sidebar scenarios pass. The revised
+- The core: 119 core unit tests and 47 sidebar scenarios pass. The revised
   sidebar suite fails against the original state implementation (seven failures).
 - The equal-depth duplicate-section scenario also fails when the canonical tie
   rule is mutated to prefer the last occurrence; the mutation was reverted.

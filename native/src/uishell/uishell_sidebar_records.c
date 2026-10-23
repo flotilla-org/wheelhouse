@@ -1,0 +1,280 @@
+//- The core's records (ADR 0012; wheelhouse.h, "named records"). The core
+// owns the sidebar's logical state: display values, row collapse, sibling
+// orders, and local sections, groups and pins (the `dashboard` record); and
+// each workspace it knows, with its subject and the rows on its path as last
+// seen (`workspace/<id>`). It hands them out as records, bytes private to
+// it, and takes them back into a fresh core before the first observe;
+// Wheelhouse only stores them, in the Dashboard directory
+// (uishell_dashboard.c). Each window still has its own core, so only the
+// first window's are the Dashboard's own:
+//
+//   <Dashboard>/                     the first window's
+//     dashboard.record
+//     workspace-<Workspace ID>.record
+//   <Dashboard>/windows/<Window ID>/   any other window's
+//
+// A record is written when its generation changes: a second after the first
+// change, through a temporary file renamed over the old one, and at once
+// when the sidebar is released (its window closing, or quitting). Nothing
+// here reads one: what Wheelhouse needs of the Dashboard's comes from
+// wheelhouse_dashboard_get, and of a workspace's from its own getters.
+
+enum { UIShell_RecordsDelayMs = 1000 };
+
+//- Files
+
+// Bytes the core returned, copied into `arena` and freed.
+internal String8
+uishell_sidebar_bytes_copy(Arena *arena, WheelhouseBytes bytes)
+{
+  String8 result = push_str8_copy(arena, str8(bytes.data, bytes.len));
+  wheelhouse_bytes_free(bytes);
+  return result;
+}
+
+internal String8
+uishell_sidebar_record_get(Arena *arena, WheelhouseCore *core, String8 name)
+{
+  WheelhouseBytes bytes = {0};
+  if(!core || !wheelhouse_record_get(core, uishell_sidebar_text(name), &bytes, 0)) { return str8_zero(); }
+  return uishell_sidebar_bytes_copy(arena, bytes);
+}
+
+// The core's record names.
+internal String8List
+uishell_sidebar_record_names(Arena *arena, WheelhouseCore *core)
+{
+  WheelhouseBytes bytes = {0};
+  String8 names = core && wheelhouse_record_names(core, &bytes, 0) ? uishell_sidebar_bytes_copy(arena, bytes) : str8_zero();
+  U8 newline = '\n';
+  return str8_split(arena, names, &newline, 1, 0);
+}
+
+internal U64
+uishell_sidebar_record_generation(WheelhouseCore *core, String8 name)
+{
+  return wheelhouse_record_generation(core, uishell_sidebar_text(name), 0);
+}
+
+// The file a record is stored in: `dashboard.record`, `workspace-<id>.record`.
+// Bytes a file name can't hold become '_' (no record names have them yet).
+internal String8
+uishell_sidebar_record_file(Arena *arena, String8 dir, String8 name)
+{
+  String8 file = push_str8_copy(arena, name);
+  for(U64 i = 0; i < file.size; i++)
+  {
+    U8 c = file.str[i];
+    if(c == '/') { file.str[i] = '-'; }
+    else if(!char_is_alpha(c) && !char_is_digit(c, 10) && c != '-' && c != '.' && c != '_') { file.str[i] = '_'; }
+  }
+  return push_str8f(arena, "%S/%S.record", dir, file);
+}
+
+// The record a file in the directory holds; empty for any other file.
+internal String8
+uishell_sidebar_record_name(Arena *arena, String8 file)
+{
+  String8 workspace = str8_lit("workspace-"), extension = str8_lit(".record");
+  if(!str8_match(str8_postfix(file, extension.size), extension, 0)) { return str8_zero(); }
+  String8 stem = str8_chop(file, extension.size);
+  if(str8_match(stem, str8_lit("dashboard"), 0)) { return push_str8_copy(arena, stem); }
+  if(str8_match(str8_prefix(stem, workspace.size), workspace, 0) && stem.size > workspace.size)
+  { return push_str8f(arena, "workspace/%S", str8_skip(stem, workspace.size)); }
+  return str8_zero();
+}
+
+// The window's records directory, named by its Window ID; empty without a
+// Dashboard.
+internal String8
+uishell_sidebar_records_dir(Arena *arena, CFG_Node *window)
+{
+  if(!uishell_dashboard.dir.size || window == &cfg_nil_node) { return str8_zero(); }
+  return uishell_dashboard_records_dir(arena, window, uishell_window_id_text_from_cfg(window));
+}
+
+internal B32
+uishell_sidebar_record_write(String8 path, String8 data)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 temp = push_str8f(scratch.arena, "%S.temp", path);
+  // Windows won't rename over an existing file.
+  B32 ok = write_data_to_file_path(temp, data) &&
+    (move_file_path(path, temp) || (delete_file_at_path(path) && move_file_path(path, temp)));
+  scratch_end(scratch);
+  return ok;
+}
+
+//- Saving
+
+internal UIShell_SidebarRecord *
+uishell_sidebar_record_written(UIShell_SidebarState *state, String8 name)
+{
+  for(UIShell_SidebarRecord *r = state->records; r; r = r->next) { if(str8_match(r->name, name, 0)) { return r; } }
+  return 0;
+}
+
+// Notes `name` as written at `generation`; 0 forgets it.
+internal void
+uishell_sidebar_record_note(UIShell_SidebarState *state, String8 name, U64 generation)
+{
+  UIShell_SidebarRecord **link = &state->records;
+  while(*link && !str8_match((*link)->name, name, 0)) { link = &(*link)->next; }
+  if(*link) { if(generation) { (*link)->generation = generation; } else { *link = (*link)->next; } return; }
+  if(!generation) { return; }
+  UIShell_SidebarRecord *record = push_array(state->records_arena, UIShell_SidebarRecord, 1);
+  record->name = push_str8_copy(state->records_arena, name);
+  record->generation = generation;
+  record->next = state->records;
+  state->records = record;
+}
+
+// Writes the records whose generation moved since they were written, and
+// deletes those the core no longer has (a forgotten workspace's), once due:
+// a second after a change was first seen, or with `flush`, now. Generations
+// are read only when one may have moved: after a new snapshot, when the
+// names changed, or while due.
+internal void
+uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
+{
+  if(!state->core || !state->records_dir.size) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  String8List names = uishell_sidebar_record_names(scratch.arena, state->core);
+  U64 present = 0, written = 0;
+  for(String8Node *n = names.first; n; n = n->next) { present += uishell_sidebar_record_written(state, n->string) != 0; }
+  for(UIShell_SidebarRecord *r = state->records; r; r = r->next) { written++; }
+  B32 changed = present != written || present != names.node_count;
+  if(!changed && !flush && !state->records_due && state->records_snapshot_count == state->snapshot_count)
+  { scratch_end(scratch); return; }
+  state->records_snapshot_count = state->snapshot_count;
+  U64 *generations = push_array(scratch.arena, U64, names.node_count);
+  U64 index = 0;
+  for(String8Node *n = names.first; n; n = n->next, index++)
+  {
+    generations[index] = uishell_sidebar_record_generation(state->core, n->string);
+    UIShell_SidebarRecord *record = uishell_sidebar_record_written(state, n->string);
+    changed |= !record || record->generation != generations[index];
+  }
+  if(!changed) { state->records_due = 0; }
+  else if(!flush && !state->records_due) { state->records_due = now+UIShell_RecordsDelayMs; }
+  // A frame comes when it's due, without input.
+  if(changed && !flush && now < state->records_due) { rd_request_frame(); }
+  if(changed && (flush || now >= state->records_due))
+  {
+    state->records_due = 0;
+    uishell_dashboard_make_directories(state->records_dir);
+    index = 0;
+    for(String8Node *n = names.first; n; n = n->next, index++)
+    {
+      UIShell_SidebarRecord *record = uishell_sidebar_record_written(state, n->string);
+      if(record && record->generation == generations[index]) { continue; }
+      String8 text = uishell_sidebar_record_get(scratch.arena, state->core, n->string);
+      if(text.size && uishell_sidebar_record_write(uishell_sidebar_record_file(scratch.arena, state->records_dir, n->string), text))
+      { uishell_sidebar_record_note(state, n->string, generations[index]); }
+    }
+    String8List gone = {0};
+    for(UIShell_SidebarRecord *r = state->records; r; r = r->next)
+    {
+      B32 kept = 0;
+      for(String8Node *n = names.first; n && !kept; n = n->next) { kept = str8_match(n->string, r->name, 0); }
+      if(!kept) { str8_list_push(scratch.arena, &gone, r->name); }
+    }
+    for(String8Node *n = gone.first; n; n = n->next)
+    {
+      String8 path = uishell_sidebar_record_file(scratch.arena, state->records_dir, n->string);
+      if(delete_file_at_path(path) || !file_path_exists(path)) { uishell_sidebar_record_note(state, n->string, 0); }
+    }
+  }
+  scratch_end(scratch);
+}
+
+//- The Dashboard's local entities and saved orders (wheelhouse_dashboard_get)
+
+// The core's Dashboard, read again when the dashboard record's generation
+// moves. Its local sections, groups and pins are read through
+// uishell_sidebar_locals.
+internal WheelhouseDashboard *
+uishell_sidebar_dashboard(UIShell_SidebarState *state)
+{
+  if(!state->core) { return 0; }
+  U64 generation = uishell_sidebar_record_generation(state->core, str8_lit("dashboard"));
+  if(state->dashboard && state->dashboard->generation == generation) { return state->dashboard; }
+  wheelhouse_dashboard_free(state->dashboard);
+  state->dashboard = wheelhouse_dashboard_get(state->core, 0);
+  return state->dashboard;
+}
+
+// Whether the core keeps an order for the sibling run keyed `loop`, which
+// offers Reset order.
+internal B32
+uishell_sidebar_order_saved(UIShell_SidebarState *state, String8 loop)
+{
+  WheelhouseDashboard *dashboard = loop.size ? uishell_sidebar_dashboard(state) : 0;
+  for(U64 i = 0; dashboard && i < dashboard->order_count; i++)
+  { if(str8_match(uishell_sidebar_string(dashboard->orders[i].loop_key), loop, 0)) { return 1; } }
+  return 0;
+}
+
+//- Loading
+
+// Imports the window's records into its new core, before its first observe:
+// the dashboard first, then each workspace's (which registers it and binds
+// it to its subject). A record that doesn't import (a newer version's, say)
+// is reported, and nothing is saved over it this session.
+internal void
+uishell_sidebar_records_load(UIShell_SidebarState *state, CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  if(!state->records_arena) { state->records_arena = arena_alloc(); }
+  arena_clear(state->records_arena);
+  state->records = 0;
+  state->records_due = 0;
+  String8 dir = uishell_sidebar_records_dir(scratch.arena, window);
+  String8List names = {0}, files = {0};
+  FileIter *it = dir.size ? file_iter_begin(scratch.arena, dir, FileIterFlag_SkipFolders) : 0;
+  for(FileInfo info = {0}; it && file_iter_next(scratch.arena, it, &info);)
+  {
+    String8 name = uishell_sidebar_record_name(scratch.arena, info.name);
+    if(!name.size) { continue; }
+    B32 first = str8_match(name, str8_lit("dashboard"), 0);
+    if(first) { str8_list_push_front(scratch.arena, &names, name); str8_list_push_front(scratch.arena, &files, info.name); }
+    else { str8_list_push(scratch.arena, &names, name); str8_list_push(scratch.arena, &files, info.name); }
+  }
+  if(it) { file_iter_end(it); }
+  B32 failed = 0;
+  for(String8Node *name = names.first, *file = files.first; name && file; name = name->next, file = file->next)
+  {
+    String8 text = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/%S", dir, file->string));
+    char *error = 0;
+    if(wheelhouse_record_put(state->core, uishell_sidebar_text(name->string), uishell_sidebar_text(text), &error))
+    { uishell_sidebar_record_note(state, name->string, uishell_sidebar_record_generation(state->core, name->string)); }
+    else
+    {
+      failed = 1;
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Sidebar record %S/%S not restored: %s", dir, file->string,
+                                                  error ? error : "unknown error"));
+    }
+    wheelhouse_string_free(error);
+  }
+  state->records_dir = failed ? str8_zero() : push_str8_copy(state->records_arena, dir);
+  // A workspace the window no longer has (deleted while an older build ran)
+  // is forgotten, and its record goes.
+  String8List recorded = uishell_sidebar_record_names(scratch.arena, state->core);
+  String8 prefix = str8_lit("workspace/");
+  for(String8Node *n = recorded.first; n; n = n->next)
+  {
+    UIShell_WorkspaceId id = {0};
+    if(!str8_match(str8_prefix(n->string, prefix.size), prefix, 0) ||
+       !uishell_workspace_id_from_string(str8_skip(n->string, prefix.size), &id)) { continue; }
+    // The window's own layout has an ID only once it is a workspace.
+    B32 kept = cfg_node_child_from_string(window, str8_lit("workspace_id")) != &cfg_nil_node &&
+      uishell_workspace_id_match(uishell_workspace_id_from_cfg(window), id);
+    for(CFG_Node *c = window->first; c != &cfg_nil_node && !kept; c = c->next)
+    {
+      kept = (str8_match(c->string, str8_lit("workspace"), 0) || str8_match(c->string, str8_lit("detached_workspace"), 0)) &&
+        uishell_workspace_id_match(uishell_workspace_id_from_cfg(c), id);
+    }
+    if(!kept) { wheelhouse_workspace_forget(state->core, uishell_sidebar_workspace(id), 0); }
+  }
+  scratch_end(scratch);
+}

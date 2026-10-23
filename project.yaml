@@ -6,6 +6,3 @@ members:
   - alias: cleat
     url: https://github.com/flotilla-org/cleat
     roles: [code]
-  - alias: andamento
-    url: https://github.com/flotilla-org/andamento
-    roles: [code]

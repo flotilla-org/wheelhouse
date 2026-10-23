@@ -1,12 +1,12 @@
 """A Dashboard seeded with one workspace of tabs, as the native drivers start.
 
-A workspace's arrangement and Slots live in Andamento's workspace record, not
+A workspace's arrangement and Slots live in the core's workspace record, not
 in the presentation file, which keeps only this device's part of them
-(src/uishell/uishell_workspace_store.c). A driver that needs particular
+(native/src/uishell/uishell_workspace_store.c). A driver that needs particular
 Views open writes both: the window, naming the workspace, in the
 presentation file, and the workspace's record in the Dashboard's
 directory, whose core imports it on its first load. Records are
-Andamento's own JSON (andamento-core, `WorkspaceRecord`).
+the core's own JSON (wheelhouse-core, `WorkspaceRecord`).
 """
 import json
 from pathlib import Path
@@ -44,7 +44,7 @@ def seed(dashboard, presentation, specs, size=(900, 600), label=None, selected=0
     dashboard.mkdir(parents=True, exist_ok=True)
     (dashboard / ('workspace-%s.record' % workspace_id)).write_text(json.dumps(record))
     # The presentation file names the workspace; `arrangement_presentation`
-    # marks one Andamento keeps the arrangement of.
+    # marks one the core keeps the arrangement of.
     owner = 'workspace_id: "%s"\n  arrangement_presentation: { }\n' % workspace_id
     if label is not None:
         owner = 'workspace:\n  {\n  label: %s\n  %s  }\n' % (json.dumps(label), owner)

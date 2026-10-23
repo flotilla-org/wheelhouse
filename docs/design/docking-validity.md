@@ -1,6 +1,6 @@
 # Declared docking validity
 
-`src/shell/shell_docking.h` declares View registrations, their traits and
+`native/src/shell/shell_docking.h` declares View registrations, their traits and
 three host kinds. `rd_dock_check` returns a named rule: host acceptance,
 Workspace Subject, minimum width, singleton, one Control Surface per
 Controlled Split, exclusion of a selector from its selected Workspace Region,
@@ -28,7 +28,7 @@ and the legacy window workspace by its panels-root identity. Thus a section can 
 being tied to a physical side of the window; it cannot become child-workspace
 content merely because it declares the Content trait.
 
-The root Andamento sections and selector declare ControlSplitScope. Their
+The root core sections and selector declare ControlSplitScope. Their
 logical owner stays the root split, including when repairing an old saved
 placement in a child workspace. Other Views use their source layout's level
 for a move. New ordinary content belongs to its destination level. Creation,
@@ -101,11 +101,11 @@ with a controllable OS size boundary. It covers 127/128/129px body widths, root
 bisection, both parent axes, sibling insertion in all directions, and resizing
 between feedback and commit. Last-View moves combine removal and insertion,
 including same-axis sibling insertion, and compare feedback and command
-acceptance with the final rendered body. CI native builds also run it through `build.sh`.
+acceptance with the final rendered body. CI native builds also run it through `native/build.sh`.
 
-The runner accepts `--andamento-include <directory>` and `--cleat-include
-<directory>` for non-sibling checkouts. Defaults honor `WHEELHOUSE_ANDAMENTO_DIR`
-and `WHEELHOUSE_CLEAT_DIR`; `build.sh` passes the configured include directories.
+The runner accepts `--core-include <directory>` and `--cleat-include
+<directory>` for non-sibling checkouts. The core default is this repo's
+`crates/wheelhouse-ffi/include`; the Cleat default honors `WHEELHOUSE_CLEAT_DIR`; `native/build.sh` passes the configured include directories.
 Rendering and measurement share window-edge and panel-inset helpers. A drag
 builds one geometry context from its existing mount; command measurement frees
 its temporary panel tree before returning.
@@ -115,13 +115,13 @@ its temporary panel tree before returning.
 
 Projects, Sessions, Attention and Git are `sidebar_section` Views in the
 window's sidebar arrangement, the live copy of the Dashboard's sidebar
-arrangement that Andamento keeps (`src/uishell/uishell_sidebar_store.c`). The shared panel renderer gives every sidebar
+arrangement that the core keeps (`native/src/uishell/uishell_sidebar_store.c`). The shared panel renderer gives every sidebar
 panel a section header, whose titles are its Views' tabs. Ordinary workspace
 content uses normal tabs. Placement creation, moves, drops and restore use the existing
 `rd_dock_check` rules. No placement hints were added to KDL.
 
 The human review clarified the level boundary: a View may dock only on its
-owning Controlled Split level. Fleet sections use the root split's Andamento
+owning Controlled Split level. Fleet sections use the root split's core
 state. They may rearrange within that level but cannot enter a selected child
 workspace, including the legacy window workspace. Host presentation does not
 grant permission to cross levels. This corrects #163's
@@ -157,7 +157,7 @@ below the normal name budget, the name gives space to the chip viewport. Failed
 display-value restore reconciliation is tracked separately in #185.
 
 Boolean display controls use the declared glyph and tooltip label. A checked
-button has the selection fill and border. Andamento keeps persistent values in
+button has the selection fill and border. The core keeps persistent values in
 its dashboard record, which Wheelhouse saves beside the user file (state model
 step 3; until then they were replayed from the window's `sidebar_display` node).
 Panel resets replace the panels subtree and keep these values. `persist=false`
@@ -243,7 +243,7 @@ missing from a refreshed snapshot keeps its saved intent and names that
 identity in the error across the same three-attempt bound.
 
 The integration runner intercepts only these process boundaries: WM client
-rectangle, Andamento action dispatch, clock, worker creation and detach, sleep,
+rectangle, the core action dispatch, clock, worker creation and detach, sleep,
 and WM wake posting. It links the real parser, settings, mount, panel renderer,
 command routes, placement checker, snapshot refresh and retry worker. Review
 new call sites at these boundaries when extending the production amalgamation;

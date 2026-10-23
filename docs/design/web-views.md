@@ -42,7 +42,7 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
 | Endpoint | Wheelhouse chooses the name (`wh-<view>`) and passes it in; readiness comes from the producer's stdout line, then its `window.ready` affordance |
 | View kind | A `web` Renderer: the page's title on the tab, an address bar with back, forward and reload, and a Jackstay client inside. The `jackstay` view stays for raw endpoints |
 | Handler table | Compiled in, beside the Renderer registry. Each entry has `matches` (kind, schemes, presentation), an argv template and a readiness rule; Luchs is the only entry. Its fields are shaped like a future manifest |
-| Opening | **Web** in the "+" menu opens a bundled start page; the address bar navigates in place; an `open_url` command prompts for a URL. Terminal links and Andamento's `OPEN_URL` still go to the system browser |
+| Opening | **Web** in the "+" menu opens a bundled start page; the address bar navigates in place; an `open_url` command prompts for a URL. Terminal links and the core's `OPEN_URL` still go to the system browser |
 | Size, scale, focus | The pane's pixel size goes out as `presentation.preferred_size`, `scale` from the display, and focus as `presentation.focused`. The producer's `window.requested_size` is ignored: the pane decides |
 | Default page | A start page bundled with Wheelhouse |
 | Failure | A launch or first load that fails shows the placeholder with the error, Retry and Open in browser |
@@ -51,7 +51,7 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
 ## How it is built
 
 - **Handlers** are an X-macro beside the Renderer registry
-  (`WH_HANDLERS`, `src/uishell/uishell_renderers.h`): name, content, URL
+  (`WH_HANDLERS`, `native/src/uishell/uishell_renderers.h`): name, content, URL
   schemes, Renderer, program and argument template. Luchs takes `http`,
   `https` and `file` URLs for the `web` Renderer. `WHEELHOUSE_LUCHS` names
   another program, as a test renderer does.
@@ -60,7 +60,7 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
   (`uishell_store_view_from_spec`). `wheelhouse:web` is the start page. **Web**
   ("+") opens it; **Open URL** prompts for an address (one without a scheme is
   https).
-- **The process** is supervised by the connector (`src/ingress/connector.rs`)
+- **The process** is supervised by the connector (`crates/wheelhouse-ingress/src/connector.rs`)
   with a *ready line*: the first stdout line is the endpoint, a run that exits
   before it is a failure that waits for Retry, and one that exits after it
   restarts with backoff. The View owns it with its Jackstay session
@@ -108,7 +108,7 @@ the start page, a `file:` page, navigate to the address typed into its form.
   without an address bar, so it looks like any other opened file. Transforms
   belong here too: Markdown or Mermaid rendered to a page. Specific Renderers for
   some of these may still come later.
-- **Links:** where terminal and Andamento links open (Wheelhouse or the system
+- **Links:** where terminal and sidebar links open (Wheelhouse or the system
   browser) as a setting, and setting `BROWSER` in launched environments so
   programs open pages in Wheelhouse.
 - **Audio.** Jackstay v3 carries playback tracks (Katzensteg already publishes

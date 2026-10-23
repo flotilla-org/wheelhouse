@@ -4,7 +4,7 @@
 Wheelhouse runs the Flotilla connector for each Dashboard subscription; the
 launcher asks for a subscription to the configured daemon and names the
 Flotilla to run. Connector restarts and the job that owns its descendants
-belong to Wheelhouse's supervisor (src/ingress/connector.rs).
+belong to Wheelhouse's supervisor (crates/wheelhouse-ingress/src/connector.rs).
 """
 import ctypes as C
 from ctypes import wintypes as W
@@ -100,9 +100,9 @@ class WindowsDailyDriverTests(unittest.TestCase):
         self.env = {**os.environ, 'PYTHONUTF8': '1', 'WHEELHOUSE_BIN': str(self.app),
                     'FLOTILLA_BIN': str(self.connector), 'FLOTILLA_DAEMON': 'ssh://inherited',
                     'WHEELHOUSE_DAILY_DIR': str(self.state), 'CLOSE_APP': str(self.close_app),
-                    'WHEELHOUSE_ANDAMENTO_CONFIG': str(ROOT / 'data/sidebar/fixture.kdl'),
+                    'WHEELHOUSE_SIDEBAR_CONFIG': str(ROOT / 'data/sidebar/fixture.kdl'),
                     'WHEELHOUSE_PYTHON_BIN': sys.executable,
-                    'ANDAMENTO_GIT_WATCHER_BIN': str(self.directory / 'absent watcher')}
+                    'WHEELHOUSE_GIT_WATCHER_BIN': str(self.directory / 'absent watcher')}
         self.command = [sys.executable, str(ROOT / 'tools/daily-driver.py'), '--no-build']
         self.processes = []
 

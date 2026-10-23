@@ -188,6 +188,18 @@ def run(args, binary, template, state, flotilla):
         return app.returncode
 
 
+# The core's variables before it was renamed (#426); honoured, with a warning, for a while.
+RENAMED = {'WHEELHOUSE_ANDAMENTO_CONFIG': 'WHEELHOUSE_SIDEBAR_CONFIG',
+           'ANDAMENTO_GIT_WATCHER_BIN': 'WHEELHOUSE_GIT_WATCHER_BIN'}
+
+
+def adopt_renamed_variables():
+    for old, new in RENAMED.items():
+        if old in os.environ:
+            print(f'daily-driver: {old} is now {new}', file=sys.stderr)
+            os.environ.setdefault(new, os.environ[old])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--no-build', action='store_true', help='use existing Wheelhouse and git watcher binaries')
@@ -203,6 +215,7 @@ def main():
     parser.add_argument('--ingress-record-bytes', type=int, default=4*1024*1024, help='maximum bytes per ingress file')
     parser.add_argument('--ingress-record-files', type=int, default=4, help='retained ingress files including active file')
     args = parser.parse_args()
+    adopt_renamed_variables()
     if args.no_git and (args.git_only or args.repo):
         parser.error('--no-git cannot be combined with --git-only or --repo')
     if WINDOWS and (args.repo or args.git_only):
@@ -212,11 +225,10 @@ def main():
     args.repo = [] if args.no_git or WINDOWS else [repo.resolve() for repo in (args.repo or [Path.cwd()])]
     binary = Path(os.environ.get('WHEELHOUSE_BIN', ROOT / ('build/wheelhouse' + EXE))).resolve()
     flotilla = flotilla_binary()
-    andamento = Path(os.environ.get('WHEELHOUSE_ANDAMENTO_DIR', os.environ.get('ANDAMENTO_ROOT', ROOT.parent / 'andamento'))).resolve()
-    template = Path(os.environ.get('WHEELHOUSE_ANDAMENTO_CONFIG', ROOT / 'data/sidebar/daily-driver.kdl')).resolve()
+    template = Path(os.environ.get('WHEELHOUSE_SIDEBAR_CONFIG', ROOT / 'data/sidebar/daily-driver.kdl')).resolve()
     state = Path(os.environ.get('WHEELHOUSE_DAILY_DIR', default_state())).resolve()
     if not template.is_file():
-        parser.error(f'Andamento template not found: {template}')
+        parser.error(f'sidebar template not found: {template}')
     if not args.git_only and not os.access(flotilla, os.X_OK):
         parser.error(f'Flotilla binary not found: {flotilla}; build Flotilla with the HTTP sink or set FLOTILLA_BIN')
     for repo in args.repo:
@@ -234,33 +246,31 @@ def main():
             parser.error(f'a daily driver is already using {state}')
         watcher_built = False
         if not args.no_build and 'WHEELHOUSE_BIN' not in os.environ:
-            build = [str(ROOT / 'build.bat'), 'wheelhouse'] if WINDOWS else ['bash', 'build.sh', 'wheelhouse']
+            build = [str(ROOT / 'native/build.bat'), 'wheelhouse'] if WINDOWS else ['bash', 'native/build.sh', 'wheelhouse']
             # Build scripts treat an inherited release selector as a profile request.
             # The launcher selects debug artifacts; Windows env keys are case-insensitive.
             build_env = {key: value for key, value in os.environ.items() if key.lower() != 'release'}
-            build_env['WHEELHOUSE_ANDAMENTO_DIR'] = str(andamento)
             subprocess.run(build, cwd=ROOT, env=build_env, check=True)
-            # The native Wheelhouse build includes andamento-git-watcher.
+            # The native Wheelhouse build includes wheelhouse-git-watcher.
             watcher_built = True
         if args.repo:
-            if 'ANDAMENTO_GIT_WATCHER_BIN' in os.environ:
-                args.watcher = Path(os.environ['ANDAMENTO_GIT_WATCHER_BIN']).resolve()
+            if 'WHEELHOUSE_GIT_WATCHER_BIN' in os.environ:
+                args.watcher = Path(os.environ['WHEELHOUSE_GIT_WATCHER_BIN']).resolve()
             else:
                 version = subprocess.check_output(['rustc', '-vV'], text=True)
                 host = next(line.split(': ', 1)[1] for line in version.splitlines() if line.startswith('host: '))
                 target = Path(os.environ.get('WHEELHOUSE_ANDAMENTO_TARGET_DIR',
-                              os.environ.get('CARGO_TARGET_DIR', andamento / 'target'))).resolve()
+                              os.environ.get('CARGO_TARGET_DIR', ROOT / 'target'))).resolve()
                 # The host build above uses the default debug profile; keep this path in sync.
-                args.watcher = target / host / ('debug/andamento-git-watcher' + EXE)
+                args.watcher = target / host / ('debug/wheelhouse-git-watcher' + EXE)
                 if not args.no_build and not watcher_built:
-                    subprocess.run([sys.executable, str(ROOT / 'tools/prepare-andamento-build.py'), str(andamento)], check=True)
-                    subprocess.run(['cargo', 'build', '--manifest-path', str(ROOT / 'build/andamento/Cargo.toml'),
-                                    '-p', 'andamento-git-watcher', '--bin', 'andamento-git-watcher', '--locked', '--target', host,
+                    subprocess.run(['cargo', 'build', '--manifest-path', str(ROOT / 'Cargo.toml'),
+                                    '-p', 'wheelhouse-git-watcher', '--bin', 'wheelhouse-git-watcher', '--locked', '--target', host,
                                     '--target-dir', str(target)], check=True)
             if not os.access(args.watcher, os.X_OK):
-                parser.error(f'Andamento git watcher not found: {args.watcher}; build andamento#107 or set ANDAMENTO_GIT_WATCHER_BIN')
+                parser.error(f'git watcher not found: {args.watcher}; build wheelhouse-git-watcher or set WHEELHOUSE_GIT_WATCHER_BIN')
         if not os.access(binary, os.X_OK):
-            build_hint = 'build.bat wheelhouse' if WINDOWS else 'bash build.sh wheelhouse'
+            build_hint = 'native/build.bat wheelhouse' if WINDOWS else 'bash native/build.sh wheelhouse'
             parser.error(f'Wheelhouse binary not found: {binary}; run {build_hint}')
         return run(args, binary, template, state, flotilla)
 

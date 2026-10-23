@@ -3,8 +3,8 @@
 Status: design, grilled with Robert on 2026-10-21 and 2026-10-22 for #90 and
 the mission #401. It builds on the View Spec and Slot decisions (#297), the
 Workspace Overlay (#298), workspace controls (#122) and
-[suggested-layouts.md](https://github.com/flotilla-org/andamento/blob/main/docs/sidebar-design/suggested-layouts.md)
-in Andamento. The first stage is below; later stages are recorded so the first
+[suggested-layouts.md](../core/sidebar-design/suggested-layouts.md)
+in the core. The first stage is below; later stages are recorded so the first
 doesn't block them.
 
 A rough mockup of the tool strip and the layouts is in
@@ -19,7 +19,7 @@ sidebar says "no opening recipe". Flotilla withdraws that recipe whenever it
 re-checks whether a session can be attached, so vessels flip between openable
 and not (drydock-vessel-agent-51 did this hundreds of times in one capture).
 
-Andamento already reads Suggested Layouts and plans slots
+The core already reads Suggested Layouts and plans slots
 (`suggested_layout.rs`, `slots.rs`), and Wheelhouse stores a slot per View.
 Nothing publishes a layout of more than one slot yet (flotilla#3012).
 
@@ -51,7 +51,7 @@ whole life:
   host. Only a change of content triggers a rebind.
 - Commands sent to a Slot that hasn't connected yet are held and replayed when
   it does, as the file view's `pending` view does today
-  (`src/shell/shell_core.c`).
+  (`native/src/shell/shell_core.c`).
 
 This is why the host wraps rather than replaces itself, as `pending` does: a
 file loads once, but a Slot can lose its connection and regain it many times.
@@ -90,7 +90,7 @@ Slots. A subject can have several, and the tool strip switches between them.
   terminals, vessels, files, promises, artifacts, linked issues and PRs), plus
   hints. Its internal presentation manager probably goes away, apart from
   exposing the PM connection's change stream.
-- **Andamento holds the layouts** as templates, like the sidebar templates,
+- **The core holds the layouts** as templates, like the sidebar templates,
   keyed by subject kind and hint. A template arranges Slots by their kind and
   role ("agents as tabs on the left, files on the right"), and the selection
   rules live with the templates. Every frontend shares them, and changing a
@@ -171,7 +171,7 @@ layouts area fills in once a subject has more than one layout.
 
 ### The first cut
 
-Settled for #122 on 2026-10-23 (`src/uishell/uishell_tool_strip.c`):
+Settled for #122 on 2026-10-23 (`native/src/uishell/uishell_tool_strip.c`):
 
 - **Where:** a column of icons, about 3.5 ems wide, between the sidebar and the
   Workspace Region. It shows on every workspace, with or without a subject,
@@ -196,14 +196,14 @@ Settled for #122 on 2026-10-23 (`src/uishell/uishell_tool_strip.c`):
 - **Views:** every slot of the workspace, in slot order, with an icon by role.
   A placed View is drawn normally, and marked when its tab is selected; a click
   selects its tab. An unplaced one is drawn weak, and a click shows it in the
-  panel its layout's matchers would give it (`AndamentoNote.panel`). Closing
+  panel its layout's matchers would give it (`WheelhouseNote.panel`). Closing
   it from a panel it was alone in closes that panel too, collapsing the
   layout (#445). Dragging
   a View into place waits for creation drags into the Workspace Region, which
   the docking checker refuses today. Repeatable views will be **view
   factories**: a factory opens another View each time.
 - **Related workspaces and linked items** are what the subject kind's `strip`
-  lists (Andamento's `docs/sidebar-design/tool-strip.md`):
+  lists (the core's `docs/core/sidebar-design/tool-strip.md`):
   - vessel: its project, then its convoy;
   - convoy: its project, then its vessels in plan order;
   - project: its governors, then its convoys that haven't landed;
@@ -320,7 +320,7 @@ It is for prototyping, not yet decided.
 1. **Slot Host** with per-kind placeholders, and the vessel's opening action no
    longer gated on its recipe. This is also the fix for "no opening recipe".
 2. **Dummy-fleet scenarios** for the convoy shapes above (Flotilla).
-3. **Layout templates and selection rules** in Andamento, with Flotilla
+3. **Layout templates and selection rules** in the core, with Flotilla
    publishing content and hints (flotilla#3012 reworked).
 4. **Tool strip, first cut** (#122 reworked), then layout switching.
 5. **One Cleat client per session**, with remote Cleat (#104).

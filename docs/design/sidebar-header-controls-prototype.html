@@ -289,7 +289,7 @@ function saveKnobs() { try { history.replaceState(null, '', '#' + encodeURICompo
 
 // ---------- fixture model (in memory only) ----------
 // Implements docs/design/drag-model.md:
-// - data entities (projects, convoys, vessels) live where Andamento puts them;
+// - data entities (projects, convoys, vessels) live where the core puts them;
 //   they reorder among siblings, and anywhere else they can only be ghosted;
 // - local workspaces and local groups are owned here and can move;
 // - local groups hold local workspaces and ghosts; sections hold groups.
@@ -298,7 +298,7 @@ const S = {
   // Generated ids start past the fixture's (gh-1, w-1...).
   collapsed: {}, pcollapsed: {}, gcollapsed: {}, nextWs: 5, nextId: 100, log: [], naming: false,
   footOpen: null, footNaming: null, scrollTop: 0, tabbed: ['ci', 'pinned-sec'], tabSel: 'ci',
-  // Data order is Andamento's; `order` holds saved sibling lists (key: group/parent).
+  // Data order is the core's; `order` holds saved sibling lists (key: group/parent).
   projects: [
     {id: 'wheelhouse', name: 'wheelhouse', color: 'var(--p1)', roles: [{glyph: '◆', ws: 'live'}]},
     {id: 'andamento', name: 'andamento', color: 'var(--p2)', roles: []},

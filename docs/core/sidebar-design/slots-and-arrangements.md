@@ -1,0 +1,259 @@
+# Slots and arrangements
+
+A workspace shows several Views, and the core owns what they are and how they
+are arranged (Wheelhouse ADR 0012). This document describes a workspace's
+**Slots**, how each slot's content is planned, and the **arrangement
+document** a host commits whole at the end of a docking gesture. It
+generalises [managed primary content](managed-primary-content.md), which is now
+the `primary` slot, and consumes the [Suggested Layout](suggested-layouts.md)
+facts. The vocabulary is Wheelhouse's `CONTEXT.md`; the overlay rules are
+Wheelhouse ADR 0013.
+
+The Rust interface is `Sidebar::slots`, `set_slot`, `remove_slot`,
+`reattach_slot`, `plan_slot`, `set_arrangement`, `arrangement`,
+`slot_resolution`, `set_slot_resolution`, `clear_slot_resolution` and
+`content_revision`, with the token calls on `Sidebar::managed`. The C calls
+are listed in [The host interface](host-interface.md#workspaces).
+
+## Slots
+
+A **Slot** is a View's place in a workspace, identified by a slot key. It has a
+**View Spec** (the content, and optionally a preferred presentation), a
+**rebind policy**, a **detached** flag, and the progress of resolving its
+content. Slots belong to registered workspaces.
+
+A workspace's slots come from two places:
+
+- **The baseline**: the slots of its subject's Suggested Layout. The core
+  keeps a cached copy of the last valid layout, with its version and
+  arrangement hint, in the workspace record. A malformed layout, or one whose
+  facts expired, keeps the cached baseline: expiry is silence, not removal. A
+  new valid layout replaces it. An entity that publishes only
+  `workspace.primary.*` has a one-slot baseline, `primary`.
+- **The host**: the user's own slots, with keys in their own namespace,
+  `u:<id>` (`<id>` is 1 to 64 of `[a-z0-9_-]`). Provider keys never contain
+  `:`, so the two never collide. The host chooses the ID; the core never
+  generates one.
+
+Setting a baseline slot's key with other content **overrides** it: the slot
+shows the override's spec and is **detached**, so it no longer follows the
+provider. The override records the baseline spec it was made against. A
+different policy alone is a rebind edit, which doesn't detach the slot.
+Setting the baseline's own spec and policy, or reattaching, drops the
+override. A detached slot the baseline later drops is kept as the user's own
+(reported with `in_baseline` false) until the host removes it. Removing a
+baseline slot gives it a tombstone, which hides it. These are edits in the
+[Workspace Overlay](workspace-overlay.md), which describes the rules and the
+flags that report them.
+
+Slots are listed, and placed by default, in this order: the baseline's, then
+detached slots the baseline dropped, then the user's in the order they were
+added.
+
+## Resolving a slot
+
+Every slot follows managed primary content's protocol. The host plans a slot
+with the identity of the resolution it applied (empty for none); the core
+returns Unavailable, Held, Current, Updating or Failed, and, while Updating, a
+token and the resolution to apply. The host prepares the new runtime instance
+without touching the current one, validates the token immediately before
+committing, commits, and completes. A Failed slot isn't retried until its
+resolution changes or the host retries it. Repeated plans return the same
+token until the resolution or binding changes.
+
+A resolution is a recipe (command, file, URL, Jackstay launcher or Cleat
+session) and,
+optionally, the target naming the backing instance. Its **identity**
+(`Resolved::id`, `WheelhouseSlotContent.resolution`) is opaque text: the host
+records it once applied and passes it back to plan, which reports Current when
+it matches.
+
+Where a slot's resolution comes from:
+
+| Slot | Resolution |
+|---|---|
+| A baseline slot that follows its provider | The subject's layout: `layout.slot.<key>.*`, or `workspace.primary.*` for `primary` |
+| A local recipe (user or override) | The recipe itself; the frontend resolves it |
+| A provider facet (user or override) | The facet entity's own layout slot named by the facet; `primary` reads its `workspace.primary.*` facts |
+
+The last row is an interim rule: where a facet's resolution lives is an open
+question of the Suggested Layout schema.
+
+### Rebind policy
+
+When a slot's resolution changes, its policy decides what happens to the
+runtime instance being replaced. The plan reports the policy; the host decides
+how to show the change.
+
+- `replace` (the default): the old instance goes when the new one commits.
+- `keep-previous`: once the new instance commits, the plan reports the old
+  resolution's identity as `previous` until the host closes that instance
+  and calls `release_previous`.
+- `ask`: the host asks the user before committing. Declining is completing
+  the update unsuccessfully: the slot is Failed and stays on its current
+  content until the resolution changes again or the host retries.
+
+### Portable Target Resolutions
+
+Resolving a slot's content yields a **Target Resolution**, a way of
+connecting such as a Cleat session on a host or a Jackstay endpoint
+(Wheelhouse `CONTEXT.md`; decisions wheelhouse#294 and #297). A
+**portable** resolution works from any device that can reach it (a remote
+session and its host, a remote endpoint), so the core saves it per slot in
+the workspace record. A **machine-local** one (a local socket, an attach
+token) stays with the device, in the host's Presentation State. The host
+decides which is which; the core never interprets either.
+
+A saved resolution is an opaque typed value: a **kind** and named text
+**fields**, for example kind `cleat-session` with `host=feta session=S
+daemon=D`. Kind and field names are 1 to 64 of `[a-z0-9_-]`; values are any
+text. Each also records **against**, the identity of the slot resolution it
+resolves (what the host applied, as it passes it to plan), and a
+**generation**:
+
+- `set_slot_resolution(workspace, key, resolution, applied, expected)` saves
+  it if `expected` is the slot's saved generation (0 for none); otherwise it
+  is stale and changes nothing, like an arrangement commit. When the slot is
+  known to resolve to something other than `applied`, the save is invalid:
+  plan again. Saving what is saved keeps the generation. Generations come
+  from the sidebar's one clock, so a host holding an old one can't
+  overwrite a newer save, even after a clear or an import.
+- `clear_slot_resolution(workspace, key, expected)` drops it the same way.
+- `slot_resolution(workspace, key)` reads it (`WheelhouseSlot.saved`).
+- Every **slot plan** carries the slot's saved resolution (`SlotPlan::saved`,
+  `WheelhouseSlotContent.saved`), in any state. A host that starts with no
+  instance, on a restart or another device, plans with an empty applied
+  identity. The plan is Updating to the resolution the saved one is
+  `against`, so the host tries connecting through the saved resolution
+  before resolving the target afresh, then validates the token and
+  completes as usual. If it no longer works, the host resolves again and
+  saves the new one: it is always disposable.
+
+**Invalidation: cleared, not marked stale.** A saved resolution is only
+useful for the slot resolution it was made for, so the core clears it as
+soon as the slot resolves to something else:
+
+- the slot's resolution is known (Ready: not Unavailable or Held) and its
+  identity differs from `against`, as when the provider names a new target.
+  This is checked whenever resolutions are published and after a record is
+  imported, so a record saved before the change is cleared on another device
+  too. Expired or held facts are silence, not a new target: the saved
+  resolution stays and the plan still reports it;
+- the user edits the slot's content (set or reattach);
+- the slot goes (removed, tombstoned, or dropped by its provider).
+
+Clearing keeps the record and the plan simple: a reported resolution is
+always one for the slot's current content, and nothing is left to sweep. The
+slot then rebinds by its rebind policy as for any resolution change; the
+instance a `keep-previous` rebind keeps reachable is the host's to reach
+through its own handle until it releases it. Saving, clearing and
+invalidation bump the content revision, never the sidebar's revision.
+
+## Arrangement documents
+
+A workspace's **arrangement** is one typed document: a tree of panels with
+stable IDs. A split panel lays its children out along an axis (`row`: left to
+right; `column`: top to bottom) with relative weights; a leaf is a tab panel
+holding slot keys as tabs and its Selected View. This is the shape of
+Wheelhouse's `RD_Arrangement`, with an explicit axis on each split rather than
+alternating ones, and the Suggested Layout's arrangement hint converts to it.
+
+Wheelhouse owns the live copy: docking previews, drop geometry and minimum
+sizes need pixels. When a gesture ends it commits the whole document with
+`set_arrangement(workspace, doc, expected_generation)`:
+
+1. **Generation.** If `expected_generation` isn't the stored generation (0
+   before anything is stored), the commit is **stale** and changes nothing;
+   the host reads the arrangement again. The C call returns
+   `WHEELHOUSE_STALE` with no error.
+2. **Validation.** Panel IDs are nonempty and unique, weights finite and
+   positive, splits nonempty, each slot has at most one tab, and a selected
+   tab is one of its panel's. Each tab names a current slot, or a slot the
+   stored document already tabbed that has since gone; a host can't give a
+   tab to a slot it never added. An invalid document changes nothing.
+3. **Reconciliation.** Each slot with no tab is appended to the first tab
+   panel in preorder, and selected there if that panel selects nothing. With
+   no panels, a tab panel is made for them. A tab whose slot has gone is kept
+   and reported gone; nothing is dropped silently. A
+   [Workspace Layout](workspace-layouts.md#the-unplaced-set) instead leaves a
+   slot with no tab unplaced.
+4. **Storage.** The document becomes the stored one. Its generation changes
+   unless the stored document is unchanged. A commit that changes only
+   weights and selected tabs is recorded as soft overrides and leaves the
+   document following the provider; any structural change makes the overlay
+   own it ([Workspace Overlay](workspace-overlay.md)).
+
+Reading the arrangement returns the document, its generation, whether the
+host owns it, and two tab flags: **placed** (the core placed it since the
+host last committed) and **gone** (its slot has gone).
+
+The core changes the document itself only when the slot set changes from the
+provider's side:
+
+- Until the overlay owns it, the document is the baseline's arrangement hint
+  (or empty), less removed slots, reconciled, with soft overrides reapplied.
+  A new hint replaces it.
+- Once the overlay owns it, a baseline change only reconciles it: new
+  baseline slots are placed, and dropped ones are reported gone. A changed
+  hint is flagged, not applied.
+
+Either changes the generation, so a commit the host prepared against the old
+one is stale. A slot the host adds with `set_slot` does not change the
+arrangement: the host gives it a tab in its next commit, or that commit
+places it.
+
+## Revisions per concern
+
+`Sidebar::revision` invalidates the snapshot, the shared revision evaluation
+and the detail cache. Wheelhouse commits an arrangement at every gesture end,
+and evaluation costs 8 to 90 ms depending on entity count, so arrangements
+must not share it.
+
+Slots, their resolutions and arrangements now have their own revision,
+`content_revision` (`wheelhouse_workspace_content_revision`). Slot edits,
+arrangement commits and baseline changes bump it and never call
+`invalidate()`, so a rendered snapshot stays current
+(`wheelhouse_snapshot_is_current`) and its actions stay dispatchable. Fact
+changes still invalidate the sidebar as before, and bump the content revision
+too when they change a slot resolution. Records change with both: store a
+record when its generation changes.
+
+Measured with `crates/wheelhouse-ffi/examples/snapshot-profile.rs` (release
+build, Wheelhouse's `daily-driver.kdl` and sidebar fixture, a shared Linux
+host): 20 arrangement commits of a two-panel, eight-slot document per size,
+each checking the rendered snapshot.
+
+| Entities | Nodes | Commit median / max ms | Snapshot current | Evaluations | Plain acquisition after a fact change, median ms |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 100 | 119 | 0.004 / 0.013 | 20 of 20 | 0 | 8.2 |
+| 300 | 319 | 0.004 / 0.014 | 20 of 20 | 0 | 23.6 |
+| 1000 | 1019 | 0.004 / 0.016 | 20 of 20 | 0 | 87.7 |
+
+The last column is what each commit would have cost had it invalidated the
+sidebar: the snapshot rebuild after a one-fact update in the same run.
+`tests/slots.rs` (`arrangement_commits_and_slot_edits_leave_the_snapshot_current`)
+asserts the snapshot stays current.
+
+## Records
+
+The `workspace/<id>` record holds the slots (the cached baseline with its
+arrangement hint, and the overlay's edits), the arrangement document and the
+saved portable resolutions. Like every record it is opaque to the host
+([Records](core-interface.md#records)); generations are not part of it. The
+migration of the resolutions Wheelhouse keeps on each device today is
+Wheelhouse's: it saves the portable ones through
+`wheelhouse_slot_resolution_set`.
+
+## Limits and next steps
+
+- **Overlay rules** (ADR 0013) are in [Workspace Overlay](workspace-overlay.md).
+- **Named layouts** from templates, with an unplaced set and edits kept per
+  layout, are designed in [Workspace Layouts](workspace-layouts.md).
+- **Machine-local Target Resolutions** (a local socket, `attach_token`) are
+  not stored: they stay in the host's device-local state. Portable ones are
+  above.
+- **The Dashboard's sidebar arrangement** uses the same document shape, with
+  a closed set and hint-based placement: see [The sidebar
+  arrangement](sidebar-arrangement.md).
+- Closed workspaces keep the slots and arrangement they had; baselines follow
+  only open workspaces' subjects.

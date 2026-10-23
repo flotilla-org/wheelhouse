@@ -7,6 +7,10 @@ work. The product and build target are Wheelhouse; current work order is in the
 
 ## Language
 
+**Core**:
+`wheelhouse-core` and its C ABI (`wheelhouse-ffi`): the host-independent library that owns the **Dashboard**'s and each **Workspace**'s logical state, placement and evaluation, which every frontend (the native app, and later web and TUI) drives. It was Andamento, a separate repo with a Zellij frontend, until it joined this repo (#440, #426); older records use that name.
+_Avoid_: Andamento (for current work), engine
+
 **Panel**:
 A tabbed container that hosts one or more **Views**.
 _Avoid_: Sidebar, workspace, region
@@ -185,7 +189,7 @@ _Avoid_: Workspace address, layout position, display name
 
 **Window ID**:
 A window's stable identity in its **Dashboard**'s **Presentation State**.
-_Avoid_: Window config, andamento_records
+_Avoid_: Window config, wheelhouse_records
 
 **Kept Workspace**:
 A **Workspace** the user closed but chose to keep. It keeps its **Workspace ID** and **Workspace Overlay**, and activating its subject again reopens it rather than creating a new Workspace.
@@ -292,7 +296,7 @@ A logical local IPC address — scope, name and transport kind — that each pla
 _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 
 **Dashboard**:
-A user's choice of which **Content Providers** to subscribe to, together with the **Grouping Projection**, section, order and display choices that turn their entries into a **Workspace Inventory**. Likely to be called a *flotilla dashboard*, even while the Andamento project defines it. It can be shared across devices and frontends, for example through cloud storage. Each Wheelhouse process opens one, as a directory of Andamento's records (`--dashboard`) and its list of provider subscriptions, each with a subscription ID that is the provider of every entity it publishes. Wheelhouse gives each subscription an ingress endpoint of its own and runs its connector (`flotilla pm connect`, until Flotilla serves a facts stream).
+A user's choice of which **Content Providers** to subscribe to, together with the **Grouping Projection**, section, order and display choices that turn their entries into a **Workspace Inventory**. Likely to be called a *flotilla dashboard*, even while the **Core** defines it. It can be shared across devices and frontends, for example through cloud storage. Each Wheelhouse process opens one, as a directory of the core's records (`--dashboard`) and its list of provider subscriptions, each with a subscription ID that is the provider of every entity it publishes. Wheelhouse gives each subscription an ingress endpoint of its own and runs its connector (`flotilla pm connect`, until Flotilla serves a facts stream).
 _Avoid_: Project, RAD project, sidebar config
 
 **Presentation State**:
@@ -485,5 +489,5 @@ _Avoid_: Self, current view, environment view ID
 - "What goes in the title bar" is not a layout question. Resolved: it is a **Placement Resolution** problem over **Chrome Hosts** (title bar, sidebar, status bar) made of **Niches**; **Chrome Elements** declare a **Placement Chain** and resolve by measured overflow, defaulting in code and overriding in config. No element is hardcoded to the title bar.
 - Tabs in the title bar is not a special tab mode. Resolved: it is the **Tab Strip** element placed in the title-bar host; the topmost docking row becomes the chrome row and the title bar's end-zone widths become **edge insets** to the docking layout. Tab overflow within the inset span stays clipped for now (a later overflow dropdown is separable). See ADR 0006.
 - The project selector is not assumed useful in uishell. Resolved: a uishell user overwhelmingly has one context bringing all threads together; the project/owner selector is not a fixed title-bar fixture — it is a **Chrome Element** like any other, present only if placed.
-- "Project" means two different things. The RAD project file holds all app state, while a flotilla project is a domain entity that Andamento picks up. Resolved for new work: the user-level aggregation is the **Dashboard**; per-device layout is **Presentation State**; "project" on its own refers only to the flotilla/domain entity.
+- "Project" means two different things. The RAD project file holds all app state, while a flotilla project is a domain entity that the core picks up. Resolved for new work: the user-level aggregation is the **Dashboard**; per-device layout is **Presentation State**; "project" on its own refers only to the flotilla/domain entity.
 - A **Workspace ID** was scoped to its owning **Controlled Split**. Resolved: it is unique across Dashboards and devices, and a **Workspace Address** remains only a locator. Entities from several **Content Providers** are told apart by the provider, not by the ID string.

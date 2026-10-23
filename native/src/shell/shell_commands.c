@@ -1,0 +1,2059 @@
+// Copyright (c) Epic Games Tools
+// Licensed under the MIT license (https://opensource.org/license/mit/)
+
+////////////////////////////////
+//~ rjf: Shell Menu Metadata
+
+#include "shell_app_hooks.h"
+
+internal RD_AppMenuSpecList
+uishell_shell_edit_menu_specs(void)
+{
+  local_persist RD_AppMenuItemSpec items[] =
+  {
+    {0, str8_lit_comp("undo"), 'u'}, {0, str8_lit_comp("redo"), 'r'}, {1},
+    {0, str8_lit_comp("cut"), 't'}, {0, str8_lit_comp("copy"), 'c'},
+    {0, str8_lit_comp("paste"), 'p'}, {1},
+    {0, str8_lit_comp("select_all"), 'a'}, {0, str8_lit_comp("clear_selection"), 'l'},
+  };
+  local_persist RD_AppMenuSpec specs[] =
+  {{str8_lit_comp("Edit"), 'e', WM_Key_E, ArrayCount(items), items}};
+  return (RD_AppMenuSpecList){ArrayCount(specs), specs};
+}
+
+internal B32
+uishell_is_edit_command(String8 name)
+{
+  return str8_match(name, str8_lit("copy"), 0) || str8_match(name, str8_lit("cut"), 0) ||
+    str8_match(name, str8_lit("paste"), 0) || str8_match(name, str8_lit("select_all"), 0) ||
+    str8_match(name, str8_lit("clear_selection"), 0) || str8_match(name, str8_lit("undo"), 0) ||
+    str8_match(name, str8_lit("redo"), 0);
+}
+
+internal B32
+uishell_edit_command_enabled(String8 name, RD_WindowState *ws)
+{
+  if(!uishell_is_edit_command(name)) { return 1; }
+  if(!ws || ws == &rd_nil_window_state || !ws->ui) { return 0; }
+  UI_State *state = ws->ui;
+  // Commands run before the next UI build: the last completed build is a valid
+  // owner snapshot. Missing consumers expire after that one build of slack.
+  B32 current_owner = state->edit_owner_build == state->build_index ||
+                      state->edit_owner_build+1 == state->build_index;
+  if(!state->edit_owner_key.u64[0] || !current_owner) { return 0; }
+  if(state->edit_owner_terminal)
+  {
+    if(rd_state->popup_active || ws->query_is_active ||
+       rd_cfg_from_view(ws->edit_owner_view) == &cfg_nil_node) { return 0; }
+    return state->edit_owner_enabled && state->edit_owner_enabled(state->edit_owner_user, name);
+  }
+  if(str8_match(name, str8_lit("paste"), 0) || str8_match(name, str8_lit("select_all"), 0)) { return 1; }
+  return (str8_match(name, str8_lit("copy"), 0) || str8_match(name, str8_lit("cut"), 0)) && state->edit_owner_selection;
+}
+
+internal RD_AppMenuSpecList
+uishell_shell_window_menu_specs(void)
+{
+#define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
+#define UIShell_MenuSep()        {1, {0}, 0}
+  local_persist RD_AppMenuItemSpec window_items[] =
+  {
+    UIShell_MenuCmd("open_window", 'w'),
+    UIShell_MenuCmd("close_window", 'c'),
+    UIShell_MenuCmd("toggle_fullscreen", 'f'),
+    UIShell_MenuCmd("toggle_tool_strip", 't'),
+    UIShell_MenuSep(),
+    UIShell_MenuCmd("workspace_settings", 'p'),
+    UIShell_MenuCmd("window_settings", 's'),
+  };
+  local_persist RD_AppMenuSpec specs[] =
+  {
+    {str8_lit_comp("Window"), 'w', WM_Key_W, ArrayCount(window_items), window_items},
+  };
+  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
+#undef UIShell_MenuSep
+#undef UIShell_MenuCmd
+  return result;
+}
+
+internal RD_AppMenuSpecList
+uishell_shell_panel_menu_specs(void)
+{
+#define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
+#define UIShell_MenuSep()        {1, {0}, 0}
+  local_persist RD_AppMenuItemSpec panel_items[] =
+  {
+    UIShell_MenuCmd("new_panel_up", 'u'),
+    UIShell_MenuCmd("new_panel_down", 'd'),
+    UIShell_MenuCmd("new_panel_right", 'r'),
+    UIShell_MenuCmd("new_panel_left", 'l'),
+    UIShell_MenuCmd("close_panel", 'o'),
+    UIShell_MenuSep(),
+    UIShell_MenuCmd("next_panel", 'n'),
+    UIShell_MenuCmd("prev_panel", 'p'),
+    UIShell_MenuSep(),
+    UIShell_MenuCmd("tab_bar_top", 0),
+    UIShell_MenuCmd("tab_bar_bottom", 0),
+  };
+  local_persist RD_AppMenuSpec specs[] =
+  {
+    {str8_lit_comp("Panel"), 'p', WM_Key_P, ArrayCount(panel_items), panel_items},
+  };
+  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
+#undef UIShell_MenuSep
+#undef UIShell_MenuCmd
+  return result;
+}
+
+internal RD_AppMenuSpecList
+uishell_shell_tab_menu_specs(void)
+{
+#define UIShell_MenuCmd(name, cp) {0, str8_lit_comp(name), cp}
+#define UIShell_MenuSep()        {1, {0}, 0}
+  local_persist RD_AppMenuItemSpec tab_items[] =
+  {
+    UIShell_MenuCmd("close_tab", 'c'),
+    UIShell_MenuCmd("duplicate_tab", 'd'),
+    UIShell_MenuSep(),
+    UIShell_MenuCmd("move_tab_left", 'l'),
+    UIShell_MenuCmd("move_tab_right", 'r'),
+    UIShell_MenuSep(),
+    UIShell_MenuCmd("next_tab", 'n'),
+    UIShell_MenuCmd("prev_tab", 'p'),
+  };
+  local_persist RD_AppMenuSpec specs[] =
+  {
+    {str8_lit_comp("Tab"), 'b', WM_Key_V, ArrayCount(tab_items), tab_items},
+  };
+  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
+#undef UIShell_MenuSep
+#undef UIShell_MenuCmd
+  return result;
+}
+
+internal RD_AppMenuSpecList
+uishell_shell_help_menu_specs(void)
+{
+  local_persist RD_AppMenuSpec specs[] =
+  {
+    {str8_lit_comp("Help"), 'h', WM_Key_H, 0, 0},
+  };
+  RD_AppMenuSpecList result = {ArrayCount(specs), specs};
+  return result;
+}
+
+////////////////////////////////
+//~ rjf: Shell Command Dispatch Helpers
+
+internal void
+uishell_push_window_ui_event(UI_Event *event)
+{
+  CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+  RD_WindowState *ws = rd_window_state_from_cfg(window);
+  if(ws != &rd_nil_window_state)
+  {
+    ui_event_list_push(rd_frame_arena(), &ws->ui_events, event);
+  }
+}
+
+internal F32
+uishell_panel_anim(UI_Key key, F32 target, F32 initial, B32 reset)
+{
+  UI_AnimParams params =
+  {
+    .target = target,
+    .initial = initial,
+    .reset = reset,
+    .rate = rd_state->menu_animation_rate,
+  };
+  return ui_anim_(key, &params);
+}
+
+internal B32
+uishell_dispatch_app_command(String8 name)
+{
+  B32 result = 1;
+
+  if(str8_match(name, str8_lit("exit"), 0))
+  {
+    rd_save_presentation();
+    UISHELL_APP_SAVE_BEFORE_EXIT();
+    rd_state->quit = 1;
+  }
+  else if(str8_match(name, str8_lit("wm_event"), 0))
+  {
+    WM_Event *wm_event = uishell_regs()->wm_event;
+    if(wm_event != 0)
+    {
+      RD_WindowState *ws = rd_window_state_from_os_handle(wm_event->window);
+      if(ws != &rd_nil_window_state)
+      {
+        UI_Event ui_event = zero_struct;
+        UI_EventKind kind = UI_EventKind_Null;
+        switch(wm_event->kind)
+        {
+          default:{}break;
+          case WM_EventKind_Press:     {kind = UI_EventKind_Press;}break;
+          case WM_EventKind_Release:   {kind = UI_EventKind_Release;}break;
+          case WM_EventKind_MouseMove: {kind = UI_EventKind_MouseMove;}break;
+          case WM_EventKind_Text:      {kind = UI_EventKind_Text;}break;
+          case WM_EventKind_Scroll:    {kind = UI_EventKind_Scroll;}break;
+          case WM_EventKind_FileDrop:  {kind = UI_EventKind_FileDrop;}break;
+        }
+        ui_event.kind         = kind;
+        ui_event.key          = wm_event->key;
+        ui_event.modifiers    = wm_event->modifiers;
+        ui_event.string       = wm_event->character ? str8_from_32(ui_build_arena(), str32(&wm_event->character, 1)) : str8_zero();
+        ui_event.paths        = str8_list_copy(ui_build_arena(), &wm_event->strings);
+        ui_event.pos          = wm_event->pos;
+        ui_event.delta_2f32   = wm_event->delta;
+        ui_event.scroll_is_precise = wm_event->scroll_is_precise;
+        ui_event.timestamp_us = wm_event->timestamp_us;
+        CFG_Node *focused_view = rd_cfg_from_view(uishell_regs()->view);
+        B32 terminal_claims_keyboard_input = (!rd_state->popup_active &&
+                                              !ws->query_is_active &&
+                                              !ws->menu_bar_focused &&
+                                              str8_match(focused_view->string, str8_lit("terminal"), 0) &&
+                                              !(wm_event->modifiers & WM_Modifier_Super) &&
+                                              (wm_event->kind == WM_EventKind_Press ||
+                                               wm_event->kind == WM_EventKind_Release ||
+                                               wm_event->kind == WM_EventKind_Text));
+        if(terminal_claims_keyboard_input)
+        {
+          ui_event.flags |= UI_EventFlag_SkipDefaultFocusNav;
+        }
+        ui_event_list_push(rd_frame_arena(), &ws->ui_events, &ui_event);
+      }
+    }
+  }
+  else if(str8_match(name, str8_lit("undo"), 0) ||
+          str8_match(name, str8_lit("redo"), 0) ||
+          str8_match(name, str8_lit("go_back"), 0) ||
+          str8_match(name, str8_lit("go_forward"), 0))
+  {
+    // Reserved app-level command names. No shell-global behavior yet.
+  }
+  else
+  {
+    result = 0;
+  }
+
+  return result;
+}
+
+internal B32
+uishell_dispatch_ui_event_command(String8 name)
+{
+  RD_WindowState *edit_ws = rd_window_state_from_cfg(cfg_node_from_id(uishell_regs()->window));
+  B32 semantic_edit = uishell_is_edit_command(name);
+  if(semantic_edit)
+  {
+    if(!uishell_edit_command_enabled(name, edit_ws)) { return 1; }
+    // Availability validated the window/UI before all owner-targeted event paths.
+    UI_State *state = edit_ws->ui;
+    if(uishell_regs()->edit_owner_captured && !ui_key_match(uishell_regs()->edit_owner_key, state->edit_owner_key)) { return 1; }
+    if(state->edit_owner_terminal)
+    {
+      String8 paste = str8_match(name, str8_lit("paste"), 0) ? wm_get_clipboard_text(rd_frame_arena()) : str8_zero();
+      state->edit_owner_dispatch(state->edit_owner_user, name, paste);
+      return 1;
+    }
+  }
+  B32 result = 1;
+  UI_Event event = zero_struct;
+  B32 push_event = 1;
+
+  if(str8_match(name, str8_lit("edit"), 0))
+  {
+    event.kind = UI_EventKind_Press;
+    event.slot = UI_EventActionSlot_Edit;
+  }
+  else if(str8_match(name, str8_lit("accept"), 0))
+  {
+    event.kind = UI_EventKind_Press;
+    event.slot = UI_EventActionSlot_Accept;
+  }
+  else if(str8_match(name, str8_lit("cancel"), 0))
+  {
+    event.kind = UI_EventKind_Press;
+    event.slot = UI_EventActionSlot_Cancel;
+  }
+  else if(str8_match(name, str8_lit("focus_menu"), 0))
+  {
+    event.kind = UI_EventKind_Press;
+    event.slot = UI_EventActionSlot_FocusMenu;
+  }
+  else if(str8_match(name, str8_lit("move_left"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_PickSelectSide|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_ExplicitDirectional;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(-1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_right"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_PickSelectSide|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_ExplicitDirectional;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_up"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_ExplicitDirectional|UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+0, -1);
+  }
+  else if(str8_match(name, str8_lit("move_down"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_ExplicitDirectional|UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+0, +1);
+  }
+  else if(str8_match(name, str8_lit("move_left_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(-1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_right_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_up_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional|UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+0, -1);
+  }
+  else if(str8_match(name, str8_lit("move_down_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional|UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+0, +1);
+  }
+  else if(str8_match(name, str8_lit("move_left_chunk"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_ExplicitDirectional;
+    event.delta_unit = UI_EventDeltaUnit_Word;
+    event.delta_2s32 = v2s32(-1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_right_chunk"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_ExplicitDirectional;
+    event.delta_unit = UI_EventDeltaUnit_Word;
+    event.delta_2s32 = v2s32(+1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_up_chunk"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_ExplicitDirectional|UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Word;
+    event.delta_2s32 = v2s32(+0, -1);
+  }
+  else if(str8_match(name, str8_lit("move_down_chunk"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_ExplicitDirectional|UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Word;
+    event.delta_2s32 = v2s32(+0, +1);
+  }
+  else if(str8_match(name, str8_lit("move_up_page"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Page;
+    event.delta_2s32 = v2s32(+0, -1);
+  }
+  else if(str8_match(name, str8_lit("move_down_page"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Page;
+    event.delta_2s32 = v2s32(+0, +1);
+  }
+  else if(str8_match(name, str8_lit("move_up_whole"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Whole;
+    event.delta_2s32 = v2s32(+0, -1);
+  }
+  else if(str8_match(name, str8_lit("move_down_whole"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Whole;
+    event.delta_2s32 = v2s32(+0, +1);
+  }
+  else if(str8_match(name, str8_lit("move_left_chunk_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional;
+    event.delta_unit = UI_EventDeltaUnit_Word;
+    event.delta_2s32 = v2s32(-1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_right_chunk_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional;
+    event.delta_unit = UI_EventDeltaUnit_Word;
+    event.delta_2s32 = v2s32(+1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_up_chunk_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional;
+    event.delta_unit = UI_EventDeltaUnit_Word;
+    event.delta_2s32 = v2s32(+0, -1);
+  }
+  else if(str8_match(name, str8_lit("move_down_chunk_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional;
+    event.delta_unit = UI_EventDeltaUnit_Word;
+    event.delta_2s32 = v2s32(+0, +1);
+  }
+  else if(str8_match(name, str8_lit("move_up_page_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark;
+    event.delta_unit = UI_EventDeltaUnit_Page;
+    event.delta_2s32 = v2s32(+0, -1);
+  }
+  else if(str8_match(name, str8_lit("move_down_page_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark;
+    event.delta_unit = UI_EventDeltaUnit_Page;
+    event.delta_2s32 = v2s32(+0, +1);
+  }
+  else if(str8_match(name, str8_lit("move_up_whole_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark;
+    event.delta_unit = UI_EventDeltaUnit_Whole;
+    event.delta_2s32 = v2s32(+0, -1);
+  }
+  else if(str8_match(name, str8_lit("move_down_whole_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark;
+    event.delta_unit = UI_EventDeltaUnit_Whole;
+    event.delta_2s32 = v2s32(+0, +1);
+  }
+  else if(str8_match(name, str8_lit("move_up_reorder"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_Reorder;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+0, -1);
+  }
+  else if(str8_match(name, str8_lit("move_down_reorder"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_Reorder;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+0, +1);
+  }
+  else if(str8_match(name, str8_lit("move_home"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.delta_unit = UI_EventDeltaUnit_Line;
+    event.delta_2s32 = v2s32(-1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_end"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.delta_unit = UI_EventDeltaUnit_Line;
+    event.delta_2s32 = v2s32(+1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_home_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark;
+    event.delta_unit = UI_EventDeltaUnit_Line;
+    event.delta_2s32 = v2s32(-1, +0);
+  }
+  else if(str8_match(name, str8_lit("move_end_select"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_KeepMark;
+    event.delta_unit = UI_EventDeltaUnit_Line;
+    event.delta_2s32 = v2s32(+1, +0);
+  }
+  else if(str8_match(name, str8_lit("select_all"), 0))
+  {
+    UI_Event event1 = zero_struct;
+    event1.kind = UI_EventKind_Navigate;
+    event1.edit_owner_key = edit_ws->ui->edit_owner_key.u64[0];
+    event1.flags = UI_EventFlag_SkipDefaultFocusNav;
+    event1.delta_unit = UI_EventDeltaUnit_Whole;
+    event1.delta_2s32 = v2s32(-1, +0);
+    uishell_push_window_ui_event(&event1);
+
+    UI_Event event2 = zero_struct;
+    event2.kind = UI_EventKind_Navigate;
+    event2.flags = UI_EventFlag_KeepMark|UI_EventFlag_SkipDefaultFocusNav;
+    event2.edit_owner_key = edit_ws->ui->edit_owner_key.u64[0];
+    event2.delta_unit = UI_EventDeltaUnit_Whole;
+    event2.delta_2s32 = v2s32(+1, +0);
+    uishell_push_window_ui_event(&event2);
+    push_event = 0;
+  }
+  // NOTE: deletion edits carry a delta describing text direction, NOT
+  // navigation intent — without SkipDefaultFocusNav, a default-focus-nav
+  // root that builds before the focused text field (the sidebar) consumes
+  // them as widget cycling & the field never sees the deletion
+  else if(str8_match(name, str8_lit("delete_single"), 0))
+  {
+    event.kind = UI_EventKind_Edit;
+    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_SkipDefaultFocusNav;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+1, +0);
+  }
+  else if(str8_match(name, str8_lit("delete_chunk"), 0))
+  {
+    event.kind = UI_EventKind_Edit;
+    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_SkipDefaultFocusNav;
+    event.delta_unit = UI_EventDeltaUnit_Word;
+    event.delta_2s32 = v2s32(+1, +0);
+  }
+  else if(str8_match(name, str8_lit("backspace_single"), 0))
+  {
+    event.kind = UI_EventKind_Edit;
+    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_SkipDefaultFocusNav;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(-1, +0);
+  }
+  else if(str8_match(name, str8_lit("backspace_chunk"), 0))
+  {
+    event.kind = UI_EventKind_Edit;
+    event.flags = UI_EventFlag_Delete|UI_EventFlag_ZeroDeltaOnSelect|UI_EventFlag_SkipDefaultFocusNav;
+    event.delta_unit = UI_EventDeltaUnit_Word;
+    event.delta_2s32 = v2s32(-1, +0);
+  }
+  else if(str8_match(name, str8_lit("copy"), 0))
+  {
+    event.kind = UI_EventKind_Edit;
+    event.flags = UI_EventFlag_Copy|UI_EventFlag_KeepMark;
+  }
+  else if(str8_match(name, str8_lit("cut"), 0))
+  {
+    event.kind = UI_EventKind_Edit;
+    event.flags = UI_EventFlag_Copy|UI_EventFlag_Delete;
+  }
+  else if(str8_match(name, str8_lit("paste"), 0))
+  {
+    event.kind = UI_EventKind_Text;
+    event.flags = UI_EventFlag_Paste;
+    event.string = wm_get_clipboard_text(rd_frame_arena());
+  }
+  else if(str8_match(name, str8_lit("insert_text"), 0))
+  {
+    event.kind = UI_EventKind_Text;
+    event.string = uishell_regs()->string;
+  }
+  else if(str8_match(name, str8_lit("move_next"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+0, +1);
+  }
+  else if(str8_match(name, str8_lit("move_prev"), 0))
+  {
+    event.kind = UI_EventKind_Navigate;
+    event.flags = UI_EventFlag_Secondary;
+    event.delta_unit = UI_EventDeltaUnit_Char;
+    event.delta_2s32 = v2s32(+0, -1);
+  }
+  else
+  {
+    result = 0;
+    push_event = 0;
+  }
+
+  if(push_event)
+  {
+    if(semantic_edit)
+    {
+      event.edit_owner_key = edit_ws->ui->edit_owner_key.u64[0];
+      event.flags |= UI_EventFlag_SkipDefaultFocusNav;
+    }
+    uishell_push_window_ui_event(&event);
+  }
+  return result;
+}
+
+internal B32
+uishell_dispatch_command_palette_command(String8 name)
+{
+  B32 result = 1;
+
+  if(str8_match(name, str8_lit("open_palette"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
+    CFG_Node *window = workspace_mount.window_cfg;
+    RD_PanelTree panel_tree = workspace_mount.panel_tree;
+    RD_ViewAddress tab = panel_tree.focused->selected_tab;
+    String8List exprs = {0};
+    str8_list_pushf(scratch.arena, &exprs, "query:commands");
+    if(!rd_view_address_is_nil(tab))
+    {
+      str8_list_pushf(scratch.arena, &exprs, "query:config.$%I64x", rd_cfg_from_view(tab)->id);
+    }
+    if(window != &cfg_nil_node)
+    {
+      str8_list_pushf(scratch.arena, &exprs, "query:config.$%I64x", window->id);
+    }
+    UISHELL_APP_PUSH_PALETTE_QUERY_ROOTS(scratch.arena, &exprs);
+    String8 expr = str8_list_join(scratch.arena, &exprs, &(StringJoin){.sep = str8_lit(", ")});
+    UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_lister = 1, .do_big_rows = 1, .view = tab, .tab = tab)
+    {
+      uishell_push_cmd_current(str8_lit("push_query"));
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("run_command"), 0) ||
+          str8_match(name, str8_lit("open_tab"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    UIShell_AppCmdInfo info = uishell_app_cmd_info_from_string(uishell_regs()->cmd_name);
+    if(info.string.size == 0)
+    {
+      result = 0;
+    }
+    else if(uishell_is_edit_command(info.string) && !uishell_edit_command_enabled(info.string,
+      rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window))))
+    {
+      // Availability is a dispatch policy, not merely menu decoration.
+    }
+    else if(!(info.query_flags & UIShell_QueryFlag_Required))
+    {
+      String8 cmd_name = uishell_regs()->cmd_name;
+      UIShell_RegsScope(.cmd_name = str8_zero())
+      {
+        uishell_push_cmd_current(cmd_name);
+      }
+    }
+    else if(info.query_slot == UIShell_AppRegSlot_FilePath && rd_setting_b32_from_name(str8_lit("use_native_file_system_dialog")))
+    {
+      CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+      CFG_Node *current_path = cfg_node_child_from_string(user, str8_lit("current_path"));
+      String8 current_path_string = current_path->first->string;
+      if(current_path_string.size == 0)
+      {
+        current_path_string = path_normalized_from_string(scratch.arena, get_current_path(scratch.arena));
+      }
+      String8 file_path = wm_graphical_pick_file(scratch.arena, current_path_string);
+      file_path = path_normalized_from_string(scratch.arena, file_path);
+      if(file_path.size != 0)
+      {
+        String8 cmd_name = uishell_regs()->cmd_name;
+        UIShell_RegsScope(.cmd_name = str8_zero(), .file_path = file_path)
+        {
+          uishell_push_cmd_current(cmd_name);
+        }
+        UIShell_RegsScope(.file_path = str8_chop_last_slash(file_path))
+        {
+          uishell_push_cmd_current(str8_lit("set_current_path"));
+        }
+      }
+    }
+    else
+    {
+      UIShell_RegsScope(.do_implicit_root = 1, .do_lister = info.query_expr.size != 0)
+      {
+        uishell_push_cmd_current(str8_lit("push_query"));
+      }
+    }
+    scratch_end(scratch);
+  }
+  else
+  {
+    result = 0;
+  }
+
+  return result;
+}
+
+// Commands explain refusal; drag feedback simply omits invalid targets.
+internal B32
+rd_dock_command_allowed(char *action, String8 view, RD_DockRule rule)
+{
+  if(rule != RD_DockRule_Valid)
+  { log_user_errorf("Cannot %s View '%S': %S.", action, view, rd_dock_rule_message(rule)); }
+  return rule == RD_DockRule_Valid;
+}
+
+internal B32
+rd_dock_move_allowed(Arena *arena, char *operation, RD_ViewAddress view, RD_PanelAddress destination, Dir2 dir)
+{
+  B32 unavailable = 0;
+  F32 width = rd_dock_target_width(arena, destination, dir, view, &unavailable);
+  RD_DockRule rule = rd_dock_placement(rd_dock_view_from_address(view), rd_dock_host_from_panel(destination, width));
+  if(rule == RD_DockRule_MinimumWidth && unavailable)
+  { log_user_errorf("Docking geometry unavailable: destination has no live window state."); }
+  return rd_dock_command_allowed(operation, rd_cfg_from_view(view)->string, rule);
+}
+
+// Drops `view` into `destination`, or into the new panel splitting it along
+// `dir` makes, after `prev` (nil: first), and sets `arrangement`, which is
+// `destination`'s. When the panel the View left is in it, the same edit
+// settles that panel (rd_arrangement_drop), closing it if the drop emptied
+// it. A panel in another arrangement (the sidebar's) is settled in that one:
+// reselected, and closed when the drop left it no tabs (#358). Returns the drop and, in *moved_out, the
+// View's address after it: a move into another owner can change it.
+internal RD_ArrangementDrop
+uishell_drop_view(RD_Arrangement *arrangement, RD_ViewAddress view, RD_PanelAddress destination, Dir2 dir, RD_ViewAddress prev, RD_ViewAddress *moved_out)
+{
+  CFG_Node *view_cfg = rd_cfg_from_view(view);
+  RD_PanelAddress source = rd_panel_from_view(view);
+  RD_ArrangementDrop drop = rd_arrangement_drop(arrangement, view, destination.id, dir, prev, rd_tab_is_shown);
+  if(moved_out) { *moved_out = view; }
+  if(drop.panel == 0) { return drop; }
+  // The panel it left, as it was before the View left it.
+  Temp scratch = scratch_begin(&arrangement->arena, 1);
+  RD_Arrangement *left = drop.source == 0 ? rd_arrangement_from_panel_owner(scratch.arena, source.owner) : 0;
+  rd_arrangement_set(arrangement);
+  if(moved_out) { *moved_out = rd_view_address_from_cfg(view_cfg); }
+  if(left)
+  {
+    RD_ArrangementPanel *left_panel = rd_arrangement_panel_from_id(left, source.id);
+    rd_arrangement_detach_tab(left, view);
+    rd_arrangement_settle(left, left_panel->id, dir, rd_tab_is_shown, left_panel->tab_count == 0);
+    rd_arrangement_set(left);
+  }
+  scratch_end(scratch);
+  return drop;
+}
+
+// The tab after or before `tab` in its panel that the current project shows,
+// wrapping; nil when there is none but it.
+internal RD_ViewAddress
+uishell_tab_neighbour(RD_ArrangementPanel *panel, RD_ViewAddress tab, B32 next)
+{
+  RD_ArrangementTab *selected = rd_arrangement_tab_from_view(panel, tab);
+  for(RD_ArrangementTab *t = selected; t != 0;)
+  {
+    t = next ? (t->next ? t->next : panel->first_tab) : (t->prev ? t->prev : panel->last_tab);
+    if(t == selected) { break; }
+    if(!rd_view_is_project_filtered(t->view)) { return t->view; }
+  }
+  return rd_nil_view_address;
+}
+
+internal B32
+uishell_dispatch_tab_command(String8 name)
+{
+  B32 result = 1;
+
+  if(str8_match(name, str8_lit("focus_tab"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    RD_ViewAddress tab = uishell_regs()->tab;
+    RD_PanelAddress panel = rd_panel_from_view(tab);
+    if(panel.id == 0) { panel = uishell_regs()->panel; }
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+    if(rd_arrangement_select(arrangement, panel.id, tab)) { rd_arrangement_set(arrangement); }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("next_tab"), 0) ||
+          str8_match(name, str8_lit("prev_tab"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    B32 is_next = str8_match(name, str8_lit("next_tab"), 0);
+    UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
+    RD_ArrangementPanel *focused = rd_arrangement_panel_from_id(workspace_mount.arrangement, workspace_mount.panel_tree.focused->address.id);
+    RD_ViewAddress next_selected_tab = uishell_tab_neighbour(focused, focused->selected, is_next);
+    if(!rd_view_address_is_nil(next_selected_tab))
+    {
+      UIShell_RegsScope(.tab = next_selected_tab)
+      {
+        uishell_push_cmd_current(str8_lit("focus_tab"));
+      }
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("move_tab_right"), 0) ||
+          str8_match(name, str8_lit("move_tab_left"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    RD_ViewAddress tab = uishell_regs()->tab;
+    RD_PanelAddress address = rd_panel_from_view(tab);
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, address.owner);
+    RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(arrangement, address.id);
+    RD_ViewAddressList filtered_tabs = {0};
+    for(RD_ArrangementTab *n = panel->first_tab; n != 0; n = n->next)
+    {
+      if(rd_view_is_project_filtered(n->view))
+      {
+        continue;
+      }
+      rd_view_address_list_push(scratch.arena, &filtered_tabs, n->view);
+    }
+    RD_ViewAddress tab_prev2 = rd_nil_view_address;
+    RD_ViewAddress tab_prev = rd_nil_view_address;
+    RD_ViewAddress tab_next = rd_nil_view_address;
+    {
+      RD_ViewAddress prev2 = rd_nil_view_address;
+      RD_ViewAddress prev = rd_nil_view_address;
+      RD_ViewAddress next = rd_nil_view_address;
+      for(RD_ViewAddressNode *n = filtered_tabs.first; n != 0; (prev2 = prev, prev = n->v, n = n->next))
+      {
+        next = n->next ? n->next->v : rd_nil_view_address;
+        if(rd_view_address_match(n->v, tab))
+        {
+          tab_prev2 = prev2;
+          tab_prev = prev;
+          tab_next = next;
+          break;
+        }
+      }
+    }
+    RD_ViewAddress new_prev = (str8_match(name, str8_lit("move_tab_right"), 0) ? tab_next : tab_prev2);
+    if(rd_view_address_match(new_prev, tab_prev) && filtered_tabs.last)
+    {
+      new_prev = filtered_tabs.last->v;
+    }
+    UIShell_RegsScope(.dst_panel = address, .view = uishell_regs()->tab, .prev_tab = new_prev)
+    {
+      uishell_push_cmd_current(str8_lit("move_view"));
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("build_tab"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    String8 expr_file_path = rd_file_path_from_eval_string(scratch.arena, uishell_regs()->expr);
+    RD_PanelAddress panel = uishell_regs()->panel;
+    if(!rd_panel_exists(panel))
+    {
+      panel = rd_nil_panel_address;
+      CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+      if(window == &cfg_nil_node)
+      {
+        window = cfg_node_from_id(rd_state->last_focused_window);
+      }
+      if(window == &cfg_nil_node)
+      {
+        CFG_NodePtrList windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
+        if(windows.first != 0)
+        {
+          window = windows.first->v;
+        }
+      }
+      if(window != &cfg_nil_node)
+      {
+        UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, window);
+        RD_PanelTree panel_tree = workspace_mount.panel_tree;
+        panel = panel_tree.focused->address;
+      }
+    }
+    if(!rd_panel_exists(panel))
+    {
+      log_user_errorf("Couldn't open a new tab because no panel was available.");
+    }
+    else if(rd_dock_command_allowed("create", uishell_regs()->string,
+              rd_dock_creation(uishell_regs()->string, rd_dock_host_from_panel(panel, RD_DOCK_UNMEASURED_WIDTH))))
+    {
+      CFG_Node *tab = rd_view_alloc(panel.owner, uishell_regs()->string, str8_zero());
+      // A web tab opens the page it's given (open_url), not an expression.
+      B32 web = str8_match(uishell_regs()->string, str8_lit("web"), 0);
+      CFG_Node *expr = cfg_node_new(rd_state->cfg, tab, web ? str8_lit("url") : str8_lit("expression"));
+      cfg_node_new(rd_state->cfg, expr, uishell_regs()->expr);
+      if(expr_file_path.size != 0)
+      {
+        CFG_Node *project = cfg_node_new(rd_state->cfg, tab, str8_lit("project"));
+        cfg_node_new(rd_state->cfg, project, rd_state->project_path);
+      }
+      RD_ViewAddress address = rd_view_address_from_cfg(tab);
+      RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+      RD_ArrangementPanel *destination = rd_arrangement_panel_from_id(arrangement, panel.id);
+      if(rd_arrangement_move_tab(arrangement, address, destination->id, destination->last_tab ? destination->last_tab->view : rd_nil_view_address))
+      { rd_arrangement_set(arrangement); }
+      else { cfg_node_release(rd_state->cfg, tab); }
+      UIShell_RegsScope(.tab = address)
+      {
+        uishell_push_cmd_current(str8_lit("focus_tab"));
+      }
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("duplicate_tab"), 0))
+  {
+    CFG_Node *src = rd_cfg_from_view(uishell_regs()->tab);
+    RD_PanelAddress panel = rd_panel_from_cfg(src);
+    if(!rd_dock_command_allowed("duplicate", src->string, rd_dock_creation(src->string, rd_dock_host_from_panel(panel, RD_DOCK_UNMEASURED_WIDTH)))) { return 1; }
+    Temp scratch = scratch_begin(0, 0);
+    // The copy is a View of its own, with a key of its own.
+    CFG_Node *dst = cfg_node_deep_copy(rd_state->cfg, src);
+    cfg_node_insert_child(rd_state->cfg, src->parent, src, dst);
+    rd_view_key_assign(dst, 1);
+    RD_ViewAddress copy = rd_view_address_from_cfg(dst);
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+    if(rd_arrangement_move_tab(arrangement, copy, panel.id, uishell_regs()->tab)) { rd_arrangement_set(arrangement); }
+    else { cfg_node_release(rd_state->cfg, dst); }
+    UIShell_RegsScope(.tab = copy)
+    {
+      uishell_push_cmd_current(str8_lit("focus_tab"));
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("close_tab"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    RD_ViewAddress closed = uishell_regs()->tab;
+    CFG_Node *tab = rd_cfg_from_view(closed);
+    if(!rd_dock_command_allowed("close", tab->string, rd_dock_closure(rd_dock_view_from_address(closed)))) { scratch_end(scratch); return 1; }
+    RD_PanelAddress address = rd_panel_from_view(closed);
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, address.owner);
+    RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(arrangement, address.id);
+    B32 focused = rd_panel_tree_from_arrangement(scratch.arena, address.owner, arrangement).focused->address.id == panel->id;
+    if(rd_view_address_match(panel->selected, closed))
+    {
+      B32 found_selected = 0;
+      RD_ViewAddress next_selected_tab = rd_nil_view_address;
+      for(RD_ArrangementTab *n = panel->first_tab; n != 0; n = n->next)
+      {
+        if(rd_view_address_match(n->view, panel->selected))
+        {
+          found_selected = 1;
+        }
+        else if(!rd_view_is_project_filtered(n->view))
+        {
+          next_selected_tab = n->view;
+          if(found_selected)
+          {
+            break;
+          }
+        }
+      }
+      UIShell_RegsScope(.tab = next_selected_tab)
+      {
+        uishell_push_cmd_current(str8_lit("focus_tab"));
+      }
+    }
+    if(rd_arrangement_remove_tab(arrangement, closed))
+    {
+      // A panel left with no tabs goes, and its siblings grow into its space
+      // (#358); a root panel stays. Focus passes to its heir.
+      RD_PanelID heir = panel->tab_count == 0 ? rd_arrangement_close(arrangement, panel->id) : 0;
+      rd_arrangement_set(arrangement);
+      if(heir != 0 && focused)
+      {
+        UIShell_RegsScope(.panel = rd_panel_address(address.owner, heir))
+        {
+          uishell_push_cmd_current(str8_lit("focus_panel"));
+        }
+      }
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("move_view"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    RD_ViewAddress view = uishell_regs()->view;
+    RD_ViewAddress prev_tab = uishell_regs()->prev_tab;
+    RD_PanelAddress dst_panel = uishell_regs()->dst_panel;
+    if(rd_panel_exists(dst_panel) && !rd_view_address_match(prev_tab, view) && rd_dock_move_allowed(scratch.arena, "move", view, dst_panel, Dir2_Invalid))
+    {
+      RD_ViewAddress moved = view;
+      uishell_drop_view(rd_arrangement_from_panel_owner(scratch.arena, dst_panel.owner), view, dst_panel, Dir2_Invalid, prev_tab, &moved);
+      UIShell_RegsScope(.panel = dst_panel, .tab = moved)
+      {
+        uishell_push_cmd_current(str8_lit("focus_tab"));
+      }
+      UIShell_RegsScope(.panel = dst_panel)
+      {
+        uishell_push_cmd_current(str8_lit("focus_panel"));
+      }
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("copy_tab_full_path"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    CFG_Node *tab = rd_cfg_from_view(uishell_regs()->tab);
+    String8 expr = rd_expr_from_cfg(tab);
+    String8 full_path = rd_file_path_from_eval_string(scratch.arena, expr);
+    wm_set_clipboard_text(full_path);
+    scratch_end(scratch);
+  }
+  // The tab bar's side is the panel's Presentation State, beside the
+  // arrangement rather than in it.
+  else if(str8_match(name, str8_lit("tab_bar_top"), 0))
+  {
+    rd_panel_flag_set(uishell_regs()->panel, str8_lit("tabs_on_bottom"), 0);
+  }
+  else if(str8_match(name, str8_lit("tab_bar_bottom"), 0))
+  {
+    if(rd_panel_exists(uishell_regs()->panel)) { rd_panel_flag_set(uishell_regs()->panel, str8_lit("tabs_on_bottom"), 1); }
+  }
+  else if(str8_match(name, str8_lit("tab_settings"), 0))
+  {
+    String8 expr = push_str8f(rd_frame_arena(), "query:config.$%I64x", rd_cfg_from_view(uishell_regs()->tab)->id);
+    UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
+    {
+      uishell_push_cmd_current(str8_lit("push_query"));
+    }
+  }
+  else
+  {
+    result = 0;
+  }
+
+  return result;
+}
+
+internal B32
+uishell_dispatch_panel_command(String8 name)
+{
+  B32 result = 1;
+
+  if(str8_match(name, str8_lit("reset_to_default_panels"), 0) ||
+     str8_match(name, str8_lit("reset_to_compact_panels"), 0) ||
+     str8_match(name, str8_lit("reset_to_simple_panels"), 0))
+  {
+    CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+    uishell_sidebar_manual_sizing(window, 0);
+    UISHELL_APP_RESET_PANELS(window);
+  }
+  else if(str8_match(name, str8_lit("new_panel_left"), 0) ||
+          str8_match(name, str8_lit("new_panel_up"), 0) ||
+          str8_match(name, str8_lit("new_panel_right"), 0) ||
+          str8_match(name, str8_lit("new_panel_down"), 0) ||
+          str8_match(name, str8_lit("split_panel"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    Dir2 split_dir = Dir2_Invalid;
+    RD_PanelAddress split_panel = rd_nil_panel_address;
+    B32 do_dragdrop_split = 0;
+    if(str8_match(name, str8_lit("new_panel_left"), 0))
+    {
+      split_dir = Dir2_Left;
+    }
+    else if(str8_match(name, str8_lit("new_panel_up"), 0))
+    {
+      split_dir = Dir2_Up;
+    }
+    else if(str8_match(name, str8_lit("new_panel_right"), 0))
+    {
+      split_dir = Dir2_Right;
+    }
+    else if(str8_match(name, str8_lit("new_panel_down"), 0))
+    {
+      split_dir = Dir2_Down;
+    }
+    else
+    {
+      split_dir = uishell_regs()->dir2;
+      split_panel = uishell_regs()->dst_panel;
+      do_dragdrop_split = 1;
+    }
+
+    if(split_dir != Dir2_Invalid)
+    {
+      Axis2 split_axis = axis2_from_dir2(split_dir);
+      if(!rd_panel_exists(split_panel))
+      {
+        split_panel = uishell_regs()->panel;
+      }
+      RD_ViewAddress moving_view = uishell_regs()->view;
+      if(do_dragdrop_split && !rd_dock_move_allowed(scratch.arena, "split with", moving_view, split_panel, split_dir))
+      { scratch_end(scratch); return 1; }
+      // rd_dock_moving_width runs the same drop on a copy to measure the
+      // result; preserve agreement with the command/render differential scenarios.
+      UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_panel_owner(scratch.arena, split_panel.owner);
+      RD_PanelTree panel_tree = workspace_mount.panel_tree;
+      RD_PanelNode *panel = rd_panel_node_from_id(panel_tree.root, split_panel.id);
+      RD_Arrangement *arrangement = workspace_mount.arrangement;
+      B32 do_drop = do_dragdrop_split && rd_cfg_from_view(moving_view) != &cfg_nil_node && rd_panel_exists(uishell_regs()->panel);
+      RD_ArrangementDrop drop = {0};
+      if(do_drop) { drop = uishell_drop_view(arrangement, moving_view, split_panel, split_dir, rd_nil_view_address, &moving_view); }
+      else
+      {
+        drop.panel = rd_arrangement_split(arrangement, split_panel.id, split_dir);
+        if(drop.panel != 0) { rd_arrangement_set(arrangement); }
+      }
+      RD_PanelAddress new_panel_address = rd_panel_address(workspace_mount.owner, drop.panel);
+      B32 new_panel_exists = rd_panel_exists(new_panel_address);
+
+      if(new_panel_exists)
+      {
+        RD_WindowState *ws = rd_window_state_from_cfg(workspace_mount.window_cfg);
+        if(ws != &rd_nil_window_state)
+        {
+          ui_select_state(ws->ui);
+          UIShell_WorkspaceMount new_workspace_mount = uishell_workspace_mount_from_panel_owner(scratch.arena, workspace_mount.owner);
+          RD_PanelTree new_panel_tree = new_workspace_mount.panel_tree;
+          RD_PanelNode *new_panel = rd_panel_node_from_id(new_panel_tree.root, drop.panel);
+          Rng2F32 stub_content_rect = r2f32p(0, 0, 1000, 1000);
+          Vec2F32 stub_content_rect_dim = dim_2f32(stub_content_rect);
+          Rng2F32 new_rect_px  = rd_target_rect_from_panel_node(stub_content_rect, new_panel_tree.root, new_panel);
+          Rng2F32 new_rect_pct = r2f32p(new_rect_px.x0/stub_content_rect_dim.x,
+                                        new_rect_px.y0/stub_content_rect_dim.y,
+                                        new_rect_px.x1/stub_content_rect_dim.x,
+                                        new_rect_px.y1/stub_content_rect_dim.y);
+          if(new_panel->prev != &rd_nil_panel_node)
+          {
+            UI_Key prev_key = rd_panel_ui_key(new_panel->prev->address);
+            Rng2F32 target_prev_rect_px  = rd_target_rect_from_panel_node(stub_content_rect, panel_tree.root, rd_panel_node_from_id(panel_tree.root, new_panel->prev->address.id));
+            Rng2F32 target_prev_rect_pct = r2f32p(target_prev_rect_px.x0/stub_content_rect_dim.x,
+                                                  target_prev_rect_px.y0/stub_content_rect_dim.y,
+                                                  target_prev_rect_px.x1/stub_content_rect_dim.x,
+                                                  target_prev_rect_px.y1/stub_content_rect_dim.y);
+            Rng2F32 prev_rect_pct = r2f32p(uishell_panel_anim(ui_key_from_stringf(prev_key, "x0"), target_prev_rect_pct.x0, target_prev_rect_pct.x0, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(prev_key, "y0"), target_prev_rect_pct.y0, target_prev_rect_pct.y0, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(prev_key, "x1"), target_prev_rect_pct.x1, target_prev_rect_pct.x1, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(prev_key, "y1"), target_prev_rect_pct.y1, target_prev_rect_pct.y1, 0));
+            new_rect_pct = prev_rect_pct;
+            new_rect_pct.p0.v[split_axis] = new_rect_pct.p1.v[split_axis];
+          }
+          if(new_panel->next != &rd_nil_panel_node)
+          {
+            UI_Key next_key = rd_panel_ui_key(new_panel->next->address);
+            Rng2F32 target_next_rect_px  = rd_target_rect_from_panel_node(stub_content_rect, panel_tree.root, rd_panel_node_from_id(panel_tree.root, new_panel->next->address.id));
+            Rng2F32 target_next_rect_pct = r2f32p(target_next_rect_px.x0/stub_content_rect_dim.x,
+                                                  target_next_rect_px.y0/stub_content_rect_dim.y,
+                                                  target_next_rect_px.x1/stub_content_rect_dim.x,
+                                                  target_next_rect_px.y1/stub_content_rect_dim.y);
+            Rng2F32 next_rect_pct = r2f32p(uishell_panel_anim(ui_key_from_stringf(next_key, "x0"), target_next_rect_pct.x0, target_next_rect_pct.x0, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(next_key, "y0"), target_next_rect_pct.y0, target_next_rect_pct.y0, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(next_key, "x1"), target_next_rect_pct.x1, target_next_rect_pct.x1, 0),
+                                           uishell_panel_anim(ui_key_from_stringf(next_key, "y1"), target_next_rect_pct.y1, target_next_rect_pct.y1, 0));
+            new_rect_pct = next_rect_pct;
+            new_rect_pct.p1.v[split_axis] = new_rect_pct.p0.v[split_axis];
+          }
+          UI_Key new_key = rd_panel_ui_key(new_panel->address);
+          uishell_panel_anim(ui_key_from_stringf(new_key, "x0"), new_rect_pct.x0, new_rect_pct.x0, 1);
+          uishell_panel_anim(ui_key_from_stringf(new_key, "x1"), new_rect_pct.x1, new_rect_pct.x1, 1);
+          uishell_panel_anim(ui_key_from_stringf(new_key, "y0"), new_rect_pct.y0, new_rect_pct.y0, 1);
+          uishell_panel_anim(ui_key_from_stringf(new_key, "y1"), new_rect_pct.y1, new_rect_pct.y1, 1);
+        }
+      }
+
+      if(do_drop && new_panel_exists)
+      {
+        UIShell_RegsScope(.panel = new_panel_address, .tab = moving_view)
+        {
+          uishell_push_cmd_current(str8_lit("focus_tab"));
+        }
+      }
+
+      if(new_panel_exists)
+      {
+        UIShell_RegsScope(.panel = new_panel_address)
+        {
+          uishell_push_cmd_current(str8_lit("focus_panel"));
+        }
+      }
+
+      if(panel->tab_side == Side_Max && split_axis == Axis2_X)
+      {
+        UIShell_RegsScope(.panel = new_panel_address)
+        {
+          uishell_push_cmd_current(str8_lit("tab_bar_bottom"));
+        }
+      }
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("close_panel"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
+    RD_PanelAddress panel = uishell_regs()->panel;
+    RD_Arrangement *arrangement = workspace_mount.arrangement;
+    RD_PanelID heir = rd_arrangement_close(arrangement, rd_panel_owner_match(panel.owner, workspace_mount.owner) ? panel.id : 0);
+    if(heir != 0)
+    {
+      rd_arrangement_set(arrangement);
+      if(rd_panel_address_match(workspace_mount.panel_tree.focused->address, panel))
+      {
+        UIShell_RegsScope(.panel = rd_panel_address(workspace_mount.owner, heir))
+        {
+          uishell_push_cmd_current(str8_lit("focus_panel"));
+        }
+      }
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("rotate_panel_columns"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    RD_PanelAddress panel = uishell_regs()->panel;
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+    RD_ArrangementPanel *parent = &rd_nil_arrangement_panel;
+    for(RD_ArrangementPanel *p = rd_arrangement_panel_from_id(arrangement, panel.id)->parent; p != &rd_nil_arrangement_panel; p = p->parent)
+    {
+      if(rd_arrangement_split_axis(arrangement, p) == Axis2_X)
+      {
+        parent = p;
+        break;
+      }
+    }
+    if(parent->child_count > 1 && rd_arrangement_reorder(arrangement, parent->first->id, parent->last->id))
+    {
+      rd_arrangement_set(arrangement);
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("next_panel"), 0) ||
+          str8_match(name, str8_lit("prev_panel"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    U64 panel_sib_off = str8_match(name, str8_lit("next_panel"), 0) ? OffsetOf(RD_PanelNode, next) : OffsetOf(RD_PanelNode, prev);
+    U64 panel_child_off = str8_match(name, str8_lit("next_panel"), 0) ? OffsetOf(RD_PanelNode, first) : OffsetOf(RD_PanelNode, last);
+    UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
+    RD_PanelTree panel_tree = workspace_mount.panel_tree;
+    RD_PanelNode *next_focused = &rd_nil_panel_node;
+    for(RD_PanelNode *p = panel_tree.focused;
+        p != &rd_nil_panel_node;
+        p = rd_panel_node_rec__depth_first(panel_tree.root, p, panel_sib_off, panel_child_off).next)
+    {
+      if(p != panel_tree.focused && p->first == &rd_nil_panel_node)
+      {
+        next_focused = p;
+        break;
+      }
+    }
+    if(next_focused == &rd_nil_panel_node)
+    {
+      for(RD_PanelNode *p = panel_tree.root;
+          p != &rd_nil_panel_node;
+          p = rd_panel_node_rec__depth_first(panel_tree.root, p, panel_sib_off, panel_child_off).next)
+      {
+        if(p != panel_tree.focused && p->first == &rd_nil_panel_node)
+        {
+          next_focused = p;
+          break;
+        }
+      }
+    }
+    UIShell_RegsScope(.panel = next_focused->address)
+    {
+      uishell_push_cmd_current(str8_lit("focus_panel"));
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("focus_panel"), 0))
+  {
+    // The focus mark is the panel's Presentation State; one mark moves there
+    // from wherever in its arrangement it was.
+    RD_PanelAddress address = uishell_regs()->panel;
+    if(rd_panel_exists(address))
+    {
+      rd_panel_focus_mark(address);
+      CFG_Node *window = rd_window_from_cfg(rd_cfg_from_panel_owner(address.owner));
+      RD_WindowState *ws = rd_window_state_from_cfg(window);
+      ws->menu_bar_focused = 0;
+      ws->active_panel = address;
+    }
+  }
+  else if(str8_match(name, str8_lit("focus_panel_right"), 0) ||
+          str8_match(name, str8_lit("focus_panel_left"), 0) ||
+          str8_match(name, str8_lit("focus_panel_up"), 0) ||
+          str8_match(name, str8_lit("focus_panel_down"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    Vec2S32 panel_change_dir = {0};
+    if(str8_match(name, str8_lit("focus_panel_right"), 0))
+    {
+      panel_change_dir = v2s32(+1, +0);
+    }
+    else if(str8_match(name, str8_lit("focus_panel_left"), 0))
+    {
+      panel_change_dir = v2s32(-1, +0);
+    }
+    else if(str8_match(name, str8_lit("focus_panel_up"), 0))
+    {
+      panel_change_dir = v2s32(+0, -1);
+    }
+    else
+    {
+      panel_change_dir = v2s32(+0, +1);
+    }
+    UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
+    RD_PanelTree panel_tree = workspace_mount.panel_tree;
+    RD_PanelNode *src_panel = panel_tree.focused;
+    Rng2F32 src_panel_rect = rd_target_rect_from_panel_node(r2f32(v2f32(0, 0), v2f32(1000, 1000)), panel_tree.root, src_panel);
+    Vec2F32 src_panel_center = center_2f32(src_panel_rect);
+    Vec2F32 src_panel_half_dim = scale_2f32(dim_2f32(src_panel_rect), 0.5f);
+    Vec2F32 travel_dim = add_2f32(src_panel_half_dim, v2f32(10.f, 10.f));
+    Vec2F32 travel_dst = add_2f32(src_panel_center, mul_2f32(travel_dim, v2f32((F32)panel_change_dir.x, (F32)panel_change_dir.y)));
+    RD_PanelNode *dst_root = &rd_nil_panel_node;
+    for(RD_PanelNode *p = panel_tree.root; p != &rd_nil_panel_node; p = rd_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
+    {
+      if(p == src_panel || p->first != &rd_nil_panel_node)
+      {
+        continue;
+      }
+      Rng2F32 p_rect = rd_target_rect_from_panel_node(r2f32(v2f32(0, 0), v2f32(1000, 1000)), panel_tree.root, p);
+      if(contains_2f32(p_rect, travel_dst))
+      {
+        dst_root = p;
+        break;
+      }
+    }
+    if(dst_root != &rd_nil_panel_node)
+    {
+      RD_PanelNode *dst_panel = &rd_nil_panel_node;
+      for(RD_PanelNode *p = dst_root; p != &rd_nil_panel_node; p = rd_panel_node_rec__depth_first_pre(dst_root, p).next)
+      {
+        if(p->first == &rd_nil_panel_node && p != src_panel)
+        {
+          dst_panel = p;
+          break;
+        }
+      }
+      UIShell_RegsScope(.panel = dst_panel->address)
+      {
+        uishell_push_cmd_current(str8_lit("focus_panel"));
+      }
+    }
+    scratch_end(scratch);
+  }
+  else
+  {
+    result = 0;
+  }
+
+  return result;
+}
+
+internal B32
+uishell_dispatch_font_command(String8 name)
+{
+  B32 result = 1;
+  CFG_Node *cfg = &cfg_nil_node;
+  F32 delta = 0.f;
+  B32 window_scope = 0;
+
+  if(str8_match(name, str8_lit("inc_window_font_size"), 0))
+  {
+    cfg = cfg_node_from_id(uishell_regs()->window);
+    delta = +1.f;
+    window_scope = 1;
+  }
+  else if(str8_match(name, str8_lit("inc_view_font_size"), 0))
+  {
+    cfg = rd_cfg_from_view(uishell_regs()->view);
+    delta = +1.f;
+  }
+  else if(str8_match(name, str8_lit("dec_window_font_size"), 0))
+  {
+    cfg = cfg_node_from_id(uishell_regs()->window);
+    delta = -1.f;
+    window_scope = 1;
+  }
+  else if(str8_match(name, str8_lit("dec_view_font_size"), 0))
+  {
+    cfg = rd_cfg_from_view(uishell_regs()->view);
+    delta = -1.f;
+  }
+  else
+  {
+    result = 0;
+  }
+
+  if(result && cfg != &cfg_nil_node)
+  {
+    fnt_reset();
+    RD_ViewAddress old_view = uishell_regs()->view;
+    RD_ViewAddress old_tab = uishell_regs()->tab;
+    if(window_scope)
+    {
+      uishell_regs()->view = rd_nil_view_address;
+      uishell_regs()->tab = rd_nil_view_address;
+    }
+    F32 current_font_size = rd_font_size();
+    uishell_regs()->view = old_view;
+    uishell_regs()->tab = old_tab;
+    F32 new_font_size = Clamp(6.f, current_font_size + delta, 72.f);
+    // A View's font size is its Presentation State; a window's is on its node.
+    String8 font_size = push_str8f(rd_frame_arena(), "%I64u", (U64)new_font_size);
+    if(window_scope) { cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, cfg, str8_lit("font_size")), font_size); }
+    else { rd_view_setting_set(uishell_regs()->view, str8_lit("font_size"), font_size); }
+  }
+
+  return result;
+}
+
+// A subjectless workspace, selected, with default panels. Window sidebar
+// regions are left alone; they are not part of the new workspace. Its default
+// name takes the lowest number no open or detached workspace uses, so closing
+// workspaces never leads to two with the same name.
+internal CFG_Node *
+uishell_new_workspace(CFG_Node *window)
+{
+  Temp scratch = scratch_begin(0, 0);
+  // Detached workspaces count too: they reopen under their saved name.
+  U64 number = 1;
+  for(B32 taken = 1; taken; number += taken)
+  {
+    taken = 0;
+    String8 name = push_str8f(scratch.arena, "Workspace %I64u", number);
+    for(CFG_Node *n = window->first; n != &cfg_nil_node && !taken; n = n->next)
+    {
+      taken = ((str8_match(n->string, str8_lit("workspace"), 0) || str8_match(n->string, str8_lit("detached_workspace"), 0)) &&
+               str8_match(rd_label_from_cfg(n), name, 0));
+    }
+  }
+  CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+  uishell_workspace_id_from_cfg(workspace);
+  CFG_Node *label = cfg_node_new(rd_state->cfg, workspace, str8_lit("label"));
+  cfg_node_newf(rd_state->cfg, label, "Workspace %I64u", number);
+  RD_WindowState *ws = rd_window_state_from_cfg(window);
+  if(ws != &rd_nil_window_state)
+  {
+    ws->root_controlled_split_initialized = 1;
+    ws->root_controlled_split_selected_workspace_id = workspace->id;
+    ws->active_panel = rd_nil_panel_address;
+  }
+  UISHELL_APP_DEFAULT_WORKSPACE_PANELS(window, workspace);
+  scratch_end(scratch);
+  return workspace;
+}
+
+internal B32
+uishell_dispatch_window_command(String8 name)
+{
+  B32 result = 1;
+
+  if(str8_match(name, str8_lit("open_window"), 0))
+  {
+    CFG_Node *old_window = cfg_node_from_id(uishell_regs()->window);
+    CFG_Node *bucket = old_window->parent;
+    if(bucket == &cfg_nil_node)
+    {
+      bucket = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    }
+    CFG_Node *new_window = cfg_node_new(rd_state->cfg, bucket, str8_lit("window"));
+    CFG_Node *size = cfg_node_new(rd_state->cfg, new_window, str8_lit("size"));
+    cfg_node_newf(rd_state->cfg, size, "1280");
+    cfg_node_newf(rd_state->cfg, size, "720");
+    for(CFG_Node *old_child = old_window->first; old_child != &cfg_nil_node; old_child = old_child->next)
+    {
+      if(!str8_match(old_child->string, str8_lit("views"), 0) &&
+         !str8_match(old_child->string, str8_lit("window_views"), 0) &&
+         !str8_match(old_child->string, str8_lit("workspace"), 0) &&
+         !str8_match(old_child->string, str8_lit("workspace_id"), 0) &&
+         !str8_match(old_child->string, str8_lit("window_id"), 0) &&
+         !str8_match(old_child->string, str8_lit("size"), 0) &&
+         !str8_match(old_child->string, str8_lit("pos"), 0) &&
+         !str8_match(old_child->string, str8_lit("monitor"), 0) &&
+         !str8_match(old_child->string, str8_lit("fullscreen"), 0) &&
+         !str8_match(old_child->string, str8_lit("maximized"), 0))
+      {
+        CFG_Node *new_child = cfg_node_deep_copy(rd_state->cfg, old_child);
+        cfg_node_insert_child(rd_state->cfg, new_window, new_window->last, new_child);
+        // A copied kept workspace is another workspace, with an ID of its own.
+        cfg_node_release(rd_state->cfg, cfg_node_child_from_string(new_child, str8_lit("workspace_id")));
+      }
+    }
+    // Its own Views and Presentation State are none of the old window's: its
+    // sidebar is the core's to place.
+    String8 owned[] = {RD_PANEL_PRESENTATION_ROOT, RD_VIEW_PRESENTATION_ROOT};
+    for EachElement(i, owned) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(new_window, owned[i])); }
+    // One empty panel, which has focus (its Presentation State).
+    Temp scratch = scratch_begin(0, 0);
+    RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, new_window);
+    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, owner);
+    RD_PanelID panel = rd_arrangement_clear(arrangement);
+    rd_arrangement_set(arrangement);
+    rd_panel_focus_mark(rd_panel_address(owner, panel));
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("new_workspace"), 0))
+  {
+    CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+    if(window == &cfg_nil_node)
+    {
+      window = cfg_node_from_id(rd_state->last_focused_window);
+    }
+    if(window != &cfg_nil_node)
+    {
+      uishell_new_workspace(window);
+    }
+  }
+  else if(str8_match(name, str8_lit("select_workspace"), 0))
+  {
+    CFG_Node *workspace = cfg_node_from_id(uishell_regs()->cfg);
+    CFG_Node *window = workspace != &cfg_nil_node ? rd_window_from_cfg(workspace) : cfg_node_from_id(uishell_regs()->window);
+    RD_WindowState *ws = rd_window_state_from_cfg(window);
+    if(ws != &rd_nil_window_state && workspace != &cfg_nil_node)
+    {
+      ws->root_controlled_split_initialized = 1;
+      ws->root_controlled_split_selected_workspace_id = workspace->id;
+      ws->active_panel = rd_nil_panel_address;
+      ws->window_layout_reset = 1;
+    }
+  }
+  else if(str8_match(name, str8_lit("close_workspace"), 0) ||
+          str8_match(name, str8_lit("detach_workspace"), 0))
+  {
+    // Detach keeps a subject workspace's layout for the next materialization;
+    // detaching a subjectless workspace, or one whose subject ended, destroys it. Close always destroys,
+    // including a subject workspace, whose row then opens a fresh layout.
+    B32 detach = str8_match(name, str8_lit("detach_workspace"), 0);
+    Temp scratch = scratch_begin(0, 0);
+    CFG_Node *workspace = cfg_node_from_id(uishell_regs()->cfg);
+    CFG_Node *window = workspace != &cfg_nil_node ? rd_window_from_cfg(workspace) : cfg_node_from_id(uishell_regs()->window);
+    if(workspace == &cfg_nil_node && window != &cfg_nil_node)
+    {
+      // From the command palette, act on the Visible Workspace.
+      UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+      if(split.inventory.selected != 0) { workspace = cfg_node_from_id(split.inventory.selected->id); }
+    }
+    if(window != &cfg_nil_node &&
+       workspace != &cfg_nil_node &&
+       (str8_match(workspace->string, str8_lit("workspace"), 0) ||
+        workspace == window))
+    {
+      UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+      UIShell_MaterializedWorkspace *closing = 0;
+      for(UIShell_MaterializedWorkspace *w = split.inventory.first; w != 0; w = w->next)
+      {
+        if(w->id == workspace->id)
+        {
+          closing = w;
+          break;
+        }
+      }
+      if(uishell_controlled_split_workspace_can_close(&split, closing))
+      {
+        UIShell_MaterializedWorkspace *next_selected = split.inventory.selected;
+        if(next_selected == 0 || next_selected == closing)
+        {
+          next_selected = closing->next ? closing->next : closing->prev;
+        }
+        if(workspace == window)
+        {
+          // Detach does not apply here: the legacy workspace has no subject.
+          // The window-backed workspace is the window's legacy layout payload.
+          // Closing it removes that payload; window-level metadata such as
+          // `label` intentionally remains attached to the window node.
+          Temp scratch = scratch_begin(0, 0);
+          RD_Arrangement *own = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, window));
+          rd_arrangement_discard(own);
+          rd_arrangement_set(own);
+          scratch_end(scratch);
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("views")));
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("workspace_id")));
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("arrangement_generation")));
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("arrangement_presentation")));
+        }
+        else if(detach && uishell_workspace_cfg_has_subject(workspace) &&
+                !uishell_sidebar_workspace_subject_ended(rd_window_state_from_cfg(window), workspace->id))
+        {
+          // TODO(#159): a detached node whose subject never returns is kept
+          // forever; prune it with the retained-workspace expiry policy.
+          cfg_node_equip_string(rd_state->cfg, workspace, str8_lit("detached_workspace"));
+        }
+        else
+        {
+          cfg_node_release(rd_state->cfg, workspace);
+        }
+        RD_WindowState *ws = rd_window_state_from_cfg(window);
+        if(next_selected == 0)
+        {
+          // Until a permanent home workspace exists, the last close leaves a
+          // fresh subjectless workspace rather than an empty Workspace Region.
+          uishell_new_workspace(window);
+        }
+        else if(ws != &rd_nil_window_state)
+        {
+          ws->root_controlled_split_initialized = 1;
+          ws->root_controlled_split_selected_workspace_id = next_selected->id;
+          ws->window_layout_reset = 1;
+        }
+      }
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("next_workspace_layout"), 0) ||
+          str8_match(name, str8_lit("default_workspace_layout"), 0) ||
+          str8_match(name, str8_lit("reset_workspace_layout"), 0))
+  {
+    // The given workspace, or from the palette the Visible Workspace.
+    Temp scratch = scratch_begin(0, 0);
+    CFG_Node *workspace = cfg_node_from_id(uishell_regs()->cfg);
+    CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+    if(workspace == &cfg_nil_node && window != &cfg_nil_node)
+    {
+      UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+      if(split.inventory.selected != 0) { workspace = cfg_node_from_id(split.inventory.selected->id); }
+    }
+    if(workspace != &cfg_nil_node)
+    {
+      if(str8_match(name, str8_lit("reset_workspace_layout"), 0)) { uishell_store_reset_layout(workspace); }
+      else if(str8_match(name, str8_lit("default_workspace_layout"), 0)) { uishell_store_choose_layout(workspace, str8_zero()); }
+      else
+      {
+        UIShell_WorkspaceLayouts layouts = uishell_store_layouts(scratch.arena, workspace);
+        if(layouts.count > 1)
+        { uishell_store_choose_layout(workspace, layouts.names[layouts.current < layouts.count ? (layouts.current+1)%layouts.count : 0]); }
+      }
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("workspace_settings"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    if(split.inventory.selected != 0)
+    {
+      String8 expr = push_str8f(rd_frame_arena(), "query:config.$%I64x", split.inventory.selected->id);
+      UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
+      { uishell_push_cmd_current(str8_lit("push_query")); }
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("window_settings"), 0))
+  {
+    String8 expr = push_str8f(rd_frame_arena(), "query:config.$%I64x", uishell_regs()->window);
+    UIShell_RegsScope(.expr = expr, .do_implicit_root = 1, .do_big_rows = 1, .do_lister = 1)
+    {
+      uishell_push_cmd_current(str8_lit("push_query"));
+    }
+  }
+  else if(str8_match(name, str8_lit("close_window"), 0) ||
+          str8_match(name, str8_lit("window_close_menu"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    CFG_NodePtrList all_windows = cfg_node_top_level_list_from_string(scratch.arena, str8_lit("window"));
+    CFG_Node *wcfg = cfg_node_from_id(uishell_regs()->window);
+    if(all_windows.count == 1 && all_windows.first->v == wcfg)
+    {
+      uishell_push_cmd_current(str8_lit("exit"));
+    }
+    else
+    {
+      cfg_node_release(rd_state->cfg, wcfg);
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("toggle_tool_strip"), 0))
+  {
+    // A user setting: every window shows the strip, or none does.
+    CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    CFG_Node *show = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("show_tool_strip"));
+    cfg_node_new_replace(rd_state->cfg, show, rd_setting_b32_from_name(str8_lit("show_tool_strip")) ? str8_lit("0") : str8_lit("1"));
+    for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
+    { ws->window_layout_reset = 1; }
+  }
+  else if(str8_match(name, str8_lit("toggle_fullscreen"), 0))
+  {
+    CFG_Node *wcfg = cfg_node_from_id(uishell_regs()->window);
+    RD_WindowState *ws = rd_window_state_from_cfg(wcfg);
+    if(ws != &rd_nil_window_state)
+    {
+      wm_window_set_fullscreen(ws->os, !wm_window_is_fullscreen(ws->os));
+    }
+  }
+  else if(str8_match(name, str8_lit("toggle_dev_menu"), 0))
+  {
+    CFG_Node *wcfg = cfg_node_from_id(uishell_regs()->window);
+    RD_WindowState *ws = rd_window_state_from_cfg(wcfg);
+    if(ws != &rd_nil_window_state)
+    {
+      ws->dev_menu_is_open ^= 1;
+    }
+  }
+  else if(str8_match(name, str8_lit("bring_to_front"), 0))
+  {
+    CFG_Node *last_focused_wcfg = cfg_node_from_id(rd_state->last_focused_window);
+    RD_WindowState *last_focused_ws = rd_window_state_from_cfg(last_focused_wcfg);
+    if(last_focused_ws == &rd_nil_window_state)
+    {
+      last_focused_ws = rd_state->first_window_state;
+    }
+    if(last_focused_ws != &rd_nil_window_state)
+    {
+      wm_window_set_minimized(last_focused_ws->os, 0);
+      wm_window_focus(last_focused_ws->os);
+    }
+  }
+  else if(str8_match(name, str8_lit("popup_accept"), 0))
+  {
+    rd_state->popup_active = 0;
+    rd_state->popup_key = ui_key_zero();
+    for(UIShell_CmdNode *n = rd_state->popup_cmds.first; n != 0; n = n->next)
+    {
+      uishell_push_stored_cmd(n->cmd.name, n->cmd.regs);
+    }
+  }
+  else if(str8_match(name, str8_lit("popup_cancel"), 0))
+  {
+    rd_state->popup_active = 0;
+    rd_state->popup_key = ui_key_zero();
+  }
+  else if(str8_match(name, str8_lit("reset_to_default_bindings"), 0))
+  {
+    CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    Temp scratch = scratch_begin(0, 0);
+    CFG_NodePtrList all_keybindings = cfg_node_child_list_from_string(scratch.arena, user, str8_lit("keybindings"));
+    for(CFG_NodePtrNode *n = all_keybindings.first; n != 0; n = n->next)
+    {
+      cfg_node_release(rd_state->cfg, n->v);
+    }
+    scratch_end(scratch);
+
+    CFG_Node *keybindings = cfg_node_new(rd_state->cfg, user, str8_lit("keybindings"));
+    for(UIShell_CmdPack *pack = rd_state->first_cmd_pack; pack != 0; pack = pack->next)
+    {
+      if(pack->binding_count != 0 && pack->binding_from_index != 0)
+      {
+        U64 binding_count = pack->binding_count();
+        for(U64 idx = 0; idx < binding_count; idx += 1)
+        {
+          UIShell_DefaultBinding default_binding = pack->binding_from_index(idx);
+          String8 binding_name = default_binding.string;
+          CFG_Binding binding = default_binding.binding;
+          CFG_Node *binding_root = cfg_node_new(rd_state->cfg, keybindings, str8_zero());
+          cfg_node_new(rd_state->cfg, binding_root, binding_name);
+          cfg_node_new(rd_state->cfg, binding_root, wm_key_cfg_name_table[binding.key]);
+          if(binding.modifiers & WM_Modifier_Ctrl)  {cfg_node_newf(rd_state->cfg, binding_root, "ctrl");}
+          if(binding.modifiers & WM_Modifier_Shift) {cfg_node_newf(rd_state->cfg, binding_root, "shift");}
+          if(binding.modifiers & WM_Modifier_Alt)   {cfg_node_newf(rd_state->cfg, binding_root, "alt");}
+          if(binding.modifiers & WM_Modifier_Super) {cfg_node_newf(rd_state->cfg, binding_root, "super");}
+        }
+      }
+    }
+  }
+  else
+  {
+    result = 0;
+  }
+
+  return result;
+}
+internal B32
+uishell_dispatch_query_command(String8 name)
+{
+  B32 result = 1;
+
+  if(str8_match(name, str8_lit("push_query"), 0))
+  {
+    Temp scratch = scratch_begin(0, 0);
+    String8 cmd_name = uishell_regs()->cmd_name;
+    UIShell_AppCmdInfo cmd_kind_info = uishell_app_cmd_info_from_string(cmd_name);
+
+    // rjf: close existing context menus
+    {
+      CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+      RD_WindowState *ws = rd_window_state_from_cfg(window);
+      ui_ctx_menu_close();
+      ws->menu_bar_focused = 0;
+    }
+
+    // rjf: floating queries -> set up window to build immediate-mode top-level query
+    CFG_Node *view = &cfg_nil_node;
+    B32 is_floating = (cmd_name.size == 0 || cmd_kind_info.query_flags & UIShell_QueryFlag_Floating);
+    if(is_floating)
+    {
+      CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+      RD_WindowState *ws = rd_window_state_from_cfg(window);
+      if(ws != &rd_nil_window_state)
+      {
+        ws->query_is_active = 1;
+        arena_clear(ws->query_arena);
+        ws->query_regs = push_array(ws->query_arena, UIShell_Regs, 1);
+        ws->query_regs[0] = uishell_regs_copy(ws->query_arena, uishell_regs());
+      }
+      // A new query is a new View, though its tree keeps its key: the last
+      // one's state goes with it.
+      CFG_Node *window_query = rd_immediate_cfg_from_keyf("window_query_%p", window);
+      for(CFG_Node *c = window_query->first; c != &cfg_nil_node; c = c->next) { rd_view_states_release_view(rd_view_address_from_cfg(c)); }
+      cfg_node_release_all_children(rd_state->cfg, window_query);
+      view = cfg_node_child_from_string_or_alloc(rd_state->cfg, window_query, str8_lit("watch"));
+      CFG_Node *expr = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("expression"));
+      cfg_node_new_replace(rd_state->cfg, expr, uishell_regs()->expr);
+    }
+
+    // rjf: non-floating -> embed in view
+    else
+    {
+      view = rd_cfg_from_view(uishell_regs()->view);
+    }
+
+    // rjf: determine if the target view is a lister (and thus already has a command)
+    B32 view_is_lister = (cfg_node_child_from_string(view, str8_lit("lister")) != &cfg_nil_node);
+
+    // rjf: target view is a lister -> do not do anything - cannot replace the command
+    if(!view_is_lister)
+    {
+      // rjf: unpack view's query info
+      CFG_Node *query = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("query"));
+      CFG_Node *cmd = cfg_node_child_from_string_or_alloc(rd_state->cfg, query, str8_lit("cmd"));
+      CFG_Node *input = cfg_node_child_from_string_or_alloc(rd_state->cfg, query, str8_lit("input"));
+      if(is_floating)
+      {
+        if(uishell_regs()->do_implicit_root)
+        {
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("explicit_root")));
+        }
+        else
+        {
+          cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("explicit_root"));
+        }
+        if(!uishell_regs()->do_lister)
+        {
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("lister")));
+        }
+        else
+        {
+          cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("lister"));
+        }
+        if(!uishell_regs()->activate_with_single_click)
+        {
+          cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, str8_lit("activate_with_single_click")));
+        }
+        else
+        {
+          cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("activate_with_single_click"));
+        }
+      }
+
+      RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
+      String8 current_query_cmd_name = cmd->first->string;
+      // Adapted from RAD a7163099 (MIT). Embedded repeats restore input focus
+      // before initialization, including file-path defaults. Cursor/mark columns
+      // are one-based UTF-8 byte offsets.
+      B32 reactivate = (!is_floating && vs->query_is_open &&
+                        str8_match(current_query_cmd_name, cmd_name, 0));
+      if(reactivate)
+      {
+        vs->query_cursor = txt_pt(1, input->first->string.size+1);
+        vs->query_mark = txt_pt(1, 1);
+      }
+      else
+      {
+        // rjf: choose initial input string
+        String8 initial_input = {0};
+        if(cmd_name.size != 0)
+        {
+          if(cmd_kind_info.query_slot == UIShell_AppRegSlot_FilePath)
+          {
+            CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+            CFG_Node *current_path = cfg_node_child_from_string(user, str8_lit("current_path"));
+            String8 current_path_string = current_path->first->string;
+            if(current_path_string.size == 0)
+            {
+              current_path_string = path_normalized_from_string(scratch.arena, get_current_path(scratch.arena));
+            }
+            initial_input = current_path_string;
+            initial_input = push_str8f(scratch.arena, "%S/", initial_input);
+          }
+          else if(cmd_kind_info.query_flags & UIShell_QueryFlag_KeepOldInput)
+          {
+            initial_input = input->first->string;
+          }
+        }
+
+        // rjf: build query state
+        cfg_node_new_replace(rd_state->cfg, input, initial_input);
+        cfg_node_new_replace(rd_state->cfg, cmd, cmd_name);
+        if(cmd_name.size != 0)
+        {
+          if(!vs->query_is_open && cmd_kind_info.query_flags & UIShell_QueryFlag_SelectOldInput)
+          {
+            vs->query_cursor = txt_pt(1, 1+input->first->string.size);
+            vs->query_mark = txt_pt(1, 1);
+          }
+          else
+          {
+            vs->query_cursor = txt_pt(1, 1+input->first->string.size);
+            vs->query_mark = vs->query_cursor;
+          }
+          if(!str8_match(current_query_cmd_name, cmd_name, 0))
+          {
+            vs->query_is_open = 1;
+          }
+          else
+          {
+            vs->query_is_open ^= 1;
+          }
+        }
+        if(uishell_regs()->do_lister)
+        {
+          vs->query_is_open = 1;
+        }
+      }
+      vs->contents_are_focused = 0;
+    }
+    scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("complete_query"), 0))
+  {
+    // rjf: unpack params
+    CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+    RD_WindowState *ws = rd_window_state_from_cfg(window);
+    CFG_Node *view = rd_cfg_from_view(uishell_regs()->view);
+    String8 cmd_name = rd_view_query_cmd();
+
+    // rjf: find out if this view is a lister
+    B32 is_lister = (cfg_node_child_from_string(view, str8_lit("lister")) != &cfg_nil_node);
+
+    // rjf: push command
+    if(cmd_name.size != 0) UIShell_RegsScope()
+    {
+      if(is_lister)
+      {
+        uishell_regs()->view = ws->query_regs->view;
+      }
+      uishell_push_cmd_current(cmd_name);
+    }
+
+    // rjf: complete query, either by closing the query popup, or closing the
+    // tab-embedded query edit
+    UIShell_AppCmdInfo cmd_kind_info = uishell_app_cmd_info_from_string(cmd_name);
+    if(is_lister)
+    {
+      ws->query_is_active = 0;
+    }
+    else if(!(cmd_kind_info.query_flags & UIShell_QueryFlag_KeepOldInput))
+    {
+      RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
+      vs->query_is_open = 0;
+      vs->query_string_size = 0;
+    }
+  }
+  else if(str8_match(name, str8_lit("cancel_query"), 0))
+  {
+    CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+    RD_WindowState *ws = rd_window_state_from_cfg(window);
+    if(ws != &rd_nil_window_state)
+    {
+      ws->query_is_active = 0;
+      arena_clear(ws->query_arena);
+      ws->query_regs = 0;
+    }
+  }
+  else if(str8_match(name, str8_lit("update_query"), 0))
+  {
+    CFG_Node *view = rd_cfg_from_view(uishell_regs()->view);
+    CFG_Node *query = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("query"));
+    CFG_Node *input = cfg_node_child_from_string_or_alloc(rd_state->cfg, query, str8_lit("input"));
+    cfg_node_new_replace(rd_state->cfg, input, uishell_regs()->string);
+    RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
+    vs->query_cursor = vs->query_mark = txt_pt(1, uishell_regs()->string.size+1);
+    vs->query_string_size = Min(sizeof(vs->query_buffer), uishell_regs()->string.size);
+    MemoryCopy(vs->query_buffer, uishell_regs()->string.str, vs->query_string_size);
+  }
+  else
+  {
+    result = 0;
+  }
+
+  return result;
+}
+internal B32
+uishell_shell_query_cmd_pack_dispatch(String8 name)
+{
+  B32 result = (uishell_dispatch_command_palette_command(name) ||
+                uishell_dispatch_query_command(name));
+  return result;
+}
+internal void
+uishell_register_shell_cmd_packs(void)
+{
+  local_persist UIShell_CmdPack shell_window_pack =
+  {
+    .name = str8_lit_comp("shell_window"),
+    .cmd_count = uishell_shell_window_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_window_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_window_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_window_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_window_cmd_pack_binding_from_index,
+    .menu_specs = uishell_shell_window_menu_specs,
+    .dispatch = uishell_dispatch_window_command,
+  };
+  local_persist UIShell_CmdPack shell_panel_pack =
+  {
+    .name = str8_lit_comp("shell_panel"),
+    .cmd_count = uishell_shell_panel_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_panel_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_panel_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_panel_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_panel_cmd_pack_binding_from_index,
+    .menu_specs = uishell_shell_panel_menu_specs,
+    .dispatch = uishell_dispatch_panel_command,
+  };
+  local_persist UIShell_CmdPack shell_tab_pack =
+  {
+    .name = str8_lit_comp("shell_tab"),
+    .cmd_count = uishell_shell_tab_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_tab_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_tab_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_tab_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_tab_cmd_pack_binding_from_index,
+    .menu_specs = uishell_shell_tab_menu_specs,
+    .dispatch = uishell_dispatch_tab_command,
+  };
+  local_persist UIShell_CmdPack shell_app_pack =
+  {
+    .name = str8_lit_comp("shell_app"),
+    .cmd_count = uishell_shell_app_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_app_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_app_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_app_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_app_cmd_pack_binding_from_index,
+    .menu_specs = uishell_shell_help_menu_specs,
+    .dispatch = uishell_dispatch_app_command,
+  };
+  local_persist UIShell_CmdPack shell_query_pack =
+  {
+    .name = str8_lit_comp("shell_query"),
+    .cmd_count = uishell_shell_query_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_query_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_query_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_query_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_query_cmd_pack_binding_from_index,
+    .dispatch = uishell_shell_query_cmd_pack_dispatch,
+  };
+  local_persist UIShell_CmdPack shell_ui_event_pack =
+  {
+    .name = str8_lit_comp("shell_ui_event"),
+    .cmd_count = uishell_shell_ui_event_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_ui_event_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_ui_event_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_ui_event_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_ui_event_cmd_pack_binding_from_index,
+    .dispatch = uishell_dispatch_ui_event_command,
+    .menu_specs = uishell_shell_edit_menu_specs,
+  };
+  local_persist UIShell_CmdPack shell_font_pack =
+  {
+    .name = str8_lit_comp("shell_font"),
+    .cmd_count = uishell_shell_font_cmd_pack_cmd_count,
+    .cmd_info_from_index = uishell_shell_font_cmd_pack_cmd_info_from_index,
+    .cmd_info_from_string = uishell_shell_font_cmd_pack_cmd_info_from_string,
+    .binding_count = uishell_shell_font_cmd_pack_binding_count,
+    .binding_from_index = uishell_shell_font_cmd_pack_binding_from_index,
+    .dispatch = uishell_dispatch_font_command,
+  };
+
+  // Edit precedes the other shell menus. These packs have distinct command
+  // names, so registration order changes menu order without changing lookup.
+  uishell_register_cmd_pack(&shell_ui_event_pack);
+  uishell_register_cmd_pack(&shell_window_pack);
+  uishell_register_cmd_pack(&shell_panel_pack);
+  uishell_register_cmd_pack(&shell_tab_pack);
+  uishell_register_cmd_pack(&shell_app_pack);
+  uishell_register_cmd_pack(&shell_query_pack);
+  uishell_register_cmd_pack(&shell_font_pack);
+}

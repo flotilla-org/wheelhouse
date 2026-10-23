@@ -29,16 +29,14 @@ prefer the primary source and flag the conflict.
   cleat *render output* natively (one VT engine, not two), locally first and
   remotely later.
 - **wheelhouse** (you) — native UI shell: C codebase, uishell + window
-  manager, builds via `./build.sh wheelhouse` with sibling Cleat, Andamento,
-  and Jackstay checkouts (`bundle` packages the macOS app). It attaches to
-  Cleat sessions, renders fleet state through the Andamento sidebar, and can
+  manager, plus the sidebar core (wheelhouse-core, formerly Andamento) as Rust
+  crates. Builds via `native/build.sh wheelhouse` with sibling Cleat and
+  Jackstay checkouts (`bundle` packages the macOS app). It attaches to
+  Cleat sessions, renders fleet state through the core's sidebar, and can
   host Jackstay video/input views. In-app review artifacts remain future work.
-- **andamento** — a terminal-first project/agent dashboard used daily inside
-  a **zellij fork**: andamento runs as a zellij plugin surface (the fork
-  carries the patches zellij needs for it). It consumes flotilla's control
-  plane through the presentation-manager connector ("pm connect"): flotilla's
-  daemon serves it the presentable tree (projects, convoys, attention).
-  Governor exists for it like you exist for wheelhouse.
+- **andamento** — retired: its core joined wheelhouse as wheelhouse-core
+  (#440), and its Zellij frontend (a plugin surface in the **zellij fork**)
+  retired with it. Its repo is archived after the merge, its live issues moved to wheelhouse.
 - **ghostty fork** (rjwittams/ghostty) — a patch set (not a divergent fork)
   carrying what cleat's ghostty-vt feature needs; per-patch branches
   integrated into a force-pushed integration branch. Its project never opens

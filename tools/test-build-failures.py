@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise build.sh failure propagation with an isolated fake toolchain."""
+"""Exercise native/build.sh failure propagation with an isolated fake toolchain."""
 import os
 from pathlib import Path
 import shutil
@@ -15,7 +15,8 @@ class BuildFailures(unittest.TestCase):
     def run_build(self, platform, fail_stage, ci=False):
         with tempfile.TemporaryDirectory(prefix='wheelhouse-build-test-') as directory:
             root = Path(directory)
-            shutil.copy2(ROOT / 'build.sh', root / 'build.sh')
+            (root / 'native').mkdir()
+            shutil.copy2(ROOT / 'native/build.sh', root / 'native/build.sh')
             (root / 'build').mkdir()
             # A prior successful build must not make a failed rebuild look green.
             (root / 'build/wheelhouse').write_text('previous build')
@@ -62,9 +63,8 @@ elif name == 'cc':
                        CC=str(bin_dir / 'cc'), BUILD_TEST_LOG=str(log),
                        BUILD_TEST_FAIL=fail_stage, BUILD_TEST_PLATFORM=platform,
                        WHEELHOUSE_CLEAT_DIR=str(root / 'deps'),
-                       WHEELHOUSE_JACKSTAY_DIR=str(root / 'deps'),
-                       WHEELHOUSE_ANDAMENTO_DIR=str(root / 'deps'))
-            result = subprocess.run(['bash', str(root / 'build.sh'), 'wheelhouse'],
+                       WHEELHOUSE_JACKSTAY_DIR=str(root / 'deps'))
+            result = subprocess.run(['bash', str(root / 'native/build.sh'), 'wheelhouse'],
                                     env=env, capture_output=True, text=True, timeout=10)
             calls = log.read_text().splitlines()
             artifact = (root / 'build/wheelhouse').read_text()

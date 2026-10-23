@@ -8,13 +8,13 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 BUILD.mkdir(exist_ok=True)
-source = ROOT / "src/config/tests/native_menu.c"
+source = ROOT / "native/src/config/tests/native_menu.c"
 binary = BUILD / ("native_menu_policy.exe" if os.name == "nt" else "native_menu_policy")
 if os.name == "nt":
     command = ["cl", "/nologo", "/Z7", "/Od", "/DBUILD_DEBUG=1", "/Zc:preprocessor",
-               "/I" + str(ROOT / "src"), str(source), "/Fe:" + str(binary)]
+               "/I" + str(ROOT / "native/src"), str(source), "/Fe:" + str(binary)]
 else:
-    command = ["clang", "-g", "-O0", "-D_GNU_SOURCE", "-I" + str(ROOT / "src"),
+    command = ["clang", "-g", "-O0", "-D_GNU_SOURCE", "-I" + str(ROOT / "native/src"),
                "-Wno-initializer-overrides", "-Wno-unused-value",
                "-Wno-incompatible-pointer-types-discards-qualifiers"]
     if sys.platform == "darwin":

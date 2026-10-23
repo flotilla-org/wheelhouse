@@ -2,7 +2,7 @@
 """Exercise native window messages through a real Cleat terminal and VT encoder.
 
 Uses only a window and child owned by this test; never moves the desktop pointer.
-Run on Windows after build.bat wheelhouse, optionally passing an executable.
+Run on Windows after native/build.bat wheelhouse, optionally passing an executable.
 """
 import ctypes as C
 from ctypes import wintypes as W

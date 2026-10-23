@@ -2,7 +2,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&display=swap">
 <style>
-/* Layout: a scenario switcher over a three-pane worked example (stored → Andamento → sidebar), KDL pinned below. */
+/* Layout: a scenario switcher over a three-pane worked example (stored → core → sidebar), KDL pinned below. */
 :root {
   --bg: #f3f4f1;
   --panel: #ffffff;
@@ -98,7 +98,7 @@ pre { margin: 0; overflow-x: auto; font: 12.5px/1.55 var(--mono); white-space: p
 <main>
   <header style="display:grid;gap:8px">
     <h1>Sections and groups, worked through</h1>
-    <p class="lede">A proposed model for part B of the drag model: user-curated sections and groups as Andamento entities, nested by facts, the way part A put a local workspace in a project. Pick a scenario to see what is saved, what Andamento receives, and what the sidebar shows.</p>
+    <p class="lede">A proposed model for part B of the drag model: user-curated sections and groups as core entities, nested by facts, the way part A put a local workspace in a project. Pick a scenario to see what is saved, what the core receives, and what the sidebar shows.</p>
   </header>
 
   <section class="kinds" aria-label="Kinds">
@@ -141,15 +141,15 @@ pre { margin: 0; overflow-x: auto; font: 12.5px/1.55 var(--mono); white-space: p
     apply-template "wheelhouse/entry"
   }
 }</pre>
-    <p class="note">Two things here are new in Andamento: the <code>layout="section"</code> loop intent (each iteration is its own section; the terminal renderer shows it as a headed section, Wheelhouse gives it its own docked View), and a ghost being placed through a reference list. Roles already use <code>in= … of=</code>, so the second may mostly exist. Names starting with <code>.</code> are Andamento's own system kinds and facts; conventions producers share, such as <code>display.label</code> and <code>flotilla.project</code>, keep theirs.</p>
+    <p class="note">Two things here are new in the core: the <code>layout="section"</code> loop intent (each iteration is its own section; the terminal renderer shows it as a headed section, Wheelhouse gives it its own docked View), and a ghost being placed through a reference list. Roles already use <code>in= … of=</code>, so the second may mostly exist. Names starting with <code>.</code> are the core's own system kinds and facts; conventions producers share, such as <code>display.label</code> and <code>flotilla.project</code>, keep theirs.</p>
   </section>
 
   <section class="open">
     <h2>Still open after these examples</h2>
     <ul>
       <li><b>Ghost state:</b> each ghost's own id, compact or expanded, and the same entity twice in one group. A plain reference list holds none of that.</li>
-      <li><b>The default Workspaces group:</b> is it a group with a reserved id, and does Wheelhouse set <code>.group</code> on every unhomed workspace, or does Andamento's leftover coverage stay the default?</li>
-      <li><b>Who stores it:</b> Wheelhouse's window layout (published, as now), or Andamento itself, so the terminal frontend could curate too.</li>
+      <li><b>The default Workspaces group:</b> is it a group with a reserved id, and does Wheelhouse set <code>.group</code> on every unhomed workspace, or does the core's leftover coverage stay the default?</li>
+      <li><b>Who stores it:</b> Wheelhouse's window layout (published, as now), or the core itself, so the terminal frontend could curate too.</li>
       <li><b>Drop intent:</b> in this model a workspace dropped on a group moves there, and anything else becomes a ghost. Is that enough, or does a workspace sometimes want a ghost?</li>
     </ul>
   </section>
@@ -297,7 +297,7 @@ function show(id) {
     <div class="intro"><h2>${s.title}</h2><p class="lede">${s.text}</p></div>
     <div class="panes">
       <div class="pane"><h3>Saved by Wheelhouse</h3><pre>${s.stored}</pre></div>
-      <div class="pane"><h3>Published to Andamento</h3><div class="facts">${s.entities.map(entityHtml).join("")}</div></div>
+      <div class="pane"><h3>Published to the core</h3><div class="facts">${s.entities.map(entityHtml).join("")}</div></div>
       <div><h3>Sidebar</h3><div class="sb">${s.sidebar}</div></div>
     </div>
     <div class="note"><ul>${s.notes.map(n => `<li>${n}</li>`).join("")}</ul></div>`;

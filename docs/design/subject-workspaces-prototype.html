@@ -306,7 +306,7 @@ const SUBJECTS = {
     facts:[['host','feta'],['provider','drydock'],['size','8 vCPU, 16 GB'],['load','23%']]}
 };
 
-// ---- Workspace Layouts: Andamento templates keyed by subject kind ---------
+// ---- Workspace Layouts: the core templates keyed by subject kind ---------
 const LAYOUTS = {
   vessel:[
     {id:'work', name:'Work', tree:{split:'row', w:[3,2], c:[{panel:'agents', kinds:['agent']},{panel:'side', kinds:['files','diff','terminal','page']}]}},
@@ -454,13 +454,13 @@ function content(s){
     const a = F.agents[s.agent], v = a.vessel ? F.vessels[a.vessel] : null;
     const lines = {
       governor:'<span class="d">governor · standing</span>\n<span class="p">›</span> waiting for review handoffs\n<span class="d">  last: answered builder about frame pacing (13:40)</span>',
-      coder:'<span class="p">›</span> bash build.sh wheelhouse\n<span class="d">[release mode] [clang compile]</span>\n<span class="p">›</span> ./build/wheelhouse --chip_diagnostics\n  vessel_x 64 &gt;= convoy_x+10 <span class="a">ok</span>\n<span class="p">›</span> git push origin fix/vessel-indent-step',
+      coder:'<span class="p">›</span> bash native/build.sh wheelhouse\n<span class="d">[release mode] [clang compile]</span>\n<span class="p">›</span> ./build/wheelhouse --chip_diagnostics\n  vessel_x 64 &gt;= convoy_x+10 <span class="a">ok</span>\n<span class="p">›</span> git push origin fix/vessel-indent-step',
       reviewer:'<span class="p">›</span> reading PR #411\n  1 finding: the 1 px threshold was too weak',
       builder:'<span class="p">›</span> cargo test -p luchs --release\n<span class="d">   Compiling luchs v0.9.2</span>\n  test display_rate::follows_consumer ... <span class="a">ok</span>',
       tester:'<span class="p">›</span> cloning flotilla-org/wheelhouse\n<span class="d">  just joined the convoy</span>'
     }[s.agent] || '';
     return `<div class="agent"><div class="ah"><span class="who">${esc(a.seat)}</span><span class="where">${v?esc(v.name)+' on '+esc(v.host):'on '+esc(a.host)}</span>${a.promises.map(p => `<span class="prom ${p[1]==='kept'?'kept':''}">${esc(p[0])}</span>`).join('')}</div><pre class="term">${lines}</pre></div>`; }
-  case 'files': return `<pre class="files"><span class="dir">src/</span>\n  <span class="dir">uishell/</span>\n    <span class="mod">uishell_sidebar.c  M</span>\n    <span class="mod">uishell_chip_diagnostics.c  M</span>\n    uishell_views.c\n  <span class="dir">shell/</span>\n<span class="dir">docs/</span>\nCONTEXT.md</pre>`;
+  case 'files': return `<pre class="files"><span class="dir">native/src/</span>\n  <span class="dir">uishell/</span>\n    <span class="mod">uishell_sidebar.c  M</span>\n    <span class="mod">uishell_chip_diagnostics.c  M</span>\n    uishell_views.c\n  <span class="dir">shell/</span>\n<span class="dir">docs/</span>\nCONTEXT.md</pre>`;
   case 'diff': return `<pre class="diff"><span class="hunk">@@ uishell_sidebar.c:812 @@</span>\n<span class="del">-F32 indent = 0.3f+depth[i]*0.4f;</span>\n<span class="add">+U64 level = Min(depth[i]-(grouped &amp;&amp; depth[i] &gt; 0), 3);</span>\n<span class="add">+F32 indent = (grouped ? 0.7f : 0.3f)+level*1.2f;</span></pre>`;
   case 'terminal': return `<pre class="term"><span class="p">~/dev/wheelhouse ›</span> git status --short\n<span class="d">?? .DS_Store</span>\n<span class="p">~/dev/wheelhouse ›</span> </pre>`;
   case 'tui': return `<pre class="term"><span class="a">flotilla</span> <span class="d">· flotilla/wheelhouse</span>\n\n CONVOY                    STATE     VESSELS  PROMISES\n Ship sidebar subjects     <span class="p">running</span>   ${String(Object.keys(F.vessels).length).padEnd(8)} 2/4 kept\n governor                  <span class="p">standing</span>  1        -\n\n ISSUES  41 open   PRS  3 open\n\n<span class="d"> enter open · d dispatch · g grill · / filter</span></pre>`;

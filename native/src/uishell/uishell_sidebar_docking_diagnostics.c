@@ -1,0 +1,1517 @@
+// Drive the footer button through real UI press/release frames. It must open
+// above its anchor, including when there are no remaining section Views.
+internal B32
+uishell_sidebar_restore_menu_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *split)
+{
+  UI_State *saved = ui_state, *test = ui_state_alloc();
+  ui_select_state(test);
+  UI_Box *button = &ui_nil_box;
+  UIShell_SidebarState *state = ws->sidebar;
+  uishell_sidebar_section_titles(state);
+  String8 saved_title = state->titles[0].title;
+  CFG_Node *view = uishell_sidebar_region_view(split->owner_cfg, state->titles[0].key);
+  CFG_Node *parent = view->parent, *prev = view->prev;
+  cfg_node_unhook(rd_state->cfg, parent, view);
+  state->titles[0].title = str8_lit("Long section declaration with a deliberately extended title for review");
+  B32 ok = 1;
+  for(U32 frame = 0; frame < 8; frame++)
+  {
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {.menu_animation_rate = 1};
+    UI_EventNode event = {0}; UI_EventList events = {0};
+    Vec2F32 mouse = ui_box_is_nil(button) ? v2f32(0, 0) : center_2f32(button->rect);
+    if(frame == 3 || frame == 4)
+    {
+      event.v = (UI_Event){.kind = frame == 3 ? UI_EventKind_Press : UI_EventKind_Release,
+        .key = WM_Key_LeftMouseButton, .pos = mouse};
+      events.first = events.last = &event; events.count = 1;
+    }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = mouse;
+    if(frame == 6) { state->titles[0].title = str8_lit("Changed long section declaration with a deliberately extended title for review"); }
+    // Changing font size while open changes both row size and toolkit padding.
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(frame >= 6 ? 15 : 11) UI_TextPadding(3)
+    { uishell_sidebar_footer_ui(r2f32p(100, 200, 400, 250), split); }
+    ui_end_build();
+    for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+    { if(str8_match(ui_box_display_string(box), str8_lit("Sections…"), 0)) { button = box; break; } }
+    if(frame == 4 && !test->next_ctx_menu_open)
+    { ok = 0; fprintf(stderr, "FAIL section restore footer activation: button [%g,%g,%g,%g]\n", button->rect.x0, button->rect.y0, button->rect.x1, button->rect.y1); }
+    // First open must already use measured title width, without a warm cache.
+    if(frame == 5 && dim_2f32(test->ctx_menu_root->rect).x <= 11.f*24.f)
+    { ok = 0; fprintf(stderr, "FAIL first-open section title measurement\n"); }
+    if(frame == 7 && (!test->ctx_menu_open || test->ctx_menu_root->rect.y1 > button->rect.y0+1))
+    { ok = 0; fprintf(stderr, "FAIL section restore footer menu placement/open\n"); }
+  }
+  UI_Box *restore = ui_box_from_key(ui_key_from_stringf(test->ctx_menu_root->key, "###restore_%S", state->titles[0].key));
+  F32 text_width = fnt_dim_from_tag_size_string(restore->font, restore->font_size, 0, 0, ui_box_display_string(restore)).x;
+  if(dim_2f32(restore->rect).x < text_width || dim_2f32(restore->rect).x <= restore->font_size*24.f)
+  { ok = 0; fprintf(stderr, "FAIL long section restore menu title width\n"); }
+  // A short native window forces the upward anchor above y=0; ui_end_build
+  // must contain the popup after anchoring, leaving the restore row reachable.
+  // The menu (New section, a label, the row) must still fit the client area
+  // that Windows leaves after its frame.
+  WM_Window short_window = wm_window_open(r2f32p(0, 0, 360, 120), 0, str8_lit("Restore containment diagnostic"));
+  UI_State *short_test = ui_state_alloc();
+  ui_select_state(short_test);
+  WM_Window original_window = ws->os;
+  ws->os = short_window;
+  for(U32 frame = 0; frame < 3; frame++)
+  {
+    UI_EventList events = {0};
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {.menu_animation_rate = 1};
+    ui_begin_build(short_window, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_sidebar_footer_ui(r2f32p(0, 0, 360, 50), split); }
+    ui_end_build();
+    if(frame == 0)
+    {
+      UI_Key footer_key = ui_key_from_string(short_test->root->key, str8_lit("###sidebar_footer"));
+      for(UI_Box *box = short_test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, short_test->root).next)
+      {
+        if(str8_match(ui_box_display_string(box), str8_lit("Sections…"), 0))
+        { ui_ctx_menu_open_above(ui_key_from_string(footer_key, str8_lit("section_restore_menu")), box->key); break; }
+      }
+    }
+  }
+  Rng2F32 bounds = wm_client_rect_from_window(short_window);
+  restore = ui_box_from_key(ui_key_from_stringf(short_test->ctx_menu_root->key, "###restore_%S", state->titles[0].key));
+  if(!short_test->ctx_menu_open || ui_box_is_nil(restore) || short_test->ctx_menu_root->rect.y0 < bounds.y0 ||
+     short_test->ctx_menu_root->rect.x0 < bounds.x0 || restore->rect.y0 < bounds.y0 ||
+     restore->rect.y1 > bounds.y1 || restore->rect.x1 > bounds.x1)
+  { ok = 0; fprintf(stderr, "FAIL short-window upward restore menu containment/reachability\n"); }
+  ws->os = original_window;
+  wm_window_close(short_window);
+  ui_select_state(test);
+  ui_state_release(short_test);
+  state->titles[0].title = saved_title;
+  cfg_node_insert_child(rd_state->cfg, parent, prev, view);
+  uishell_sidebar_dock_layout(split);
+  U64 generation = cfg_change_gen();
+  U8 saved_error[sizeof(state->error)]; MemoryCopy(saved_error, state->error, sizeof(saved_error));
+  if(uishell_sidebar_restore_from_menu(split, str8_lit("not-declared")) || !test->next_ctx_menu_open ||
+     !state->error[0] || cfg_change_gen() != generation)
+  { ok = 0; fprintf(stderr, "FAIL failed section restore must leave menu open with a notice\n"); }
+  if(!uishell_sidebar_restore_from_menu(split, state->titles[0].key) || test->next_ctx_menu_open)
+  { ok = 0; fprintf(stderr, "FAIL successful section restore must close menu\n"); }
+  MemoryCopy(state->error, saved_error, sizeof(saved_error));
+  ui_select_state(saved); ui_state_release(test);
+  return ok;
+}
+
+// Exercise the shared panel host, not the former stacked sidebar adapter.
+internal void
+uishell_sidebar_docking_drain(UIShell_CmdNode *before)
+{
+  for(UIShell_CmdNode *n = before ? before->next : rd_state->cmds[0].first; n; n = n->next) UIShell_RegsScope()
+  {
+    MemoryCopyStruct(uishell_regs(), n->cmd.regs);
+    if(!uishell_dispatch_tab_command(n->cmd.name)) { uishell_dispatch_panel_command(n->cmd.name); }
+  }
+}
+
+// What changes when the config or any arrangement does: both only count up.
+internal U64
+uishell_sidebar_docking_gen(void)
+{
+  return cfg_change_gen() + rd_state->arrangement_version;
+}
+
+// The first section View among `panel`'s tabs, or nil.
+internal CFG_Node *
+uishell_sidebar_docking_section(RD_PanelAddress panel)
+{
+  RD_ArrangementPanel *p = rd_arrangement_panel_from_id(rd_arrangement_live(panel.owner), panel.id);
+  for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
+  {
+    CFG_Node *view = rd_cfg_from_view(t->view);
+    if(str8_match(view->string, str8_lit("sidebar_section"), 0)) { return view; }
+  }
+  return &cfg_nil_node;
+}
+
+// The weight of `panel` of its owner's live arrangement.
+internal F32
+uishell_sidebar_docking_weight(RD_PanelAddress panel)
+{
+  return rd_arrangement_panel_from_id(rd_arrangement_live(panel.owner), panel.id)->weight;
+}
+
+// Moves `view` into the first leaf of `host`'s (a workspace's) panels, as a
+// layout saved before the docking checker refused that would have it; an
+// emptied panel it leaves goes.
+internal void
+uishell_sidebar_docking_misplace(CFG_Node *view, CFG_Node *host)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_ViewAddress address = rd_view_address_from_cfg(view);
+  RD_PanelAddress from = rd_panel_from_view(address);
+  RD_PanelAddress leaf = rd_fixture_leaf(rd_fixture_owner(host));
+  RD_Arrangement *to = rd_arrangement_from_panel_owner(scratch.arena, leaf.owner);
+  rd_arrangement_move_tab(to, address, leaf.id, rd_nil_view_address);
+  rd_arrangement_set(to);
+  RD_Arrangement *source = rd_arrangement_from_panel_owner(scratch.arena, from.owner);
+  RD_ArrangementPanel *left = rd_arrangement_panel_from_id(source, from.id);
+  if(left != &rd_nil_arrangement_panel && left->tab_count == 0 && left->first == &rd_nil_arrangement_panel)
+  {
+    if(left == source->root) { rd_arrangement_discard(source); }
+    else { rd_arrangement_remove(source, from.id); }
+    rd_arrangement_set(source);
+  }
+  scratch_end(scratch);
+}
+
+// Whether `view` is where the docking checker accepts it, and the kind of
+// host it is in.
+internal B32
+uishell_sidebar_docking_valid(CFG_Node *view)
+{
+  RD_DockView dock_view = rd_dock_view_from_address(rd_view_address_from_cfg(view));
+  return dock_view.exists && rd_panel_from_cfg(view).id != 0 && rd_dock_placement(dock_view, dock_view.source) == RD_DockRule_Valid;
+}
+
+internal RD_DockHostKind
+uishell_sidebar_docking_host_kind(CFG_Node *view)
+{
+  return rd_dock_view_from_address(rd_view_address_from_cfg(view)).source.kind;
+}
+
+// Exercise the production tab strip with enough tabs to overflow it. (A
+// sidebar panel has no strip: its header holds its Views.)
+internal B32
+uishell_sidebar_tab_overflow_diagnostics(RD_WindowState *ws)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  UI_State *saved = ui_state, *test = ui_state_alloc();
+  ui_select_state(test);
+  B32 ok = 1;
+  {
+    CFG_Node *owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+    RD_PanelAddress panel = rd_fixture_leaf(rd_fixture_owner(owner));
+    CFG_Node *last = &cfg_nil_node;
+    for(U32 i = 0; i < 12; i++) { last = rd_fixture_view(panel, str8_lit("text"), str8_zero(), i == 0); }
+    ws->window_layout_reset = 1;
+    UI_Box *bar = &ui_nil_box;
+    UI_Box *last_grip = &ui_nil_box;
+    for(U32 frame = 0; frame < 8; frame++)
+    {
+      UI_EventList events = {0}; UI_EventNode event = {0};
+      if(frame == 4)
+      {
+        event.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(bar->rect),
+          .delta_2f32 = v2f32(10000, 0), .scroll_is_precise = 1};
+        events.first = events.last = &event; events.count = 1;
+      }
+      UI_IconInfo icons = ws->ui->icon_info;
+      UI_AnimationInfo animation = {.scroll_animation_rate = 1};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = event.v.pos;
+      UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, owner);
+      UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { rd_panel_area_ui(scratch, r2f32p(0, 0, 180, 100), r2f32p(0, 0, 180, 100), ws, &mount, 1, 0, 0, 0, 0); }
+      ui_end_build();
+      bar = ui_box_from_key(ui_key_from_stringf(rd_panel_ui_key(panel), "tab_bar"));
+      U64 last_key = rd_view_ui_key(rd_view_address_from_cfg(last)).u64[0];
+      UI_Key column = ui_key_from_stringf(bar->key, "tab_column_%I64x", last_key);
+      UI_Key tab = ui_key_from_stringf(column, "tab_%I64x", last_key);
+      UI_Box *tab_box = ui_box_from_key(tab);
+      for(UI_Box *box = tab_box; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, tab_box).next)
+      { if(str8_match(ui_box_display_string(box), str8_lit("⋮⋮"), 0)) { last_grip = box; break; } }
+    }
+    if(ui_box_is_nil(bar) || ui_box_is_nil(last_grip) || bar->view_off_target.x <= 0 ||
+       last_grip->rect.x0 < bar->rect.x0-1 || last_grip->rect.x1 > bar->rect.x1+1)
+    { ok = 0; fprintf(stderr, "FAIL many-tab scroll/grip reachability: offset=%g bar=[%g,%g] grip=[%g,%g]\n", bar->view_off_target.x, bar->rect.x0, bar->rect.x1, last_grip->rect.x0, last_grip->rect.x1); }
+    cfg_node_release(rd_state->cfg, owner);
+    rd_arrangements_release_unowned();
+  }
+  ui_select_state(saved); ui_state_release(test); scratch_end(scratch);
+  return ok;
+}
+
+// Reproduce saved manual layouts with zero-height Sessions and Git panels.
+// Their headers must remain visible without a boundary drag after startup.
+internal B32
+uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *split, B32 manual_sizing)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *owner = split->owner_cfg;
+  RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, owner);
+  RD_FixtureSaved saved_layout = rd_fixture_isolate(scratch.arena, sidebar_owner);
+  CFG_Node *saved_inventory = cfg_node_child_from_string(owner, str8_lit("sidebar_generation"));
+  CFG_Node *saved_sizing = cfg_node_child_from_string(owner, str8_lit("sidebar_layout_sized"));
+  cfg_node_unhook(rd_state->cfg, owner, saved_inventory);
+  cfg_node_unhook(rd_state->cfg, owner, saved_sizing);
+  UIShell_SidebarState *saved_sidebar = ws->sidebar;
+  UIShell_SidebarState fixture = {.initialized = 1};
+  String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
+  char *error = 0;
+  fixture.core = wheelhouse_create(daily.str, daily.size, &error);
+  B32 ok = uishell_sidebar_result(&fixture, fixture.core != 0, error);
+  uishell_sidebar_refresh(&fixture);
+  ws->sidebar = &fixture;
+  // The fixture is the window's sidebar while it runs: the core's
+  // arrangement is built for it.
+  fixture.window = owner->id;
+  uishell_sidebar_dock_layout(split);
+  String8 keys[] = {str8_lit("sessions"), str8_lit("git")};
+  for(U32 i = 0; i < ArrayCount(keys); i++)
+  {
+    if(uishell_sidebar_region_view(owner, keys[i]) == &cfg_nil_node)
+    { ok = 0; fprintf(stderr, "FAIL saved header fixture must declare %.*s\n", (int)keys[i].size, keys[i].str); }
+  }
+  {
+    RD_Arrangement *dock = rd_arrangement_from_panel_owner(scratch.arena, sidebar_owner);
+    U64 count = 0;
+    for(RD_ArrangementPanel *panel = dock->root->first; panel != &rd_nil_arrangement_panel; panel = panel->next)
+    {
+      count += 1;
+      String8 key = uishell_sidebar_section_key(uishell_sidebar_docking_section(rd_panel_address(sidebar_owner, panel->id)));
+      panel->weight = str8_match(key, keys[0], 0) || str8_match(key, keys[1], 0) ? 0.f : 1.f/Max(1, count);
+    }
+    // Normalize only the fixture's healthy shares. Keep the reported zeros.
+    F32 total = 0;
+    for(RD_ArrangementPanel *panel = dock->root->first; panel != &rd_nil_arrangement_panel; panel = panel->next) { total += panel->weight; }
+    for(RD_ArrangementPanel *panel = dock->root->first; panel != &rd_nil_arrangement_panel; panel = panel->next) { panel->weight /= Max(.01f, total); }
+    rd_arrangement_set(dock);
+  }
+  CFG_Node *manual = manual_sizing ? cfg_node_new(rd_state->cfg, split->owner_cfg, str8_lit("sidebar_layout_sized")) : &cfg_nil_node;
+  UI_State *saved = ui_state, *test = ui_state_alloc(); ui_select_state(test);
+  U64 settled_generation = 0;
+  for(U32 frame = 0; frame < 5; frame++)
+  {
+    UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    UIShell_RegsScope(.window = split->owner_cfg->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_control_surface_ui(r2f32p(17, 29, 337, 769), split); }
+    ui_end_build();
+    if(frame == 3) { settled_generation = uishell_sidebar_docking_gen(); }
+    if(frame == 4 && uishell_sidebar_docking_gen() != settled_generation)
+    { ok = 0; fprintf(stderr, "FAIL header repair must stay idle after settling\n"); }
+  }
+  for(U32 i = 0; i < ArrayCount(keys); i++)
+  {
+    UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", keys[i]);
+    UI_Box *header = ui_box_from_key(ui_key_from_stringf(root_key, "###section_header_%S", keys[i]));
+    Rng2F32 visible = header->rect;
+    for(UI_Box *parent = header->parent; !ui_box_is_nil(parent); parent = parent->parent)
+    { if(parent->flags & UI_BoxFlag_Clip) { visible = intersect_2f32(visible, parent->rect); } }
+    if(ui_box_is_nil(header) || dim_2f32(visible).y < 24.f-1)
+    { ok = 0; fprintf(stderr, "FAIL saved section header %.*s: visible height %g\n", (int)keys[i].size, keys[i].str, dim_2f32(visible).y); }
+  }
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(owner, str8_lit("sidebar_generation")));
+  if(manual != &cfg_nil_node) { cfg_node_release(rd_state->cfg, manual); }
+  rd_fixture_restore(saved_layout);
+  if(saved_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_inventory); }
+  if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, owner, owner->last, saved_sizing); }
+  ws->sidebar = saved_sidebar;
+  // Releasing it as a window's would release the window's local sections.
+  fixture.window = 0;
+  uishell_sidebar_release(&fixture);
+  ui_select_state(saved); ui_state_release(test); scratch_end(scratch);
+  return ok;
+}
+
+
+// A boolean display variable's value as its first control shows it: 1 or 0,
+// or -1 when no control shows it.
+internal S32
+uishell_sidebar_docking_variable(WheelhouseSnapshot *snapshot, String8 variable)
+{
+  for(U64 i = 0; snapshot && i < wheelhouse_snapshot_node_count(snapshot); i++)
+  {
+    WheelhouseNode node = {0}; wheelhouse_snapshot_node(snapshot, i, &node);
+    for(U64 c = 0; c < node.control_count; c++)
+    {
+      WheelhouseControl control = {0}; wheelhouse_snapshot_control(snapshot, node.first_control+c, &control);
+      if(control.value_kind == WHEELHOUSE_VALUE_BOOL && str8_match(uishell_sidebar_string(control.variable), variable, 0)) { return !!control.checked; }
+    }
+  }
+  return -1;
+}
+
+// Closing a middle section with its close button closes its panel too
+// (#358): no empty leaf stays between the sections either side of it, and
+// the boundary between them drags, moving their saved sizes. On a sidebar
+// of its own, built from the fixture, as the saved header check's is.
+internal B32
+uishell_sidebar_close_middle_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *split)
+{
+  U32 failures = 0;
+#define CloseFailure(expr) do { if(expr) { failures++; fprintf(stderr, "FAIL sidebar close line %u: %s\n", __LINE__, #expr); } } while(0)
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *window = split->owner_cfg;
+  RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
+  RD_FixtureSaved saved_layout = rd_fixture_isolate(scratch.arena, owner);
+  CFG_Node *saved_inventory = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
+  CFG_Node *saved_sizing = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized"));
+  cfg_node_unhook(rd_state->cfg, window, saved_inventory);
+  cfg_node_unhook(rd_state->cfg, window, saved_sizing);
+  UIShell_SidebarState *saved_sidebar = ws->sidebar;
+  UIShell_SidebarState fixture = {.initialized = 1};
+  String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
+  char *error = 0;
+  fixture.core = wheelhouse_create(daily.str, daily.size, &error);
+  CloseFailure(!uishell_sidebar_result(&fixture, fixture.core != 0, error));
+  uishell_sidebar_refresh(&fixture);
+  ws->sidebar = &fixture;
+  fixture.window = window->id;
+  UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc(); ui_select_state(test_ui);
+  Rng2F32 rect = r2f32p(17, 29, 337, 769);
+  for(U32 frame = 0; frame < 3; frame++)
+  {
+    UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = v2f32(-100, -100);
+    UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_control_surface_ui(rect, split); }
+    ui_end_build();
+  }
+  // Three stacked sections, each alone in its leaf and shown.
+  RD_Arrangement *sidebar = rd_arrangement_from_panel_owner(scratch.arena, owner);
+  RD_ArrangementPanel *middle = &rd_nil_arrangement_panel;
+  for(RD_ArrangementPanel *p = sidebar->root->first; p != &rd_nil_arrangement_panel && middle == &rd_nil_arrangement_panel; p = p->next)
+  {
+    B32 stacked = p->prev != &rd_nil_arrangement_panel && p->next != &rd_nil_arrangement_panel;
+    for(RD_ArrangementPanel *q = p->prev; stacked && q != p->next->next; q = q->next)
+    {
+      CFG_Node *view = q->first_tab ? rd_cfg_from_view(q->first_tab->view) : &cfg_nil_node;
+      stacked = q->first == &rd_nil_arrangement_panel && q->tab_count == 1 && str8_match(view->string, str8_lit("sidebar_section"), 0) &&
+        !uishell_sidebar_view_hidden(view) && !uishell_sidebar_section_collapsed(view);
+    }
+    if(stacked) { middle = p; }
+  }
+  CloseFailure(middle == &rd_nil_arrangement_panel);
+  if(middle != &rd_nil_arrangement_panel)
+  {
+    CFG_Node *closing = rd_cfg_from_view(middle->first_tab->view);
+    RD_PanelAddress middle_panel = rd_panel_address(owner, middle->id);
+    RD_PanelAddress above_panel = rd_panel_address(owner, middle->prev->id), below_panel = rd_panel_address(owner, middle->next->id);
+    UIShell_CmdNode *before = rd_state->cmds[0].last;
+    UIShell_RegsScope(.window = window->id, .panel = middle_panel, .view = rd_view_address_from_cfg(closing), .tab = rd_view_address_from_cfg(closing))
+    { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    uishell_sidebar_docking_drain(before);
+    CloseFailure(rd_panel_exists(middle_panel));
+    // Sized by hand, evenly, so both sides have room to give.
+    {
+      RD_Arrangement *even = rd_arrangement_from_panel_owner(scratch.arena, owner);
+      RD_ArrangementPanel *parent = rd_arrangement_panel_from_id(even, above_panel.id)->parent;
+      for(RD_ArrangementPanel *c = parent->first; c != &rd_nil_arrangement_panel; c = c->next) { c->weight = 1.f/Max(1, parent->child_count); }
+      rd_arrangement_set(even);
+    }
+    uishell_sidebar_manual_sizing(window, 1);
+    // Drag the boundary above the section below down, through real events.
+    F32 above_before = 0;
+    Vec2F32 start = {0};
+    B32 found = 0;
+    for(U32 frame = 0; frame < 8; frame++)
+    {
+      UI_Box *boundary = ui_box_from_key(ui_key_from_stringf(rd_panel_ui_key(above_panel), "boundary_%I64u", below_panel.id));
+      UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0};
+      UI_EventList events = {0}; UI_EventNode event = {0};
+      if(frame == 3)
+      {
+        found = !ui_box_is_nil(boundary);
+        start = center_2f32(boundary->rect);
+        above_before = uishell_sidebar_docking_weight(above_panel);
+      }
+      if(found && frame >= 3 && frame <= 5)
+      {
+        event.v = (UI_Event){.key = WM_Key_LeftMouseButton,
+          .kind = frame == 3 ? UI_EventKind_Press : frame == 4 ? UI_EventKind_MouseMove : UI_EventKind_Release,
+          .pos = add_2f32(start, v2f32(0, frame == 3 ? 0 : 24)), .timestamp_us = 20000000+frame*20000};
+        events.first = events.last = &event; events.count = 1;
+      }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = events.count ? event.v.pos : v2f32(-100, -100);
+      UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_control_surface_ui(rect, split); }
+      ui_end_build();
+    }
+    sidebar = rd_arrangement_live(owner);
+    B32 empty = 0;
+    for(RD_ArrangementPanel *p = sidebar->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(sidebar->root, p))
+    { empty |= p != sidebar->root && p->first == &rd_nil_arrangement_panel && p->tab_count == 0; }
+    CloseFailure(empty);
+    CloseFailure(rd_arrangement_panel_from_id(sidebar, above_panel.id)->next->id != below_panel.id);
+    CloseFailure(!found);
+    CloseFailure(found && uishell_sidebar_docking_weight(above_panel) <= above_before+.0001f);
+  }
+  ui_kill_action();
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_generation")));
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")));
+  rd_fixture_restore(saved_layout);
+  if(saved_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_inventory); }
+  if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_sizing); }
+  ws->sidebar = saved_sidebar;
+  // Releasing it as a window's would release the window's local sections.
+  fixture.window = 0;
+  uishell_sidebar_release(&fixture);
+  ui_select_state(saved_ui); ui_state_release(test_ui); scratch_end(scratch);
+#undef CloseFailure
+  return failures == 0;
+}
+
+internal B32
+uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
+{
+  Temp scratch = scratch_begin(0, 0);
+  CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+  // The sidebar follows the core's placement afresh, its Views kept by key,
+  // and is put back as it was after.
+  RD_PanelOwner sidebar_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
+  RD_Arrangement *saved_layout = rd_arrangement_from_panel_owner(scratch.arena, sidebar_owner);
+  CFG_Node *saved_positions = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
+  if(saved_positions != &cfg_nil_node) { cfg_node_unhook(rd_state->cfg, window, saved_positions); }
+  U32 failures = 0;
+#define DockFailure(expr) do { if(expr) { failures++; fprintf(stderr, "FAIL sidebar docking line %u: %s\n", __LINE__, #expr); } } while(0)
+  CFG_Node *saved_sizing = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized"));
+  cfg_node_unhook(rd_state->cfg, window, saved_sizing);
+  UIShell_SidebarState *saved_sidebar = ws->sidebar;
+  B32 saved_fixture = uishell_sidebar_fixture, saved_subject = uishell_sidebar_subject_fixture;
+  uishell_sidebar_fixture = 1; uishell_sidebar_subject_fixture = 0;
+  UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+  UIShell_SidebarState unavailable = {.initialized = 1};
+  ws->sidebar = &unavailable;
+  U64 before_unavailable = uishell_sidebar_docking_gen();
+  uishell_sidebar_dock_layout(&split);
+  DockFailure(uishell_sidebar_docking_gen() != before_unavailable);
+  ws->sidebar = 0;
+  UIShell_SidebarState *state = uishell_sidebar_init(ws);
+  uishell_sidebar_dock_layout(&split);
+  DockFailure(rd_arrangement_live(sidebar_owner)->root == &rd_nil_arrangement_panel);
+  DockFailure(!uishell_sidebar_restore_menu_diagnostics(ws, &split));
+  DockFailure(!uishell_sidebar_tab_overflow_diagnostics(ws));
+  DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 1));
+  DockFailure(!uishell_sidebar_saved_header_diagnostics(ws, &split, 0));
+  DockFailure(!uishell_sidebar_close_middle_diagnostics(ws, &split));
+  // Two adjacent scrolling sections: the core places pinned regions
+  // (controls) first, so they're found by key, not position.
+  RD_PanelAddress first_panel = rd_panel_from_cfg(uishell_sidebar_region_view(window, str8_lit("tree")));
+  RD_PanelAddress second_panel = rd_panel_address(sidebar_owner, rd_arrangement_panel_from_id(rd_arrangement_live(sidebar_owner), first_panel.id)->next->id);
+  CFG_Node *view = uishell_sidebar_docking_section(first_panel);
+  CFG_Node *second_view = uishell_sidebar_docking_section(second_panel);
+  CFG_ID view_id = view->id;
+  String8 key = push_str8_copy(scratch.arena, cfg_node_child_from_string(view, str8_lit("section"))->first->string);
+  String8 second_key = push_str8_copy(scratch.arena, cfg_node_child_from_string(second_view, str8_lit("section"))->first->string);
+  UI_Key roots[2] = {ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", key),
+                     ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", second_key)};
+  UI_Key bodies[2] = {ui_key_from_stringf(roots[0], "section_body_%S", key),
+                      ui_key_from_stringf(roots[1], "section_body_%S", second_key)};
+  UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc();
+  ui_select_state(test_ui);
+  RD_PanelAddress saved_sidebar_focus = ws->active_panel;
+  // Reconciliation also places the synthetic unplaced-workspaces region after
+  // fixture observation. Leave room for all four headers and scroll bodies.
+  F32 expected[2] = {0};
+  U64 settled_cfg_gen = 0;
+  for(U32 frame = 0; frame < 36; frame++)
+  {
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0}; animation.scroll_animation_rate = .5f;
+    UI_EventList events = {0}; UI_EventNode node = {0};
+    if(frame >= 4 && frame < 20)
+    {
+      U32 which = (frame/4)%2;
+      UI_Box *body = ui_box_from_key(bodies[which]);
+      F32 delta = frame < 12 ? .25f : -.125f;
+      // Near the body's left edge: a row's chips scroll sideways and take the wheel.
+      node.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = v2f32(body->rect.x0+6.f, center_2f32(body->rect).y),
+                         .delta_2f32 = v2f32(0, delta), .scroll_is_precise = 1};
+      events.first = events.last = &node; events.count = 1; expected[which] += delta;
+    }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = node.v.pos;
+    UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_control_surface_ui(r2f32p(17, 29, 337, 229), &split); }
+    ui_end_build();
+    for(U32 i = 0; i < 2; i++)
+    {
+      UI_Box *body = ui_box_from_key(bodies[i]);
+      DockFailure(ui_box_is_nil(body));
+      if(!ui_box_is_nil(body))
+      {
+        DockFailure(body->rect.x0 < 17 || body->rect.x1 > 337 || body->rect.y0 < 29 || body->rect.y1 > 229);
+        if(frame >= 4 && abs_f32(body->view_off_target.y-expected[i]) > .00001f)
+        { fprintf(stderr, "FAIL dock scroll frame %u section %u: %g != %g\n", frame, i, body->view_off_target.y, expected[i]); failures++; }
+      }
+    }
+    DockFailure(events.count != 0);
+    if(frame == 25) { settled_cfg_gen = uishell_sidebar_docking_gen(); }
+    if(frame > 25) { DockFailure(uishell_sidebar_docking_gen() != settled_cfg_gen); }
+    UI_Key tabbar = ui_key_from_stringf(rd_panel_ui_key(first_panel), "tab_bar");
+    DockFailure(!ui_box_is_nil(ui_box_from_key(tabbar)));
+  }
+  // Drive a real boundary drag, serialize its manual allocation, then
+  // double-click the boundary to return to content-based default sizing.
+  // A press alone writes no sizes.
+  F32 pressed_from = 0;
+  F32 default_pct = uishell_sidebar_docking_weight(first_panel);
+  UI_Key boundary_key = ui_key_from_stringf(rd_panel_ui_key(first_panel), "boundary_%I64u", second_panel.id);
+  Vec2F32 drag_start = {0};
+  for(U32 frame = 0; frame < 12; frame++)
+  {
+    UI_Box *boundary = ui_box_from_key(boundary_key);
+    DockFailure(ui_box_is_nil(boundary));
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0};
+    UI_EventList events = {0}; UI_EventNode event = {0};
+    if(frame == 1 || frame == 2 || frame == 3 || frame == 7 || frame == 8 || frame == 9 || frame == 10)
+    {
+      if(frame == 1) { drag_start = center_2f32(boundary->rect); }
+      event.v = (UI_Event){.key = WM_Key_LeftMouseButton,
+        .kind = frame == 2 ? UI_EventKind_MouseMove : (frame == 1 || frame == 7 || frame == 9 ? UI_EventKind_Press : UI_EventKind_Release),
+        .pos = frame < 4 ? add_2f32(drag_start, v2f32(0, frame == 1 ? 0 : 8)) : center_2f32(boundary->rect),
+        .timestamp_us = frame < 4 ? 2000000+frame*20000 : 3000000+(frame-7)*50000};
+      events.first = events.last = &event; events.count = 1;
+    }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = events.count ? event.v.pos : v2f32(-100, -100);
+    UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_control_surface_ui(r2f32p(17, 29, 337, 229), &split); }
+    ui_end_build();
+    if(frame == 0) { pressed_from = uishell_sidebar_docking_weight(first_panel); }
+    if(frame == 1) { DockFailure(uishell_sidebar_docking_weight(first_panel) != pressed_from); }
+    if(frame == 4)
+    {
+      DockFailure(cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) == &cfg_nil_node);
+      F32 dragged = uishell_sidebar_docking_weight(first_panel);
+      DockFailure(abs_f32(dragged-default_pct) < .0001f);
+      // The drag keeps the shown sections' saved sizes summing to one. The
+      // leftover section, standing aside, takes no share whatever it saved.
+      F32 saved_sum = 0;
+      RD_ArrangementPanel *parent = rd_arrangement_panel_from_id(rd_arrangement_live(sidebar_owner), first_panel.id)->parent;
+      for(RD_ArrangementPanel *c = parent->first; c != &rd_nil_arrangement_panel; c = c->next)
+      {
+        B32 hidden = c->first == &rd_nil_arrangement_panel;
+        for(RD_ArrangementTab *t = c->first_tab; t && hidden; t = t->next) { hidden = uishell_sidebar_view_hidden(rd_cfg_from_view(t->view)); }
+        if(!hidden) { saved_sum += c->weight; }
+      }
+      DockFailure(abs_f32(saved_sum-1.f) > .001f);
+      // Sizing the sidebar again keeps sizes set by hand.
+      UIShell_WorkspaceMount sized_mount = uishell_workspace_mount_from_sidebar(scratch.arena, window);
+      UI_FontSize(11)
+      { uishell_sidebar_size_panels(&split, &sized_mount, r2f32p(17, 29, 337, 229-uishell_sidebar_footer_height(ws))); }
+      DockFailure(abs_f32(uishell_sidebar_docking_weight(first_panel)-dragged) > .0001f);
+    }
+  }
+  DockFailure(cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node);
+  DockFailure(abs_f32(uishell_sidebar_docking_weight(first_panel)-default_pct) > .0001f);
+  // Beside a collapsed section there's no boundary to drag: it would only
+  // eat into the size the section returns to when expanded.
+  {
+    uishell_sidebar_section_set_collapsed(second_view, 1);
+    for(U32 frame = 0; frame < 2; frame++)
+    {
+      UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_control_surface_ui(r2f32p(17, 29, 337, 229), &split); }
+      ui_end_build();
+    }
+    if(!ui_box_is_nil(ui_box_from_key(boundary_key))) { fprintf(stderr, "FAIL dock: a boundary beside a collapsed section can be dragged\n"); failures++; }
+    uishell_sidebar_section_set_collapsed(second_view, 0);
+  }
+  // A row dragged onto the pill between two sections makes a new section
+  // there holding its ghost (drag-model.md: "a docking site: a new pinned
+  // area"), through the real docking sites.
+  {
+    U64 sections_before = uishell_sidebar_window_locals(window)->section_count;
+    UI_Key site_key = ui_key_from_stringf(rd_panel_ui_key(rd_panel_address(sidebar_owner, rd_arrangement_live(sidebar_owner)->root->id)), "drop_boundary_%I64u", second_panel.id);
+    UIShell_CmdNode *cmds_before = rd_state->cmds[0].last;
+    Vec2F32 pointer = v2f32(-100, -100), start = pointer;
+    B32 started = 0, site_seen = 0;
+    for(U32 frame = 0; frame < 9; frame++)
+    {
+      UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0};
+      UI_EventList events = {0}; UI_EventNode event = {0};
+      if(frame == 1)
+      {
+        // A row (not a header: its string has a label before the key).
+        for(UI_Box *b = ui_box_from_key(bodies[1]); !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_box_from_key(bodies[1])).next)
+        {
+          if(b->string.size > 0 && !str8_match(str8_prefix(b->string, 3), str8_lit("###"), 0) &&
+             str8_find_needle(b->string, 0, str8_lit("###entry_"), 0) < b->string.size)
+          { start = pointer = center_2f32(b->rect); break; }
+        }
+      }
+      if(frame >= 2 && frame < 4) { pointer = add_2f32(start, v2f32(0, 12.f*(frame-1))); }
+      UI_Box *site = ui_box_from_key(site_key);
+      if(frame >= 4 && !ui_box_is_nil(site)) { pointer = center_2f32(site->rect); site_seen = 1; }
+      if(frame == 1 || frame >= 2 && frame < 7 || frame == 7)
+      {
+        event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .pos = pointer,
+          .kind = frame == 1 ? UI_EventKind_Press : frame == 7 ? UI_EventKind_Release : UI_EventKind_MouseMove,
+          .timestamp_us = 9000000+frame*50000};
+        events.first = events.last = &event; events.count = 1;
+      }
+      // The window's event loop marks a release during a drag as a drop.
+      if(frame == 7 && rd_drag_is_active()) { rd_state->drag_drop_state = RD_DragDropState_Dropping; }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = pointer;
+      UIShell_RegsScope(.window = window->id) UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_control_surface_ui(r2f32p(17, 29, 337, 229), &split); }
+      ui_end_build();
+      uishell_sidebar_drag_finish(ws);
+      if(frame == 5) { started = rd_drag_is_active(); }
+    }
+    UIShell_Locals *locals = uishell_sidebar_window_locals(window);
+    U64 sections_after = locals->section_count;
+    if(!started || !site_seen || sections_after != sections_before+1)
+    {
+      fprintf(stderr, "FAIL dock: a row dropped on the pill between sections makes a section there (started %d, site %d, sections %llu -> %llu)\n",
+              started, site_seen, (unsigned long long)sections_before, (unsigned long long)sections_after);
+      failures++;
+    }
+    if(rd_drag_is_active()) { rd_drag_kill(); }
+    // The split it asked for puts the View in a panel of its own, above the
+    // pill's lower section.
+    uishell_sidebar_docking_drain(cmds_before);
+    Temp made_scratch = scratch_begin(0, 0);
+    String8 made = sections_after > sections_before ? push_str8_copy(made_scratch.arena, locals->sections[sections_after-1].id) : str8_zero();
+    CFG_Node *made_view = made.size ? uishell_sidebar_local_view(window, made) : &cfg_nil_node;
+    RD_Arrangement *made_dock = rd_arrangement_live(sidebar_owner);
+    RD_ArrangementPanel *made_panel = rd_arrangement_panel_from_view(made_dock, rd_view_address_from_cfg(made_view));
+    DockFailure(made.size && (made_view == &cfg_nil_node || made_panel->parent != made_dock->root || made_panel->next->id != second_panel.id));
+    // Remove the section, its View and its panel.
+    if(made_view != &cfg_nil_node) { rd_fixture_remove_panel(rd_panel_from_cfg(made_view)); }
+    if(made.size) { uishell_sidebar_local_forget_section(window, made); }
+    scratch_end(made_scratch);
+  }
+  // Merge through the production command, then split the merged panel in the
+  // opposite direction. This exercises host-root retention on split/collapse.
+  UIShell_CmdNode *before = rd_state->cmds[0].last;
+  UIShell_RegsScope(.window = window->id, .panel = second_panel, .view = rd_view_address_from_cfg(second_view),
+                   .dst_panel = first_panel, .prev_tab = rd_view_address_from_cfg(view))
+  { uishell_dispatch_tab_command(str8_lit("move_view")); }
+  uishell_sidebar_docking_drain(before);
+  DockFailure(!rd_panel_address_match(rd_panel_from_cfg(second_view), rd_panel_from_cfg(view)));
+  UIShell_WorkspaceMount merged = uishell_workspace_mount_from_cfg(scratch.arena, view);
+  DockFailure(rd_dock_presentation(RD_DockHostKind_Sidebar,
+    rd_panel_node_from_id(merged.panel_tree.root, rd_panel_from_cfg(view).id)->tabs.count) != RD_DockPresentation_SectionHeader);
+  before = rd_state->cmds[0].last;
+  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(second_view), .view = rd_view_address_from_cfg(second_view),
+                   .dst_panel = rd_panel_from_cfg(view), .dir2 = Dir2_Right)
+  { uishell_dispatch_panel_command(str8_lit("split_panel")); }
+  uishell_sidebar_docking_drain(before);
+  DockFailure(rd_panel_address_match(rd_panel_from_cfg(view), rd_panel_from_cfg(second_view)));
+  DockFailure(uishell_sidebar_docking_host_kind(second_view) != RD_DockHostKind_Sidebar);
+  DockFailure(rd_arrangement_live(sidebar_owner)->root == &rd_nil_arrangement_panel);
+  // Child workspace targets must stay absent, and commands enforce the same
+  // level boundary even when called without a drag. Old previews' saved
+  // cross-level placements must recover into the root Control Region.
+  CFG_Node *workspace = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+  RD_PanelAddress panels = rd_fixture_leaf(rd_fixture_owner(workspace));
+  UIShell_WorkspaceMount child_mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace);
+  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view))
+  {
+    rd_drag_begin(UIShell_ContextRegSlot_View);
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0};
+    UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = v2f32(320, 240);
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11)
+    { rd_panel_area_ui(scratch, r2f32p(0, 0, 640, 480), r2f32p(0, 0, 640, 480), ws, &child_mount, 1, 0, 0, 0, 0); }
+    ui_end_build();
+    char *names[] = {"up", "down", "left", "right"};
+    for(U32 i = 0; i < ArrayCount(names); i++)
+    {
+      UI_Key site = ui_key_from_stringf(rd_panel_ui_key(child_mount.panel_tree.root->address), "drop_split_%s", names[i]);
+      DockFailure(!ui_box_is_nil(ui_box_from_key(site)));
+    }
+    UI_Key catchall = rd_panel_catchall_drop_site_key(child_mount.panel_tree.root->address);
+    DockFailure(!ui_box_is_nil(ui_box_from_key(catchall)));
+    rd_drag_kill();
+  }
+  RD_PanelAddress original_panel = rd_panel_from_cfg(view);
+  U64 before_rejected = uishell_sidebar_docking_gen();
+  log_scope_begin();
+  before = rd_state->cmds[0].last;
+  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view),
+                   .dst_panel = panels, .prev_tab = rd_nil_view_address)
+  { uishell_dispatch_tab_command(str8_lit("move_view")); }
+  uishell_sidebar_docking_drain(before);
+  UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view),
+                   .dst_panel = panels, .dir2 = Dir2_Right)
+  { uishell_dispatch_panel_command(str8_lit("split_panel")); }
+  LogScopeResult rejected = log_scope_end(scratch.arena);
+  DockFailure(str8_find_needle(rejected.strings[LogMsgKind_UserError], 0,
+    str8_lit("different Controlled Split level"), 0) == rejected.strings[LogMsgKind_UserError].size);
+  DockFailure(!rd_panel_address_match(rd_panel_from_cfg(view), original_panel) || uishell_sidebar_docking_gen() != before_rejected);
+  uishell_sidebar_docking_misplace(view, workspace);
+  rd_dock_restore_window(window);
+  DockFailure(rd_panel_owner_match(rd_panel_from_cfg(view).owner, panels.owner) || view->id != view_id);
+  DockFailure(uishell_sidebar_docking_host_kind(view) != RD_DockHostKind_Sidebar);
+  RD_PanelAddress recovered_panel = rd_panel_from_cfg(view);
+  U64 recovered_gen = uishell_sidebar_docking_gen();
+  rd_dock_restore_window(window);
+  DockFailure(!rd_panel_address_match(rd_panel_from_cfg(view), recovered_panel) || uishell_sidebar_docking_gen() != recovered_gen);
+  // A display value crosses to a new core instance in the core's dashboard
+  // record, imported before the first snapshot as at startup.
+  UIShell_SidebarState display = {0};
+  String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
+  char *error = 0;
+  display.core = wheelhouse_create(daily.str, daily.size, &error);
+  DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
+  uishell_sidebar_refresh(&display);
+  WheelhouseNode section = {0}; wheelhouse_snapshot_node(display.snapshot, 0, &section);
+  WheelhouseControl control = {0};
+  wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
+  B32 default_value = control.checked;
+  error = 0;
+  DockFailure(!wheelhouse_dispatch(display.core, display.snapshot, control.action, &error));
+  if(error) { wheelhouse_string_free(error); }
+  uishell_sidebar_refresh(&display);
+  String8 record = uishell_sidebar_record_get(scratch.arena, display.core, str8_lit("dashboard"));
+  uishell_sidebar_release(&display); MemoryZeroStruct(&display);
+  error = 0; display.core = wheelhouse_create(daily.str, daily.size, &error);
+  DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
+  error = 0;
+  DockFailure(!uishell_sidebar_result(&display, wheelhouse_record_put(display.core, uishell_sidebar_text(str8_lit("dashboard")),
+    uishell_sidebar_text(record), &error), error));
+  uishell_sidebar_refresh(&display);
+  wheelhouse_snapshot_node(display.snapshot, 0, &section);
+  wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
+  DockFailure(!!control.checked == default_value);
+  // Exercise real header buttons at both acceptance widths, including their
+  // pressed appearance and dispatch through the native UI event path.
+  ws->sidebar = &display; display.initialized = 1;
+  UI_Key header_key = ui_key_from_stringf(roots[0], "###section_header_%S", key);
+  // Display toggles sit in one segment inside the header (#210).
+  UI_Key controls_key = ui_key_from_stringf(header_key, "###controls_%S", key);
+  F32 widths[] = {260, 600};
+  for(U64 w = 0; w < ArrayCount(widths); w++)
+  {
+    wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
+    B32 before_click = !!control.checked;
+    for(U32 frame = 0; frame < 5; frame++)
+    {
+      UI_IconInfo icons = ws->ui->icon_info;
+      UI_AnimationInfo animation = {0};
+      UI_EventList events = {0}; UI_EventNode event = {0};
+      UI_Key button_key = ui_key_from_stringf(controls_key, "###control_%S_0", key);
+      if(frame == 2 || frame == 3)
+      {
+        UI_Box *button = ui_box_from_key(button_key);
+        event.v = (UI_Event){.kind = frame == 2 ? UI_EventKind_Press : UI_EventKind_Release,
+                            .key = WM_Key_LeftMouseButton, .pos = center_2f32(button->rect)};
+        events.first = events.last = &event; events.count = 1;
+      }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      // (0, 0) is inside this header. Idle frames must use an explicit
+      // point outside the panel rather than relying on native window geometry.
+      ui_state->mouse = events.count ? event.v.pos : v2f32(-100, -100);
+      UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view))
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_sidebar_render(r2f32p(0, 0, widths[w], 180), &split,
+                                (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, key}); }
+      ui_end_build();
+      UI_Box *close = ui_box_from_key(ui_key_from_string(header_key, str8_lit("###section_close")));
+      DockFailure(ui_box_is_nil(close));
+      if(frame == 1) { DockFailure(ui_box_display_string(close).size != 0); }
+      if(frame == 2) { DockFailure(ui_box_display_string(close).size == 0); }
+      // Header chrome (#210): toggles show on hover or while any is on, the
+      // grip only on hover, the collapse indicator after the title, and a
+      // toggle's tooltip keeps the shell tooltip look instead of the
+      // button's fill.
+      B32 any_on = 0;
+      for(U64 c = 0; c < section.control_count; c++)
+      {
+        WheelhouseControl each = {0};
+        wheelhouse_snapshot_control(display.snapshot, section.first_control+c, &each);
+        any_on |= each.value_kind == 1 && each.checked;
+      }
+      UI_Box *first_toggle = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_0", key));
+      UI_Box *grip = ui_box_from_key(ui_key_from_string(header_key, str8_lit("###section_drag")));
+      UI_Box *title = ui_box_from_key(ui_key_from_stringf(header_key, "###section_%S", key));
+      UI_Box *disclosure = ui_box_from_key(ui_key_from_stringf(header_key, "###section_toggle_%S", key));
+      if(frame == 1)
+      {
+        DockFailure((ui_box_display_string(first_toggle).size != 0) != !!any_on);
+        DockFailure(!ui_box_is_nil(grip) && ui_box_display_string(grip).size != 0);
+      }
+      if(frame == 2)
+      {
+        DockFailure(ui_box_display_string(first_toggle).size == 0);
+        DockFailure(ui_box_is_nil(grip) || ui_box_display_string(grip).size == 0);
+        // Find the tooltip holding this toggle's label, then its drawn frame.
+        WheelhouseControl first_control = {0};
+        wheelhouse_snapshot_control(display.snapshot, section.first_control, &first_control);
+        UI_Box *tip = &ui_nil_box;
+        for(UI_Box *b = ui_state->tooltip_root; !ui_box_is_nil(b) && ui_box_is_nil(tip); b = ui_box_rec_df_pre(b, ui_state->tooltip_root).next)
+        { if(str8_match(ui_box_display_string(b), uishell_sidebar_string(first_control.label), 0)) { tip = b; } }
+        while(!ui_box_is_nil(tip) && !(tip->flags & UI_BoxFlag_DrawBackground)) { tip = tip->parent; }
+        DockFailure(ui_box_is_nil(tip));
+        // The tooltip keeps the theme's tooltip background for its own tags
+        // (translucent), not a colour inherited from the button's scope.
+        Vec4F32 themed = ui_box_is_nil(tip) ? v4f32(0, 0, 0, 0) : ui_color_from_tags_key_name(tip->tags_key, str8_lit("background"));
+        DockFailure(!ui_box_is_nil(tip) && !MemoryMatchStruct(&tip->background_color, &themed));
+      }
+      if(frame >= 1) { DockFailure(ui_box_is_nil(title) || ui_box_is_nil(disclosure) || disclosure->rect.x0 < title->rect.x1-1); }
+      F32 previous_right = 0;
+      for(U64 c = 0; c < section.control_count; c++)
+      {
+        UI_Box *button = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_%I64u", key, c));
+        DockFailure(ui_box_is_nil(button));
+        DockFailure(button->rect.x0 < previous_right || button->rect.x1 > widths[w] || dim_2f32(button->rect).x <= 0);
+        previous_right = button->rect.x1;
+      }
+    }
+    wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
+    DockFailure(!!control.checked == before_click);
+    UI_Box *button = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_0", key));
+    DockFailure(!!(button->flags & UI_BoxFlag_DrawBackground) != !!control.checked);
+  }
+  // A docked section's title is its drag handle: a press that moves past the
+  // shared threshold starts this View's docking drag, and a still click on
+  // the title keeps collapsing it (drag-model.md, Gesture).
+  for(U32 moved = 0; moved < 2; moved++)
+  {
+    B32 collapsed_before = uishell_sidebar_section_collapsed(view);
+    UI_Key title_key = ui_key_from_stringf(header_key, "###section_%S", key);
+    Vec2F32 start = {0};
+    B32 started = 0;
+    for(U32 frame = 0; frame < 5; frame++)
+    {
+      UI_IconInfo icons = ws->ui->icon_info;
+      UI_AnimationInfo animation = {0};
+      UI_EventList events = {0}; UI_EventNode event = {0};
+      Vec2F32 pointer = frame < 2 ? start : add_2f32(start, v2f32(moved ? 3*UIShell_DragThresholdPT : 0, moved ? UIShell_DragThresholdPT : 0));
+      if(frame == 1 || frame == 3)
+      {
+        event.v = (UI_Event){.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release,
+                            .key = WM_Key_LeftMouseButton, .pos = pointer};
+        events.first = events.last = &event; events.count = 1;
+      }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      ui_state->mouse = frame == 0 ? v2f32(-100, -100) : pointer;
+      UIShell_RegsScope(.window = window->id, .panel = rd_panel_from_cfg(view), .view = rd_view_address_from_cfg(view))
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_sidebar_render(r2f32p(0, 0, 320, 180), &split,
+                                (UIShell_SidebarRenderParams){UIShell_SidebarRenderMode_SectionPanel, key}); }
+      ui_end_build();
+      if(frame == 0) { start = center_2f32(ui_box_from_key(title_key)->rect); }
+      if(frame == 2) { started = rd_drag_is_active() && rd_view_address_match(rd_state->drag_drop_regs->view, rd_view_address_from_cfg(view)); }
+    }
+    B32 collapsed_after = uishell_sidebar_section_collapsed(view);
+    if(moved) { DockFailure(!started); DockFailure(collapsed_after != collapsed_before); }
+    else { DockFailure(started); DockFailure(collapsed_after == collapsed_before); }
+    rd_drag_kill(); ui_kill_action();
+  }
+  uishell_sidebar_section_set_collapsed(view, 0);
+  ws->sidebar = state;
+  // Values of display variables that don't persist stay out of the record:
+  // restored where the variable persists, it has its default again, while
+  // one that persists keeps its value.
+  String8 persisted = str8_lit("display-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role history\" icon=\"R\" persist=true");
+  U64 declaration_at = str8_find_needle(daily, 0, persisted, 0);
+  DockFailure(declaration_at == daily.size);
+  String8 ephemeral = push_str8f(scratch.arena, "%Sdisplay-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role history\" icon=\"R\" persist=false%S",
+                                 str8_prefix(daily, declaration_at), str8_skip(daily, declaration_at+persisted.size));
+  error = 0;
+  DockFailure(!wheelhouse_configure(display.core, uishell_sidebar_text(ephemeral), &error));
+  if(error) { wheelhouse_string_free(error); }
+  error = 0;
+  DockFailure(!uishell_sidebar_result(&display, wheelhouse_set_display_variable(display.core, uishell_sidebar_text(str8_lit("show-role-attempts")),
+                                                                                uishell_sidebar_text(str8_lit("true")), &error), error));
+  uishell_sidebar_refresh(&display);
+  S32 issues = uishell_sidebar_docking_variable(display.snapshot, str8_lit("show-issues"));
+  DockFailure(issues < 0 || uishell_sidebar_docking_variable(display.snapshot, str8_lit("show-role-attempts")) != 1);
+  record = uishell_sidebar_record_get(scratch.arena, display.core, str8_lit("dashboard"));
+  UIShell_SidebarState reread = {.initialized = 1};
+  error = 0; reread.core = wheelhouse_create(daily.str, daily.size, &error);
+  DockFailure(!uishell_sidebar_result(&reread, reread.core != 0, error));
+  error = 0;
+  DockFailure(!uishell_sidebar_result(&reread, wheelhouse_record_put(reread.core, uishell_sidebar_text(str8_lit("dashboard")),
+    uishell_sidebar_text(record), &error), error));
+  uishell_sidebar_refresh(&reread);
+  DockFailure(uishell_sidebar_docking_variable(reread.snapshot, str8_lit("show-issues")) != issues);
+  DockFailure(uishell_sidebar_docking_variable(reread.snapshot, str8_lit("show-role-attempts")) != 0);
+  uishell_sidebar_release(&reread);
+  uishell_sidebar_release(&display);
+  ws->active_panel = saved_sidebar_focus;
+  cfg_node_release(rd_state->cfg, workspace);
+  rd_arrangements_release_unowned();
+  cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")));
+  rd_arrangement_set(saved_layout);
+  if(saved_sizing != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_sizing); }
+  CFG_Node *test_positions = cfg_node_child_from_string(window, str8_lit("sidebar_generation"));
+  if(test_positions != &cfg_nil_node) { cfg_node_release(rd_state->cfg, test_positions); }
+  if(saved_positions != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, saved_positions); }
+  uishell_sidebar_release(state);
+  ws->sidebar = saved_sidebar; uishell_sidebar_fixture = saved_fixture; uishell_sidebar_subject_fixture = saved_subject;
+  ui_select_state(saved_ui); ui_state_release(test_ui);
+  scratch_end(scratch);
+  fprintf(stderr, "Sidebar docking diagnostics: %u failures\n", failures);
+  return failures == 0;
+#undef DockFailure
+}
+
+// The placement scenarios read the window's dock by panel: the panels of its
+// root split, first, last and after `panel` (0 for none), and the one a
+// View is a tab of (0 when it's not in the dock).
+internal RD_Arrangement *
+uishell_section_placement_dock(CFG_Node *window)
+{
+  return rd_arrangement_live(rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window));
+}
+
+internal RD_PanelID
+uishell_section_placement_first_panel(CFG_Node *window)
+{
+  return uishell_section_placement_dock(window)->root->first->id;
+}
+
+internal RD_PanelID
+uishell_section_placement_last_panel(CFG_Node *window)
+{
+  return uishell_section_placement_dock(window)->root->last->id;
+}
+
+internal RD_PanelID
+uishell_section_placement_next_panel(CFG_Node *window, RD_PanelID panel)
+{
+  return rd_arrangement_panel_from_id(uishell_section_placement_dock(window), panel)->next->id;
+}
+
+internal RD_PanelID
+uishell_section_placement_panel(CFG_Node *window, CFG_Node *view)
+{
+  return rd_arrangement_panel_from_view(uishell_section_placement_dock(window), rd_view_address_from_cfg(view))->id;
+}
+
+// The headless sidebar of the placement scenarios: one window, its core and
+// snapshot, as uishell_sidebar_init makes them.
+typedef struct UIShell_SectionPlacement UIShell_SectionPlacement;
+struct UIShell_SectionPlacement
+{
+  CFG_Node *user, *window;
+  CFG_SchemaTable *schemas;
+  UIShell_SidebarState sidebar;
+  RD_WindowState ws;
+  UIShell_ControlledSplit split;
+};
+
+// Makes `window` the sidebar's, with `core` (taking it; the old one goes).
+internal void
+uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, WheelhouseCore *core)
+{
+  UIShell_SidebarState *s = &p->sidebar;
+  if(core != s->core)
+  {
+    uishell_sidebar_replace_snapshot(s, 0);
+    wheelhouse_destroy(s->core);
+    s->core = core;
+    s->sidebar_synced = 0; s->sidebar_version = s->sidebar_generation = 0;
+  }
+  p->window = window;
+  s->window = window->id;
+  p->ws.cfg_id = window->id;
+  rd_state->window_state_last_accessed_id = window->id;
+  p->split.owner_cfg = window;
+  uishell_sidebar_replace_snapshot(s, core ? wheelhouse_snapshot_acquire(core, 0) : 0);
+}
+
+// A frame: the sidebar commits what changed, or follows the core, then lays
+// itself out.
+internal void
+uishell_section_placement_frame(UIShell_SectionPlacement *p)
+{
+  uishell_sidebar_store_sync(&p->sidebar, p->window, 0);
+  uishell_sidebar_dock_layout(&p->split);
+}
+
+internal B32
+uishell_section_placement_configure(UIShell_SectionPlacement *p, String8 config)
+{
+  B32 ok = wheelhouse_configure(p->sidebar.core, uishell_sidebar_text(config), 0);
+  uishell_sidebar_replace_snapshot(&p->sidebar, wheelhouse_snapshot_acquire(p->sidebar.core, 0));
+  uishell_section_placement_frame(p);
+  return ok;
+}
+
+// A window of the placement scenarios goes, with its arrangements.
+internal void
+uishell_section_placement_release_window(CFG_Node *window)
+{
+  cfg_node_release(rd_state->cfg, window);
+  rd_arrangements_release_unowned();
+}
+
+// A restart: the window as the presentation file holds it, read back, and a
+// new core with `config` that imports the dashboard record. Returns the
+// window's text.
+internal String8
+uishell_section_placement_restart(Arena *arena, UIShell_SectionPlacement *p, String8 config)
+{
+  String8 text = uishell_workspace_store_window_text(arena, str8_zero(), p->window);
+  String8 record = uishell_sidebar_record_get(arena, p->sidebar.core, str8_lit("dashboard"));
+  uishell_section_placement_release_window(p->window);
+  CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(arena, rd_state->cfg, p->schemas, str8_zero(), text);
+  CFG_Node *window = loaded.first ? loaded.first->v : &cfg_nil_node;
+  cfg_node_insert_child(rd_state->cfg, p->user, p->user->last, window);
+  WheelhouseCore *core = wheelhouse_create(config.str, config.size, 0);
+  if(core && record.size) { wheelhouse_record_put(core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0); }
+  uishell_section_placement_use(p, window, core);
+  uishell_sidebar_store_load(&p->sidebar, window);
+  uishell_section_placement_frame(p);
+  return text;
+}
+
+internal B32
+uishell_section_placement_closed(UIShell_SectionPlacement *p, String8 key)
+{
+  for(U64 i = 0; i < p->sidebar.sidebar_closed_count; i++) { if(str8_match(p->sidebar.sidebar_closed[i], key, 0)) { return 1; } }
+  return 0;
+}
+
+// Headless lifecycle scenarios with the real core ABI, docking checker
+// and config codec. The core places, restores and flags sections
+// (uishell_sidebar_store.c); these check the sidebar Wheelhouse builds from
+// it, across restarts through the presentation file and the dashboard record.
+internal B32
+uishell_section_placement_diagnostics(String8 source_path)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_State *saved_rd = rd_state;
+  CFG_Ctx *saved_ctx = cfg_ctx;
+  RD_State state = {0}; rd_state = &state;
+  state.arena = scratch.arena;
+  state.cfg = cfg_state_alloc(); cfg_ctx_select(cfg_state_ctx(state.cfg));
+  CFG_SchemaNode *slot = 0; CFG_SchemaTable schemas = {&slot, 1}; state.cfg_schema_table = &schemas;
+  UIShell_SectionPlacement p = {0};
+  p.schemas = &schemas;
+  p.user = cfg_node_new(state.cfg, cfg_node_root(), str8_lit("user"));
+  CFG_Node *window = cfg_node_new(state.cfg, p.user, str8_lit("window"));
+  p.sidebar.initialized = 1;
+  p.ws.sidebar = &p.sidebar;
+  state.window_state_last_accessed = &p.ws;
+  U32 failures = 0;
+#define PlacementCheck(expr) do { if(!(expr)) { failures++; fprintf(stderr, "FAIL section placement line %u: %s\n", __LINE__, #expr); } } while(0)
+  // The source-integrity integration runner supplies the shipped KDL. Build,
+  // reorder and reset its real declarations before the generated scenarios.
+  if(source_path.size)
+  {
+    String8 source = data_from_file_path(scratch.arena, source_path);
+    PlacementCheck(source.size != 0);
+    WheelhouseCore *source_core = wheelhouse_create(source.str, source.size, 0);
+    PlacementCheck(source_core != 0);
+    if(source_core)
+    {
+      uishell_section_placement_use(&p, window, source_core);
+      uishell_section_placement_frame(&p);
+      PlacementCheck(uishell_section_placement_first_panel(window) != 0);
+      // The unhinted workspace fallback follows every hinted shipped region.
+      CFG_Node *source_fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
+      PlacementCheck(source_fallback != &cfg_nil_node && uishell_section_placement_last_panel(window) == uishell_section_placement_panel(window, source_fallback));
+      if(uishell_section_placement_first_panel(window) != 0)
+      {
+        RD_PanelID moved = uishell_section_placement_last_panel(window);
+        RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(window));
+        rd_arrangement_reorder(dock, moved, 0);
+        rd_arrangement_set(dock);
+        uishell_section_placement_frame(&p);
+        PlacementCheck(uishell_section_placement_first_panel(window) == moved);
+        String8 text = cfg_string_from_tree(scratch.arena, &schemas, str8_zero(), window);
+        PlacementCheck(text.size != 0);
+      }
+      uishell_sidebar_reset_regions(window);
+      PlacementCheck(uishell_section_placement_last_panel(window) ==
+                     uishell_section_placement_panel(window, uishell_sidebar_region_view(window, str8_lit(".unplaced"))));
+    }
+    uishell_section_placement_release_window(window);
+    window = cfg_node_new(state.cfg, p.user, str8_lit("window"));
+  }
+  String8 config = str8_lit(
+    "region \"b\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\" order=20\n"
+    "region \"a\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\" order=10\n");
+  WheelhouseCore *core = wheelhouse_create(config.str, config.size, 0);
+  PlacementCheck(core != 0);
+  uishell_section_placement_use(&p, window, core);
+  uishell_section_placement_frame(&p);
+  RD_PanelOwner dock_owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Sidebar, window);
+  CFG_Node *a = uishell_sidebar_region_view(window, str8_lit("a"));
+  CFG_Node *b = uishell_sidebar_region_view(window, str8_lit("b"));
+  // Defaults are stable by hint, regardless of declaration order.
+  PlacementCheck(a != &cfg_nil_node && b != &cfg_nil_node);
+  // The core always declares the unhinted workspace fallback; it sorts last.
+  CFG_Node *fallback = uishell_sidebar_region_view(window, str8_lit(".unplaced"));
+  PlacementCheck(fallback != &cfg_nil_node);
+  PlacementCheck(uishell_section_placement_first_panel(window) == uishell_section_placement_panel(window, a) &&
+                 uishell_section_placement_next_panel(window, uishell_section_placement_panel(window, a)) == uishell_section_placement_panel(window, b) &&
+                 uishell_section_placement_last_panel(window) == uishell_section_placement_panel(window, fallback));
+  CFG_ID a_id = a->id, b_id = b->id;
+  // A user reorder changes only layout: one commit, and nothing more after.
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(window));
+    rd_arrangement_reorder(dock, uishell_section_placement_panel(window, b), 0);
+    rd_arrangement_set(dock);
+  }
+  U64 commits = p.sidebar.sidebar_commits;
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_section_placement_first_panel(window) == uishell_section_placement_panel(window, b) && a->id == a_id && b->id == b_id);
+  PlacementCheck(p.sidebar.sidebar_commits == commits+1);
+  U64 generation = uishell_sidebar_docking_gen(), title_builds = p.sidebar.title_builds;
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_sidebar_docking_gen() == generation && p.sidebar.title_builds == title_builds && p.sidebar.sidebar_commits == commits+1);
+  // An empty panel shows nothing: it goes, and the commit after records the
+  // sidebar without it (#358).
+  RD_PanelID empty_id = 0;
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(window));
+    empty_id = rd_arrangement_add(dock, dock->root->id, 0.25f);
+    rd_arrangement_set(dock);
+  }
+  commits = p.sidebar.sidebar_commits;
+  uishell_section_placement_frame(&p);
+  PlacementCheck(!rd_panel_exists(rd_panel_address(dock_owner, empty_id)) && p.sidebar.sidebar_commits == commits+1);
+  // A View of the window's own in the dock keeps its place, View and share
+  // across a restart.
+  CFG_Node *unrelated = &cfg_nil_node;
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(window));
+    RD_PanelID unrelated_panel = rd_arrangement_add(dock, dock->root->id, 0.125f);
+    unrelated = rd_view_alloc(dock_owner, str8_lit("text"), str8_zero());
+    cfg_node_new(state.cfg, cfg_node_new(state.cfg, unrelated, str8_lit("label")), str8_lit("unrelated"));
+    rd_arrangement_move_tab(dock, rd_view_address_from_cfg(unrelated), unrelated_panel, rd_nil_view_address);
+    rd_arrangement_set(dock);
+  }
+  uishell_section_placement_frame(&p);
+  // The restart reads it back from the presentation file and the record.
+  String8 text = uishell_section_placement_restart(scratch.arena, &p, config);
+  PlacementCheck(str8_find_needle(text, 0, str8_lit("control_views"), 0) == text.size);
+  PlacementCheck(str8_find_needle(text, 0, str8_lit("sidebar_presentation"), 0) < text.size);
+  CFG_Node *restored = p.window;
+  b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  PlacementCheck(uishell_section_placement_first_panel(restored) == uishell_section_placement_panel(restored, b));
+  RD_PanelAddress restored_unrelated_panel = {0};
+  {
+    RD_Arrangement *dock = uishell_section_placement_dock(restored);
+    for(RD_ArrangementPanel *n = dock->root; n != &rd_nil_arrangement_panel; n = rd_arrangement_next(dock->root, n))
+    {
+      for(RD_ArrangementTab *t = n->first_tab; t; t = t->next)
+      { if(str8_match(rd_cfg_from_view(t->view)->string, str8_lit("text"), 0)) { restored_unrelated_panel = rd_panel_address(dock_owner, n->id); unrelated = rd_cfg_from_view(t->view); } }
+    }
+  }
+  PlacementCheck(restored_unrelated_panel.id != 0);
+  // Its share is this device's, as content sizes it, kept by key.
+  PlacementCheck(restored_unrelated_panel.id != 0 && abs_f32(uishell_sidebar_docking_weight(restored_unrelated_panel)-.125f) < .00001f);
+  PlacementCheck(str8_match(cfg_node_child_from_string(unrelated, str8_lit("label"))->first->string, str8_lit("unrelated"), 0));
+  generation = uishell_sidebar_docking_gen();
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_sidebar_docking_gen() == generation);
+  // Remove the unrelated fixture.
+  if(restored_unrelated_panel.id != 0) { rd_fixture_remove_panel(restored_unrelated_panel); }
+  uishell_section_placement_frame(&p);
+  // Adding a hinted region places it before its next hinted neighbour,
+  // without changing the saved pair's order.
+  String8 added = push_str8f(scratch.arena, "%Sregion \"c\" root-template=\"flotilla/region/tree\" order=15\n", config);
+  PlacementCheck(uishell_section_placement_configure(&p, added));
+  CFG_Node *c = uishell_sidebar_region_view(restored, str8_lit("c"));
+  a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  PlacementCheck(c != &cfg_nil_node && uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, c)) == uishell_section_placement_panel(restored, b) &&
+                 uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, b)) == uishell_section_placement_panel(restored, a));
+  // Closing a section is remembered, distinct from one never seen.
+  rd_fixture_remove_panel(rd_panel_from_cfg(c));
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) == &cfg_nil_node);
+  PlacementCheck(uishell_section_placement_closed(&p, str8_lit("c")));
+  // Closed survives a restart.
+  uishell_section_placement_restart(scratch.arena, &p, added);
+  restored = p.window;
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) == &cfg_nil_node);
+  PlacementCheck(uishell_section_placement_closed(&p, str8_lit("c")));
+  // Sizes set by hand are the document's: Restore gives an equal share of
+  // the dock, the others scaled to make room, even from a zero weight.
+  cfg_node_new(state.cfg, restored, str8_lit("sidebar_layout_sized"));
+  RD_PanelID zero_id = 0;
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(restored));
+    RD_ArrangementPanel *a_panel = rd_arrangement_panel_from_view(dock, rd_view_address_from_cfg(uishell_sidebar_region_view(restored, str8_lit("a"))));
+    RD_ArrangementPanel *b_panel = rd_arrangement_panel_from_view(dock, rd_view_address_from_cfg(uishell_sidebar_region_view(restored, str8_lit("b"))));
+    a_panel->weight = 0;
+    b_panel->weight = .75f;
+    zero_id = rd_arrangement_add(dock, a_panel->parent->id, .5f);
+    rd_arrangement_panel_from_id(dock, zero_id)->weight = 0;
+    rd_arrangement_set(dock);
+  }
+  uishell_section_placement_frame(&p);
+  // Restore is idempotent, even twice before another frame.
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("c")));
+  c = uishell_sidebar_region_view(restored, str8_lit("c"));
+  PlacementCheck(c != &cfg_nil_node && uishell_sidebar_docking_valid(c));
+  a = uishell_sidebar_region_view(restored, str8_lit("a"));
+  b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  PlacementCheck(uishell_sidebar_docking_weight(rd_panel_from_cfg(a)) > 0);
+  PlacementCheck(uishell_sidebar_docking_weight(rd_panel_from_cfg(b)) > 0);
+  PlacementCheck(!rd_panel_exists(rd_panel_address(dock_owner, zero_id)) || uishell_sidebar_docking_weight(rd_panel_address(dock_owner, zero_id)) > 0);
+  F32 restored_sum = 0;
+  {
+    RD_Arrangement *dock = uishell_section_placement_dock(restored);
+    RD_ArrangementPanel *parent = rd_arrangement_panel_from_id(dock, uishell_section_placement_panel(restored, c))->parent;
+    for(RD_ArrangementPanel *n = parent->first; n != &rd_nil_arrangement_panel; n = n->next) { restored_sum += n->weight; }
+  }
+  PlacementCheck(abs_f32(restored_sum-1.f) < .0001f);
+  PlacementCheck(!uishell_section_placement_closed(&p, str8_lit("c")));
+  CFG_ID restored_c_id = c->id;
+  generation = uishell_sidebar_docking_gen();
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("c")));
+  PlacementCheck(c->id == restored_c_id && uishell_sidebar_docking_gen() == generation);
+  PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("undeclared")));
+  PlacementCheck(uishell_sidebar_docking_gen() == generation);
+  uishell_section_placement_restart(scratch.arena, &p, added);
+  restored = p.window;
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("c")) != &cfg_nil_node);
+  PlacementCheck(cfg_node_child_from_string(restored, str8_lit("sidebar_layout_sized")) != &cfg_nil_node);
+  cfg_node_release(state.cfg, cfg_node_child_from_string(restored, str8_lit("sidebar_layout_sized")));
+  // A region the template drops keeps its place, flagged (ADR 0013), and
+  // other Views keep their identity. Removing it forgets it.
+  a = uishell_sidebar_region_view(restored, str8_lit("a"));
+  CFG_ID kept = a->id;
+  String8 removed = str8_lit("region \"a\" root-template=\"flotilla/region/tree\" order=10\n");
+  PlacementCheck(uishell_section_placement_configure(&p, removed));
+  b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  PlacementCheck(b != &cfg_nil_node && uishell_sidebar_section_gone(&p.sidebar, str8_lit("b")));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("a"))->id == kept);
+  PlacementCheck(uishell_sidebar_section_gone(&p.sidebar, str8_lit("c")));
+  // It comes back where it was if the template has it again.
+  PlacementCheck(uishell_section_placement_configure(&p, added));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("b")) == b && !uishell_sidebar_section_gone(&p.sidebar, str8_lit("b")));
+  PlacementCheck(uishell_section_placement_configure(&p, removed));
+  rd_fixture_remove_panel(rd_panel_from_cfg(b));
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("b")) == &cfg_nil_node && !uishell_sidebar_section_gone(&p.sidebar, str8_lit("b")));
+  PlacementCheck(!uishell_section_placement_closed(&p, str8_lit("b")));
+  // Reset clears closes and user positions, restoring all hints.
+  PlacementCheck(uishell_section_placement_configure(&p, added));
+  uishell_sidebar_reset_regions(restored); uishell_section_placement_frame(&p);
+  a = uishell_sidebar_region_view(restored, str8_lit("a")); b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  c = uishell_sidebar_region_view(restored, str8_lit("c"));
+  PlacementCheck(uishell_section_placement_first_panel(restored) == uishell_section_placement_panel(restored, a) &&
+                 uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, a)) == uishell_section_placement_panel(restored, c) &&
+                 uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, c)) == uishell_section_placement_panel(restored, b));
+  fallback = uishell_sidebar_region_view(restored, str8_lit(".unplaced"));
+  PlacementCheck(fallback != &cfg_nil_node && uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, b)) == uishell_section_placement_panel(restored, fallback) &&
+                 uishell_section_placement_last_panel(restored) == uishell_section_placement_panel(restored, fallback));
+  // A saved user split stays whole when a new neighbour is hinted before a
+  // View within it: the whole subtree is the anchor.
+  RD_PanelID nested = 0;
+  CFG_ID nested_b_id = b->id;
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(restored));
+    RD_ArrangementPanel *b_panel = rd_arrangement_panel_from_view(dock, rd_view_address_from_cfg(b));
+    RD_PanelID b_prev = b_panel->prev->id;
+    nested = rd_arrangement_add(dock, dock->root->id, .5f);
+    rd_arrangement_reorder(dock, nested, b_prev);
+    rd_arrangement_panel_from_id(dock, nested)->weight = .5f;
+    RD_PanelID inner = rd_arrangement_add(dock, nested, 0);
+    rd_arrangement_move_tab(dock, rd_view_address_from_cfg(b), inner, rd_nil_view_address);
+    rd_arrangement_remove(dock, b_panel->id);
+    rd_arrangement_set(dock);
+  }
+  uishell_section_placement_frame(&p);
+  String8 nested_added = push_str8f(scratch.arena, "%Sregion \"d\" root-template=\"flotilla/region/tree\" order=17\n", added);
+  PlacementCheck(uishell_section_placement_configure(&p, nested_added));
+  CFG_Node *d = uishell_sidebar_region_view(restored, str8_lit("d"));
+  b = uishell_sidebar_region_view(restored, str8_lit("b"));
+  {
+    RD_Arrangement *dock = uishell_section_placement_dock(restored);
+    RD_ArrangementPanel *b_parent = rd_arrangement_panel_from_view(dock, rd_view_address_from_cfg(b))->parent;
+    PlacementCheck(d != &cfg_nil_node && b->id == nested_b_id && b_parent != dock->root && b_parent->parent == dock->root &&
+                   uishell_section_placement_next_panel(restored, uishell_section_placement_panel(restored, d)) == b_parent->id);
+    PlacementCheck(abs_f32(b_parent->weight-.5f) < .00001f);
+  }
+  // A section saved inside a child Workspace level is refused by the shared
+  // checker: the frame's safety restore marks it, and it goes where its hint
+  // says, keeping its identity; the level it was in loses it.
+  CFG_Node *invalid_workspace = cfg_node_new(state.cfg, restored, str8_lit("workspace"));
+  RD_PanelOwner invalid_owner = rd_fixture_owner(invalid_workspace);
+  CFG_ID invalid_view_id = a->id;
+  uishell_sidebar_docking_misplace(a, invalid_workspace);
+  PlacementCheck(!uishell_sidebar_docking_valid(a));
+  rd_dock_restore_window(restored);
+  PlacementCheck(cfg_node_child_from_string(a, str8_lit("section_hint_pending")) != &cfg_nil_node);
+  uishell_section_placement_frame(&p);
+  a = uishell_sidebar_region_view(restored, str8_lit("a"));
+  PlacementCheck(a->id == invalid_view_id && uishell_sidebar_docking_valid(a));
+  PlacementCheck(cfg_node_child_from_string(a, str8_lit("section_hint_pending")) == &cfg_nil_node);
+  PlacementCheck(rd_fixture_count(invalid_owner, str8_lit("sidebar_section")) == 0);
+  uishell_section_placement_release_window(invalid_workspace);
+  // An empty declaration flags every section rather than clearing them
+  // (the core, "Template key drift"); a declaration that has them again
+  // finds them where they were.
+  rd_fixture_remove_panel(rd_panel_from_cfg(uishell_sidebar_region_view(restored, str8_lit("d"))));
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("d")) == &cfg_nil_node && uishell_section_placement_closed(&p, str8_lit("d")));
+  String8 post_upgrade = push_str8f(scratch.arena, "%Sregion \"e\" root-template=\"flotilla/region/tree\" order=25\n", nested_added);
+  PlacementCheck(uishell_section_placement_configure(&p, post_upgrade));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("e")) != &cfg_nil_node);
+  PlacementCheck(uishell_section_placement_configure(&p, str8_lit("template \"empty\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Empty\"; }\n")));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("a")) != &cfg_nil_node && uishell_sidebar_section_gone(&p.sidebar, str8_lit("a")));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("e")) != &cfg_nil_node && uishell_sidebar_section_gone(&p.sidebar, str8_lit("e")));
+  PlacementCheck(uishell_section_placement_closed(&p, str8_lit("d")) && uishell_sidebar_section_gone(&p.sidebar, str8_lit("d")));
+  PlacementCheck(uishell_section_placement_configure(&p, post_upgrade));
+  PlacementCheck(!uishell_sidebar_section_gone(&p.sidebar, str8_lit("a")) && uishell_sidebar_region_view(restored, str8_lit("d")) == &cfg_nil_node);
+  // Generated host/order cases cover absent hints, equal hints, negative order,
+  // and hosts other than the sidebar: an unknown one, and "floating" from
+  // before Floating Panels were removed. Every section docks, and every
+  // placement passes the same validity checker used by drag and restore.
+  for(U64 variant = 0; variant < 4; variant++)
+  {
+    char *attributes[] = {"", "default-host=\"unknown\" order=-10", "default-host=\"floating\" order=0", "order=0"};
+    String8 generated = push_str8f(scratch.arena,
+      "region \"x\" root-template=\"flotilla/region/tree\" %s\n"
+      "region \"y\" root-template=\"flotilla/region/tree\" %s\n", attributes[variant], attributes[variant]);
+    PlacementCheck(uishell_section_placement_configure(&p, generated));
+    uishell_sidebar_reset_regions(restored); uishell_section_placement_frame(&p);
+    CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
+    CFG_Node *y = uishell_sidebar_region_view(restored, str8_lit("y"));
+    CFG_ID existing_x = x->id;
+    U64 existing_generation = uishell_sidebar_docking_gen();
+    PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
+    PlacementCheck(x->id == existing_x && uishell_sidebar_docking_gen() == existing_generation);
+    PlacementCheck(x != &cfg_nil_node && y != &cfg_nil_node);
+    {
+      // Next in the dock.
+      RD_PanelAddress x_panel = rd_panel_from_cfg(x), y_panel = rd_panel_from_cfg(y);
+      PlacementCheck(rd_panel_owner_match(x_panel.owner, y_panel.owner) &&
+                     rd_arrangement_panel_from_id(rd_arrangement_live(x_panel.owner), x_panel.id)->next->id == y_panel.id);
+    }
+    PlacementCheck(uishell_sidebar_docking_valid(x) && uishell_sidebar_docking_valid(y));
+    PlacementCheck(uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_Sidebar);
+    if(variant == 2)
+    {
+      // Startup first applies generic safety restore. The sidebar commit
+      // puts the recovered View back by its hints, in the dock.
+      CFG_Node *bad_workspace = cfg_node_new(state.cfg, restored, str8_lit("workspace"));
+      RD_PanelOwner bad_owner = rd_fixture_owner(bad_workspace);
+      CFG_ID x_id = x->id;
+      uishell_sidebar_docking_misplace(x, bad_workspace);
+      rd_dock_restore_window(restored);
+      PlacementCheck(cfg_node_child_from_string(x, str8_lit("section_hint_pending")) != &cfg_nil_node);
+      uishell_section_placement_frame(&p);
+      PlacementCheck(x->id == x_id && uishell_sidebar_docking_valid(x));
+      PlacementCheck(uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_Sidebar);
+      PlacementCheck(rd_fixture_count(bad_owner, str8_lit("sidebar_section")) == 0);
+      PlacementCheck(cfg_node_child_from_string(x, str8_lit("section_hint_pending")) == &cfg_nil_node);
+      uishell_section_placement_release_window(bad_workspace);
+      // A changed host hint moves nothing already placed.
+      String8 changed_host = str8_lit("region \"x\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\"\nregion \"y\" root-template=\"flotilla/region/tree\"\n");
+      PlacementCheck(uishell_section_placement_configure(&p, changed_host));
+      PlacementCheck(x->id == x_id && uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_Sidebar);
+    }
+  }
+  // Unusual numeric and reserved-looking keys survive the record and the
+  // config codec.
+  {
+    String8 unusual = str8_lit("region \"123\" root-template=\"flotilla/region/tree\"\nregion \"closed\" root-template=\"flotilla/region/tree\" order=1\n");
+    PlacementCheck(uishell_section_placement_configure(&p, unusual));
+    uishell_sidebar_reset_regions(restored);
+    for(U32 restart = 0; restart < 2; restart++)
+    {
+      uishell_section_placement_restart(scratch.arena, &p, unusual);
+      restored = p.window;
+      PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("123")) != &cfg_nil_node);
+      PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("closed")) != &cfg_nil_node);
+    }
+  }
+  // A changed default host doesn't move a placed section; KDL titles do
+  // refresh its label. A region the template drops is flagged.
+  {
+    String8 generated = str8_lit("region \"x\" root-template=\"flotilla/region/tree\" order=0\nregion \"y\" root-template=\"flotilla/region/tree\" order=0\n");
+    PlacementCheck(uishell_section_placement_configure(&p, generated));
+    uishell_sidebar_reset_regions(restored); uishell_section_placement_frame(&p);
+  }
+  CFG_Node *saved_x = uishell_sidebar_region_view(restored, str8_lit("x"));
+  CFG_ID saved_x_id = saved_x->id;
+  CFG_ID kept_y_id = uishell_sidebar_region_view(restored, str8_lit("y"))->id;
+  String8 retitled = str8_lit(
+    "region \"x\" root-template=\"renamed\" form=\"compact\" default-host=\"floating\"\n"
+    "template \"renamed\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Renamed\"; }\n");
+  PlacementCheck(uishell_section_placement_configure(&p, retitled));
+  PlacementCheck(saved_x->id == saved_x_id && uishell_sidebar_docking_host_kind(saved_x) == RD_DockHostKind_Sidebar);
+  PlacementCheck(str8_match(cfg_node_child_from_string(saved_x, str8_lit("label"))->first->string, str8_lit("Renamed"), 0));
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("y"))->id == kept_y_id && uishell_sidebar_section_gone(&p.sidebar, str8_lit("y")));
+  // A provider outage changes nothing.
+  CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
+  WheelhouseSnapshot *saved_snapshot = p.sidebar.snapshot; p.sidebar.snapshot = 0;
+  generation = uishell_sidebar_docking_gen(); uishell_sidebar_dock_layout(&p.split);
+  PlacementCheck(uishell_sidebar_docking_gen() == generation && uishell_sidebar_region_view(restored, str8_lit("x")) == x);
+  p.sidebar.snapshot = saved_snapshot;
+  // Closing every section leaves the dock empty across a restart.
+  String8 only_x = str8_lit("region \"x\" root-template=\"flotilla/region/tree\"\n");
+  PlacementCheck(uishell_section_placement_configure(&p, only_x));
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(restored));
+    rd_arrangement_discard(dock);
+    rd_arrangement_set(dock);
+  }
+  uishell_section_placement_frame(&p);
+  uishell_section_placement_restart(scratch.arena, &p, only_x);
+  restored = p.window;
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("x")) == &cfg_nil_node);
+  PlacementCheck(uishell_sidebar_region_view(restored, str8_lit(".unplaced")) == &cfg_nil_node);
+  // Restore needs the snapshot and the window's sidebar; with them, the
+  // section goes to the dock, not into a child Workspace level.
+  CFG_Node *child = cfg_node_new(state.cfg, restored, str8_lit("workspace"));
+  RD_PanelOwner child_owner = rd_fixture_owner(child);
+  rd_fixture_leaf(child_owner);
+  uishell_section_placement_frame(&p);
+  saved_snapshot = p.sidebar.snapshot; p.sidebar.snapshot = 0;
+  generation = uishell_sidebar_docking_gen();
+  PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("x")) && uishell_sidebar_docking_gen() == generation);
+  p.ws.sidebar = 0;
+  PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("x")) && uishell_sidebar_docking_gen() == generation);
+  p.ws.sidebar = &p.sidebar;
+  p.sidebar.snapshot = saved_snapshot;
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
+  x = uishell_sidebar_region_view(restored, str8_lit("x"));
+  PlacementCheck(uishell_sidebar_docking_valid(x));
+  PlacementCheck(uishell_sidebar_docking_host_kind(x) == RD_DockHostKind_Sidebar);
+  PlacementCheck(rd_fixture_count(child_owner, str8_lit("sidebar_section")) == 0);
+  generation = uishell_sidebar_docking_gen();
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")) && uishell_sidebar_docking_gen() == generation);
+  // Restoring into a dock that is one panel with a View of its own lifts
+  // that panel, with its Presentation State, into a split: half each.
+  CFG_Node *ordinary = &cfg_nil_node;
+  RD_PanelAddress leaf = {0};
+  {
+    RD_Arrangement *dock = rd_arrangement_copy(scratch.arena, uishell_section_placement_dock(restored));
+    RD_PanelID root = rd_arrangement_clear(dock);
+    ordinary = rd_view_alloc(dock_owner, str8_lit("text"), str8_zero());
+    rd_arrangement_move_tab(dock, rd_view_address_from_cfg(ordinary), root, rd_nil_view_address);
+    rd_arrangement_set(dock);
+    leaf = rd_panel_address(dock_owner, root);
+  }
+  uishell_section_placement_frame(&p);
+  CFG_ID ordinary_id = ordinary->id;
+  rd_panel_focus_mark(leaf);
+  rd_panel_flag_set(leaf, str8_lit("tabs_on_bottom"), 1);
+  uishell_section_placement_frame(&p);
+  PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
+  x = uishell_sidebar_region_view(restored, str8_lit("x"));
+  {
+    RD_Arrangement *dock = uishell_section_placement_dock(restored);
+    RD_PanelID ordinary_panel = uishell_section_placement_panel(restored, ordinary);
+    PlacementCheck(ordinary->id == ordinary_id && ordinary_panel != dock->root->id && ordinary_panel != uishell_section_placement_panel(restored, x));
+    RD_PanelTree lifted = rd_panel_tree_from_arrangement(scratch.arena, dock_owner, dock);
+    RD_PanelNode *lifted_leaf = rd_panel_node_from_id(lifted.root, ordinary_panel);
+    PlacementCheck(lifted_leaf->tab_side == Side_Max && rd_view_address_match(lifted_leaf->selected_tab, rd_view_address_from_cfg(ordinary)));
+    PlacementCheck(lifted.focused == lifted_leaf);
+    PlacementCheck(abs_f32(rd_arrangement_panel_from_id(dock, ordinary_panel)->weight-.5f) < .00001f);
+    PlacementCheck(abs_f32(rd_arrangement_panel_from_id(dock, uishell_section_placement_panel(restored, x))->weight-.5f) < .00001f);
+  }
+  uishell_sidebar_replace_snapshot(&p.sidebar, 0);
+  wheelhouse_destroy(p.sidebar.core);
+  if(p.sidebar.titles_arena) { arena_release(p.sidebar.titles_arena); }
+  if(p.sidebar.roles_arena) { arena_release(p.sidebar.roles_arena); }
+  if(p.sidebar.sidebar_notes_arena) { arena_release(p.sidebar.sidebar_notes_arena); }
+  uishell_section_placement_release_window(p.user);
+  if(state.live_arrangement_arena) { arena_release(state.live_arrangement_arena); }
+  cfg_state_release(state.cfg); cfg_ctx_select(saved_ctx); rd_state = saved_rd;
+  fprintf(stderr, "Section placement diagnostics: %s (hints, reorder, restart, add, close, drift, reset)\n", failures ? "FAILED" : "passed");
+#undef PlacementCheck
+  scratch_end(scratch); return failures == 0;
+}

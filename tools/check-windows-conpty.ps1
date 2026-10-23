@@ -1,6 +1,6 @@
 param(
   # "bundled": the pane must run under the conpty.dll + OpenConsole.exe that
-  # build.bat places beside wheelhouse.exe. "inbox": run with CLEAT_CONPTY=inbox
+  # native\build.bat places beside wheelhouse.exe. "inbox": run with CLEAT_CONPTY=inbox
   # and expect the system conhost.exe, to show the check can tell them apart.
   [ValidateSet("bundled", "inbox")]
   [string]$Expect = "bundled",
@@ -22,7 +22,7 @@ if([string]::IsNullOrWhiteSpace($Exe)) {
   $Exe = Join-Path $RepoRoot "build\wheelhouse.exe"
 }
 if(-not (Test-Path $Exe)) {
-  throw "Wheelhouse executable not found: $Exe (run build.bat wheelhouse first)"
+  throw "Wheelhouse executable not found: $Exe (run native\build.bat wheelhouse first)"
 }
 $Exe = (Resolve-Path $Exe).Path
 $ExeDir = Split-Path -Parent $Exe

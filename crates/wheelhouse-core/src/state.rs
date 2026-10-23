@@ -1,0 +1,5512 @@
+#[derive(Debug, Clone)]
+pub(crate) struct EvaluatedPlacement {
+    pub entity: EntityRef,
+    pub placement: Option<PlacementKey>,
+    pub label: String,
+    pub form: String,
+    pub tier: Option<AbbreviationTier>,
+    pub metadata: Rc<FactMap>,
+    pub templates: ResolvedTemplateSlots,
+    pub annotation: PlacementAnnotation,
+    pub children: Vec<Rc<EvaluatedPlacement>>,
+}
+#[derive(Debug)]
+pub(crate) struct EvaluatedSection {
+    pub definition: SurfaceRegionDefinition,
+    pub root: Option<Rc<ResolvedTemplateSlot>>,
+    pub entities: Vec<Rc<EvaluatedPlacement>>,
+}
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PlacementAnnotation {
+    pub layout: Option<String>,
+    /// From its loop: collapsed unless toggled (PlacementLoop::default_collapsed).
+    pub default_collapsed: bool,
+    pub related_detail: Vec<TemplateConfigRenderedField>,
+}
+use crate::{FactMap, FastHashMap, FastHashSet};
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::ops::{Bound, Deref, DerefMut};
+use std::path::Path;
+use std::rc::Rc;
+use std::sync::Arc;
+
+#[cfg(test)]
+use crate::census::Census;
+use crate::detail::{resolve_field, DetailCard};
+use crate::facts::Entries;
+use crate::host::PaneObservation;
+use crate::metadata::{select_primary_entry, CandidateEntry, EntityId, Fact, MetadataStore, ResolvedFacts};
+use crate::profile;
+#[cfg(test)]
+use crate::template_config::PlacementDefinition;
+use crate::template_config::{
+    placement_index_text, AbbreviationTier, NodeVariableDefinition, PlacementOrder, PlacementOrderAbsent, PlacementOrderDirection,
+    PlacementVisibility, PlacementVisibilityRule, ResolutionKey, SurfaceRegionDefinition, TemplateAddress, TemplateConfigCatalog,
+    TemplateConfigLayerKind, TemplateConfigMatchContext, TemplateConfigNodeKind, TemplateConfigOrigin, TemplateConfigRenderReady,
+    TemplateConfigRenderedField, TemplateConfigSlot,
+};
+use crate::WorkspaceId;
+use crate::{
+    managed::{DesiredContent, Resolved},
+    presentation::{system, PresentationState, SurfaceContext, SurfaceKept, SurfaceSnapshot},
+    records::{recordable, DashboardState, SubjectRecord},
+    sidebar_arrangement::RegionHints,
+    suggested_layout::{self, LayoutError, SuggestedLayout},
+    template_config::{PlacementLoop, TemplateVariableType},
+    ControllerBootstrapSnapshot, ControllerViewModel, DisplayVariableValue, EffectiveKdl, EffectiveNodeVariables, EffectiveVariableValue,
+    EntityRef, LatentMaterializationState, LatentTab, MaterializeLatentRequest, MetadataControls, MetadataEntry, MetadataIdentity,
+    MetadataPatch, MetadataSourceEntry, MetadataTarget, MetadataTriState, MetadataValue, MetadataValueUpdate, NodeKey,
+    NodeVariableOverrides, ObservedMetadataIdentity, PaneTarget, PlacementKey, PlacementLoopKey, PlacementSegment, PluginPlacement,
+    PluginRegistrationHello, Priority, RailConfig, RailUiAction, RailUiRevision, RailUiState, ReachableMetadataIdentity, RendererHello,
+    ResolvedMetadata, ResolvedMetadataTarget, ResolvedTemplateSlot, ResolvedTemplateSlots, SetPaneStatus, SortMode, TabCard,
+    TabStatusSummary, TemplateConfigDiagnostics, VariableSetterProvenance, DISPLAY_FORM_COMPACT, LOCAL_PROVIDER,
+    NODE_VARIABLE_CONFIG_OVERRIDE_SETTER,
+};
+
+const SOURCE_ZELLIJ: &str = "zellij";
+const SOURCE_LATENT_MATERIALIZER: &str = "andamento-latent-materializer";
+const KEY_PANE_CWD: &str = "zellij.pane.cwd";
+const KEY_PANE_CWD_LABEL: &str = "zellij.pane.cwd.label";
+const KEY_ENTITY_KIND: &str = "entity.kind";
+const KEY_ENTITY_ID: &str = "entity.id";
+/// The provider of the entity `entity.kind`/`entity.id` name, on a target
+/// that isn't that entity (such as a workspace). The core stamps it from the
+/// provider of the patch that names the entity; a patch never sets it. Where
+/// it is missing (a core-owned patch), the entity is local.
+const KEY_ENTITY_PROVIDER: &str = "entity.provider";
+/// A host-owned entity published for one workspace, such as a local workspace
+/// the host gives its own identity. Its rows are live for the tab, as a
+/// subject's are, but it is not the tab's subject: closing the tab retains no
+/// path, and the host retracts the entity.
+const KEY_HOST_ENTITY_KIND: &str = system::HOST_KIND;
+const KEY_HOST_ENTITY_ID: &str = system::HOST_ID;
+const KEY_HOST_ENTITY_PROVIDER: &str = system::HOST_PROVIDER;
+const KEY_ACTION_TARGET: &str = "action.primary.target";
+const KEY_MATERIALIZE_RECIPE: &str = "action.primary.recipe";
+const KEY_CHECKOUT_PATH: &str = "git.root";
+const KEY_STATUS_STATE: &str = "status.state";
+const KEY_DISPLAY_LABEL: &str = "display.label";
+const DISPLAY_SHOW_FINISHED: &str = "show-finished";
+const KEY_CONVOY_PHASE: &str = "flotilla.convoy.phase";
+const KEY_CONVOY_SUPERSEDED: &str = "flotilla.convoy.superseded";
+const FOCUSED_CWD_PRECEDENCE: i64 = 100;
+const NORMAL_CWD_PRECEDENCE: i64 = 0;
+// Opener-owned identity must outrank observational discovery such as cwd-derived associations.
+const LATENT_MATERIALIZER_PRECEDENCE: i64 = 1_000;
+
+type TabSeedMetadata = FastHashMap<WorkspaceId, BTreeMap<String, MetadataEntry>>;
+
+/// Per tab: its subject, and the host entity the host published for it.
+#[derive(Debug, Default)]
+pub(crate) struct WorkspaceIdentities {
+    pub subjects: BTreeMap<WorkspaceId, EntityRef>,
+    pub hosts: BTreeMap<WorkspaceId, EntityRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControllerTab {
+    pub tab_id: WorkspaceId,
+    pub position: usize,
+    pub name: String,
+    pub active: bool,
+}
+
+// Keep scalar text distinct from structured entity identities.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum IndexedValue {
+    Scalar(Arc<str>),
+    Entity(EntityRef),
+}
+
+/// Catalog entities indexed by `(fact key, scalar or entity identity)`, by
+/// position in the catalog. It is kept between evaluations: while the catalog
+/// lists the same entities in the same order, only positions whose facts
+/// changed (a new `Rc` from the metadata store) are re-indexed, and their
+/// visibility re-evaluated. Placement predicates perform posting lookups only.
+///
+/// Each posting has a generation, moved whenever an entity in it (before or
+/// after) changes facts, so a loop can tell whether what it matched could
+/// differ now (see `LoopReads`). Anything else that changes what lookups
+/// return, such as a rebuild or new visibility, moves the epoch.
+#[derive(Debug, Default)]
+struct PlacementIndex {
+    by_fact: FastHashMap<Rc<PostingKey>, usize>,
+    /// The fact names postings are under, to look one up without making it.
+    names: FastHashSet<Rc<str>>,
+    /// Postings by ID; an emptied posting keeps its ID and generation.
+    postings: Vec<Posting>,
+    clock: u64,
+    epoch: u64,
+    /// The generation of the catalog indexed, if it had one.
+    list: Option<u64>,
+    visibility: BTreeMap<String, Vec<bool>>,
+    ref_keys: BTreeSet<String>,
+    /// Keys whose facts hold entity references, with how many positions do.
+    ref_key_counts: BTreeMap<String, usize>,
+    /// What each position was indexed from, and the postings it added.
+    facts: Vec<Rc<ResolvedFacts>>,
+    indexed: Vec<Vec<usize>>,
+    /// What visibility was evaluated with: the template catalog's
+    /// generation and the display variables; and the warnings it gave.
+    visibility_inputs: Option<(u64, BTreeMap<String, DisplayVariableValue>)>,
+    visibility_warnings: Vec<String>,
+}
+
+#[derive(Debug)]
+struct Posting {
+    key: Rc<PostingKey>,
+    positions: Vec<usize>,
+    generation: u64,
+}
+
+/// A posting a loop looked up: one that exists, at the generation it had,
+/// or one that didn't.
+#[derive(Debug)]
+enum PostingRead {
+    Present { id: usize, generation: u64 },
+    Absent(Rc<PostingKey>),
+}
+
+/// What placement evaluation reads besides the catalog's facts. When any of
+/// it changes, nothing placed earlier is kept.
+#[derive(Debug, PartialEq)]
+struct PlacementInputs {
+    template_generation: u64,
+    index_epoch: u64,
+    show_finished: bool,
+    ended: BTreeSet<EntityRef>,
+    retained: Vec<EntityRef>,
+}
+
+/// Where a loop is evaluated: each enclosing match, bound under its loop's
+/// name. An applied template starts a new lexical environment: names bound
+/// outside it are not visible in it, but enclosing matches stay ancestors.
+#[derive(Clone, Copy, Default)]
+struct Scope<'s, 'a> {
+    entity: Option<&'a CatalogEntity>,
+    name: Option<&'s str>,
+    outer: Option<&'s Scope<'s, 'a>>,
+    parent: Option<&'s Scope<'s, 'a>>,
+}
+
+impl<'s, 'a> Scope<'s, 'a> {
+    /// The scope inside a match of `entity`, bound as `name`; `fresh` when
+    /// it starts a new lexical environment.
+    fn within(&'s self, name: &'s str, entity: &'a CatalogEntity, fresh: bool) -> Self {
+        Scope { entity: Some(entity), name: Some(name), outer: (!fresh).then_some(self), parent: Some(self) }
+    }
+
+    fn bound(&self, name: &str) -> Option<&'a CatalogEntity> {
+        if self.name == Some(name) {
+            return self.entity;
+        }
+        self.outer?.bound(name)
+    }
+
+    fn is_ancestor(&self, entity: &EntityRef) -> bool {
+        self.entity.is_some_and(|own| own.entity == *entity) || self.parent.is_some_and(|parent| parent.is_ancestor(entity))
+    }
+}
+
+/// What evaluating a loop read: the entities bound to the names it used, and
+/// the postings it intersected. While the bound entities' facts are the
+/// same and any one of those postings is unchanged, it matches the same
+/// entities in the same order: whatever matched, or would match now, is in
+/// every one of them, and a change to it moves them all.
+#[derive(Debug, Default)]
+struct LoopReads {
+    bound: Vec<(String, Option<Rc<ResolvedFacts>>)>,
+    postings: Vec<PostingRead>,
+}
+
+impl LoopReads {
+    fn bind<'a>(&mut self, scope: &Scope<'_, 'a>, name: &str) -> Option<&'a CatalogEntity> {
+        let bound = scope.bound(name);
+        if !self.bound.iter().any(|(read, _)| read == name) {
+            self.bound.push((name.to_owned(), bound.map(|entity| entity.facts.clone())));
+        }
+        bound
+    }
+
+    fn valid(&self, scope: &Scope, index: &PlacementIndex) -> bool {
+        self.bound.iter().all(|(name, facts)| match (scope.bound(name), facts) {
+            (Some(entity), Some(facts)) => Rc::ptr_eq(&entity.facts, facts),
+            (None, None) => true,
+            _ => false,
+        }) && (self.postings.is_empty() || self.postings.iter().any(|read| index.unchanged(read)))
+    }
+}
+
+/// A loop's evaluation in one place, kept for the next.
+#[derive(Debug, Default)]
+struct LoopMemo {
+    reads: LoopReads,
+    nodes: Vec<NodeMemo>,
+}
+
+impl LoopMemo {
+    fn placed(&self) -> impl Iterator<Item = Rc<EvaluatedPlacement>> + '_ {
+        self.nodes.iter().map(|node| node.placement.clone())
+    }
+}
+
+/// One match's evaluation, kept for the next: its placement, what its
+/// related detail read, and its nested loops'.
+#[derive(Debug)]
+struct NodeMemo {
+    position: usize,
+    facts: Rc<ResolvedFacts>,
+    placement: Rc<EvaluatedPlacement>,
+    related: Vec<LoopReads>,
+    related_binding: String,
+    /// The name nested loops see this match as, and whether they see only it.
+    binding: String,
+    fresh: bool,
+    child_loops: ChildLoops,
+    children: Vec<LoopMemo>,
+}
+
+/// Each placed node's variables, by the address of its placement.
+pub(crate) type NodeVariables = FastHashMap<*const EvaluatedPlacement, VariablesMemo>;
+
+/// A node's variables, kept while its placement and its parent's variables
+/// stay the same.
+#[derive(Debug)]
+pub(crate) struct VariablesMemo {
+    placement: Rc<EvaluatedPlacement>,
+    parent: Rc<EffectiveNodeVariables>,
+    pub(crate) resolved: Rc<EffectiveNodeVariables>,
+    warnings: Vec<String>,
+}
+
+/// The inspector's variable settings, by node.
+type VariableOverrides = BTreeMap<NodeKey, BTreeMap<String, String>>;
+
+/// Placed nodes' variables, with what they were resolved under: the
+/// template catalog's generation and the inspector's overrides, and the
+/// root's variables.
+#[derive(Debug, Default)]
+struct VariablesKept {
+    inputs: Option<(u64, VariableOverrides)>,
+    root: Option<Rc<EffectiveNodeVariables>>,
+    nodes: NodeVariables,
+}
+
+/// Which loops nest under a match: its loop's own, an applied template's, or
+/// none (an applied template that doesn't exist).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChildLoops {
+    Own,
+    Template(TemplateAddress),
+    None,
+}
+
+struct PlacementContext<'a, 'f> {
+    entities: &'a [CatalogEntity],
+    index: &'a PlacementIndex,
+    form: &'f str,
+}
+
+/// A posting's key: a fact's name, shared with the records' spines, and a
+/// value.
+type PostingKey = (Rc<str>, IndexedValue);
+
+/// A fact's value as placement predicates match it, sharing its text.
+fn indexed_text(value: &MetadataValue) -> Option<Arc<str>> {
+    match value {
+        MetadataValue::Text(text) => Some(text.clone()),
+        other => placement_index_text(other).map(Arc::from),
+    }
+}
+
+impl PlacementIndex {
+    #[cfg(test)]
+    fn build(entities: &[CatalogEntity]) -> Self {
+        let mut index = Self::default();
+        index.update(entities, None);
+        index
+    }
+
+    /// Bring the index up to date with `entities`, re-indexing the positions
+    /// whose facts changed, or every position when the list itself changed.
+    /// Returns the positions re-indexed (all of them: `None`).
+    /// `list` is the catalog's generation: while it is the same, so is the
+    /// list. Without one, the list is taken to have changed.
+    fn update(&mut self, entities: &[CatalogEntity], list: Option<u64>) -> Option<Vec<usize>> {
+        let same_list = self.facts.len() == entities.len() && list.is_some() && self.list == list;
+        if !same_list {
+            *self = Self { epoch: self.epoch + 1, list, ..Self::default() };
+            for (position, entity) in entities.iter().enumerate() {
+                self.facts.push(entity.facts.clone());
+                self.indexed.push(vec![]);
+                let postings = self.postings_of(entity);
+                self.index(position, &postings);
+            }
+            return None;
+        }
+        self.clock += 1;
+        let mut changed = vec![];
+        for (position, entity) in entities.iter().enumerate() {
+            if Rc::ptr_eq(&self.facts[position], &entity.facts) {
+                continue;
+            }
+            self.facts[position] = entity.facts.clone();
+            for &id in &self.indexed[position] {
+                self.postings[id].generation = self.clock;
+            }
+            let next = self.postings_of(entity);
+            if self.indexed[position].iter().map(|&id| &*self.postings[id].key).eq(next.iter()) {
+                continue;
+            }
+            self.unindex(position);
+            self.index(position, &next);
+            changed.push(position);
+        }
+        Some(changed)
+    }
+
+    /// The postings `entity` is indexed under.
+    fn postings_of(&mut self, entity: &CatalogEntity) -> Vec<PostingKey> {
+        // An entity's kind and id come from its ref, not from whatever the
+        // producer happened to echo into its facts, so `kind=` always works.
+        let mut postings = vec![
+            (self.name(KEY_ENTITY_KIND), IndexedValue::Scalar(Arc::from(entity.entity.kind.as_str()))),
+            (self.name(KEY_ENTITY_ID), IndexedValue::Scalar(Arc::from(entity.entity.id.as_str()))),
+        ];
+        // A `.ref` carries its target's facts for presentation, but rules
+        // reach it only through its own placement facts, so a query on the
+        // target's facts (say, needs attention) never places the ghost too.
+        let is_ref = entity.entity.kind == system::REF;
+        for (key, fact) in entity.facts.named() {
+            if is_ref && &**key != system::GROUP && &**key != system::TARGET {
+                continue;
+            }
+            if let MetadataValue::EntityRefs(refs) = &fact.entry.value {
+                postings.extend(refs.iter().map(|reference| (key.clone(), IndexedValue::Entity(reference.clone()))));
+                continue;
+            }
+            if let Some(text) = indexed_text(&fact.entry.value) {
+                postings.push((key.clone(), IndexedValue::Scalar(text)));
+            }
+        }
+        postings.sort();
+        postings.dedup();
+        postings
+    }
+
+    fn name(&mut self, name: &str) -> Rc<str> {
+        if let Some(name) = self.names.get(name) {
+            return name.clone();
+        }
+        let name: Rc<str> = Rc::from(name);
+        self.names.insert(name.clone());
+        name
+    }
+
+    fn index(&mut self, position: usize, postings: &[PostingKey]) {
+        let mut ids = Vec::with_capacity(postings.len());
+        for posting in postings {
+            self.names.insert(posting.0.clone());
+            if let IndexedValue::Entity(_) = posting.1 {
+                *self.ref_key_counts.entry(posting.0.to_string()).or_default() += 1;
+                if self.ref_keys.insert(posting.0.to_string()) {
+                    self.epoch += 1;
+                }
+            }
+            let id = match self.by_fact.get(posting) {
+                Some(&id) => id,
+                None => {
+                    let key = Rc::new(posting.clone());
+                    self.by_fact.insert(key.clone(), self.postings.len());
+                    self.postings.push(Posting { key, positions: vec![], generation: self.clock });
+                    self.postings.len() - 1
+                }
+            };
+            let entry = &mut self.postings[id];
+            entry.generation = self.clock;
+            if let Err(at) = entry.positions.binary_search(&position) {
+                entry.positions.insert(at, position);
+            }
+            ids.push(id);
+        }
+        self.indexed[position] = ids;
+    }
+
+    fn unindex(&mut self, position: usize) {
+        for id in std::mem::take(&mut self.indexed[position]) {
+            let entry = &mut self.postings[id];
+            entry.generation = self.clock;
+            if let IndexedValue::Entity(_) = entry.key.1 {
+                if let Some(count) = self.ref_key_counts.get_mut(&*entry.key.0) {
+                    *count -= 1;
+                    if *count == 0 {
+                        self.ref_key_counts.remove(&*entry.key.0);
+                        self.ref_keys.remove(&*entry.key.0);
+                        self.epoch += 1;
+                    }
+                }
+            }
+            if let Ok(at) = entry.positions.binary_search(&position) {
+                entry.positions.remove(at);
+            }
+        }
+    }
+
+    /// Evaluate visibility after `update`: every position when the
+    /// policies, the display variables or the list changed, else only the
+    /// re-indexed positions. Each policy is evaluated once per entity, never
+    /// once per nested loop; query evaluation then checks a bit alongside its
+    /// posting position.
+    fn update_visibility(
+        &mut self,
+        entities: &[CatalogEntity],
+        catalog: &TemplateConfigCatalog,
+        generation: u64,
+        variables: &BTreeMap<String, DisplayVariableValue>,
+        reindexed: Option<Vec<usize>>,
+    ) -> Vec<String> {
+        let unchanged = self.visibility_inputs.as_ref().is_some_and(|(at, vars)| *at == generation && vars == variables);
+        match reindexed {
+            Some(positions) if unchanged => {
+                for policy in catalog.visibility() {
+                    let enabled = Self::enabled_rules(policy, catalog, variables, &mut BTreeSet::new());
+                    let Some(visible) = self.visibility.get_mut(&policy.name) else {
+                        continue;
+                    };
+                    for &position in &positions {
+                        let rule = policy.rules.iter().position(|rule| visibility_rule_matches(&entities[position], rule));
+                        visible[position] = rule.is_none_or(|rule| enabled[rule]);
+                    }
+                }
+            }
+            _ => {
+                let mut warnings = BTreeSet::new();
+                self.visibility.clear();
+                for policy in catalog.visibility() {
+                    let enabled = Self::enabled_rules(policy, catalog, variables, &mut warnings);
+                    let visible = entities
+                        .iter()
+                        .map(|entity| {
+                            let rule = policy.rules.iter().position(|rule| visibility_rule_matches(entity, rule));
+                            rule.is_none_or(|position| enabled[position])
+                        })
+                        .collect();
+                    self.visibility.insert(policy.name.clone(), visible);
+                }
+                self.visibility_inputs = Some((generation, variables.clone()));
+                self.epoch += 1;
+                self.visibility_warnings = warnings.into_iter().collect();
+            }
+        }
+        self.visibility_warnings.clone()
+    }
+
+    /// Whether each of `policy`'s rules is switched on by its display
+    /// variables.
+    fn enabled_rules(
+        policy: &PlacementVisibility,
+        catalog: &TemplateConfigCatalog,
+        variables: &BTreeMap<String, DisplayVariableValue>,
+        warnings: &mut BTreeSet<String>,
+    ) -> Vec<bool> {
+        policy
+            .rules
+            .iter()
+            .map(|rule| {
+                std::iter::once(&rule.visible_when).chain(rule.and_visible_when.iter()).fold(true, |enabled, name| {
+                    let value = variables.get(name).or_else(|| {
+                        catalog.display_variables().iter().find(|variable| &variable.name == name).map(|variable| &variable.default)
+                    });
+                    if !matches!(value, Some(DisplayVariableValue::Bool(_))) {
+                        warnings.insert(format!(
+                            "visibility {} requires boolean display variable {}; matching entities are hidden",
+                            policy.name, name
+                        ));
+                    }
+                    enabled & matches!(value, Some(DisplayVariableValue::Bool(true)))
+                })
+            })
+            .collect()
+    }
+
+    /// The positions under `(key, value)`, and the read to record.
+    fn lookup(&self, key: &str, value: IndexedValue) -> (&[usize], PostingRead) {
+        let name = self.names.get(key).cloned().unwrap_or_else(|| Rc::from(key));
+        let key = (name, value);
+        match self.by_fact.get(&key) {
+            Some(&id) => {
+                let posting = &self.postings[id];
+                (&posting.positions, PostingRead::Present { id, generation: posting.generation })
+            }
+            None => (&[], PostingRead::Absent(Rc::new(key))),
+        }
+    }
+
+    /// Whether no entity in a posting read earlier has changed since.
+    fn unchanged(&self, read: &PostingRead) -> bool {
+        match read {
+            PostingRead::Present { id, generation } => self.postings[*id].generation == *generation,
+            PostingRead::Absent(key) => !self.by_fact.contains_key(&**key),
+        }
+    }
+}
+
+fn visibility_rule_matches(entity: &CatalogEntity, rule: &PlacementVisibilityRule) -> bool {
+    rule.predicates.iter().all(|predicate| {
+        let identity = match predicate.key.as_str() {
+            "entity.kind" => Some(entity.entity.kind.as_str()),
+            "entity.id" => Some(entity.entity.id.as_str()),
+            _ => None,
+        };
+        let fact = entity.facts.get(&predicate.key);
+        if let Some(exists) = predicate.exists {
+            return exists == (identity.is_some() || fact.is_some());
+        }
+        let expected = predicate.value.as_deref();
+        if let Some(identity) = identity {
+            return Some(identity) == expected;
+        }
+        match fact.map(|entry| &entry.value) {
+            Some(MetadataValue::Text(text)) => Some(&**text) == expected,
+            Some(MetadataValue::Bool(value)) => Some(if *value { "true" } else { "false" }) == expected,
+            Some(MetadataValue::Integer(value)) => Some(value.to_string().as_str()) == expected,
+            _ => false,
+        }
+    })
+}
+
+/// What a node resolved to: the variable values in effect, and the declarations
+/// that are in scope there.
+#[derive(Debug, Clone, Default)]
+struct ResolvedNodeVariables {
+    values: BTreeMap<String, EffectiveVariableValue>,
+    declarations: Vec<NodeVariableDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntityActivation {
+    FocusTab { position: usize },
+    Materialize(MaterializeLatentRequest),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StoredPaneStatus {
+    status: SetPaneStatus,
+    received_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ControllerPane {
+    pane_id: PaneTarget,
+    tab_id: WorkspaceId,
+    is_selectable: bool,
+    is_focused: bool,
+    ordinal: i64,
+    cwd: Option<String>,
+    // One host-call attempt per pane lifetime; afterwards cwd arrives only
+    // via Event::CwdChanged, so a failed lookup is never retried per event.
+    cwd_requested: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingLatentMaterialization {
+    request: MaterializeLatentRequest,
+    tab_id: Option<WorkspaceId>,
+    subject: Option<EntityRef>,
+}
+
+#[cfg(test)]
+thread_local! { static CATALOG_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+/// An entity in the catalog: its resolved facts (`values`, `sources`),
+/// shared with the metadata store's resolution until an edit here copies them.
+#[derive(Debug, Clone)]
+struct CatalogEntity {
+    entity: EntityRef,
+    facts: Rc<ResolvedFacts>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SubjectLifecycle {
+    Unknown,
+    Live,
+    Ended,
+}
+
+/// Current producer evidence, independent of attachment recipes and saved
+/// workspace history. A standing role outlives the attempt whose phase it lifts.
+fn subject_lifecycle(subject: &EntityRef, facts: &ResolvedFacts, stale: bool) -> SubjectLifecycle {
+    if stale {
+        return SubjectLifecycle::Unknown;
+    }
+    let declared = facts.contains_key(KEY_ENTITY_ID) && facts.contains_key(KEY_ENTITY_KIND);
+    match subject.kind.as_str() {
+        "role" | "project" if declared => SubjectLifecycle::Live,
+        "convoy" | "vessel" => {
+            // TODO(#122): consume a producer-declared lifecycle-ended fact.
+            if matches!(metadata_entry_text(facts, KEY_CONVOY_PHASE), Some("landed" | "abandoned" | "cancelled"))
+                || matches!(facts.get(KEY_CONVOY_SUPERSEDED).map(|e| &e.value), Some(MetadataValue::Bool(true)))
+            {
+                SubjectLifecycle::Ended
+            } else if declared
+                && matches!(metadata_entry_text(facts, KEY_CONVOY_PHASE), Some("pending" | "active" | "interrupted" | "landing"))
+            {
+                SubjectLifecycle::Live
+            } else {
+                SubjectLifecycle::Unknown
+            }
+        }
+        _ => SubjectLifecycle::Unknown,
+    }
+}
+
+impl Deref for CatalogEntity {
+    type Target = ResolvedFacts;
+    fn deref(&self) -> &ResolvedFacts {
+        &self.facts
+    }
+}
+
+impl DerefMut for CatalogEntity {
+    fn deref_mut(&mut self) -> &mut ResolvedFacts {
+        Rc::make_mut(&mut self.facts)
+    }
+}
+
+/// Resolved catalog and lookup tables shared by every pass of one model build.
+/// Its lifetime is the evaluation, so metadata/configuration/time changes cannot
+/// leave stale derived state behind between snapshots.
+#[derive(Debug, Clone)]
+struct CatalogEvaluation {
+    entities: Vec<CatalogEntity>,
+    /// Positions, ordered by their entities, to find one by identity.
+    by_entity: Vec<usize>,
+    /// Moves when the list of entities or their order changes.
+    generation: u64,
+    /// Entities derived from others (retained subjects, refs), built again
+    /// each time the catalog is brought up to date.
+    derived: BTreeSet<EntityRef>,
+    /// What `replace` will remove and add when `reorder` runs.
+    removed: BTreeSet<EntityRef>,
+    added: Vec<CatalogEntity>,
+    structure_changed: bool,
+}
+
+impl CatalogEvaluation {
+    fn new(entities: Vec<CatalogEntity>, generation: u64) -> Self {
+        let by_entity = Self::by_entity(&entities);
+        let derived = entities.iter().filter(|e| e.entity.kind == system::REF).map(|e| e.entity.clone()).collect();
+        Self { entities, by_entity, generation, derived, removed: BTreeSet::new(), added: vec![], structure_changed: false }
+    }
+
+    fn by_entity(entities: &[CatalogEntity]) -> Vec<usize> {
+        let mut positions: Vec<usize> = (0..entities.len()).collect();
+        positions.sort_by(|&left, &right| entities[left].entity.cmp(&entities[right].entity));
+        positions
+    }
+
+    fn position(&self, target: &EntityRef) -> Option<usize> {
+        self.by_entity.binary_search_by(|&position| self.entities[position].entity.cmp(target)).ok().map(|at| self.by_entity[at])
+    }
+
+    fn entity(&self, target: &EntityRef) -> Option<&CatalogEntity> {
+        self.position(target).map(|position| &self.entities[position])
+    }
+
+    /// Make `entity` `next` (None: absent). One whose facts are the same
+    /// keeps its own. Returns whether the list or its order changes, which
+    /// `reorder` then makes.
+    fn replace(&mut self, entity: &EntityRef, next: Option<CatalogEntity>) -> bool {
+        match (self.position(entity), next) {
+            (Some(at), Some(next)) => {
+                let current = &mut self.entities[at];
+                if !Rc::ptr_eq(&current.facts, &next.facts) && *current.facts != *next.facts {
+                    *current = next;
+                }
+                false
+            }
+            (Some(_), None) => {
+                self.removed.insert(entity.clone());
+                true
+            }
+            (None, Some(next)) => {
+                self.added.push(next);
+                true
+            }
+            (None, None) => false,
+        }
+    }
+
+    fn reorder(&mut self) {
+        let removed = std::mem::take(&mut self.removed);
+        self.entities.retain(|entity| !removed.contains(&entity.entity));
+        self.entities.append(&mut self.added);
+        self.entities.sort_by(catalog_order);
+        self.by_entity = Self::by_entity(&self.entities);
+        self.structure_changed = true;
+    }
+}
+
+/// Whether `candidate` is the action target of `entity`, given its own
+/// (`action.target`): that, else one made from its identity, as
+/// `EntityRef::action_target` makes it, compared without making it.
+fn is_action_target(entity: &EntityRef, own: Option<&str>, candidate: &str) -> bool {
+    if let Some(own) = own {
+        return own == candidate;
+    }
+    let Some(rest) = candidate.strip_prefix(entity.kind.as_str()).and_then(|rest| rest.strip_prefix(':')) else {
+        return false;
+    };
+    if entity.provider == LOCAL_PROVIDER {
+        rest == entity.id
+    } else {
+        rest.strip_prefix(entity.id.as_str()).and_then(|rest| rest.strip_prefix('@')) == Some(entity.provider.as_str())
+    }
+}
+
+/// The catalog's order: by identity.
+fn catalog_order(a: &CatalogEntity, b: &CatalogEntity) -> Ordering {
+    a.entity.cmp(&b.entity)
+}
+
+/// The catalog as last built (`ControllerState::catalog`).
+#[derive(Debug, Default)]
+struct KeptCatalog {
+    evaluation: Option<Rc<CatalogEvaluation>>,
+    generation: u64,
+}
+
+/// Which controller outputs the caller consumes; semantic presentation is
+/// always resolved for both modes, including non-placement regions.
+enum ModelOutputs {
+    Controller,
+    Presentation,
+}
+
+/// Immutable catalog and activation inputs owned by a Sidebar revision.
+pub(crate) struct RevisionEvaluation {
+    catalog: Rc<CatalogEvaluation>,
+    /// Action targets open in a workspace: an entity with any other is
+    /// latent (see `latent_tabs_in`).
+    live_targets: BTreeSet<String>,
+    resolved_workspaces: Vec<ResolvedMetadata>,
+    live: BTreeMap<String, PresentationState>,
+}
+
+fn compare_order_values(left: &MetadataValue, right: &MetadataValue, natural: bool) -> Ordering {
+    if natural {
+        if let (MetadataValue::Text(left), MetadataValue::Text(right)) = (left, right) {
+            return natural_text_order(left, right);
+        }
+    }
+    left.cmp(right)
+}
+
+/// Compare arbitrary-length ASCII digit runs without integer overflow.
+fn natural_text_order(mut left: &str, mut right: &str) -> Ordering {
+    while !left.is_empty() && !right.is_empty() {
+        let compared;
+        if left.as_bytes()[0].is_ascii_digit() && right.as_bytes()[0].is_ascii_digit() {
+            let a = left.bytes().take_while(u8::is_ascii_digit).count();
+            let b = right.bytes().take_while(u8::is_ascii_digit).count();
+            let x = left[..a].trim_start_matches('0');
+            let y = right[..b].trim_start_matches('0');
+            compared = x.len().cmp(&y.len()).then_with(|| x.cmp(y));
+            left = &left[a..];
+            right = &right[b..];
+        } else {
+            let x = left.chars().next().unwrap();
+            let y = right.chars().next().unwrap();
+            compared = x.cmp(&y);
+            left = &left[x.len_utf8()..];
+            right = &right[y.len_utf8()..];
+        }
+        if compared != Ordering::Equal {
+            return compared;
+        }
+    }
+    left.len().cmp(&right.len())
+}
+
+fn placement_entity_order(left: &CatalogEntity, right: &CatalogEntity, order: &[PlacementOrder]) -> Ordering {
+    for key in order {
+        let left_value = placement_sort_fact(left, &key.key);
+        let right_value = placement_sort_fact(right, &key.key);
+        let compared = match (left_value, right_value) {
+            (Some(left), Some(right)) => match key.direction {
+                PlacementOrderDirection::Ascending => compare_order_values(left.as_ref(), right.as_ref(), key.natural),
+                PlacementOrderDirection::Descending => compare_order_values(right.as_ref(), left.as_ref(), key.natural),
+            },
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => match key.absent {
+                PlacementOrderAbsent::First => Ordering::Less,
+                PlacementOrderAbsent::Last => Ordering::Greater,
+            },
+            (Some(_), None) => match key.absent {
+                PlacementOrderAbsent::First => Ordering::Greater,
+                PlacementOrderAbsent::Last => Ordering::Less,
+            },
+        };
+        if compared != Ordering::Equal {
+            return compared;
+        }
+    }
+    left.entity.cmp(&right.entity)
+}
+
+fn placement_sort_fact<'a>(entity: &'a CatalogEntity, key: &str) -> Option<Cow<'a, MetadataValue>> {
+    match key {
+        KEY_ENTITY_KIND => Some(Cow::Owned(MetadataValue::Text(entity.entity.kind.as_str().into()))),
+        KEY_ENTITY_ID => Some(Cow::Owned(MetadataValue::Text(entity.entity.id.as_str().into()))),
+        _ => entity.facts.get(key).map(|entry| Cow::Borrowed(&entry.value)),
+    }
+}
+
+#[derive(Debug, Default)]
+struct ControllerRailUiState {
+    revision: RailUiRevision,
+    /// Placements toggled away from their loop's default: collapsed ones,
+    /// or expanded ones of a `default-collapsed` loop.
+    collapsed_placements: BTreeSet<PlacementKey>,
+    sibling_orders: BTreeMap<PlacementLoopKey, Vec<EntityRef>>,
+    scroll_offset: isize,
+    variables: BTreeMap<String, DisplayVariableValue>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ControllerClientState {
+    pub client_id: u16,
+    pub inspected_node: Option<NodeKey>,
+    pub metadata_controls: MetadataControls,
+    pub tabs: BTreeMap<WorkspaceId, ControllerClientTabState>,
+    pub background_rails: BTreeMap<u32, PluginRegistration>,
+    pub background_config_editors: BTreeMap<u32, PluginRegistration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControllerClientTabState {
+    pub tab_id: WorkspaceId,
+    pub rails: BTreeMap<u32, PluginRegistration>,
+    pub config_editors: BTreeMap<u32, PluginRegistration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginRegistration {
+    pub identity: RendererHello,
+    pub placement: PluginPlacement,
+}
+
+/// Template resolutions by what they read.
+type Resolutions = FastHashMap<ResolutionKey, Option<Rc<ResolvedTemplateSlot>>>;
+
+/// An entity's display, with the facts and template generation it was made from.
+type KeptDisplay = (Rc<ResolvedFacts>, u64, EvaluatedPlacement);
+
+/// What evaluation keeps between revisions, each part valid only while
+/// what it was derived from stays the same. Everything kept lives here, so
+/// a test can evaluate without it and compare.
+#[derive(Debug, Default)]
+struct Kept {
+    /// The placement index (see `PlacementIndex`).
+    placement_index: RefCell<PlacementIndex>,
+    /// Each entity's display (`display_entity`), kept while its resolved
+    /// facts and the template catalog stay the same.
+    displays: RefCell<FastHashMap<EntityRef, KeptDisplay>>,
+    /// Template resolutions, by what they read (`resolution`), with the
+    /// template catalog's generation they were made under.
+    resolutions: RefCell<(u64, Resolutions)>,
+    /// Each region's loops as last evaluated (`evaluate_regions`), with
+    /// what they were evaluated under.
+    placements: RefCell<Option<(PlacementInputs, Vec<Vec<LoopMemo>>)>>,
+    /// Each placed node's variables (`resolve_placement_variables`).
+    variables: RefCell<VariablesKept>,
+    /// Each placed node's resolution (`SurfaceSnapshot::resolve`).
+    surface: RefCell<SurfaceKept>,
+    /// The catalog (`catalog`).
+    catalog: RefCell<KeptCatalog>,
+}
+
+impl Kept {
+    #[cfg(test)]
+    fn swap(&self, other: &Kept) {
+        self.placement_index.swap(&other.placement_index);
+        self.displays.swap(&other.displays);
+        self.resolutions.swap(&other.resolutions);
+        self.placements.swap(&other.placements);
+        self.variables.swap(&other.variables);
+        self.surface.swap(&other.surface);
+        self.catalog.swap(&other.catalog);
+    }
+}
+
+#[derive(Debug)]
+pub struct ControllerState {
+    tabs: Vec<ControllerTab>,
+    observed_workdirs: BTreeMap<WorkspaceId, BTreeSet<String>>,
+    pane_to_tab: FastHashMap<PaneTarget, WorkspaceId>,
+    panes: FastHashMap<PaneTarget, ControllerPane>,
+    metadata: MetadataStore,
+    retained_subjects: BTreeMap<EntityRef, CatalogEntity>,
+    // Authoritative ends are terminal for an identity; new attempts use new IDs.
+    ended_subjects: BTreeSet<EntityRef>,
+    pane_statuses: FastHashMap<PaneTarget, StoredPaneStatus>,
+    pinned_tabs: FastHashSet<WorkspaceId>,
+    clients: BTreeMap<u16, ControllerClientState>,
+    sort_mode: SortMode,
+    rail_config: RailConfig,
+    template_catalog: Option<TemplateConfigCatalog>,
+    /// Moves whenever the template catalog is set, for what is derived from it.
+    template_generation: u64,
+    /// What evaluation keeps from one revision to the next.
+    kept: Kept,
+    template_config: TemplateConfigDiagnostics,
+    receive_counter: u64,
+    clock_ms: Option<u64>,
+    pending_materialized_tab_names: FastHashMap<WorkspaceId, String>,
+    pending_latent_materializations: BTreeMap<String, PendingLatentMaterialization>,
+    rail_ui: ControllerRailUiState,
+    rail_ui_writer_client_id: u16,
+    node_variable_overrides: VariableOverrides,
+}
+impl Default for ControllerState {
+    fn default() -> Self {
+        Self {
+            tabs: Default::default(),
+            observed_workdirs: Default::default(),
+            pane_to_tab: Default::default(),
+            panes: Default::default(),
+            metadata: Default::default(),
+            retained_subjects: Default::default(),
+            ended_subjects: Default::default(),
+            pane_statuses: Default::default(),
+            pinned_tabs: Default::default(),
+            clients: Default::default(),
+            sort_mode: Default::default(),
+            rail_config: Default::default(),
+            template_catalog: Some(Default::default()),
+            template_generation: 0,
+            kept: Default::default(),
+            template_config: Default::default(),
+            receive_counter: Default::default(),
+            clock_ms: Default::default(),
+            pending_materialized_tab_names: Default::default(),
+            pending_latent_materializations: Default::default(),
+            rail_ui: Default::default(),
+            rail_ui_writer_client_id: Default::default(),
+            node_variable_overrides: Default::default(),
+        }
+    }
+}
+
+impl ControllerState {
+    /// Run `f` as a first evaluation would, with nothing kept from earlier
+    /// ones, leaving what is kept as it was.
+    #[cfg(test)]
+    pub(crate) fn cold<R>(&self, f: impl FnOnce(&Self) -> R) -> R {
+        let kept = Kept::default();
+        self.kept.swap(&kept);
+        let result = self.metadata.cold(|| f(self));
+        self.kept.swap(&kept);
+        result
+    }
+
+    /// Opt into host-supplied monotonic time. Legacy adapters retain receipt-clock behavior.
+    pub fn advance_time(&mut self, now_ms: u64) -> bool {
+        let before = self.now();
+        let now = self.clock_ms.unwrap_or(0).max(now_ms);
+        self.clock_ms = Some(now);
+        let expired = self.metadata.expires_between(before, now);
+        if expired {
+            self.metadata.change_all();
+        }
+        expired
+    }
+
+    /// What changed in the facts since the last call.
+    pub(crate) fn take_metadata_changes(&mut self) -> crate::metadata::Changed {
+        self.metadata.take_changed()
+    }
+
+    /// Every entity with facts.
+    pub(crate) fn metadata_entities(&self) -> Vec<EntityRef> {
+        self.metadata
+            .targets()
+            .filter_map(|target| match target {
+                EntityId::Entity(entity) => Some(entity.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+    fn now(&self) -> u64 {
+        self.clock_ms.unwrap_or(self.receive_counter)
+    }
+
+    pub fn entity_is_opening(&self, entity: &EntityRef) -> bool {
+        self.latent_tabs().iter().any(|tab| &tab.entity == entity && tab.materialization == LatentMaterializationState::Opening)
+    }
+
+    /// Current host observations, without building a presentation.
+    pub fn workspaces(&self) -> &[ControllerTab] {
+        &self.tabs
+    }
+
+    #[allow(dead_code)]
+    pub fn client(&self, client_id: u16) -> Option<&ControllerClientState> {
+        self.clients.get(&client_id)
+    }
+
+    fn client_mut(&mut self, client_id: u16) -> &mut ControllerClientState {
+        self.clients.entry(client_id).or_insert_with(|| ControllerClientState { client_id, ..Default::default() })
+    }
+
+    #[allow(dead_code)]
+    pub fn observe_workspaces(&mut self, tabs: Vec<ControllerTab>) -> bool {
+        let mut pending_materialized_tab_names = std::mem::take(&mut self.pending_materialized_tab_names);
+        let mut next_tabs = Vec::with_capacity(tabs.len());
+        for tab in tabs {
+            let tab_id = tab.tab_id;
+            let default_name = format!("Tab {}", tab.position + 1);
+            let incoming_name = if tab.name.is_empty() { default_name.clone() } else { tab.name };
+            let name = match pending_materialized_tab_names.get(&tab_id).cloned() {
+                Some(expected_name) if incoming_name == expected_name => {
+                    pending_materialized_tab_names.remove(&tab_id);
+                    incoming_name
+                }
+                Some(expected_name) if incoming_name == default_name => expected_name,
+                Some(_) => {
+                    pending_materialized_tab_names.remove(&tab_id);
+                    incoming_name
+                }
+                None => incoming_name,
+            };
+            next_tabs.push(ControllerTab { tab_id: tab.tab_id, position: tab.position, name, active: tab.active });
+        }
+        next_tabs.sort_by_key(|tab| tab.position);
+        let live_tab_ids: FastHashSet<WorkspaceId> = next_tabs.iter().map(|tab| tab.tab_id).collect();
+        pending_materialized_tab_names.retain(|tab_id, _| live_tab_ids.contains(tab_id));
+        self.pending_materialized_tab_names = pending_materialized_tab_names;
+        self.observed_workdirs.retain(|id, _| live_tab_ids.contains(id));
+        let tabs_changed = self.tabs != next_tabs;
+        self.tabs = next_tabs;
+
+        self.pinned_tabs.retain(|tab_id| live_tab_ids.contains(tab_id));
+        self.pane_to_tab.retain(|_, tab_id| live_tab_ids.contains(tab_id));
+        self.panes.retain(|_, pane| live_tab_ids.contains(&pane.tab_id));
+        self.pane_statuses.retain(|pane_id, _| self.pane_to_tab.get(pane_id).map(|tab_id| live_tab_ids.contains(tab_id)).unwrap_or(true));
+        let claimed_materialization = self.claim_materializing_tabs();
+        tabs_changed || claimed_materialization
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn update_tabs(&mut self, tabs: Vec<ControllerTab>) {
+        self.tabs = tabs;
+        self.tabs.sort_by_key(|tab| tab.position);
+    }
+
+    #[allow(dead_code)]
+    pub fn observe_panes(&mut self, observations: Vec<PaneObservation>) -> bool {
+        let mut live_panes = FastHashSet::default();
+        let previous_pane_to_tab = self.pane_to_tab.clone();
+        self.pane_to_tab.clear();
+        let previous_panes = self.panes.clone();
+        self.panes.clear();
+        for pane in observations {
+            if !self.tabs.iter().any(|tab| tab.tab_id == pane.workspace_id) {
+                continue;
+            }
+            let pane_target = pane.pane_id;
+            live_panes.insert(pane_target);
+            self.pane_to_tab.insert(pane_target, pane.workspace_id);
+            self.panes.insert(
+                pane_target,
+                ControllerPane {
+                    pane_id: pane_target,
+                    tab_id: pane.workspace_id,
+                    is_selectable: pane.is_selectable,
+                    is_focused: pane.is_focused,
+                    ordinal: pane.ordinal,
+                    cwd: previous_panes.get(&pane_target).and_then(|p| p.cwd.clone()),
+                    cwd_requested: previous_panes.get(&pane_target).is_some_and(|p| p.cwd_requested),
+                },
+            );
+        }
+        self.retain_panes(live_panes);
+        let pane_topology_changed = self.pane_to_tab != previous_pane_to_tab || self.panes != previous_panes;
+        let pane_ids: Vec<PaneTarget> = self.panes.keys().copied().collect();
+        let mut metadata_changed = false;
+        for pane_id in pane_ids {
+            metadata_changed |= self.refresh_pane_cwd_metadata(pane_id);
+        }
+        pane_topology_changed || metadata_changed
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_pane_tab(&mut self, pane_id: PaneTarget, tab_id: WorkspaceId) {
+        self.pane_to_tab.insert(pane_id, tab_id);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_test_pane(&mut self, pane_id: PaneTarget, tab_id: WorkspaceId, is_selectable: bool, is_focused: bool, ordinal: i64) {
+        self.pane_to_tab.insert(pane_id, tab_id);
+        self.panes.insert(pane_id, ControllerPane { pane_id, tab_id, is_selectable, is_focused, ordinal, cwd: None, cwd_requested: false });
+    }
+
+    #[allow(dead_code)]
+    pub fn set_pane_cwd(&mut self, pane_id: PaneTarget, cwd: String) -> bool {
+        if let Some(pane) = self.panes.get_mut(&pane_id) {
+            pane.cwd = Some(cwd);
+        }
+        self.refresh_pane_cwd_metadata(pane_id)
+    }
+
+    #[allow(dead_code)]
+    pub fn terminal_panes_for_cwd_refresh(&self) -> Vec<u32> {
+        let mut terminal_ids: Vec<u32> = self
+            .panes
+            .values()
+            .filter(|pane| pane.is_selectable)
+            .filter(|pane| pane.cwd.is_none() && !pane.cwd_requested)
+            .filter_map(|pane| match pane.pane_id {
+                PaneTarget::Terminal(id) => Some(id),
+                PaneTarget::Plugin(_) => None,
+            })
+            .collect();
+        terminal_ids.sort_unstable();
+        terminal_ids
+    }
+
+    pub fn mark_pane_cwd_requested(&mut self, pane_id: PaneTarget) {
+        if let Some(pane) = self.panes.get_mut(&pane_id) {
+            pane.cwd_requested = true;
+        }
+    }
+
+    pub fn set_status(&mut self, mut status: SetPaneStatus) {
+        self.receive_counter = self.receive_counter.saturating_add(1);
+        if status.timestamp_ms.is_none() {
+            status.timestamp_ms = Some(self.receive_counter);
+        }
+        self.pane_statuses.insert(status.pane_id, StoredPaneStatus { status, received_at: self.receive_counter });
+    }
+
+    #[allow(dead_code)]
+    pub fn clear_status(&mut self, pane_id: PaneTarget) {
+        self.pane_statuses.remove(&pane_id);
+    }
+
+    pub fn retain_panes(&mut self, live_panes: FastHashSet<PaneTarget>) {
+        self.pane_to_tab.retain(|pane_id, _| live_panes.contains(pane_id));
+        self.panes.retain(|pane_id, _| live_panes.contains(pane_id));
+        self.pane_statuses.retain(|pane_id, _| live_panes.contains(pane_id));
+    }
+
+    #[allow(dead_code)]
+    pub fn toggle_pin(&mut self, tab_id: WorkspaceId) {
+        if self.pinned_tabs.contains(&tab_id) {
+            self.pinned_tabs.remove(&tab_id);
+        } else {
+            self.pinned_tabs.insert(tab_id);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn set_sort_mode(&mut self, sort_mode: SortMode) {
+        self.sort_mode = sort_mode;
+    }
+
+    #[allow(dead_code)]
+    pub fn set_rail_config(&mut self, rail_config: RailConfig) {
+        self.rail_config = rail_config;
+    }
+
+    pub fn set_metadata_visibility_for_client(&mut self, client_id: u16, key: NodeKey, state: Option<MetadataTriState>) {
+        let controls = &mut self.client_mut(client_id).metadata_controls;
+        if let Some(state) = state {
+            controls.per_node.insert(key, state);
+        } else {
+            controls.per_node.remove(&key);
+        }
+    }
+
+    pub fn set_node_variable(&mut self, node: NodeKey, name: String, value: Option<String>) -> bool {
+        let previous = self.node_variable_overrides.get(&node).and_then(|values| values.get(&name)).cloned();
+        if previous == value {
+            return false;
+        }
+        if let Some(value) = value {
+            self.node_variable_overrides.entry(node).or_default().insert(name, value);
+        } else if let Some(values) = self.node_variable_overrides.get_mut(&node) {
+            values.remove(&name);
+            if values.is_empty() {
+                self.node_variable_overrides.remove(&node);
+            }
+        }
+        true
+    }
+
+    pub fn set_rail_ui_writer_client_id(&mut self, client_id: u16) {
+        self.rail_ui_writer_client_id = client_id;
+    }
+
+    pub fn apply_rail_ui_action(&mut self, action: RailUiAction) -> bool {
+        let toggle_definition = if let RailUiAction::ToggleVariable { name } = &action {
+            let Some(definition) = self
+                .template_catalog
+                .as_ref()
+                .and_then(|catalog| catalog.display_variables().iter().find(|item| &item.name == name))
+                .cloned()
+            else {
+                return false;
+            };
+            Some(definition)
+        } else {
+            None
+        };
+        self.rail_ui.revision =
+            RailUiRevision { sequence: self.rail_ui.revision.sequence.saturating_add(1), writer_client_id: self.rail_ui_writer_client_id };
+        match action {
+            RailUiAction::TogglePlacement { key } => {
+                if !self.rail_ui.collapsed_placements.insert(key.clone()) {
+                    self.rail_ui.collapsed_placements.remove(&key);
+                }
+            }
+            RailUiAction::ToggleVariable { name } => {
+                let definition = toggle_definition.expect("toggle definition resolved above");
+                let current = self.rail_ui.variables.get(&name).unwrap_or(&definition.default);
+                let next = match (&definition.variable_type, current) {
+                    (TemplateVariableType::Bool, DisplayVariableValue::Bool(value)) => DisplayVariableValue::Bool(!value),
+                    (TemplateVariableType::Enum { values }, DisplayVariableValue::Enum(value)) => {
+                        let next =
+                            values.iter().position(|candidate| candidate == value).map(|index| (index + 1) % values.len()).unwrap_or(0);
+                        DisplayVariableValue::Enum(values.get(next).cloned().unwrap_or_else(|| value.clone()))
+                    }
+                    _ => definition.default.clone(),
+                };
+                self.rail_ui.variables.insert(name, next);
+            }
+            RailUiAction::ScrollBy { delta } => {
+                self.rail_ui.scroll_offset = self.rail_ui.scroll_offset.saturating_add(delta);
+            }
+            RailUiAction::SetScrollOffset { offset } => {
+                self.rail_ui.scroll_offset = offset;
+            }
+            RailUiAction::ResetScroll => {
+                self.rail_ui.scroll_offset = 0;
+            }
+            RailUiAction::SetSiblingOrder { loop_key, order } => {
+                if order.is_empty() {
+                    self.rail_ui.sibling_orders.remove(&loop_key);
+                } else {
+                    self.rail_ui.sibling_orders.insert(loop_key, order);
+                }
+            }
+        }
+        true
+    }
+
+    pub fn rail_ui_state(&self) -> RailUiState {
+        RailUiState {
+            revision: self.rail_ui.revision,
+            collapsed_placements: self.rail_ui.collapsed_placements.iter().cloned().collect(),
+            scroll_offset: self.rail_ui.scroll_offset,
+            variables: self.rail_ui.variables.clone(),
+            sibling_orders: self.rail_ui.sibling_orders.clone().into_iter().collect(),
+        }
+    }
+
+    pub fn apply_rail_ui_state(&mut self, state: RailUiState) -> bool {
+        if state.revision <= self.rail_ui.revision {
+            return false;
+        }
+        self.rail_ui = ControllerRailUiState {
+            revision: state.revision,
+            collapsed_placements: state.collapsed_placements.into_iter().collect(),
+            scroll_offset: state.scroll_offset,
+            variables: state.variables,
+            sibling_orders: state.sibling_orders.into_iter().filter(|(_, order)| !order.is_empty()).collect(),
+        };
+        true
+    }
+
+    pub fn set_template_catalog(&mut self, catalog: Option<TemplateConfigCatalog>) {
+        self.template_catalog = Some(catalog.unwrap_or_default());
+        self.template_generation += 1;
+        if let Some(catalog) = self.template_catalog.as_ref() {
+            for variable in catalog.display_variables() {
+                self.rail_ui.variables.entry(variable.name.clone()).or_insert_with(|| variable.default.clone());
+            }
+        }
+    }
+
+    pub fn set_template_config_diagnostics(&mut self, diagnostics: TemplateConfigDiagnostics) {
+        self.template_config = diagnostics;
+    }
+
+    pub fn template_config_diagnostics(&self) -> &TemplateConfigDiagnostics {
+        &self.template_config
+    }
+
+    /// Apply a patch the core (or the Zellij controller) owns, as written:
+    /// entities keep the providers they name, and those naming none are
+    /// [`LOCAL_PROVIDER`](crate::LOCAL_PROVIDER)'s. Its facts belong to no
+    /// subscription, so no retraction or staleness touches them.
+    pub fn apply_metadata_patch(&mut self, mut patch: MetadataPatch) -> bool {
+        patch.fill_provider(LOCAL_PROVIDER);
+        self.apply_patch_from(None, patch)
+    }
+
+    /// Apply a patch from `provider`, the subscription it came from. The
+    /// provider is stamped over every entity the patch names, and over the
+    /// provider of any entity it names by `entity.kind`/`entity.id` (or the
+    /// `.host.` keys) on another target; the patch never names it itself.
+    pub fn apply_provider_patch(&mut self, provider: &str, mut patch: MetadataPatch) -> bool {
+        patch.stamp_provider(provider);
+        stamp_identity_providers(&mut patch, provider);
+        self.apply_patch_from(Some(provider), patch)
+    }
+
+    /// Remove every fact `provider` contributed. Subjects on open workspace
+    /// paths that it published are retained, as when their facts expire.
+    pub fn retract_provider(&mut self, provider: &str) -> bool {
+        let (changed, affected) = self.metadata.retract(provider);
+        let mut retained_changed = false;
+        for entity in &affected {
+            retained_changed |= self.refresh_retained_subjects_for(Some(entity));
+        }
+        changed || retained_changed
+    }
+
+    /// Mark a provider stale (its connection dropped) or fresh again. A
+    /// stale provider's facts are kept, its entities flagged stale; its leased
+    /// non-entity facts don't expire while stale, and renew from now when it
+    /// is fresh again.
+    pub fn set_provider_stale(&mut self, provider: &str, stale: bool) -> bool {
+        let now = self.now();
+        self.metadata.set_stale(provider, stale, now)
+    }
+
+    pub fn provider_is_stale(&self, provider: &str) -> bool {
+        self.metadata.is_stale(provider)
+    }
+
+    fn apply_patch_from(&mut self, provider: Option<&str>, patch: MetadataPatch) -> bool {
+        // A producer removes an entity by unsetting both identity facts. TTL
+        // expiry and reassertion after a connection loss never take this path.
+        let removed = match &patch.target {
+            MetadataTarget::Entity(entity)
+                if patch.unset.iter().any(|key| key == KEY_ENTITY_ID)
+                    && patch.unset.iter().any(|key| key == KEY_ENTITY_KIND)
+                    && !patch.set.contains_key(KEY_ENTITY_ID)
+                    && !patch.set.contains_key(KEY_ENTITY_KIND)
+                    && self.metadata.source_contributes(&EntityId::Entity(entity.clone()), KEY_ENTITY_ID, provider, &patch.source_id) =>
+            {
+                Some(entity.clone())
+            }
+            _ => None,
+        };
+        let retained_target = match &patch.target {
+            MetadataTarget::Entity(entity) => Some(entity.clone()),
+            _ => None,
+        };
+        let unset_keys: Vec<_> = patch
+            .unset
+            .iter()
+            .filter(|key| self.metadata.source_contributes(&EntityId::from(patch.target.clone()), key, provider, &patch.source_id))
+            .cloned()
+            .collect();
+        let is_removal = removed.is_some();
+        let next_receive_counter = self.receive_counter.saturating_add(1);
+        let outcome = self.metadata.apply_patch_from(provider, patch, self.clock_ms.unwrap_or(next_receive_counter));
+        if outcome.touched {
+            self.receive_counter = next_receive_counter;
+        }
+        let mut ended_changed = false;
+        if let Some(entity) = removed {
+            if self.retained_subjects.contains_key(&entity)
+                && !self.metadata.has_contributors(&EntityId::Entity(entity.clone()), KEY_ENTITY_ID)
+            {
+                ended_changed = self.ended_subjects.insert(entity);
+            }
+        }
+        // Explicit single-fact unsets on a still-observed subject are not
+        // history. Keep the old record only for authoritative removal/loss.
+        if !is_removal {
+            if let Some(entity) = retained_target.as_ref().filter(|entity| self.retained_subjects.contains_key(*entity)) {
+                let current = self.metadata.resolved(&EntityId::Entity(entity.clone()), self.now());
+                if current.contains_key(KEY_ENTITY_ID) || current.contains_key(KEY_DISPLAY_LABEL) {
+                    if let Some(retained) = self.retained_subjects.get_mut(entity) {
+                        for key in unset_keys {
+                            ended_changed |= retained.remove(&key).is_some();
+                        }
+                    }
+                }
+            }
+        }
+        let retained_changed = retained_target.as_ref().is_some_and(|entity| self.refresh_retained_subjects_for(Some(entity)));
+        outcome.view_changed || ended_changed || retained_changed
+    }
+
+    pub fn bootstrap_snapshot(&self) -> ControllerBootstrapSnapshot {
+        let mut pinned_tabs: Vec<WorkspaceId> = self.pinned_tabs.iter().copied().collect();
+        pinned_tabs.sort_unstable();
+        let mut pane_statuses: Vec<SetPaneStatus> = self.pane_statuses.values().map(|stored| stored.status.clone()).collect();
+        pane_statuses.sort_by_key(|status| status.timestamp_ms.unwrap_or(0));
+
+        ControllerBootstrapSnapshot {
+            sort_mode: self.sort_mode,
+            config: self.rail_config,
+            pinned_tabs,
+            pane_statuses,
+            node_variable_overrides: self
+                .node_variable_overrides
+                .iter()
+                .map(|(node, values)| NodeVariableOverrides { node: node.clone(), values: values.clone() })
+                .collect(),
+            metadata_patches: self.metadata.snapshot_patches(self.now()),
+            rail_ui_state: RailUiState {
+                variables: self
+                    .template_catalog
+                    .as_ref()
+                    .map(|catalog| {
+                        catalog
+                            .display_variables()
+                            .iter()
+                            .filter(|variable| variable.persist)
+                            .filter_map(|variable| {
+                                self.rail_ui.variables.get(&variable.name).cloned().map(|value| (variable.name.clone(), value))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                ..self.rail_ui_state()
+            },
+        }
+    }
+
+    pub fn apply_bootstrap_snapshot(&mut self, snapshot: ControllerBootstrapSnapshot) {
+        self.sort_mode = snapshot.sort_mode;
+        self.rail_config = snapshot.config;
+        self.pinned_tabs.extend(snapshot.pinned_tabs);
+        for overrides in snapshot.node_variable_overrides {
+            self.node_variable_overrides.entry(overrides.node).or_default().extend(overrides.values);
+        }
+        for status in snapshot.pane_statuses {
+            self.set_status(status);
+        }
+        for patch in snapshot.metadata_patches {
+            self.apply_metadata_patch(patch);
+        }
+        self.apply_rail_ui_state(snapshot.rail_ui_state);
+    }
+
+    fn plugin_registration(&self, plugin_id: u32) -> Option<&PluginRegistration> {
+        for client in self.clients.values() {
+            if let Some(registration) = client.background_rails.get(&plugin_id) {
+                return Some(registration);
+            }
+            if let Some(registration) = client.background_config_editors.get(&plugin_id) {
+                return Some(registration);
+            }
+            for tab in client.tabs.values() {
+                if let Some(registration) = tab.rails.get(&plugin_id) {
+                    return Some(registration);
+                }
+                if let Some(registration) = tab.config_editors.get(&plugin_id) {
+                    return Some(registration);
+                }
+            }
+        }
+        None
+    }
+
+    #[allow(dead_code)]
+    pub fn register_rail(&mut self, hello: PluginRegistrationHello) -> bool {
+        let registration = PluginRegistration { identity: hello.identity, placement: hello.placement };
+        if self.plugin_registration(registration.identity.plugin_id) == Some(&registration) {
+            return false;
+        }
+        self.unregister_renderer(registration.identity.plugin_id);
+        let client = self.client_mut(registration.identity.client_id);
+        match registration.placement {
+            PluginPlacement::Tab { tab_id, .. } => {
+                let tab = client.tabs.entry(tab_id).or_insert_with(|| ControllerClientTabState {
+                    tab_id,
+                    rails: BTreeMap::new(),
+                    config_editors: BTreeMap::new(),
+                });
+                tab.rails.insert(registration.identity.plugin_id, registration);
+            }
+            PluginPlacement::Background | PluginPlacement::Unknown => {
+                client.background_rails.insert(registration.identity.plugin_id, registration);
+            }
+        }
+        true
+    }
+
+    #[allow(dead_code)]
+    pub fn retain_rails(&mut self, live_plugin_ids: &HashSet<u32>) {
+        for client in self.clients.values_mut() {
+            client.background_rails.retain(|plugin_id, _| live_plugin_ids.contains(plugin_id));
+            client.background_config_editors.retain(|plugin_id, _| live_plugin_ids.contains(plugin_id));
+            for tab in client.tabs.values_mut() {
+                tab.rails.retain(|plugin_id, _| live_plugin_ids.contains(plugin_id));
+                tab.config_editors.retain(|plugin_id, _| live_plugin_ids.contains(plugin_id));
+            }
+            client.tabs.retain(|_, tab| !tab.rails.is_empty() || !tab.config_editors.is_empty());
+        }
+        self.clients.retain(|_, client| {
+            !client.background_rails.is_empty()
+                || !client.background_config_editors.is_empty()
+                || !client.tabs.is_empty()
+                || client.inspected_node.is_some()
+                || client.metadata_controls != MetadataControls::default()
+        });
+    }
+
+    /// Remove a renderer by plugin id, regardless of whether it was registered
+    /// as a rail or a config editor. Returns true if anything was removed.
+    pub fn unregister_renderer(&mut self, plugin_id: u32) -> bool {
+        let mut removed = false;
+        for client in self.clients.values_mut() {
+            removed |= client.background_rails.remove(&plugin_id).is_some();
+            removed |= client.background_config_editors.remove(&plugin_id).is_some();
+            for tab in client.tabs.values_mut() {
+                removed |= tab.rails.remove(&plugin_id).is_some();
+                removed |= tab.config_editors.remove(&plugin_id).is_some();
+            }
+            client.tabs.retain(|_, tab| !tab.rails.is_empty() || !tab.config_editors.is_empty());
+        }
+        removed
+    }
+
+    #[allow(dead_code)]
+    pub fn rail_plugin_ids(&self) -> Vec<u32> {
+        self.rail_plugin_targets().into_iter().map(|target| target.plugin_id).collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn rail_plugin_targets(&self) -> Vec<RendererHello> {
+        let mut targets = vec![];
+        for client in self.clients.values() {
+            targets.extend(client.background_rails.values().map(|registration| registration.identity.clone()));
+            targets.extend(client.background_config_editors.values().map(|registration| registration.identity.clone()));
+            for tab in client.tabs.values() {
+                targets.extend(tab.rails.values().map(|registration| registration.identity.clone()));
+                targets.extend(tab.config_editors.values().map(|registration| registration.identity.clone()));
+            }
+        }
+        targets
+    }
+
+    #[allow(dead_code)]
+    pub fn known_rail_count(&self) -> usize {
+        self.clients
+            .values()
+            .map(|client| client.background_rails.len() + client.tabs.values().map(|tab| tab.rails.len()).sum::<usize>())
+            .sum()
+    }
+
+    #[allow(dead_code)]
+    pub fn known_config_editor_count(&self) -> usize {
+        self.clients
+            .values()
+            .map(|client| client.background_config_editors.len() + client.tabs.values().map(|tab| tab.config_editors.len()).sum::<usize>())
+            .sum()
+    }
+
+    pub fn config_editor_target_for_client_tab(&self, client_id: u16, tab_id: WorkspaceId) -> Option<RendererHello> {
+        let client = self.clients.get(&client_id)?;
+        if let Some(target) = client.tabs.get(&tab_id).and_then(|tab| tab.config_editors.values().next()) {
+            return Some(target.identity.clone());
+        }
+        None
+    }
+
+    pub fn set_inspected_node(&mut self, client_id: u16, node_key: NodeKey) -> bool {
+        let client = self.client_mut(client_id);
+        if client.inspected_node.as_ref() == Some(&node_key) {
+            return false;
+        }
+        client.inspected_node = Some(node_key);
+        true
+    }
+
+    #[allow(dead_code)]
+    pub fn register_config_editor(&mut self, hello: PluginRegistrationHello) -> bool {
+        let registration = PluginRegistration { identity: hello.identity, placement: hello.placement };
+        if self.plugin_registration(registration.identity.plugin_id) == Some(&registration) {
+            return false;
+        }
+        self.unregister_renderer(registration.identity.plugin_id);
+        let client = self.client_mut(registration.identity.client_id);
+        match registration.placement {
+            PluginPlacement::Tab { tab_id, .. } => {
+                let tab = client.tabs.entry(tab_id).or_insert_with(|| ControllerClientTabState {
+                    tab_id,
+                    rails: BTreeMap::new(),
+                    config_editors: BTreeMap::new(),
+                });
+                tab.config_editors.insert(registration.identity.plugin_id, registration);
+            }
+            PluginPlacement::Background | PluginPlacement::Unknown => {
+                client.background_config_editors.insert(registration.identity.plugin_id, registration);
+            }
+        }
+        true
+    }
+
+    pub fn view_model(&self) -> ControllerViewModel {
+        let _phase = profile::span("presentation");
+        let evaluation = self.evaluate_revision();
+        self.view_model_in(&evaluation, ModelOutputs::Controller)
+    }
+
+    pub(crate) fn evaluate_revision(&self) -> RevisionEvaluation {
+        let _phase = profile::span("revision-evaluation");
+        let catalog = self.catalog();
+        let live_targets = self.materialized_action_targets(&catalog);
+        let seeds = self.tab_seed_metadata_entries();
+        let resolved_workspaces: Vec<ResolvedMetadata> = std::iter::once(EntityId::Root)
+            .chain(self.tabs.iter().map(|tab| EntityId::Tab(tab.tab_id)))
+            .map(|target| {
+                let seed = match target {
+                    EntityId::Tab(id) => seeds.get(&id).cloned().unwrap_or_default(),
+                    _ => BTreeMap::new(),
+                };
+                let (values, source_entries, reachable_identities) = self.resolve_target_metadata(&target, seed);
+                ResolvedMetadata { target, values, source_entries, reachable_identities }
+            })
+            .collect();
+        let tab_metadata = resolved_workspaces
+            .iter()
+            .filter_map(|m| if let EntityId::Tab(id) = m.target { Some((id, &m.values)) } else { None })
+            .collect();
+        let live = self.live_presentation_states(&catalog, &tab_metadata);
+        RevisionEvaluation { catalog, live_targets, resolved_workspaces, live }
+    }
+
+    pub(crate) fn presentation_in(&self, evaluation: &RevisionEvaluation) -> SurfaceSnapshot {
+        let _phase = profile::span("presentation");
+        self.view_model_in(evaluation, ModelOutputs::Presentation).presentation.unwrap_or_default()
+    }
+
+    fn view_model_in(&self, evaluation: &RevisionEvaluation, outputs: ModelOutputs) -> ControllerViewModel {
+        let presentation_only = matches!(outputs, ModelOutputs::Presentation);
+        let catalog = &evaluation.catalog;
+        let mut tabs: Vec<TabCard> = if presentation_only {
+            vec![]
+        } else {
+            self.tabs
+                .iter()
+                .map(|tab| TabCard {
+                    tab_id: tab.tab_id,
+                    position: tab.position,
+                    name: tab.name.clone(),
+                    active: tab.active,
+                    pinned: self.pinned_tabs.contains(&tab.tab_id),
+                    status: self.status_for_tab(tab.tab_id),
+                    templates: ResolvedTemplateSlots::default(),
+                    active_pane: self.panes.values().find(|pane| pane.tab_id == tab.tab_id && pane.is_focused).map(|pane| pane.pane_id),
+                })
+                .collect()
+        };
+
+        match self.sort_mode {
+            SortMode::Controller | SortMode::Position => {
+                tabs.sort_by_key(|tab| tab.position);
+            }
+            SortMode::PinnedFirst => {
+                tabs.sort_by_key(|tab| (!tab.pinned, tab.position));
+            }
+            SortMode::LatestStatus => {
+                tabs.sort_by(|a, b| {
+                    let a_key = self.status_sort_key(a.status.as_ref());
+                    let b_key = self.status_sort_key(b.status.as_ref());
+                    b_key.cmp(&a_key).then_with(|| a.position.cmp(&b.position))
+                });
+            }
+        }
+
+        let resolved_metadata =
+            if presentation_only { evaluation.resolved_workspaces.clone() } else { self.resolved_metadata_for_tabs(&tabs, catalog) };
+        let observed_identities = if presentation_only { vec![] } else { observed_metadata_identities(&resolved_metadata) };
+        let region_catalog_entities = &catalog.entities;
+        let (effective_variables, variable_warnings) = self.resolve_effective_variables(&resolved_metadata);
+        let mut template_config = self.template_config.clone();
+        template_config.effective_variables = effective_variables;
+        for warning in variable_warnings {
+            if !template_config.warnings.contains(&warning) {
+                template_config.warnings.push(warning);
+            }
+        }
+        let index_phase = profile::span("placement-index");
+        let (index, warnings) = self.refreshed_placement_index(region_catalog_entities, catalog.generation);
+        for warning in warnings {
+            if !template_config.warnings.contains(&warning) {
+                template_config.warnings.push(warning);
+            }
+        }
+        let placement_index: &PlacementIndex = &index;
+        drop(index_phase);
+        let placements_phase = profile::span("placements");
+        let surface_regions = self.evaluate_regions(region_catalog_entities, placement_index);
+        drop(placements_phase);
+        let variables_phase = profile::span("placement-variables");
+        let root = template_config.effective_variables.iter().find(|variables| variables.node == NodeKey::Root).cloned();
+        for warning in self.resolve_placement_variables(&surface_regions, root.as_ref()) {
+            if !template_config.warnings.contains(&warning) {
+                template_config.warnings.push(warning);
+            }
+        }
+        let node_variables = self.kept.variables.borrow();
+        if !presentation_only {
+            fn collect(placements: &[Rc<EvaluatedPlacement>], variables: &NodeVariables, out: &mut Vec<EffectiveNodeVariables>) {
+                for placement in placements {
+                    if let Some(memo) = variables.get(&Rc::as_ptr(placement)) {
+                        out.push((*memo.resolved).clone());
+                    }
+                    collect(&placement.children, variables, out);
+                }
+            }
+            for region in &surface_regions {
+                collect(&region.entities, &node_variables.nodes, &mut template_config.effective_variables);
+            }
+        }
+        drop(variables_phase);
+        fn collect_matched(nodes: &[Rc<EvaluatedPlacement>], matched: &mut BTreeSet<EntityRef>) {
+            for node in nodes {
+                matched.insert(node.entity.clone());
+                collect_matched(&node.children, matched);
+            }
+        }
+        let mut matched = BTreeSet::new();
+        for section in surface_regions.iter().filter(|_| !presentation_only) {
+            collect_matched(&section.entities, &mut matched);
+        }
+        let unmatched_entities = catalog
+            .entities
+            .iter()
+            .filter(|entity| !presentation_only && !matched.contains(&entity.entity))
+            .map(|entity| entity.entity.clone())
+            .collect();
+        let mut model = ControllerViewModel {
+            unmatched_entities,
+            sort_mode: self.sort_mode,
+            config: self.rail_config,
+            template_config,
+            resolved_metadata,
+            observed_identities,
+            tabs,
+            metadata_controls: self.clients.get(&0).map(|client| client.metadata_controls.clone()).unwrap_or_default(),
+            inspected_node: None,
+            collapsed_placements: self.rail_ui.collapsed_placements.iter().cloned().collect(),
+            sibling_orders: self.rail_ui.sibling_orders.clone().into_iter().collect(),
+            display_variables: self.template_catalog.as_ref().map(|catalog| catalog.display_variables().to_vec()).unwrap_or_default(),
+            display_variable_values: self.rail_ui.variables.clone(),
+            presentation: None,
+        };
+        // Reuse this build's resolved facts. Re-running activation resolution for
+        // every displayed entity would rebuild the catalog once per node.
+        let live = &evaluation.live;
+        // Selection belongs to the workspace subject, not shared action targets.
+        let WorkspaceIdentities { subjects, hosts: host_entities } = self.workspace_identities();
+        let mut exact = BTreeMap::new();
+        for workspace in &self.tabs {
+            // A tab's subject and its host entity (distinct entities) are each
+            // live for it; selection follows the tab.
+            for entity in [subjects.get(&workspace.tab_id), host_entities.get(&workspace.tab_id)].into_iter().flatten() {
+                // Prefer the selected workspace; otherwise preserve inventory order.
+                let state = PresentationState::Live { workspace_id: workspace.tab_id, selected: workspace.active };
+                let existing = exact.entry(entity.clone()).or_insert(state.clone());
+                if workspace.active {
+                    *existing = state;
+                }
+            }
+        }
+        // What a node presenting an entity shows it as: live in its exact
+        // workspace, or where its action target is open; else latent, unless
+        // its action target is materialized.
+        let live_targets = &evaluation.live_targets;
+        let state = |entity: &EntityRef, facts: &FactMap| {
+            if let Some(state) = exact.get(entity) {
+                return state.clone();
+            }
+            let own = match facts.get(KEY_ACTION_TARGET) {
+                Some(MetadataValue::Text(target)) => Some(&**target),
+                _ => None,
+            };
+            if let Some((_, state)) = live.iter().find(|(target, _)| is_action_target(entity, own, target)) {
+                return Self::alias_presentation_state(state, &subjects, entity);
+            }
+            if live_targets.iter().any(|target| is_action_target(entity, own, target)) {
+                return PresentationState::default();
+            }
+            if self.pending_latent_materializations.keys().any(|target| is_action_target(entity, own, target)) {
+                return PresentationState::Opening;
+            }
+            PresentationState::Latent {
+                openable: self.openable(
+                    matches!(facts.get(KEY_MATERIALIZE_RECIPE), Some(MetadataValue::Text(recipe)) if !recipe.is_empty()),
+                    &entity.kind,
+                ),
+            }
+        };
+        // A node is stale when the entity it presents (a ref's target) has a
+        // stale provider.
+        let any_stale = self.metadata.has_stale();
+        let stale = |entity: &EntityRef| {
+            any_stale && {
+                let target =
+                    (entity.kind == system::REF).then(|| catalog.entity(entity)).flatten().and_then(|entity| ref_target(&entity.facts));
+                self.metadata.is_stale(&target.as_ref().unwrap_or(entity).provider)
+            }
+        };
+        let surface_phase = profile::span("surface");
+        let cx = SurfaceContext { generation: self.template_generation, variables: &node_variables.nodes, state: &state, stale: &stale };
+        let presentation = SurfaceSnapshot::resolve(&model, &surface_regions, cx, &mut self.kept.surface.borrow_mut());
+        model.presentation = Some(presentation);
+        drop(surface_phase);
+        if let Some(surface) = &mut model.presentation {
+            // Default groups (`.default`) cover tabs nothing else places.
+            let default_groups = region_catalog_entities
+                .iter()
+                .filter(|e| {
+                    e.entity.kind == system::GROUP
+                        && matches!(e.facts.get(system::DEFAULT).map(|v| &v.value), Some(MetadataValue::Bool(true)))
+                })
+                .map(|e| e.entity.clone())
+                .collect::<Vec<_>>();
+            surface.cover_workspaces(&self.tabs, &host_entities, &default_groups, &stale);
+            surface.diagnostics.extend(model.template_config.warnings.iter().cloned());
+        }
+        model
+    }
+
+    pub fn view_model_for_client(&self, client_id: u16) -> ControllerViewModel {
+        let mut model = self.view_model();
+        if let Some(client) = self.clients.get(&client_id) {
+            model.metadata_controls = client.metadata_controls.clone();
+            model.inspected_node = client.inspected_node.clone();
+        }
+        model
+    }
+
+    fn alias_presentation_state(
+        state: &PresentationState,
+        subjects: &BTreeMap<WorkspaceId, EntityRef>,
+        entity: &EntityRef,
+    ) -> PresentationState {
+        let mut state = state.clone();
+        if let PresentationState::Live { workspace_id, selected } = &mut state {
+            if subjects.get(workspace_id).is_some_and(|subject| subject != entity) {
+                *selected = false;
+            }
+        }
+        state
+    }
+
+    /// Shared workspace binding rules for placement and catalog detail consumers.
+    fn live_presentation_states(
+        &self,
+        catalog: &CatalogEvaluation,
+        tab_metadata: &BTreeMap<WorkspaceId, &BTreeMap<String, MetadataEntry>>,
+    ) -> BTreeMap<String, PresentationState> {
+        let mut live = BTreeMap::new();
+        for workspace in &self.tabs {
+            if let Some(values) = tab_metadata.get(&workspace.tab_id) {
+                // An entity is matched by its own action target, if it
+                // publishes one, else one made from its identity.
+                let target_of = |entity: EntityRef| {
+                    catalog
+                        .entity(&entity)
+                        .and_then(|e| metadata_entry_text(&e.facts, KEY_ACTION_TARGET))
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| entity.action_target())
+                };
+                let target = metadata_entry_text(values, KEY_ACTION_TARGET)
+                    .map(str::to_owned)
+                    .or_else(|| entity_ref_from_entries(values).map(target_of));
+                // A tab's host entity is live there too, alongside any subject.
+                let host = host_entity_ref_from_entries(values).map(target_of);
+                for target in [target, host].into_iter().flatten() {
+                    live.entry(target).or_insert(PresentationState::Live { workspace_id: workspace.tab_id, selected: workspace.active });
+                }
+            }
+        }
+        for (entity, id) in self.directory_bindings(&catalog.entities) {
+            if let Some(candidate) = catalog.entity(&entity) {
+                let action_target =
+                    metadata_entry_text(&candidate.facts, KEY_ACTION_TARGET).map(str::to_owned).unwrap_or_else(|| entity.action_target());
+                let selected = self.tabs.iter().any(|tab| tab.tab_id == id && tab.active);
+                live.entry(action_target).or_insert(PresentationState::Live { workspace_id: id, selected });
+            }
+        }
+        live
+    }
+
+    /// Resolve every catalog entity, including identities with no placement.
+    /// Builds one catalog and resolves detail templates and observations for it;
+    /// native hosts opt in with snapshot_acquire_details, keeping flat acquire cheap.
+    pub fn detail_cards(&self) -> (u64, Vec<DetailCard>) {
+        let _phase = profile::span("details");
+        let evaluation = self.evaluate_revision();
+        (self.now(), self.detail_cards_in(&evaluation, None))
+    }
+
+    pub(crate) fn detail_cards_in(&self, evaluation: &RevisionEvaluation, target: Option<&EntityRef>) -> Vec<DetailCard> {
+        let _phase = profile::span("detail-generation");
+        let catalog = &evaluation.catalog;
+        let live = &evaluation.live;
+        let entities: Vec<_> = match target {
+            Some(target) => catalog.entity(target).into_iter().collect(),
+            None => catalog.entities.iter().collect(),
+        };
+        let cards = entities
+            .into_iter()
+            .map(|entity| {
+                let facts = entity_facts(&entity.entity, &entity.facts);
+                let slot = self.resolve_template_slot(TemplateConfigSlot::Detail, TemplateConfigNodeKind::Entity, &facts);
+                let context = TemplateConfigMatchContext {
+                    slot: TemplateConfigSlot::Detail,
+                    node_kind: TemplateConfigNodeKind::Entity,
+                    metadata: &facts,
+                    collapsed: false,
+                    collapsible: false,
+                    active_tab_name: None,
+                };
+                let fields = slot
+                    .as_ref()
+                    .and_then(|slot| slot.render_ready.as_ref())
+                    .map(|ready| {
+                        ready
+                            .fields
+                            .iter()
+                            .filter_map(|spec| {
+                                let mut field = resolve_field(spec, context, &entity.facts)?;
+                                field.source_id =
+                                    field.observation.as_ref().and_then(|_| entity.source(&field.source_key)).map(str::to_owned);
+                                field.relations.retain(|target| target != &entity.entity);
+                                Some(field)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let action_target = metadata_entry_text(&entity.facts, KEY_ACTION_TARGET)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| entity.entity.action_target());
+                let workspace_id = match live.get(&action_target) {
+                    Some(PresentationState::Live { workspace_id, .. }) => Some(*workspace_id),
+                    _ => None,
+                };
+                use crate::detail::DetailIntent;
+                let primary_intent = if self.subject_url(&entity.entity).is_some() {
+                    DetailIntent::OpenUrl
+                } else if workspace_id.is_some() {
+                    DetailIntent::FocusWorkspace
+                } else if !evaluation.live_targets.contains(&action_target)
+                    && !self.pending_latent_materializations.contains_key(&action_target)
+                    && self.openable(materialize_recipe(&entity.facts).is_some(), &entity.entity.kind)
+                {
+                    DetailIntent::MaterializeWorkspace
+                } else {
+                    DetailIntent::Inspect
+                };
+                DetailCard {
+                    entity: entity.entity.clone(),
+                    label: metadata_entry_text(&entity.facts, KEY_DISPLAY_LABEL).unwrap_or(&entity.entity.id).to_owned(),
+                    workspace_id,
+                    primary_label: metadata_entry_text(&entity.facts, "action.primary.label")
+                        .unwrap_or(primary_intent.default_label())
+                        .to_owned(),
+                    primary_intent,
+                    fields,
+                    error: slot.and_then(|slot| slot.resolve_error.clone()),
+                }
+            })
+            .collect();
+        cards
+    }
+
+    /// What the tool strip of `subject`'s workspace lists: its kind's `strip`
+    /// loops matched over the catalog with the subject bound by its kind's
+    /// name, by the same rules as the sidebar's (visibility, Show finished,
+    /// providers). Empty for an entity not in the catalog or a kind without a
+    /// strip.
+    pub(crate) fn strip_in(&self, evaluation: &RevisionEvaluation, subject: &EntityRef) -> Vec<crate::tool_strip::StripEntry> {
+        let catalog = &evaluation.catalog;
+        let Some(entity) = catalog.entity(subject) else {
+            return vec![];
+        };
+        let facts = entity_facts(&entity.entity, &entity.facts);
+        let Some(strip) = self.workspace_template(&subject.kind, &facts).map(|template| &template.strip) else {
+            return vec![];
+        };
+        // The snapshot reports visibility warnings; a strip only reads it.
+        let (index, _) = self.refreshed_placement_index(&catalog.entities, catalog.generation);
+        let root = Scope::default();
+        let scope = root.within(&subject.kind, entity, true);
+        let mut entries = vec![];
+        // An entity two loops match is listed once, where it first appears.
+        let mut listed = HashSet::new();
+        for (section, loops) in strip.sections() {
+            for definition in loops {
+                let mut reads = LoopReads::default();
+                for position in self.placement_matches(definition, &catalog.entities, &index, &scope, &mut reads) {
+                    if listed.insert(position) {
+                        entries.push(crate::tool_strip::StripEntry { section, entity: catalog.entities[position].entity.clone() });
+                    }
+                }
+            }
+        }
+        entries
+    }
+
+    /// The placement index, brought up to `entities` (the catalog list of
+    /// `generation`) and to the visibility policies, with their warnings.
+    fn refreshed_placement_index(
+        &self,
+        entities: &[CatalogEntity],
+        generation: u64,
+    ) -> (std::cell::RefMut<'_, PlacementIndex>, Vec<String>) {
+        let mut index = self.kept.placement_index.borrow_mut();
+        let reindexed = index.update(entities, Some(generation));
+        let warnings = match self.template_catalog.as_ref() {
+            Some(config) => index.update_visibility(entities, config, self.template_generation, &self.rail_ui.variables, reindexed),
+            None => vec![],
+        };
+        (index, warnings)
+    }
+
+    pub(crate) fn evaluation_time(&self) -> u64 {
+        self.now()
+    }
+
+    fn display_entity(&self, entity: &CatalogEntity) -> EvaluatedPlacement {
+        let generation = self.template_generation;
+        if let Some((facts, at, display)) = self.kept.displays.borrow().get(&entity.entity) {
+            if *at == generation && Rc::ptr_eq(facts, &entity.facts) {
+                return display.clone();
+            }
+        }
+        let display = self.display_entity_uncached(entity);
+        let mut displays = self.kept.displays.borrow_mut();
+        // Forget entities whose facts nothing else holds any more (gone, or
+        // superseded), so the cache stays the size of the catalog.
+        if displays.len() > 64 && displays.len() > 2 * self.metadata.targets().count() {
+            displays.retain(|_, (facts, _, _)| Rc::strong_count(facts) > 1);
+        }
+        displays.insert(entity.entity.clone(), (entity.facts.clone(), generation, display.clone()));
+        display
+    }
+
+    /// `template_name` applied to `entity`, kept while its resolved facts
+    /// and the template catalog stay the same.
+    fn applied_template(
+        &self,
+        catalog: &TemplateConfigCatalog,
+        template_name: &str,
+        metadata: &FactMap,
+    ) -> Option<Rc<ResolvedTemplateSlot>> {
+        self.resolution(catalog.placement_resolution_key(template_name, metadata), || {
+            match catalog.resolve_placement_template(template_name, metadata) {
+                Ok(Some(resolved)) => Some(ResolvedTemplateSlot {
+                    template_name: resolved.name.clone(),
+                    fields: vec![],
+                    render_ready: Some(resolved.render_ready()),
+                    setters: resolved.setters.clone(),
+                    effective_kdl: EffectiveKdl::of(resolved),
+                    resolve_error: None,
+                }),
+                Ok(None) => None,
+                Err(error) => Some(ResolvedTemplateSlot {
+                    template_name: "<resolve-error>".to_owned(),
+                    fields: vec![],
+                    render_ready: None,
+                    setters: vec![],
+                    effective_kdl: Default::default(),
+                    resolve_error: Some(error.to_string()),
+                }),
+            }
+        })
+    }
+
+    /// A template's resolution for facts with `key`, shared by all with it:
+    /// made once while the template catalog lasts.
+    fn resolution(&self, key: ResolutionKey, resolve: impl FnOnce() -> Option<ResolvedTemplateSlot>) -> Option<Rc<ResolvedTemplateSlot>> {
+        let mut kept = self.kept.resolutions.borrow_mut();
+        if kept.0 != self.template_generation {
+            *kept = (self.template_generation, FastHashMap::default());
+        }
+        if let Some(slot) = kept.1.get(&key) {
+            return slot.clone();
+        }
+        let slot = resolve().map(Rc::new);
+        kept.1.insert(key, slot.clone());
+        slot
+    }
+
+    fn display_entity_uncached(&self, entity: &CatalogEntity) -> EvaluatedPlacement {
+        let metadata = entity_facts(&entity.entity, &entity.facts);
+        let templates = ResolvedTemplateSlots {
+            compact: self.resolve_template_slot(TemplateConfigSlot::Compact, TemplateConfigNodeKind::Entity, &metadata),
+            detail: self.resolve_template_slot(TemplateConfigSlot::Detail, TemplateConfigNodeKind::Entity, &metadata),
+            ..Default::default()
+        };
+        EvaluatedPlacement {
+            entity: entity.entity.clone(),
+            placement: None,
+            tier: None,
+            label: metadata_entry_text(&entity.facts, KEY_DISPLAY_LABEL).map(str::to_owned).unwrap_or_else(|| entity.entity.id.clone()),
+            form: DISPLAY_FORM_COMPACT.into(),
+            metadata: Rc::new(metadata),
+            templates,
+            annotation: Default::default(),
+            children: vec![],
+        }
+    }
+
+    /// Evaluate a placement's loops into the entities they place, with
+    /// nothing kept from earlier evaluations.
+    #[cfg(test)]
+    fn evaluate_placement(
+        &self,
+        placement: &PlacementDefinition,
+        entities: &[CatalogEntity],
+        index: &PlacementIndex,
+        form: &str,
+    ) -> Vec<Rc<EvaluatedPlacement>> {
+        let cx = PlacementContext { entities, index, form };
+        placement
+            .loops
+            .iter()
+            .flat_map(|definition| {
+                self.evaluate_loop(&cx, definition, &Scope::default(), &PlacementKey::default(), 0, None).0.placed().collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// Each region's placed entities. What an earlier evaluation placed is
+    /// kept: a loop whose reads are unchanged keeps its matches, and an entity
+    /// whose facts are unchanged keeps its display, so only paths to what
+    /// changed are evaluated again.
+    fn evaluate_regions(&self, entities: &[CatalogEntity], index: &PlacementIndex) -> Vec<EvaluatedSection> {
+        let Some(catalog) = self.template_catalog.as_ref() else {
+            return vec![];
+        };
+        let inputs = PlacementInputs {
+            template_generation: self.template_generation,
+            index_epoch: index.epoch,
+            show_finished: self.show_finished(),
+            ended: self.ended_subjects.clone(),
+            retained: self.retained_subjects.keys().cloned().collect(),
+        };
+        let mut kept = self.kept.placements.borrow_mut();
+        let previous = match kept.take() {
+            Some((at, regions)) if at == inputs => regions,
+            _ => vec![],
+        };
+        let mut previous = previous.into_iter();
+        let mut memos = Vec::with_capacity(catalog.regions().len());
+        let sections = catalog
+            .regions()
+            .iter()
+            .map(|definition| {
+                let mut prior = previous.next().unwrap_or_default().into_iter();
+                let mut loops = vec![];
+                if let Some(placement) = definition.placement.as_deref().and_then(|name| catalog.placement(name)) {
+                    let cx = PlacementContext { entities, index, form: &definition.form };
+                    for loop_definition in &placement.loops {
+                        let (memo, _) =
+                            self.evaluate_loop(&cx, loop_definition, &Scope::default(), &PlacementKey::default(), 0, prior.next());
+                        loops.push(memo);
+                    }
+                }
+                let metadata =
+                    FactMap::from([("presentation.template".into(), MetadataValue::Text(definition.root_template.as_str().into()))]);
+                let section = EvaluatedSection {
+                    definition: definition.clone(),
+                    root: self.resolve_template_slot(TemplateConfigSlot::Compact, TemplateConfigNodeKind::Entity, &metadata),
+                    entities: loops.iter().flat_map(LoopMemo::placed).collect(),
+                };
+                memos.push(loops);
+                section
+            })
+            .collect();
+        *kept = Some((inputs, memos));
+        sections
+    }
+
+    /// Evaluate one loop in `scope`, reusing `prior` (this loop's evaluation
+    /// in the same place last time) where what it read is unchanged. Returns
+    /// whether what it places differs from `prior`.
+    fn evaluate_loop<'a>(
+        &self,
+        cx: &PlacementContext<'a, '_>,
+        definition: &PlacementLoop,
+        scope: &Scope<'_, 'a>,
+        parent: &PlacementKey,
+        depth: usize,
+        prior: Option<LoopMemo>,
+    ) -> (LoopMemo, bool) {
+        const MAX_PLACEMENT_DEPTH: usize = 64;
+        if depth >= MAX_PLACEMENT_DEPTH {
+            return (LoopMemo::default(), prior.is_some_and(|memo| !memo.nodes.is_empty()));
+        }
+        match prior {
+            Some(memo) if memo.reads.valid(scope, cx.index) => {
+                let mut changed = false;
+                let nodes = memo
+                    .nodes
+                    .into_iter()
+                    .map(|node| {
+                        let (node, node_changed) = self.evaluate_node(cx, definition, scope, parent, depth, node.position, Some(node));
+                        changed |= node_changed;
+                        node
+                    })
+                    .collect();
+                (LoopMemo { reads: memo.reads, nodes }, changed)
+            }
+            prior => {
+                let mut earlier: FastHashMap<EntityRef, NodeMemo> = prior
+                    .map(|memo| memo.nodes.into_iter().map(|node| (node.placement.entity.clone(), node)).collect())
+                    .unwrap_or_default();
+                let matching = profile::span("placement-matches");
+                let mut reads = LoopReads::default();
+                let matches = self.placement_matches(definition, cx.entities, cx.index, scope, &mut reads);
+                drop(matching);
+                let nodes = matches
+                    .into_iter()
+                    .map(|position| {
+                        let prior = earlier.remove(&cx.entities[position].entity);
+                        self.evaluate_node(cx, definition, scope, parent, depth, position, prior).0
+                    })
+                    .collect();
+                (LoopMemo { reads, nodes }, true)
+            }
+        }
+    }
+
+    /// Evaluate the entity at `position` as a match of `definition`, reusing
+    /// `prior` while its facts and its related reads are unchanged. Returns
+    /// whether its placement differs from `prior`'s.
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_node<'a>(
+        &self,
+        cx: &PlacementContext<'a, '_>,
+        definition: &PlacementLoop,
+        scope: &Scope<'_, 'a>,
+        parent: &PlacementKey,
+        depth: usize,
+        position: usize,
+        prior: Option<NodeMemo>,
+    ) -> (NodeMemo, bool) {
+        let entity = &cx.entities[position];
+        let reusable = prior.as_ref().is_some_and(|node| {
+            Rc::ptr_eq(&node.facts, &entity.facts) && {
+                let related = Scope::default();
+                let related = related.within(&node.related_binding, entity, true);
+                node.related.iter().all(|reads| reads.valid(&related, cx.index))
+            }
+        });
+        if reusable {
+            let mut node = prior.expect("reusable implies prior");
+            let loops = self.child_loops(definition, node.child_loops);
+            let child_scope = scope.within(&node.binding, entity, node.fresh);
+            let key = node.placement.placement.clone().expect("a placed entity has a key");
+            let mut changed = false;
+            let children = std::mem::take(&mut node.children);
+            node.children = loops
+                .iter()
+                .zip(children)
+                .map(|(nested, memo)| {
+                    let (memo, loop_changed) = self.evaluate_loop(cx, nested, &child_scope, &key, depth + 1, Some(memo));
+                    changed |= loop_changed;
+                    memo
+                })
+                .collect();
+            if changed {
+                let mut placement = (*node.placement).clone();
+                placement.children = node.children.iter().flat_map(LoopMemo::placed).collect();
+                node.placement = Rc::new(placement);
+            }
+            return (node, changed);
+        }
+
+        let display_phase = profile::span("placement-display");
+        let mut display = self.display_entity(entity);
+        drop(display_phase);
+        display.form = cx.form.to_owned();
+        display.tier = definition.tier;
+        if !definition.fields.is_empty() {
+            display.templates.compact = Some(Rc::new(ResolvedTemplateSlot {
+                template_name: format!("placement:{}", definition.binding),
+                fields: vec![],
+                setters: vec![],
+                effective_kdl: Default::default(),
+                resolve_error: None,
+                render_ready: Some(TemplateConfigRenderReady {
+                    fields: definition.fields.clone(),
+                    controls: vec![],
+                    chrome: Default::default(),
+                }),
+            }));
+            if cx.form != DISPLAY_FORM_COMPACT {
+                display.templates.detail = display.templates.compact.clone();
+            }
+        }
+        let mut key = parent.clone();
+        key.0.push(PlacementSegment { loop_name: definition.binding.clone(), entity: entity.entity.clone() });
+        let related_phase = profile::span("placement-related-detail");
+        let (related_detail, related, related_binding) = self.related_detail_fields(&display, entity, cx.entities, cx.index);
+        drop(related_phase);
+        display.annotation =
+            PlacementAnnotation { layout: definition.layout.clone(), default_collapsed: definition.default_collapsed, related_detail };
+        display.placement = Some(key.clone());
+
+        let mut child_loops = ChildLoops::Own;
+        let mut binding = definition.binding.clone();
+        let mut fresh = false;
+        let applied_phase = profile::span("placement-applied-template");
+        if let Some(requested) = definition.apply_template.as_deref() {
+            let template_name = if requested.is_empty() { format!("{}/line", entity.entity.kind) } else { requested.to_owned() };
+            if let Some(catalog) = self.template_catalog.as_ref() {
+                if let Some(address) = catalog.placement_template_address(&template_name, &display.metadata) {
+                    let resolved_slot = self.applied_template(catalog, &template_name, &display.metadata);
+                    if let Some(slot) = resolved_slot {
+                        display.templates.compact = Some(slot.clone());
+                        if cx.form != DISPLAY_FORM_COMPACT {
+                            display.templates.detail = Some(slot);
+                        }
+                    }
+                    child_loops = ChildLoops::Template(address);
+                    // Applied templates intentionally start a new lexical environment.
+                    fresh = true;
+                    binding = template_name.split('/').next().unwrap_or(&template_name).to_owned();
+                } else if !requested.is_empty() {
+                    let slot = Rc::new(ResolvedTemplateSlot {
+                        template_name: "<resolve-error>".to_owned(),
+                        fields: vec![],
+                        render_ready: None,
+                        setters: vec![],
+                        effective_kdl: Default::default(),
+                        resolve_error: Some(format!("unknown applied template {template_name}")),
+                    });
+                    display.templates.compact = Some(slot.clone());
+                    display.templates.detail = Some(slot);
+                    child_loops = ChildLoops::None;
+                }
+            }
+        }
+        drop(applied_phase);
+        let mut earlier = prior.filter(|node| node.child_loops == child_loops).map(|node| node.children.into_iter()).into_iter().flatten();
+        let child_scope = scope.within(&binding, entity, fresh);
+        let children: Vec<LoopMemo> = self
+            .child_loops(definition, child_loops)
+            .iter()
+            .map(|nested| self.evaluate_loop(cx, nested, &child_scope, &key, depth + 1, earlier.next()).0)
+            .collect();
+        display.children = children.iter().flat_map(LoopMemo::placed).collect();
+        let node = NodeMemo {
+            position,
+            facts: entity.facts.clone(),
+            placement: Rc::new(display),
+            related,
+            related_binding,
+            binding,
+            fresh,
+            child_loops,
+            children,
+        };
+        (node, true)
+    }
+
+    /// The loops nested under a match of `definition`.
+    fn child_loops<'d>(&'d self, definition: &'d PlacementLoop, loops: ChildLoops) -> &'d [PlacementLoop] {
+        match (loops, self.template_catalog.as_ref()) {
+            (ChildLoops::Own, _) => &definition.loops,
+            (ChildLoops::Template(address), Some(catalog)) => &catalog.template_at(address).loops,
+            (ChildLoops::Template(_), None) | (ChildLoops::None, _) => &[],
+        }
+    }
+
+    /// Positions of the entities a loop selects in `scope`, in its declared
+    /// order, recording what it read in `reads`.
+    fn placement_matches<'a>(
+        &self,
+        loop_definition: &PlacementLoop,
+        entities: &'a [CatalogEntity],
+        index: &PlacementIndex,
+        scope: &Scope<'_, 'a>,
+        reads: &mut LoopReads,
+    ) -> Vec<usize> {
+        let mut postings = loop_definition
+            .predicates
+            .iter()
+            .map(|predicate| {
+                if predicate.value.is_none() && index.ref_keys.contains(&predicate.key) {
+                    let Some(bound) = predicate.of.as_ref().and_then(|name| reads.bind(scope, name)) else {
+                        return &[][..];
+                    };
+                    let (positions, read) = index.lookup(&predicate.key, IndexedValue::Entity(bound.entity.clone()));
+                    reads.postings.push(read);
+                    return positions;
+                }
+                let value = predicate.value.as_deref().map(Arc::from).or_else(|| {
+                    let bound = reads.bind(scope, predicate.of.as_deref()?)?;
+                    if predicate.key == "entity.kind" {
+                        Some(Arc::from(bound.entity.kind.as_str()))
+                    } else if predicate.key == "entity.id" {
+                        Some(Arc::from(bound.entity.id.as_str()))
+                    } else {
+                        bound.facts.get(&predicate.key).and_then(|entry| indexed_text(&entry.value))
+                    }
+                });
+                let Some(value) = value else {
+                    return &[][..];
+                };
+                let (positions, read) = index.lookup(&predicate.key, IndexedValue::Scalar(value));
+                reads.postings.push(read);
+                positions
+            })
+            .collect::<Vec<_>>();
+        // A join on a provider's entity (`of`) stays within that provider:
+        // another subscription's facts with the same text are another
+        // provider's entities. Joins on local entities (sections, groups)
+        // span providers.
+        let joined_providers = loop_definition
+            .predicates
+            .iter()
+            .filter_map(|predicate| scope.bound(predicate.of.as_deref()?))
+            .map(|bound| bound.entity.provider.as_str())
+            .filter(|provider| *provider != LOCAL_PROVIDER)
+            .collect::<BTreeSet<_>>();
+        let show_finished = self.show_finished();
+        postings.sort_by_key(|matches| matches.len());
+        let Some((seed, rest)) = postings.split_first() else {
+            return vec![];
+        };
+        let mut matches = seed
+            .iter()
+            .copied()
+            .filter(|position| rest.iter().all(|matches| matches.binary_search(position).is_ok()))
+            .filter(|position| {
+                // An open ended workspace keeps its retained subject path reachable
+                // even while Show finished is off (wheelhouse#188 owner ruling).
+                // This deliberately overrides all visibility policies: open ended
+                // subjects must remain reachable on their retained path.
+                entities.get(*position).is_some_and(|entity| {
+                    self.ended_subjects.contains(&entity.entity) && self.retained_subjects.contains_key(&entity.entity)
+                }) || loop_definition.visibility.as_ref().is_none_or(|name| {
+                    debug_assert!(index.visibility.contains_key(name), "validated visibility policy {name} was not evaluated");
+                    index.visibility.get(name).and_then(|visible| visible.get(*position)).copied().unwrap_or(false)
+                })
+            })
+            .filter(|position| {
+                let entity = &entities[*position];
+                joined_providers.iter().all(|provider| entity.entity.provider == *provider)
+                    && !scope.is_ancestor(&entity.entity)
+                    && (show_finished
+                        || !self.ended_subjects.contains(&entity.entity)
+                        || self.retained_subjects.contains_key(&entity.entity))
+            })
+            .collect::<Vec<_>>();
+        if let Some(key) = &loop_definition.in_key {
+            let Some(MetadataValue::EntityRefs(refs)) = loop_definition
+                .of
+                .as_ref()
+                .and_then(|name| reads.bind(scope, name))
+                .and_then(|entity| entity.facts.get(key))
+                .map(|entry| &entry.value)
+            else {
+                return vec![];
+            };
+            let eligible: BTreeMap<_, _> = matches.iter().map(|&position| (&entities[position].entity, position)).collect();
+            let mut seen = BTreeSet::new();
+            matches =
+                refs.iter().filter(|reference| seen.insert(*reference)).filter_map(|reference| eligible.get(reference).copied()).collect();
+        }
+        if loop_definition.in_key.is_none() || !loop_definition.order.is_empty() {
+            matches.sort_by(|&left, &right| placement_entity_order(&entities[left], &entities[right], &loop_definition.order));
+        }
+        matches
+    }
+
+    /// Fields contributed to a placed entity's detail by loops declared in its
+    /// detail template. The template binds the entity under its own name, as an
+    /// applied template does, and each loop renders its fields per match.
+    /// Returns them with what each loop read and the name it bound.
+    fn related_detail_fields(
+        &self,
+        display: &EvaluatedPlacement,
+        entity: &CatalogEntity,
+        entities: &[CatalogEntity],
+        index: &PlacementIndex,
+    ) -> (Vec<TemplateConfigRenderedField>, Vec<LoopReads>, String) {
+        let (Some(catalog), Some(detail)) = (self.template_catalog.as_ref(), display.templates.detail.as_ref()) else {
+            return (vec![], vec![], String::new());
+        };
+        let Some(template) = catalog.placement_template(&detail.template_name, &display.metadata) else {
+            return (vec![], vec![], String::new());
+        };
+        let binding = detail.template_name.split('/').next().unwrap_or(&detail.template_name).to_owned();
+        let root = Scope::default();
+        let scope = root.within(&binding, entity, true);
+        let mut fields = vec![];
+        let mut reads = vec![];
+        for related_loop in &template.loops {
+            let mut loop_reads = LoopReads::default();
+            for position in self.placement_matches(related_loop, entities, index, &scope, &mut loop_reads) {
+                let related = &entities[position];
+                let metadata = entity_facts(&related.entity, &related.facts);
+                let context = TemplateConfigMatchContext {
+                    slot: TemplateConfigSlot::Detail,
+                    node_kind: TemplateConfigNodeKind::Entity,
+                    metadata: &metadata,
+                    collapsed: false,
+                    collapsible: false,
+                    active_tab_name: None,
+                };
+                fields.extend(related_loop.fields.iter().filter_map(|spec| spec.render(context)));
+            }
+            reads.push(loop_reads);
+        }
+        (fields, reads, binding)
+    }
+
+    fn resolve_effective_variables(&self, resolved_metadata: &[ResolvedMetadata]) -> (Vec<EffectiveNodeVariables>, Vec<String>) {
+        let Some(catalog) = self.template_catalog.as_ref() else {
+            return (vec![], vec![]);
+        };
+        let mut warnings = BTreeSet::new();
+        let root = NodeKey::Root;
+        let resolved = self.resolve_variables_at_node(catalog, &root, None, &node_metadata(&root, resolved_metadata), None, &mut warnings);
+        (
+            vec![EffectiveNodeVariables { node: root, values: resolved.values, declarations: resolved.declarations }],
+            warnings.into_iter().collect(),
+        )
+    }
+
+    /// Resolve each placed node's variables, inheriting from `root` down.
+    /// A node whose placement and parent's variables are unchanged keeps
+    /// its variables. Returns the warnings, kept with them.
+    fn resolve_placement_variables(&self, regions: &[EvaluatedSection], root: Option<&EffectiveNodeVariables>) -> BTreeSet<String> {
+        let mut kept = self.kept.variables.borrow_mut();
+        let (Some(catalog), Some(root)) = (self.template_catalog.as_ref(), root) else {
+            *kept = VariablesKept::default();
+            return BTreeSet::new();
+        };
+        let inputs = (self.template_generation, self.node_variable_overrides.clone());
+        let mut prior = std::mem::take(&mut kept.nodes);
+        if kept.inputs.as_ref() != Some(&inputs) {
+            prior.clear();
+            kept.inputs = Some(inputs);
+        }
+        let root = match kept.root.take() {
+            Some(kept) if *kept == *root => kept,
+            _ => Rc::new(root.clone()),
+        };
+        let mut nodes = FastHashMap::with_capacity_and_hasher(prior.len(), Default::default());
+        let mut warnings = BTreeSet::new();
+        for placement in regions.iter().flat_map(|region| &region.entities) {
+            self.node_variables(catalog, placement, &root, &mut prior, &mut nodes, &mut warnings);
+        }
+        kept.root = Some(root);
+        kept.nodes = nodes;
+        warnings
+    }
+
+    fn node_variables(
+        &self,
+        catalog: &TemplateConfigCatalog,
+        placement: &Rc<EvaluatedPlacement>,
+        parent: &Rc<EffectiveNodeVariables>,
+        prior: &mut NodeVariables,
+        nodes: &mut NodeVariables,
+        warnings: &mut BTreeSet<String>,
+    ) {
+        let Some(key) = placement.placement.as_ref() else {
+            return;
+        };
+        let address = Rc::as_ptr(placement);
+        let memo = match prior.remove(&address) {
+            Some(memo) if Rc::ptr_eq(&memo.placement, placement) && Rc::ptr_eq(&memo.parent, parent) => memo,
+            _ => {
+                let node = NodeKey::Placement(key.clone());
+                let template = if placement.form == DISPLAY_FORM_COMPACT {
+                    placement.templates.compact.as_deref()
+                } else {
+                    placement.templates.detail.as_deref()
+                };
+                let mut own = BTreeSet::new();
+                let resolved =
+                    self.resolve_variables_at_node(catalog, &node, Some(&parent.values), &placement.metadata, template, &mut own);
+                VariablesMemo {
+                    placement: placement.clone(),
+                    parent: parent.clone(),
+                    resolved: Rc::new(EffectiveNodeVariables { node, values: resolved.values, declarations: resolved.declarations }),
+                    warnings: own.into_iter().collect(),
+                }
+            }
+        };
+        warnings.extend(memo.warnings.iter().cloned());
+        let resolved = memo.resolved.clone();
+        nodes.insert(address, memo);
+        for child in &placement.children {
+            self.node_variables(catalog, child, &resolved, prior, nodes, warnings);
+        }
+    }
+
+    fn resolve_variables_at_node(
+        &self,
+        catalog: &TemplateConfigCatalog,
+        node: &NodeKey,
+        inherited: Option<&BTreeMap<String, EffectiveVariableValue>>,
+        metadata: &FactMap,
+        template: Option<&ResolvedTemplateSlot>,
+        warnings: &mut BTreeSet<String>,
+    ) -> ResolvedNodeVariables {
+        let scope = catalog.variable_scope(metadata);
+        warnings.extend(scope.warnings);
+        let declarations = scope.declarations;
+        let declaration_by_name =
+            declarations.iter().map(|resolved| (resolved.definition.name.as_str(), resolved)).collect::<BTreeMap<_, _>>();
+        let mut values = inherited.cloned().unwrap_or_default();
+        for declaration in &declarations {
+            values.entry(declaration.definition.name.clone()).or_insert_with(|| EffectiveVariableValue {
+                value: declaration.definition.default.clone(),
+                provenance: VariableSetterProvenance {
+                    setter: "default".to_owned(),
+                    ancestor: node.clone(),
+                    origin: declaration.origin.clone(),
+                },
+                overridden: vec![],
+            });
+        }
+        if let Some(template) = template {
+            for setter in &template.setters {
+                let Some(declaration) = declaration_by_name.get(setter.setter.name.as_str()) else {
+                    warnings.insert(format!(
+                        "{} template {} sets undeclared node variable {}",
+                        setter.origin.label(),
+                        template.template_name,
+                        setter.setter.name,
+                    ));
+                    continue;
+                };
+                if !declaration.definition.accepts(&setter.setter.value) {
+                    warnings.insert(format!(
+                        "{} template {} sets node variable {} to disallowed value {}",
+                        setter.origin.label(),
+                        template.template_name,
+                        setter.setter.name,
+                        setter.setter.value,
+                    ));
+                    continue;
+                }
+                apply_variable_setter(
+                    &mut values,
+                    &setter.setter.name,
+                    &setter.setter.value,
+                    VariableSetterProvenance {
+                        setter: format!("template {}", template.template_name),
+                        ancestor: node.clone(),
+                        origin: setter.origin.clone(),
+                    },
+                );
+            }
+        }
+        for setter in scope.setters {
+            apply_variable_setter(
+                &mut values,
+                &setter.setter.name,
+                &setter.setter.value,
+                VariableSetterProvenance { setter: "config".to_owned(), ancestor: node.clone(), origin: setter.origin },
+            );
+        }
+        if let Some(overrides) = self.node_variable_overrides.get(node) {
+            for (name, value) in overrides {
+                let Some(declaration) = declaration_by_name.get(name.as_str()) else {
+                    warnings.insert(format!("andamento-inspector sets undeclared node variable {name}"));
+                    continue;
+                };
+                if !declaration.definition.accepts(value) {
+                    warnings.insert(format!("andamento-inspector sets node variable {name} to disallowed value {value}"));
+                    continue;
+                }
+                apply_variable_setter(
+                    &mut values,
+                    name,
+                    value,
+                    VariableSetterProvenance {
+                        setter: NODE_VARIABLE_CONFIG_OVERRIDE_SETTER.to_owned(),
+                        ancestor: node.clone(),
+                        origin: TemplateConfigOrigin {
+                            layer: TemplateConfigLayerKind::User,
+                            membership: None,
+                            source: "andamento-inspector".to_owned(),
+                        },
+                    },
+                );
+            }
+        }
+        ResolvedNodeVariables { values, declarations: declarations.into_iter().map(|resolved| resolved.definition).collect() }
+    }
+
+    fn latent_tabs(&self) -> Vec<LatentTab> {
+        self.latent_tabs_in(&self.catalog())
+    }
+
+    fn latent_tabs_in(&self, catalog: &CatalogEvaluation) -> Vec<LatentTab> {
+        let _phase = profile::span("latents");
+        let entities = &catalog.entities;
+        let live_targets = self.materialized_action_targets(catalog);
+        entities
+            .iter()
+            .filter_map(|entity| {
+                let action_target = metadata_entry_text(&entity.facts, KEY_ACTION_TARGET)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| entity.entity.action_target());
+                if live_targets.contains(&action_target) {
+                    return None;
+                }
+                let name =
+                    metadata_entry_text(&entity.facts, KEY_DISPLAY_LABEL).map(str::to_owned).unwrap_or_else(|| entity.entity.id.clone());
+                Some(LatentTab {
+                    entity: entity.entity.clone(),
+                    materialization: if self.pending_latent_materializations.contains_key(&action_target) {
+                        LatentMaterializationState::Opening
+                    } else {
+                        LatentMaterializationState::Ready
+                    },
+                    action_target,
+                    name,
+                    materialize_recipe: materialize_recipe(&entity.facts).map(str::to_owned),
+                    opens_workspace: self.opens_workspace(&entity.entity.kind),
+                    checkout_path: metadata_entry_text(&entity.facts, KEY_CHECKOUT_PATH).map(str::to_owned),
+                })
+            })
+            .collect()
+    }
+
+    /// Keep just the subjects and ancestors needed by open workspace paths.
+    /// This is presentation history, never input to producer fact arbitration.
+    ///
+    /// `saved` seeds presentation history when a path is first retained.
+    /// Current lifecycle evidence takes precedence over that history.
+    pub(crate) fn retain_workspace_paths(&mut self, subjects: BTreeSet<EntityRef>, saved: &BTreeMap<EntityRef, SubjectRecord>) -> bool {
+        let before = (self.retained_subjects.len(), self.ended_subjects.len());
+        let mut changed = false;
+        self.retained_subjects.retain(|entity, _| subjects.contains(entity));
+        self.ended_subjects.retain(|entity| subjects.contains(entity));
+        for subject in subjects {
+            if !self.retained_subjects.contains_key(&subject) {
+                let target = EntityId::Entity(subject.clone());
+                let facts = self.metadata.resolved(&target, self.now());
+                // Seed history before choosing retained display facts below.
+                // Neither saved phases nor stale facts are new lifecycle evidence.
+                if saved.get(&subject).is_some_and(|record| record.ended)
+                    && subject_lifecycle(&subject, &facts, self.metadata.is_stale(&subject.provider)) != SubjectLifecycle::Live
+                {
+                    changed |= self.ended_subjects.insert(subject.clone());
+                }
+                if facts.is_empty() {
+                    if let Some(record) = saved.get(&subject) {
+                        changed = true;
+                        self.retained_subjects.insert(subject.clone(), saved_catalog_entity(subject, record));
+                    }
+                } else {
+                    changed = true;
+                    self.retained_subjects.insert(subject.clone(), CatalogEntity { entity: subject, facts });
+                }
+            }
+        }
+        changed |= before != (self.retained_subjects.len(), self.ended_subjects.len());
+        let refreshed = self.refresh_retained_subjects();
+        // Every ended subject must belong to the retained workspace-path union.
+        debug_assert!(self.ended_subjects.iter().all(|subject| self.retained_subjects.contains_key(subject)));
+        changed | refreshed
+    }
+
+    pub(crate) fn refresh_retained_subjects(&mut self) -> bool {
+        self.refresh_retained_subjects_for(None)
+    }
+
+    fn refresh_retained_subjects_for(&mut self, target: Option<&EntityRef>) -> bool {
+        let now = self.now();
+        let mut changed = false;
+        let range = match target {
+            Some(target) => (Bound::Included(target), Bound::Included(target)),
+            None => (Bound::Unbounded, Bound::Unbounded),
+        };
+        for (subject, retained) in self.retained_subjects.range_mut::<EntityRef, _>(range) {
+            let facts = self.metadata.resolved(&EntityId::Entity(subject.clone()), now);
+            let lifecycle = subject_lifecycle(subject, &facts, self.metadata.is_stale(&subject.provider));
+            // While identity remains observed, individual facts keep their ordinary
+            // freshness. Only unobserved identities need the last known record.
+            if facts.contains_key(KEY_ENTITY_ID) || facts.contains_key(KEY_DISPLAY_LABEL) {
+                changed |= retained.facts != facts;
+                retained.facts = facts;
+            }
+            match lifecycle {
+                SubjectLifecycle::Live => changed |= self.ended_subjects.remove(subject),
+                SubjectLifecycle::Ended => changed |= self.ended_subjects.insert(subject.clone()),
+                SubjectLifecycle::Unknown => {}
+            }
+        }
+        changed
+    }
+
+    pub(crate) fn mark_ended_workspace_paths(
+        &mut self,
+        paths: &BTreeMap<WorkspaceId, BTreeSet<EntityRef>>,
+        subjects: &BTreeMap<WorkspaceId, EntityRef>,
+    ) -> bool {
+        let mut changed = false;
+        for (id, path) in paths {
+            if path.iter().any(|subject| self.ended_subjects.contains(subject)) {
+                if let Some(subject) = subjects.get(id) {
+                    let facts = self.metadata.resolved(&EntityId::Entity(subject.clone()), self.now());
+                    // Historical ancestry cannot end a currently live subject.
+                    let stale = self.metadata.is_stale(&subject.provider);
+                    if !stale && subject_lifecycle(subject, &facts, stale) != SubjectLifecycle::Live {
+                        changed |= self.ended_subjects.insert(subject.clone());
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    /// The record of a retained subject: its label, whether it ended, the
+    /// recordable facts among `keys`, and whether a producer publishes it now.
+    pub(crate) fn retained_subject_record(&self, subject: &EntityRef, keys: &BTreeSet<String>) -> Option<(SubjectRecord, bool)> {
+        let retained = self.retained_subjects.get(subject)?;
+        let observed = !self.metadata.resolved(&EntityId::Entity(subject.clone()), self.now()).is_empty();
+        let record = SubjectRecord {
+            label: metadata_entry_text(&retained.facts, KEY_DISPLAY_LABEL).map(str::to_owned),
+            ended: self.ended_subjects.contains(subject),
+            last_seen_ms: None,
+            facts: retained
+                .facts
+                .iter()
+                .filter(|(key, entry)| keys.contains(*key) && *key != KEY_DISPLAY_LABEL && recordable(&entry.value))
+                .map(|(key, entry)| (key.to_owned(), entry.value.clone()))
+                .collect(),
+        };
+        Some((record, observed))
+    }
+
+    /// Bind a workspace to its subject, as a materialize completion does, or
+    /// remove that binding.
+    pub(crate) fn bind_workspace_subject(&mut self, tab_id: WorkspaceId, subject: Option<&EntityRef>) -> bool {
+        let patch = match subject {
+            Some(subject) => MetadataPatch {
+                target: MetadataTarget::Tab(tab_id),
+                source_id: SOURCE_LATENT_MATERIALIZER.to_owned(),
+                set: subject_binding(subject),
+                unset: vec![],
+            },
+            None => MetadataPatch {
+                target: MetadataTarget::Tab(tab_id),
+                source_id: SOURCE_LATENT_MATERIALIZER.to_owned(),
+                set: BTreeMap::new(),
+                unset: [KEY_ENTITY_PROVIDER, KEY_ENTITY_KIND, KEY_ENTITY_ID].map(str::to_owned).to_vec(),
+            },
+        };
+        self.apply_metadata_patch(patch)
+    }
+
+    /// Each configured region's placement hints, in declaration order, for
+    /// the sidebar arrangement.
+    pub(crate) fn sidebar_regions(&self) -> Vec<RegionHints> {
+        fn hosts_sections(loops: &[PlacementLoop]) -> bool {
+            loops.iter().any(|l| l.layout.as_deref() == Some("section") || hosts_sections(&l.loops))
+        }
+        let Some(catalog) = self.template_catalog.as_ref() else {
+            return Vec::new();
+        };
+        catalog
+            .regions()
+            .iter()
+            .map(|region| RegionHints {
+                name: region.name.clone(),
+                order: region.order,
+                pinned: region.pinned,
+                hosts_local_sections: region
+                    .placement
+                    .as_deref()
+                    .and_then(|name| catalog.placement(name))
+                    .is_some_and(|placement| hosts_sections(&placement.loops)),
+            })
+            .collect()
+    }
+
+    /// Loop bindings and display variables the configured template
+    /// declares, for flagging dashboard keys that no longer resolve.
+    pub(crate) fn template_names(&self) -> (BTreeSet<String>, BTreeSet<String>) {
+        let Some(catalog) = self.template_catalog.as_ref() else {
+            return Default::default();
+        };
+        (catalog.loop_bindings(), catalog.display_variables().iter().map(|variable| variable.name.clone()).collect())
+    }
+
+    /// Fact keys placement reads, for subject records.
+    pub(crate) fn placement_fact_keys(&self) -> BTreeSet<String> {
+        self.template_catalog.as_ref().map(|catalog| catalog.placement_fact_keys()).unwrap_or_default()
+    }
+
+    /// Display variables a record keeps: declared ones that persist, and any
+    /// that no configuration declares (restored before their declaration).
+    pub(crate) fn recorded_display_variables(&self) -> BTreeMap<String, DisplayVariableValue> {
+        let declared = self.template_catalog.as_ref().map(|catalog| catalog.display_variables()).unwrap_or_default();
+        self.rail_ui
+            .variables
+            .iter()
+            .filter(|(name, _)| declared.iter().find(|variable| &variable.name == *name).is_none_or(|variable| variable.persist))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect()
+    }
+
+    pub(crate) fn collapsed_placements(&self) -> &BTreeSet<PlacementKey> {
+        &self.rail_ui.collapsed_placements
+    }
+
+    pub(crate) fn sibling_orders(&self) -> &BTreeMap<PlacementLoopKey, Vec<EntityRef>> {
+        &self.rail_ui.sibling_orders
+    }
+
+    pub(crate) fn placement_variables(&self) -> BTreeMap<PlacementKey, BTreeMap<String, String>> {
+        self.node_variable_overrides
+            .iter()
+            .filter_map(|(node, values)| match node {
+                NodeKey::Placement(key) => Some((key.clone(), values.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Replace the Dashboard's display variables, collapse, sibling orders and
+    /// placement variables with a record's. Variables that persist and the
+    /// record leaves out return to their defaults; others keep their values.
+    pub(crate) fn restore_dashboard(&mut self, record: &DashboardState) {
+        let declared = self.template_catalog.as_ref().map(|catalog| catalog.display_variables().to_vec()).unwrap_or_default();
+        self.rail_ui.variables.retain(|name, _| declared.iter().any(|variable| &variable.name == name && !variable.persist));
+        for variable in &declared {
+            self.rail_ui.variables.entry(variable.name.clone()).or_insert_with(|| variable.default.clone());
+        }
+        self.rail_ui.variables.extend(record.display.iter().map(|(name, value)| (name.clone(), value.clone())));
+        self.rail_ui.collapsed_placements = record.collapsed.clone();
+        self.rail_ui.sibling_orders = record.orders.clone();
+        self.node_variable_overrides.retain(|node, _| !matches!(node, NodeKey::Placement(_)));
+        for (key, values) in &record.variables {
+            if !values.is_empty() {
+                self.node_variable_overrides.insert(NodeKey::Placement(key.clone()), values.clone());
+            }
+        }
+        self.bump_rail_ui_revision();
+    }
+
+    /// Set a declared display variable directly, or return it to its default
+    /// with None. Returns whether the value changed.
+    pub fn set_display_variable(&mut self, name: &str, value: Option<DisplayVariableValue>) -> Result<bool, String> {
+        let definition = self
+            .template_catalog
+            .as_ref()
+            .and_then(|catalog| catalog.display_variables().iter().find(|variable| variable.name == name))
+            .ok_or("unknown display variable")?;
+        let value = match value {
+            None => definition.default.clone(),
+            Some(value) => {
+                let valid = match (&definition.variable_type, &value) {
+                    (TemplateVariableType::Bool, DisplayVariableValue::Bool(_)) => true,
+                    (TemplateVariableType::Enum { values }, DisplayVariableValue::Enum(value)) => values.contains(value),
+                    _ => false,
+                };
+                if !valid {
+                    return Err("value is not allowed by the display variable".into());
+                }
+                value
+            }
+        };
+        if self.rail_ui.variables.get(name) == Some(&value) {
+            return Ok(false);
+        }
+        self.rail_ui.variables.insert(name.to_owned(), value);
+        self.bump_rail_ui_revision();
+        Ok(true)
+    }
+
+    fn bump_rail_ui_revision(&mut self) {
+        self.rail_ui.revision =
+            RailUiRevision { sequence: self.rail_ui.revision.sequence.saturating_add(1), writer_client_id: self.rail_ui_writer_client_id };
+    }
+
+    /// Each tab's subject (`entity.kind`/`id`) and host entity
+    /// (`.host.kind`/`.host.id`), from one metadata resolution per tab.
+    pub(crate) fn workspace_identities(&self) -> WorkspaceIdentities {
+        let _phase = profile::span("workspace-subjects");
+        let seeds = self.tab_seed_metadata_entries();
+        let mut identities = WorkspaceIdentities::default();
+        for tab in &self.tabs {
+            let (values, _, _) =
+                self.resolve_target_metadata(&EntityId::Tab(tab.tab_id), seeds.get(&tab.tab_id).cloned().unwrap_or_default());
+            if let Some(subject) = entity_ref_from_entries(&values) {
+                identities.subjects.insert(tab.tab_id, subject);
+            }
+            if let Some(host) = host_entity_ref_from_entries(&values) {
+                identities.hosts.insert(tab.tab_id, host);
+            }
+        }
+        identities
+    }
+
+    pub(crate) fn workspace_subjects(&self) -> BTreeMap<WorkspaceId, EntityRef> {
+        self.workspace_identities().subjects
+    }
+
+    fn show_finished(&self) -> bool {
+        matches!(
+            self.rail_ui.variables.get(DISPLAY_SHOW_FINISHED).or_else(|| self
+                .template_catalog
+                .as_ref()?
+                .display_variables()
+                .iter()
+                .find(|v| v.name == DISPLAY_SHOW_FINISHED)
+                .map(|v| &v.default)),
+            Some(DisplayVariableValue::Bool(true))
+        )
+    }
+
+    fn catalog_entities(&self) -> Vec<CatalogEntity> {
+        let _phase = profile::span("catalog");
+        #[cfg(test)]
+        CATALOG_BUILDS.with(|count| count.set(count.get() + 1));
+        let now = self.now();
+        let mut entities = self
+            .metadata
+            .targets()
+            .filter_map(|target| match target {
+                EntityId::Entity(entity) if !self.retained_subjects.contains_key(entity) => self.catalog_entity(entity, now),
+                _ => None,
+            })
+            .chain(self.retained_subjects.keys().filter_map(|subject| self.catalog_entity(subject, now)))
+            .collect::<Vec<_>>();
+        Self::present_refs(&mut entities);
+        entities.sort_by(catalog_order);
+        entities
+    }
+
+    /// One entity as the catalog presents it, but for a ref's target's facts
+    /// (`present_refs`): its resolved facts, over what is retained of it if
+    /// it is a retained subject, and marked as ended if it is an ended one.
+    /// None if it has no facts.
+    fn catalog_entity(&self, entity: &EntityRef, now: u64) -> Option<CatalogEntity> {
+        let target = EntityId::Entity(entity.clone());
+        let facts = self.metadata.resolved(&target, now);
+        let mut current = (!facts.is_empty()).then(|| CatalogEntity { entity: entity.clone(), facts });
+        if let Some(retained) = self.retained_subjects.get(entity) {
+            current = Some(match current {
+                Some(mut current) => {
+                    current.facts = Rc::new(current.facts.over(&retained.facts));
+                    current
+                }
+                None => retained.clone(),
+            });
+        }
+        if let Some(entity) = current.as_mut().filter(|entity| self.ended_subjects.contains(&entity.entity)) {
+            let made = |value| Fact {
+                entry: Rc::new(MetadataEntry { value, updated_at: now, ttl_ms: None, precedence: 0, ordinal: 0 }),
+                source: None,
+            };
+            entity.insert(KEY_STATUS_STATE, made(MetadataValue::Text("ended".into())));
+            entity.insert("presentation.ended", made(MetadataValue::Bool(true)));
+        }
+        current
+    }
+
+    /// The catalog, brought up to date from the one built last time: only
+    /// entities whose facts changed are built again, and those derived from
+    /// others (retained subjects, refs) each time. An entity whose facts are
+    /// the same as before keeps them, shared, so what is kept from them stays.
+    fn catalog(&self) -> Rc<CatalogEvaluation> {
+        let changed = self.metadata.take_catalog_changes();
+        let mut kept = self.kept.catalog.borrow_mut();
+        let previous = kept.evaluation.take().filter(|_| !changed.all);
+        let Some(previous) = previous else {
+            kept.generation += 1;
+            let catalog = Rc::new(CatalogEvaluation::new(self.catalog_entities(), kept.generation));
+            kept.evaluation = Some(catalog.clone());
+            return catalog;
+        };
+        let _phase = profile::span("catalog");
+        let now = self.now();
+        let mut catalog = Rc::try_unwrap(previous).unwrap_or_else(|shared| (*shared).clone());
+        let mut again: BTreeSet<EntityRef> = changed
+            .targets
+            .into_iter()
+            .filter_map(|target| match target {
+                EntityId::Entity(entity) => Some(entity),
+                _ => None,
+            })
+            .collect();
+        again.extend(self.retained_subjects.keys().cloned());
+        again.extend(std::mem::take(&mut catalog.derived));
+        let (refs, others): (Vec<_>, Vec<_>) = again.into_iter().partition(|entity| entity.kind == system::REF);
+        let mut structural = false;
+        for entity in others {
+            let next = self.catalog_entity(&entity, now);
+            structural |= catalog.replace(&entity, next);
+        }
+        if structural {
+            catalog.reorder();
+        }
+        // Refs present their targets as now in the catalog.
+        let mut structural = false;
+        for entity in refs {
+            let next = self.catalog_entity(&entity, now).map(|mut entity| {
+                if let Some(target) = ref_target(&entity.facts).and_then(|target| catalog.entity(&target)) {
+                    if target.entity.kind != system::REF {
+                        Self::present_ref(&mut entity, target);
+                    }
+                }
+                entity
+            });
+            structural |= catalog.replace(&entity, next);
+        }
+        if structural {
+            catalog.reorder();
+        }
+        if catalog.structure_changed {
+            kept.generation += 1;
+            catalog.generation = kept.generation;
+            catalog.structure_changed = false;
+        }
+        catalog.derived = self.retained_subjects.keys().cloned().collect();
+        catalog
+            .derived
+            .extend(catalog.entities.iter().filter(|entity| entity.entity.kind == system::REF).map(|entity| entity.entity.clone()));
+        let catalog = Rc::new(catalog);
+        kept.evaluation = Some(catalog.clone());
+        catalog
+    }
+
+    /// A `.ref` (a ghost) presents its `.target`: it takes the target's facts
+    /// and sources, so templates, status, live state, details and activation
+    /// all follow the target. Its place is its own: it keeps its own
+    /// `.`-prefixed facts (`.group`, `.target`, `.position`) and takes none of
+    /// the target's, so it is a separate object in its own place. A ref whose
+    /// target is not in the catalog keeps only its own facts.
+    ///
+    /// Refs don't chain: a ref whose target is itself a ref presents that ref
+    /// as it is, not what it refers to.
+    fn present_refs(entities: &mut [CatalogEntity]) {
+        let targets = entities
+            .iter()
+            .filter(|e| e.entity.kind == system::REF)
+            .filter_map(|e| Some((e.entity.clone(), ref_target(&e.facts)?)))
+            .collect::<BTreeMap<_, _>>();
+        if targets.is_empty() {
+            return;
+        }
+        let wanted = targets.values().cloned().collect::<BTreeSet<_>>();
+        let resolved = entities
+            .iter()
+            .filter(|e| e.entity.kind != system::REF && wanted.contains(&e.entity))
+            .map(|e| (e.entity.clone(), e.clone()))
+            .collect::<BTreeMap<_, _>>();
+        for entity in entities.iter_mut().filter(|e| e.entity.kind == system::REF) {
+            if let Some(target) = targets.get(&entity.entity).and_then(|target| resolved.get(target)) {
+                Self::present_ref(entity, target);
+            }
+        }
+    }
+
+    /// Give a ref its target's facts and sources, keeping its own
+    /// `.`-prefixed ones (see `present_refs`).
+    fn present_ref(entity: &mut CatalogEntity, target: &CatalogEntity) {
+        let mut own = (*entity.facts).clone();
+        own.retain(|key, _| system::is_system(key));
+        let mut presented = (*target.facts).clone();
+        presented.retain(|key, _| !system::is_system(key));
+        // Live state and activation key on the action target: the
+        // target's own, else one made from its identity. The made entry
+        // dates from the ref's `.target`, so it is as fresh as the
+        // reference; it never expires and loses to any real one.
+        if !presented.contains_key(KEY_ACTION_TARGET) {
+            let entry = MetadataEntry {
+                value: MetadataValue::Text(target.entity.action_target().into()),
+                updated_at: own.get(system::TARGET).map(|e| e.updated_at).unwrap_or_default(),
+                ttl_ms: None,
+                precedence: 0,
+                ordinal: 0,
+            };
+            presented.insert(KEY_ACTION_TARGET, Fact { entry: Rc::new(entry), source: None });
+        }
+        entity.facts = Rc::new(own.over(&presented));
+    }
+
+    /// The entity a placement presents: a `.ref`'s target, otherwise itself.
+    pub(crate) fn presented_entity(&self, entity: &EntityRef) -> EntityRef {
+        if entity.kind != system::REF {
+            return entity.clone();
+        }
+        ref_target(&self.metadata.resolved(&EntityId::Entity(entity.clone()), self.now())).unwrap_or_else(|| entity.clone())
+    }
+
+    /// Full replacement of ephemeral host directory observations. These are
+    /// presentation associations, never metadata identities or managed bindings.
+    pub fn observe_workdirs(&mut self, workdirs: Vec<(WorkspaceId, String)>) -> bool {
+        let mut next = BTreeMap::<WorkspaceId, BTreeSet<String>>::new();
+        for (id, cwd) in workdirs {
+            if !cwd.is_empty() && self.tabs.iter().any(|tab| tab.tab_id == id) {
+                next.entry(id).or_default().insert(cwd);
+            }
+        }
+        if next == self.observed_workdirs {
+            return false;
+        }
+        self.observed_workdirs = next;
+        true
+    }
+
+    fn directory_bindings(&self, entities: &[CatalogEntity]) -> BTreeMap<EntityRef, WorkspaceId> {
+        if self.observed_workdirs.is_empty() {
+            return BTreeMap::new();
+        }
+        let seeds = self.tab_seed_metadata_entries();
+        let unbound: Vec<_> = self
+            .tabs
+            .iter()
+            .filter(|tab| {
+                let (values, _, _) =
+                    self.resolve_target_metadata(&EntityId::Tab(tab.tab_id), seeds.get(&tab.tab_id).cloned().unwrap_or_default());
+                entity_ref_from_entries(&values).is_none() && metadata_entry_text(&values, KEY_ACTION_TARGET).is_none()
+            })
+            .collect();
+        entities
+            .iter()
+            .filter_map(|entity| {
+                let cwd = metadata_entry_text(&entity.facts, KEY_CHECKOUT_PATH).filter(|s| !s.is_empty())?;
+                let tab = unbound.iter().find(|tab| self.observed_workdirs.get(&tab.tab_id).is_some_and(|dirs| dirs.contains(cwd)))?;
+                Some((entity.entity.clone(), tab.tab_id))
+            })
+            .collect()
+    }
+
+    fn materialized_action_targets(&self, catalog: &CatalogEvaluation) -> BTreeSet<String> {
+        let tab_seed_metadata = self.tab_seed_metadata_entries();
+        self.tabs
+            .iter()
+            .filter_map(|tab| self.tab_entity_ref(tab.tab_id, &tab_seed_metadata))
+            .chain(self.directory_bindings(&catalog.entities).into_keys())
+            .map(|entity| {
+                catalog
+                    .entity(&entity)
+                    .and_then(|candidate| metadata_entry_text(&candidate.facts, KEY_ACTION_TARGET))
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| entity.action_target())
+            })
+            .collect()
+    }
+
+    fn tab_entity_ref(&self, tab_id: WorkspaceId, tab_seed_metadata: &TabSeedMetadata) -> Option<EntityRef> {
+        let target = EntityId::Tab(tab_id);
+        let seed_values = tab_seed_metadata.get(&tab_id).cloned().unwrap_or_default();
+        let (values, _, _) = self.resolve_target_metadata(&target, seed_values);
+        entity_ref_from_entries(&values)
+    }
+
+    pub fn can_materialize_latent(&self, request: &MaterializeLatentRequest) -> bool {
+        // This exact equality check is the security boundary for controller pipe callers:
+        // accepting an action target alone would let a caller substitute its own recipe or path.
+        self.latent_tabs().iter().filter_map(LatentTab::materialize_request).any(|candidate| candidate == *request)
+    }
+
+    pub fn begin_latent_materialization(&mut self, request: &MaterializeLatentRequest) -> bool {
+        if self.materialized_tab_position(request).is_some()
+            || self.pending_latent_materializations.contains_key(&request.action_target)
+            || !self.can_materialize_latent(request)
+        {
+            return false;
+        }
+        self.pending_latent_materializations
+            .insert(request.action_target.clone(), PendingLatentMaterialization { request: request.clone(), tab_id: None, subject: None });
+        true
+    }
+
+    pub fn bind_materializing_tab(&mut self, request: &MaterializeLatentRequest, tab_id: WorkspaceId) -> bool {
+        let Some(pending) = self.pending_latent_materializations.get_mut(&request.action_target) else {
+            return false;
+        };
+        if pending.request != *request || pending.tab_id.is_some() {
+            return false;
+        }
+        pending.tab_id = Some(tab_id);
+        self.pending_materialized_tab_names.insert(tab_id, request.name.clone());
+        true
+    }
+
+    pub(crate) fn bind_materializing_subject(
+        &mut self,
+        request: &MaterializeLatentRequest,
+        tab_id: WorkspaceId,
+        subject: EntityRef,
+    ) -> bool {
+        if !self.bind_materializing_tab(request, tab_id) {
+            return false;
+        }
+        if let Some(pending) = self.pending_latent_materializations.get_mut(&request.action_target) {
+            pending.subject = Some(subject);
+            return true;
+        }
+        false
+    }
+
+    pub fn abort_latent_materialization(&mut self, request: &MaterializeLatentRequest) -> bool {
+        let Some(pending) = self.pending_latent_materializations.get(&request.action_target) else {
+            return false;
+        };
+        if pending.request != *request {
+            return false;
+        }
+        if let Some(tab_id) = pending.tab_id {
+            self.pending_materialized_tab_names.remove(&tab_id);
+        }
+        self.pending_latent_materializations.remove(&request.action_target);
+        true
+    }
+
+    pub fn materialized_tab_position(&self, request: &MaterializeLatentRequest) -> Option<usize> {
+        self.materialized_tab_position_for_action_target(&request.action_target)
+    }
+
+    /// The action target an entity is matched by: its own
+    /// `action.primary.target`, else one made from its identity.
+    fn action_target_of(&self, entity: &EntityRef) -> String {
+        let values = self.metadata.resolved(&EntityId::Entity(entity.clone()), self.now());
+        metadata_entry_text(&values, KEY_ACTION_TARGET).map(str::to_owned).unwrap_or_else(|| entity.action_target())
+    }
+
+    fn materialized_tab_position_for_action_target(&self, action_target: &str) -> Option<usize> {
+        let tab_seed_metadata = self.tab_seed_metadata_entries();
+        self.tabs
+            .iter()
+            .find_map(|tab| {
+                let target = EntityId::Tab(tab.tab_id);
+                let seed_values = tab_seed_metadata.get(&tab.tab_id).cloned().unwrap_or_default();
+                let (values, _, _) = self.resolve_target_metadata(&target, seed_values);
+                let entity_target = entity_ref_from_entries(&values).map(|entity| self.action_target_of(&entity));
+                let resolved_action_target = metadata_entry_text(&values, KEY_ACTION_TARGET).map(str::to_owned).or(entity_target);
+                // A tab's host entity is live there too (live_presentation_states),
+                // so activating it focuses the tab.
+                let host_target = host_entity_ref_from_entries(&values).map(|entity| self.action_target_of(&entity));
+                (resolved_action_target.as_deref() == Some(action_target) || host_target.as_deref() == Some(action_target))
+                    .then_some(tab.position)
+            })
+            .or_else(|| {
+                let entities = self.catalog_entities();
+                let bindings = self.directory_bindings(&entities);
+                entities.iter().find_map(|entity| {
+                    let target = metadata_entry_text(&entity.facts, KEY_ACTION_TARGET)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| entity.entity.action_target());
+                    if target != action_target {
+                        return None;
+                    }
+                    let id = bindings.get(&entity.entity)?;
+                    self.tabs.iter().find(|tab| tab.tab_id == *id).map(|tab| tab.position)
+                })
+            })
+    }
+
+    /// Every slot resolution producers publish now, keyed by the suggesting
+    /// entity and slot key: each entity's `primary` slot (read from the
+    /// `workspace.primary.*` facts, independently of any `layout.*` facts)
+    /// and the slots of its valid Suggested Layout. Unavailable resolutions
+    /// are absent.
+    /// What `entity`'s facts resolve its Slots to: the primary from its
+    /// `workspace.primary.*` facts, the others from its Suggested Layout.
+    pub(crate) fn entity_slot_resolutions(&self, entity: &EntityRef) -> BTreeMap<String, DesiredContent> {
+        use crate::suggested_layout::{SlotResolution, PRIMARY_SLOT};
+        let mut resolutions = BTreeMap::new();
+        let values = self.metadata.resolved(&EntityId::Entity(entity.clone()), self.now());
+        if let Some(desired) = desired_primary(&values, self.subject_target(entity).as_deref()) {
+            resolutions.insert(PRIMARY_SLOT.to_owned(), desired);
+        }
+        let facts: FactMap = values.named().map(|(key, fact)| (key.clone(), fact.entry.value.clone())).collect();
+        let template = self.workspace_template(&entity.kind, &facts);
+        if template.is_none() && !values.iter().any(|(key, _)| key.starts_with("layout.")) {
+            return resolutions;
+        }
+        let Ok(Some(layout)) = self.layout_from_facts(entity, &facts, self.primary_slot(entity)) else {
+            return resolutions;
+        };
+        for slot in layout.slots {
+            if slot.key == PRIMARY_SLOT {
+                continue;
+            }
+            let desired = match slot.resolution {
+                SlotResolution::Ready { target, recipe } => DesiredContent::Ready(Resolved { target, recipe }),
+                SlotResolution::Held => DesiredContent::Held,
+                SlotResolution::Unavailable => continue,
+            };
+            resolutions.insert(slot.key, desired);
+        }
+        resolutions
+    }
+
+    /// Whether entities of `kind` are workspace subjects (`workspace kind=…`
+    /// in the template config): each opens a workspace without a recipe.
+    pub(crate) fn opens_workspace(&self, kind: &str) -> bool {
+        self.template_catalog.as_ref().is_some_and(|catalog| catalog.opens_workspace(kind))
+    }
+
+    /// When `entity`'s Suggested Layout has the primary slot: always for a
+    /// workspace subject.
+    pub(crate) fn primary_slot(&self, entity: &EntityRef) -> suggested_layout::PrimarySlot {
+        match self.opens_workspace(&entity.kind) {
+            true => suggested_layout::PrimarySlot::Always,
+            false => suggested_layout::PrimarySlot::IfPublished,
+        }
+    }
+
+    /// Whether an entity of `kind` is openable: it has an opening recipe, or
+    /// is a workspace subject, which opens without one.
+    fn openable(&self, has_recipe: bool, kind: &str) -> bool {
+        has_recipe || self.opens_workspace(kind)
+    }
+
+    /// The Suggested Layout `entity` publishes now, read from its live facts,
+    /// with the primary slot as `primary` says ([`suggested_layout::parse`]),
+    /// and the template slots of its kind's workspace template after its own.
+    pub(crate) fn suggested_layout(
+        &self,
+        entity: &EntityRef,
+        primary: suggested_layout::PrimarySlot,
+    ) -> Result<Option<SuggestedLayout>, LayoutError> {
+        self.layout_from_facts(entity, &self.entity_facts(entity), primary)
+    }
+
+    /// `entity`'s live facts, by name.
+    pub(crate) fn entity_facts(&self, entity: &EntityRef) -> FactMap {
+        self.metadata
+            .resolved(&EntityId::Entity(entity.clone()), self.now())
+            .named()
+            .map(|(key, fact)| (key.clone(), fact.entry.value.clone()))
+            .collect()
+    }
+
+    /// The Workspace Layout a workspace of `subject` shows, the user having
+    /// chosen `chosen`, planned over its `slots`: `None` when its kind's
+    /// template has no layout that applies. A matcher reads the facts of a
+    /// slot's facet entity, or the subject's for a local slot.
+    pub(crate) fn layout_plan(
+        &self,
+        subject: &EntityRef,
+        chosen: Option<&str>,
+        slots: &[crate::slots::SlotInfo],
+    ) -> Option<crate::workspace_layout::LayoutPlan> {
+        use crate::suggested_layout::Content;
+        let subject_facts = self.entity_facts(subject);
+        let definition = self.workspace_template(&subject.kind, &subject_facts)?.current_layout(chosen, &subject_facts)?;
+        let mut facts: BTreeMap<&EntityRef, FactMap> = BTreeMap::new();
+        for slot in slots {
+            if let Content::ProviderFacet { entity, .. } = &slot.spec.content {
+                if entity != subject && !facts.contains_key(entity) {
+                    facts.insert(entity, self.entity_facts(entity));
+                }
+            }
+        }
+        let fields = slots.iter().map(|slot| {
+            let (facet, entity) = match &slot.spec.content {
+                Content::ProviderFacet { entity, facet } => (Some(facet.as_str()), Some(entity)),
+                Content::Local(_) => (None, None),
+            };
+            crate::workspace_layout::SlotFields {
+                key: &slot.key,
+                role: slot.spec.role.as_deref(),
+                facet,
+                presentation: slot.spec.presentation.as_deref(),
+                entity_kind: entity.map(|entity| entity.kind.as_str()),
+                facts: Some(entity.and_then(|entity| facts.get(entity)).unwrap_or(&subject_facts)),
+            }
+        });
+        Some(crate::workspace_layout::LayoutPlan::new(definition, fields))
+    }
+
+    fn layout_from_facts(
+        &self,
+        entity: &EntityRef,
+        facts: &FactMap,
+        primary: suggested_layout::PrimarySlot,
+    ) -> Result<Option<SuggestedLayout>, LayoutError> {
+        let mut layout = suggested_layout::parse(entity, facts, primary)?;
+        let template = self.workspace_template(&entity.kind, facts).filter(|template| !template.slots.is_empty());
+        if let Some(template) = template {
+            let layout = layout.get_or_insert_with(|| SuggestedLayout {
+                version: suggested_layout::BaselineVersion::PrimaryOnly,
+                slots: Vec::new(),
+                arrangement: None,
+            });
+            layout.slots.extend(crate::workspace_layout::template_slots(entity, &template.slots, facts));
+        }
+        Ok(layout)
+    }
+
+    /// The workspace template for subjects of `kind` with `facts`, if the
+    /// configuration has one.
+    pub(crate) fn workspace_template(&self, kind: &str, facts: &FactMap) -> Option<&crate::template_config::WorkspaceDefinition> {
+        self.template_catalog.as_ref()?.workspace_template(kind, facts)
+    }
+
+    fn desired_content(&self, target: &EntityId) -> Option<DesiredContent> {
+        let subject = match target {
+            EntityId::Entity(entity) => self.subject_target(entity),
+            _ => None,
+        };
+        desired_primary(&self.metadata.resolved(target, self.now()), subject.as_deref())
+    }
+
+    /// The action target a workspace subject's primary slot falls back to,
+    /// or `None` when `entity` isn't a workspace subject.
+    fn subject_target(&self, entity: &EntityRef) -> Option<String> {
+        self.opens_workspace(&entity.kind).then(|| entity.action_target())
+    }
+
+    /// The managed target a materialization of `recipe` would install, if the
+    /// entity is ready and that recipe is its current resolution.
+    pub(crate) fn managed_primary_target(&self, entity: &EntityRef, recipe: &str, cwd: Option<&str>) -> Option<String> {
+        match self.desired_content(&EntityId::Entity(entity.clone()))? {
+            DesiredContent::Ready(content) => {
+                let (target, command, content_cwd) = content.as_terminal()?;
+                (command == recipe && content_cwd == cwd).then(|| target.to_owned())
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `entity`'s primary resolves to a direct Cleat session now: a
+    /// materialization then opens no recipe of its own, and the first plan
+    /// of its primary slot fills it.
+    pub(crate) fn primary_is_direct(&self, entity: &EntityRef) -> bool {
+        matches!(
+            self.desired_content(&EntityId::Entity(entity.clone())),
+            Some(DesiredContent::Ready(Resolved { recipe: suggested_layout::LocalRecipe::CleatSession { .. }, .. }))
+        )
+    }
+
+    /// A subject's display label as its provider gives it now.
+    pub fn subject_label(&self, subject: &EntityRef) -> Option<String> {
+        let values = self.metadata.resolved(&EntityId::Entity(subject.clone()), self.now());
+        metadata_entry_text(&values, KEY_DISPLAY_LABEL).map(str::to_owned)
+    }
+
+    /// Resolve the producer's forge relationship at action time, so changed
+    /// identity and forge templates never leave stale row URLs behind.
+    pub fn subject_url(&self, subject: &EntityRef) -> Option<String> {
+        let template_key = match subject.kind.as_str() {
+            "change_request" => "flotilla.forge.change_request_url_template",
+            "issue" => "flotilla.forge.issue_url_template",
+            _ => return None,
+        };
+        let values = self.metadata.resolved(&EntityId::Entity(subject.clone()), self.now());
+        let MetadataValue::EntityRefs(refs) = &values.get("flotilla.forge")?.value else {
+            return None;
+        };
+        let [forge] = refs.as_slice() else {
+            return None;
+        };
+        if forge.kind != "forge" {
+            return None;
+        }
+        let forge_values = self.metadata.resolved(&EntityId::Entity(forge.clone()), self.now());
+        let template = metadata_entry_text(&forge_values, template_key)?;
+        let web_url = metadata_entry_text(&forge_values, "flotilla.forge.web_url")?;
+        let scope = metadata_entry_text(&values, "flotilla.subject.scope")?;
+        let number = metadata_entry_text(&values, "flotilla.subject.number")?;
+        // Substitute only the original template, never placeholders in values.
+        let mut url = String::new();
+        let mut rest = template;
+        while let Some(start) = rest.find('{') {
+            url.push_str(&rest[..start]);
+            let end = rest[start..].find('}')? + start;
+            url.push_str(match &rest[start..=end] {
+                "{web_url}" => web_url,
+                "{scope}" => scope,
+                "{number}" => number,
+                _ => return None,
+            });
+            rest = &rest[end + 1..];
+        }
+        url.push_str(rest);
+        (url.starts_with("https://") || url.starts_with("http://")).then_some(url)
+    }
+
+    pub fn activation_for_entity(&self, subject: &EntityRef) -> Option<EntityActivation> {
+        let entities = self.catalog_entities();
+        let entity = entities.iter().find(|entity| &entity.entity == subject)?;
+        let action_target =
+            metadata_entry_text(&entity.facts, KEY_ACTION_TARGET).map(str::to_owned).unwrap_or_else(|| entity.entity.action_target());
+        if let Some(position) = self.materialized_tab_position_for_action_target(&action_target) {
+            return Some(EntityActivation::FocusTab { position });
+        }
+        self.latent_tabs()
+            .into_iter()
+            .find(|latent| latent.entity == *subject)
+            .and_then(|latent| latent.materialize_request())
+            .map(EntityActivation::Materialize)
+    }
+
+    fn claim_materializing_tabs(&mut self) -> bool {
+        let live_tab_ids = self.tabs.iter().map(|tab| tab.tab_id).collect::<FastHashSet<_>>();
+        let claims = self
+            .pending_latent_materializations
+            .iter()
+            .filter_map(|(action_target, pending)| {
+                let tab_id = pending.tab_id?;
+                live_tab_ids.contains(&tab_id).then_some((action_target.clone(), tab_id, pending.request.clone(), pending.subject.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (action_target, tab_id, request, subject) in &claims {
+            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.tab_id == *tab_id) {
+                tab.name = request.name.clone();
+            }
+            self.apply_materialized_identity(*tab_id, request, subject.clone());
+            self.pending_latent_materializations.remove(action_target);
+        }
+        !claims.is_empty()
+    }
+
+    fn apply_materialized_identity(&mut self, tab_id: WorkspaceId, request: &MaterializeLatentRequest, subject: Option<EntityRef>) -> bool {
+        let Some(entity) = subject.or_else(|| {
+            self.catalog_entities()
+                .into_iter()
+                .find(|entity| {
+                    metadata_entry_text(&entity.facts, KEY_ACTION_TARGET)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| entity.entity.action_target())
+                        == request.action_target
+                })
+                .map(|entity| entity.entity)
+        }) else {
+            return false;
+        };
+        self.apply_metadata_patch(MetadataPatch {
+            target: MetadataTarget::Tab(tab_id),
+            source_id: SOURCE_LATENT_MATERIALIZER.to_owned(),
+            set: subject_binding(&entity),
+            unset: vec![],
+        })
+    }
+
+    fn resolve_template_slot(
+        &self,
+        slot: TemplateConfigSlot,
+        node_kind: TemplateConfigNodeKind,
+        metadata: &FactMap,
+    ) -> Option<Rc<ResolvedTemplateSlot>> {
+        let catalog = self.template_catalog.as_ref()?;
+        let context = TemplateConfigMatchContext { slot, node_kind, metadata, collapsed: false, collapsible: true, active_tab_name: None };
+        self.resolution(catalog.resolution_key(context), || match catalog.resolve(context) {
+            Ok(Some(resolved)) => Some(ResolvedTemplateSlot {
+                template_name: resolved.name.clone(),
+                fields: vec![],
+                render_ready: Some(resolved.render_ready()),
+                setters: resolved.setters.clone(),
+                effective_kdl: EffectiveKdl::of(resolved),
+                resolve_error: None,
+            }),
+            Ok(None) => None,
+            Err(error) => Some(ResolvedTemplateSlot {
+                template_name: "<resolve-error>".to_owned(),
+                fields: vec![],
+                render_ready: None,
+                setters: vec![],
+                effective_kdl: EffectiveKdl::text(format!("// error: {error}\n")),
+                resolve_error: Some(error.to_string()),
+            }),
+        })
+    }
+
+    fn tab_primary_metadata_entry(&self, tab_id: WorkspaceId, key: &str) -> Option<MetadataEntry> {
+        let entries: Vec<CandidateEntry> = self
+            .panes
+            .values()
+            .filter(|pane| pane.tab_id == tab_id)
+            .flat_map(|pane| self.metadata.entries_for(&EntityId::Pane(pane.pane_id), key, self.now()))
+            .collect();
+        select_primary_entry(&entries).map(|candidate| candidate.entry)
+    }
+
+    fn resolved_metadata_for_tabs(&self, tabs: &[TabCard], catalog: &CatalogEvaluation) -> Vec<ResolvedMetadata> {
+        let seeds = self.tab_seed_metadata_entries();
+        let targets = std::iter::once(EntityId::Root)
+            .chain(tabs.iter().map(|tab| EntityId::Tab(tab.tab_id)))
+            .chain(catalog.entities.iter().map(|entity| EntityId::Entity(entity.entity.clone())));
+        targets
+            .map(|target| {
+                let seed = if let EntityId::Tab(id) = target { seeds.get(&id).cloned().unwrap_or_default() } else { BTreeMap::new() };
+                let (values, source_entries, reachable_identities) = self.resolve_target_metadata(&target, seed);
+                ResolvedMetadata { target, values, source_entries, reachable_identities }
+            })
+            .collect()
+    }
+
+    fn resolve_target_metadata(
+        &self,
+        target: &EntityId,
+        seed_values: BTreeMap<String, MetadataEntry>,
+    ) -> (BTreeMap<String, MetadataEntry>, BTreeMap<String, Vec<MetadataSourceEntry>>, Vec<ReachableMetadataIdentity>) {
+        let _phase = profile::span("metadata-resolution");
+        let mut values = BTreeMap::new();
+        let mut source_entries = BTreeMap::<String, Vec<MetadataSourceEntry>>::new();
+        let mut reachable_identities = vec![];
+        let mut visited = BTreeSet::new();
+        let mut queue = VecDeque::from([(target.clone(), 0usize)]);
+
+        while let Some((current, distance)) = queue.pop_front() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            if let EntityId::Identity(identity) = &current {
+                reachable_identities.push(ReachableMetadataIdentity { identity: identity.clone(), distance });
+            }
+            let current_values = self.metadata.resolved_entries_for(&current, self.now());
+            let current_values = if &current == target {
+                seed_values.clone().into_iter().chain(current_values).collect::<BTreeMap<_, _>>()
+            } else {
+                current_values
+            };
+            // An entity restating its own identity names itself.
+            let current_values = match &current {
+                EntityId::Entity(entity)
+                    if !current_values.contains_key(KEY_ENTITY_PROVIDER) && current_values.contains_key(KEY_ENTITY_ID) =>
+                {
+                    let mut values = current_values;
+                    let entry =
+                        MetadataEntry { value: MetadataValue::Text(entity.provider.as_str().into()), ..values[KEY_ENTITY_ID].clone() };
+                    values.insert(KEY_ENTITY_PROVIDER.to_owned(), entry);
+                    values
+                }
+                _ => current_values,
+            };
+            if let Some(entity) = entity_ref_from_entries(&current_values) {
+                let entity_target = EntityId::Entity(entity);
+                if !visited.contains(&entity_target) {
+                    queue.push_back((entity_target, distance + 1));
+                }
+            }
+            for (key, entry) in current_values {
+                let identity = EntityId::Identity(MetadataIdentity { key: key.clone(), value: entry.value.clone() });
+                values.entry(key).or_insert(entry);
+                if !visited.contains(&identity) {
+                    queue.push_back((identity, distance + 1));
+                }
+            }
+            for (key, entries) in self.metadata.source_entries_for(&current, self.now()) {
+                source_entries.entry(key).or_default().extend(entries);
+            }
+        }
+
+        (values, source_entries, reachable_identities)
+    }
+
+    fn tab_seed_metadata_entries(&self) -> TabSeedMetadata {
+        self.tab_seed_metadata_entries_for(&FastHashSet::default())
+    }
+
+    fn tab_seed_metadata_entries_for(&self, directory_tab_ids: &FastHashSet<WorkspaceId>) -> TabSeedMetadata {
+        let cwd_entries = self
+            .tabs
+            .iter()
+            .filter_map(|tab| self.tab_primary_metadata_entry(tab.tab_id, KEY_PANE_CWD).map(|entry| (tab.tab_id, entry)))
+            .collect::<FastHashMap<_, _>>();
+        let all_group_cwds = cwd_entries
+            .iter()
+            .filter_map(|(tab_id, entry)| {
+                if !directory_tab_ids.contains(tab_id) {
+                    return None;
+                }
+                match &entry.value {
+                    MetadataValue::Text(cwd) => Some(cwd.clone()),
+                    _ => None,
+                }
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        cwd_entries
+            .into_iter()
+            .map(|(tab_id, cwd_entry)| {
+                let mut entries = BTreeMap::from([(KEY_PANE_CWD.to_owned(), cwd_entry.clone())]);
+                if let MetadataValue::Text(cwd) = &cwd_entry.value {
+                    entries.insert(
+                        KEY_PANE_CWD_LABEL.to_owned(),
+                        MetadataEntry { value: MetadataValue::Text(cwd_group_label(cwd, &all_group_cwds).into()), ..cwd_entry },
+                    );
+                }
+                (tab_id, entries)
+            })
+            .collect()
+    }
+
+    fn refresh_pane_cwd_metadata(&mut self, pane_id: PaneTarget) -> bool {
+        let entity_id = EntityId::Pane(pane_id);
+        let Some(pane) = self.panes.get(&pane_id) else {
+            let changed = self.metadata.source_entry(&entity_id, KEY_PANE_CWD, SOURCE_ZELLIJ, self.now()).is_some();
+            self.metadata.unset(&entity_id, KEY_PANE_CWD, SOURCE_ZELLIJ);
+            return changed;
+        };
+        let should_emit = matches!(pane_id, PaneTarget::Terminal(_)) && pane.is_selectable;
+        let Some(cwd) = pane.cwd.clone().filter(|_| should_emit) else {
+            let changed = self.metadata.source_entry(&entity_id, KEY_PANE_CWD, SOURCE_ZELLIJ, self.now()).is_some();
+            self.metadata.unset(&entity_id, KEY_PANE_CWD, SOURCE_ZELLIJ);
+            return changed;
+        };
+        let value = MetadataValue::Text(cwd.into());
+        let precedence = if pane.is_focused { FOCUSED_CWD_PRECEDENCE } else { NORMAL_CWD_PRECEDENCE };
+        if self.metadata.source_entry(&entity_id, KEY_PANE_CWD, SOURCE_ZELLIJ, self.now()).is_some_and(|entry| {
+            entry.value == value && entry.ttl_ms.is_none() && entry.precedence == precedence && entry.ordinal == pane.ordinal
+        }) {
+            return false;
+        }
+        self.receive_counter = self.receive_counter.saturating_add(1);
+        self.metadata.set(
+            entity_id,
+            KEY_PANE_CWD,
+            SOURCE_ZELLIJ,
+            MetadataEntry { value, updated_at: self.now(), ttl_ms: None, precedence, ordinal: pane.ordinal },
+        );
+        true
+    }
+
+    fn status_for_tab(&self, tab_id: WorkspaceId) -> Option<TabStatusSummary> {
+        self.pane_statuses
+            .iter()
+            .filter(|(pane_id, _)| self.pane_to_tab.get(pane_id) == Some(&tab_id))
+            .max_by_key(|(_, stored)| {
+                (stored.status.priority, stored.status.timestamp_ms.unwrap_or(stored.received_at), stored.received_at)
+            })
+            .map(|(pane_id, stored)| TabStatusSummary {
+                priority: stored.status.priority,
+                title: stored.status.title.clone(),
+                detail: stored.status.detail.clone(),
+                icon: stored.status.icon.clone(),
+                source_pane: *pane_id,
+            })
+    }
+
+    fn status_sort_key(&self, status: Option<&TabStatusSummary>) -> (Priority, u64) {
+        let Some(status) = status else {
+            return (Priority::Idle, 0);
+        };
+        let timestamp = self
+            .pane_statuses
+            .get(&status.source_pane)
+            .and_then(|stored| stored.status.timestamp_ms.or(Some(stored.received_at)))
+            .unwrap_or(0);
+        (status.priority, timestamp)
+    }
+}
+
+fn node_metadata(node: &NodeKey, resolved_metadata: &[ResolvedMetadata]) -> FactMap {
+    let target = match node {
+        NodeKey::Root => ResolvedMetadataTarget::Root,
+        NodeKey::Tab(tab_id) => ResolvedMetadataTarget::Tab(*tab_id),
+        NodeKey::Entity(entity) => ResolvedMetadataTarget::Entity(entity.clone()),
+        NodeKey::Placement(key) => {
+            key.0.last().map(|segment| ResolvedMetadataTarget::Entity(segment.entity.clone())).unwrap_or(ResolvedMetadataTarget::Root)
+        }
+    };
+    resolved_metadata
+        .iter()
+        .find(|metadata| metadata.target == target)
+        .map(|metadata| metadata.values.iter().map(|(key, entry)| (key.as_str().into(), entry.value.clone())).collect())
+        .unwrap_or_default()
+}
+
+fn apply_variable_setter(
+    values: &mut BTreeMap<String, EffectiveVariableValue>,
+    name: &str,
+    value: &str,
+    provenance: VariableSetterProvenance,
+) {
+    let overridden = values
+        .remove(name)
+        .map(|previous| {
+            let mut history = vec![previous.provenance];
+            history.extend(previous.overridden);
+            history
+        })
+        .unwrap_or_default();
+    values.insert(name.to_owned(), EffectiveVariableValue { value: value.to_owned(), provenance, overridden });
+}
+
+thread_local! {
+    /// The names of the identity facts `entity_facts` adds, made once.
+    static IDENTITY_KEYS: (Rc<str>, Rc<str>) = (Rc::from(KEY_ENTITY_KIND), Rc::from(KEY_ENTITY_ID));
+}
+
+/// An entity's facts as templates read them, sharing the record's names.
+fn entity_facts(entity: &EntityRef, values: &ResolvedFacts) -> FactMap {
+    let mut facts: FactMap = values.named().map(|(key, fact)| (key.clone(), fact.entry.value.clone())).collect();
+    // The target is the canonical entity identity. Producers must not have to
+    // duplicate it in every patch's set map for placement queries and templates.
+    let (kind, id) = IDENTITY_KEYS.with(|(kind, id)| (kind.clone(), id.clone()));
+    facts.insert(kind, MetadataValue::Text(entity.kind.as_str().into()));
+    facts.insert(id, MetadataValue::Text(entity.id.as_str().into()));
+    facts
+}
+
+/// A `.ref`'s `.target`: a single entity reference.
+fn ref_target(entries: &impl Entries) -> Option<EntityRef> {
+    match &entries.entry_at(system::TARGET)?.value {
+        MetadataValue::EntityRefs(refs) if refs.len() == 1 => refs.first().cloned(),
+        _ => None,
+    }
+}
+
+fn host_entity_ref_from_entries(entries: &impl Entries) -> Option<EntityRef> {
+    Some(EntityRef::new(
+        metadata_entry_text(entries, KEY_HOST_ENTITY_PROVIDER).unwrap_or(LOCAL_PROVIDER),
+        metadata_entry_text(entries, KEY_HOST_ENTITY_KIND)?,
+        metadata_entry_text(entries, KEY_HOST_ENTITY_ID)?,
+    ))
+}
+
+/// Replace any provider a patch names by `entity.provider` (or
+/// `.host.provider`) with `provider`, wherever it names an entity by kind and
+/// ID on another target, so the entity is the patch's provider's.
+fn stamp_identity_providers(patch: &mut MetadataPatch, provider: &str) {
+    for (kind, id, key) in
+        [(KEY_ENTITY_KIND, KEY_ENTITY_ID, KEY_ENTITY_PROVIDER), (KEY_HOST_ENTITY_KIND, KEY_HOST_ENTITY_ID, KEY_HOST_ENTITY_PROVIDER)]
+    {
+        patch.set.remove(key);
+        patch.unset.retain(|unset| unset != key);
+        if matches!(patch.target, MetadataTarget::Entity(_)) {
+            continue;
+        }
+        if let Some(update) = patch.set.get(id).or_else(|| patch.set.get(kind)).cloned() {
+            patch.set.insert(key.to_owned(), MetadataValueUpdate { value: MetadataValue::Text(provider.into()), ..update });
+        } else if patch.unset.iter().any(|unset| unset == id || unset == kind) {
+            patch.unset.push(key.to_owned());
+        }
+    }
+}
+
+/// A retained subject drawn from its record alone: its label and the facts
+/// placement reads, dated when it was last seen.
+fn saved_catalog_entity(entity: EntityRef, record: &SubjectRecord) -> CatalogEntity {
+    const SOURCE_RECORD: &str = "andamento-record";
+    let updated_at = record.last_seen_ms.unwrap_or_default();
+    let entry = |value| MetadataEntry { value, updated_at, ttl_ms: None, precedence: 0, ordinal: 0 };
+    let mut values: BTreeMap<_, _> = record.facts.iter().map(|(key, value)| (key.clone(), entry(value.clone()))).collect();
+    if let Some(label) = &record.label {
+        values.insert(KEY_DISPLAY_LABEL.to_owned(), entry(MetadataValue::Text(label.as_str().into())));
+    }
+    let sources = values.keys().map(|key| (key.clone(), SOURCE_RECORD.to_owned())).collect();
+    CatalogEntity { entity, facts: Rc::new(ResolvedFacts::from_maps(values, &sources)) }
+}
+
+fn entity_ref_from_entries(entries: &impl Entries) -> Option<EntityRef> {
+    Some(EntityRef::new(
+        metadata_entry_text(entries, KEY_ENTITY_PROVIDER).unwrap_or(LOCAL_PROVIDER),
+        metadata_entry_text(entries, KEY_ENTITY_KIND)?,
+        metadata_entry_text(entries, KEY_ENTITY_ID)?,
+    ))
+}
+
+/// The tab facts that bind a workspace to `subject`, as the core owns them.
+fn subject_binding(subject: &EntityRef) -> BTreeMap<String, MetadataValueUpdate> {
+    [(KEY_ENTITY_PROVIDER, &subject.provider), (KEY_ENTITY_KIND, &subject.kind), (KEY_ENTITY_ID, &subject.id)]
+        .into_iter()
+        .map(|(key, value)| {
+            (
+                key.to_owned(),
+                MetadataValueUpdate {
+                    value: MetadataValue::Text(value.as_str().into()),
+                    ttl_ms: None,
+                    precedence: Some(LATENT_MATERIALIZER_PRECEDENCE),
+                    ordinal: None,
+                },
+            )
+        })
+        .collect()
+}
+
+/// An entity's opening recipe: an empty one is none, as there is nothing to
+/// run, so every host sees a recipe-less open the same way.
+fn materialize_recipe(values: &impl Entries) -> Option<&str> {
+    metadata_entry_text(values, KEY_MATERIALIZE_RECIPE).filter(|recipe| !recipe.is_empty())
+}
+
+/// The `primary` slot's resolution, from the facts managed primary content
+/// has always read. A workspace subject (`subject_target` is its action
+/// target) that publishes no `workspace.primary.state` (a vessel or convoy,
+/// today) resolves it to its opening recipe, at its action target: the
+/// recipe is that Slot's content, not a condition for opening the workspace,
+/// so a workspace opened without one fills in when one arrives. A direct
+/// Cleat endpoint, when published, is preferred over the recipe.
+fn desired_primary(values: &impl Entries, subject_target: Option<&str>) -> Option<DesiredContent> {
+    use crate::managed::TerminalContent;
+    let text = |key| metadata_entry_text(values, key).map(str::to_owned);
+    let ready = |target: Option<String>| -> Option<DesiredContent> {
+        let target = target.filter(|s| !s.is_empty())?;
+        if let Some(recipe) = suggested_layout::direct_primary(text) {
+            return Some(DesiredContent::Ready(Resolved { target: Some(target), recipe }));
+        }
+        Some(DesiredContent::Ready(
+            TerminalContent {
+                target,
+                command: text(KEY_MATERIALIZE_RECIPE).filter(|s| !s.is_empty())?,
+                // The same fact materialization launches in, so a workspace opened
+                // from this resolution compares equal to it.
+                cwd: text(KEY_CHECKOUT_PATH),
+            }
+            .into(),
+        ))
+    };
+    match text("workspace.primary.state").as_deref() {
+        Some("held") => Some(DesiredContent::Held),
+        Some("ready") => ready(text("workspace.primary.target")),
+        Some(_) => None,
+        None => subject_target.and_then(|fallback| ready(text(KEY_ACTION_TARGET).or_else(|| Some(fallback.to_owned())))),
+    }
+}
+
+fn metadata_entry_text<'a>(values: &'a impl Entries, key: &str) -> Option<&'a str> {
+    match values.entry_at(key).map(|entry| &entry.value) {
+        Some(MetadataValue::Text(value)) => Some(value),
+        _ => None,
+    }
+}
+
+fn cwd_group_label(cwd: &str, all_group_cwds: &[Arc<str>]) -> String {
+    let basename = Path::new(cwd).file_name().and_then(|name| name.to_str()).filter(|name| !name.is_empty()).unwrap_or(cwd);
+    let duplicate_basename_count = all_group_cwds
+        .iter()
+        .filter(|candidate| Path::new(&***candidate).file_name().and_then(|name| name.to_str()) == Some(basename))
+        .count();
+    if duplicate_basename_count <= 1 {
+        return basename.to_owned();
+    }
+    Path::new(cwd)
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|parent| parent.to_str())
+        .map(|parent| format!("{parent}/{basename}"))
+        .unwrap_or_else(|| cwd.to_owned())
+}
+
+fn observed_metadata_identities(resolved_metadata: &[ResolvedMetadata]) -> Vec<ObservedMetadataIdentity> {
+    let mut by_identity: BTreeMap<MetadataIdentity, (BTreeSet<EntityId>, usize)> = BTreeMap::new();
+    for metadata in resolved_metadata {
+        for reachable in &metadata.reachable_identities {
+            let (targets, nearest_distance) =
+                by_identity.entry(reachable.identity.clone()).or_insert_with(|| (BTreeSet::new(), reachable.distance));
+            targets.insert(metadata.target.clone());
+            *nearest_distance = (*nearest_distance).min(reachable.distance);
+        }
+    }
+    by_identity
+        .into_iter()
+        .map(|(identity, (targets, nearest_distance))| ObservedMetadataIdentity { identity, target_count: targets.len(), nearest_distance })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn placement_loop(predicates: &[(&str, &str)]) -> PlacementDefinition {
+        PlacementDefinition {
+            name: "section".to_owned(),
+            loops: vec![PlacementLoop {
+                binding: "item".to_owned(),
+                in_key: None,
+                of: None,
+                visibility: None,
+                predicates: predicates
+                    .iter()
+                    .map(|(key, value)| PlacementPredicate { key: (*key).to_owned(), value: Some((*value).to_owned()), of: None })
+                    .collect(),
+                order: vec![],
+                fields: vec![],
+                layout: None,
+                default_collapsed: false,
+                tier: None,
+                loops: vec![],
+                apply_template: None,
+            }],
+        }
+    }
+    use crate::template_config::{parse_template_config_kdl, PlacementPredicate, TemplateConfigLayer};
+    use crate::{
+        tab_workspace_id, PluginPaneKind, PluginPlacement, PluginRegistrationHello, RailStructure, ResolvedMetadataTarget, StatusIcon,
+    };
+
+    type EntityId = MetadataTarget;
+    fn status(pane_id: PaneTarget, priority: Priority, title: &str, timestamp_ms: u64) -> SetPaneStatus {
+        SetPaneStatus { pane_id, priority, title: title.to_owned(), detail: None, icon: None, timestamp_ms: Some(timestamp_ms) }
+    }
+
+    fn tab_info(tab_id: usize, position: usize, name: &str, active: bool) -> ControllerTab {
+        ControllerTab { tab_id: tab_workspace_id(tab_id as u64), position, name: name.into(), active }
+    }
+
+    fn entity_ref(kind: &str, id: &str) -> EntityRef {
+        EntityRef::local(kind, id)
+    }
+
+    // EntityRefs joins must use only prebuilt postings, including each identity
+    // component. Removing candidate facts after indexing proves matching does
+    // not inspect those facts or scan them for membership.
+    #[test]
+    fn subject_membership_is_index_only() {
+        let mut state = ControllerState::default();
+        let convoy = entity_ref("convoy", "same:id");
+        apply_entity(&mut state, "convoy", &convoy.id, 0, &[("display.label", "Convoy")]);
+        for (id, refs) in
+            [("match", vec![convoy.clone(), convoy.clone()]), ("wrong-kind", vec![entity_ref("vessel", &convoy.id)]), ("empty", vec![])]
+        {
+            state.apply_metadata_patch(MetadataPatch {
+                target: MetadataTarget::Entity(entity_ref("change_request", id)),
+                source_id: "test".into(),
+                set: BTreeMap::from([(
+                    "flotilla.subject_of".into(),
+                    MetadataValueUpdate { value: MetadataValue::EntityRefs(refs), ttl_ms: None, precedence: None, ordinal: None },
+                )]),
+                unset: vec![],
+            });
+        }
+        let mut entities = state.catalog_entities();
+        let index = PlacementIndex::build(&entities);
+        let config = parse_template_config_kdl(
+            r#"
+            placement "subjects" {
+                for "convoy" kind="convoy" {
+                    for "subject" kind="change_request" { match "flotilla.subject_of" of="convoy"; }
+                }
+            }
+        "#,
+        )
+        .unwrap();
+        let query = &config.placements[0].loops[0].loops[0];
+        for entity in &mut entities {
+            entity.facts = Rc::new(ResolvedFacts::default());
+        }
+        let bound = entities.iter().find(|entity| entity.entity == convoy).unwrap();
+        let root = Scope::default();
+        let scope = root.within("convoy", bound, true);
+        let matched = state.placement_matches(query, &entities, &index, &scope, &mut LoopReads::default());
+        assert_eq!(matched.iter().map(|&p| entities[p].entity.id.as_str()).collect::<Vec<_>>(), vec!["match"]);
+    }
+
+    fn forward_reference_lists() -> Vec<Vec<EntityRef>> {
+        // Exhaustive generator: lengths 0..=3 over valid, missing, and wrong-kind
+        // refs spans empty input, ordering permutations, and repeated identities.
+        let choices = [entity_ref("convoy", "a"), entity_ref("convoy", "z"), entity_ref("vessel", "a"), entity_ref("convoy", "missing")];
+        let mut sequences = vec![vec![]];
+        let mut level = vec![vec![]];
+        for _ in 0..3 {
+            level = level
+                .iter()
+                .flat_map(|prefix| {
+                    choices.iter().map(move |reference| {
+                        let mut next = prefix.clone();
+                        next.push(reference.clone());
+                        next
+                    })
+                })
+                .collect();
+            sequences.extend(level.clone());
+        }
+        sequences
+    }
+
+    // Forward joins follow the producer's ordered list, deduplicate repeated refs,
+    // and reject missing/wrong-kind targets and ancestor cycles. Explicit order wins.
+    #[test]
+    fn forward_edges_preserve_order_and_filter_targets() {
+        let mut state = ControllerState::default();
+        for (kind, id) in [("role", "r"), ("convoy", "a"), ("convoy", "z"), ("vessel", "a")] {
+            apply_entity(&mut state, kind, id, 0, &[("display.label", id)]);
+        }
+        let configs = [false, true].map(|explicit_order| {
+            let order = if explicit_order { r#"order "display.label";"# } else { "" };
+            parse_template_config_kdl(&format!(
+                r#"
+                placement "tree" {{
+                    for "role" kind="role" {{
+                        for "attempt" kind="convoy" in="attempts" of="role" {{
+                            {order}
+                        }}
+                    }}
+                    for "other" kind="vessel"
+                }}
+            "#
+            ))
+            .unwrap()
+        });
+        for refs in forward_reference_lists() {
+            state.apply_metadata_patch(MetadataPatch {
+                target: MetadataTarget::Entity(entity_ref("role", "r")),
+                source_id: "test".into(),
+                set: BTreeMap::from([(
+                    "attempts".into(),
+                    MetadataValueUpdate { value: MetadataValue::EntityRefs(refs.clone()), ttl_ms: None, precedence: None, ordinal: None },
+                )]),
+                unset: vec![],
+            });
+            let entities = state.catalog_entities();
+            let index = PlacementIndex::build(&entities);
+            let role = entities.iter().find(|e| e.entity == entity_ref("role", "r")).unwrap();
+            for (explicit_order, config) in [false, true].into_iter().zip(&configs) {
+                assert_eq!(config.placements[0].loops.len(), 2);
+                let query = &config.placements[0].loops[0].loops[0];
+                // `role` bound, under an ancestor bound to no name.
+                let ids = |ancestors: &[EntityRef]| {
+                    let ancestor = ancestors.first().and_then(|a| entities.iter().find(|e| e.entity == *a));
+                    let outside = Scope { entity: ancestor, ..Scope::default() };
+                    let scope = Scope { entity: Some(role), name: Some("role"), outer: None, parent: Some(&outside) };
+                    state
+                        .placement_matches(query, &entities, &index, &scope, &mut LoopReads::default())
+                        .iter()
+                        .map(|&p| entities[p].entity.id.as_str())
+                        .collect::<Vec<_>>()
+                };
+                let mut expected = vec![];
+                for reference in &refs {
+                    if reference.kind == "convoy"
+                        && ["a", "z"].contains(&reference.id.as_str())
+                        && !expected.contains(&reference.id.as_str())
+                    {
+                        expected.push(reference.id.as_str());
+                    }
+                }
+                if explicit_order {
+                    expected.sort();
+                }
+                assert_eq!(ids(&[]), expected, "{refs:?}");
+                assert_eq!(ids(&[entity_ref("convoy", "z")]), expected.into_iter().filter(|id| *id != "z").collect::<Vec<_>>());
+            }
+        }
+        let entities = state.catalog_entities();
+        let index = PlacementIndex::build(&entities);
+        let role = entities.iter().find(|e| e.entity == entity_ref("role", "r")).unwrap();
+        let root = Scope::default();
+        let bindings = root.within("role", role, true);
+        let missing = Scope::default();
+        let config = parse_template_config_kdl(
+            r#"
+            placement "tree" { for "role" kind="role" { for "attempt" kind="convoy" in="absent" of="role"; }; }
+        "#,
+        )
+        .unwrap();
+        let query = &config.placements[0].loops[0].loops[0];
+        assert!(state.placement_matches(query, &entities, &index, &bindings, &mut LoopReads::default()).is_empty());
+        assert!(state.placement_matches(query, &entities, &index, &missing, &mut LoopReads::default()).is_empty());
+    }
+
+    // Forward detail fields bind their source by template name, remain fresh,
+    // and do not materialize the referenced convoy as an extra tree row.
+    #[test]
+    fn forward_detail_template_uses_current_attempt() {
+        let mut state = ControllerState::default();
+        state.set_template_catalog(Some(TemplateConfigCatalog::from_config(
+            parse_template_config_kdl(
+                r#"
+                region "tree" root-template="heading" placement="tree"
+                template "heading" { field "label" source="literal" value="Roles"; }
+                placement "tree" { for "role" kind="role" { apply-template "role/native"; }; }
+                template "role/native" { field "label" key="display.label"; }
+                template "role/detail" slot="detail" node-kind="entity" {
+                    for "attempt" kind="convoy" in="current" of="role" {
+                        field "label" key="display.label" prefix="Current: "
+                        field "phase" key="phase" prefix="Phase: "
+                    }
+                }
+            "#,
+            )
+            .unwrap(),
+        )));
+        apply_entity(&mut state, "role", "r", 0, &[("display.label", "Governor")]);
+        apply_entity(&mut state, "convoy", "a", 0, &[("display.label", "Attempt"), ("phase", "active")]);
+        for refs in [vec![entity_ref("convoy", "a")], vec![]] {
+            let present = !refs.is_empty();
+            state.apply_metadata_patch(MetadataPatch {
+                target: MetadataTarget::Entity(entity_ref("role", "r")),
+                source_id: "test".into(),
+                set: BTreeMap::from([(
+                    "current".into(),
+                    MetadataValueUpdate { value: MetadataValue::EntityRefs(refs), ttl_ms: None, precedence: None, ordinal: None },
+                )]),
+                unset: vec![],
+            });
+            let model = state.view_model().presentation.unwrap();
+            assert_eq!(model.sections[0].nodes.len(), 1);
+            let detail = &model.sections[0].nodes[0].detail;
+            assert_eq!(
+                detail.fields.iter().map(|field| field.value.as_str()).collect::<Vec<_>>(),
+                if present { vec!["Governor", "Current: Attempt", "Phase: active"] } else { vec!["Governor"] }
+            );
+        }
+    }
+
+    // A self-reference cannot repeat the bound entity; sibling selectors still
+    // render after a forward loop whose self-edge was filtered by the cycle guard.
+    #[test]
+    fn forward_self_edge_and_sibling_selectors_render_safely() {
+        let mut state = ControllerState::default();
+        state.set_template_catalog(Some(TemplateConfigCatalog::from_config(
+            parse_template_config_kdl(
+                r#"
+                region "tree" root-template="heading" placement="tree"
+                template "heading" { field "label" source="literal" value="Items"; }
+                placement "tree" {
+                    for "role" kind="role" {
+                        match "entity.id" value="r"
+                        for "related" kind="role" in="refs" of="role" { field "label" key="display.label"; }
+                    }
+                    for "vessel" kind="vessel"
+                }
+            "#,
+            )
+            .unwrap(),
+        )));
+        for (kind, id) in [("role", "r"), ("role", "s"), ("vessel", "v")] {
+            apply_entity(&mut state, kind, id, 0, &[("display.label", id)]);
+        }
+        state.apply_metadata_patch(MetadataPatch {
+            target: MetadataTarget::Entity(entity_ref("role", "r")),
+            source_id: "test".into(),
+            set: BTreeMap::from([(
+                "refs".into(),
+                MetadataValueUpdate {
+                    value: MetadataValue::EntityRefs(vec![entity_ref("role", "r"), entity_ref("role", "s")]),
+                    ttl_ms: None,
+                    precedence: None,
+                    ordinal: None,
+                },
+            )]),
+            unset: vec![],
+        });
+        let model = state.view_model().presentation.unwrap();
+        assert_eq!(model.sections[0].nodes.iter().map(|node| node.entity.id.as_str()).collect::<Vec<_>>(), vec!["r", "v"]);
+        assert_eq!(model.sections[0].nodes[0].children.iter().map(|node| node.entity.id.as_str()).collect::<Vec<_>>(), vec!["s"]);
+    }
+
+    // Explicit generated space spans digit widths, leading zeroes, Unicode,
+    // multiple runs and numbers larger than u64; natural comparison is numeric,
+    // antisymmetric and leaves the default text ordering untouched.
+    #[test]
+    fn natural_order_numeric_runs_property() {
+        for a in [0u64, 1, 9, 10, 99, 100, 281, 999, 1000, u64::MAX] {
+            for b in [0u64, 1, 9, 10, 99, 100, 281, 999, 1000, u64::MAX] {
+                for prefix in ["", "!", "é/repo!"] {
+                    for padding in [0, 1, 4] {
+                        let left = format!("{prefix}{a:0width$}/run2", width = padding);
+                        let right = format!("{prefix}{b}/run2");
+                        assert_eq!(natural_text_order(&left, &right), a.cmp(&b));
+                        assert_eq!(
+                            compare_order_values(
+                                &MetadataValue::Text(left.as_str().into()),
+                                &MetadataValue::Text(right.as_str().into()),
+                                true
+                            ),
+                            a.cmp(&b)
+                        );
+                        assert_eq!(natural_text_order(&right, &left), a.cmp(&b).reverse());
+                    }
+                }
+            }
+        }
+        assert_eq!(natural_text_order("", ""), Ordering::Equal);
+        assert_eq!(natural_text_order("a2b9", "a2b10"), Ordering::Less);
+        assert_eq!(natural_text_order("999999999999999999999999", "1000000000000000000000000"), Ordering::Less);
+        assert_eq!(compare_order_values(&MetadataValue::Text("281".into()), &MetadataValue::Text("1000".into()), false), Ordering::Greater);
+    }
+
+    #[test]
+    fn cross_layer_variable_setter_warnings_reach_template_diagnostics() {
+        let user = parse_template_config_kdl(r#"set "child-layout" "compact-strip""#).expect("user setter");
+        let bundled = parse_template_config_kdl(
+            r#"
+            variable "child-layout" default="cards" {
+              value "cards"
+              value "strip"
+            }
+            "#,
+        )
+        .expect("bundled declaration");
+        let mut state = ControllerState::default();
+        state.set_template_catalog(Some(TemplateConfigCatalog::from_layers(vec![
+            TemplateConfigLayer::user("user.kdl", user),
+            TemplateConfigLayer::bundled("bundled.kdl", bundled),
+        ])));
+
+        let model = state.view_model();
+
+        assert!(model
+            .template_config
+            .warnings
+            .iter()
+            .any(|warning| { warning.contains("child-layout") && warning.contains("disallowed value compact-strip") }));
+    }
+
+    fn apply_entity(state: &mut ControllerState, kind: &str, id: &str, ordinal: i64, facts: &[(&str, &str)]) {
+        let entity = entity_ref(kind, id);
+        let mut set = BTreeMap::from([
+            (
+                KEY_ENTITY_KIND.to_owned(),
+                MetadataValueUpdate { value: MetadataValue::Text(kind.into()), ttl_ms: None, precedence: None, ordinal: Some(ordinal) },
+            ),
+            (
+                KEY_ENTITY_ID.to_owned(),
+                MetadataValueUpdate { value: MetadataValue::Text(id.into()), ttl_ms: None, precedence: None, ordinal: Some(ordinal) },
+            ),
+        ]);
+        set.extend(facts.iter().map(|(key, value)| {
+            (
+                (*key).to_owned(),
+                MetadataValueUpdate { value: MetadataValue::Text((*value).into()), ttl_ms: None, precedence: None, ordinal: Some(ordinal) },
+            )
+        }));
+        state.apply_metadata_patch(MetadataPatch {
+            target: MetadataTarget::Entity(entity),
+            source_id: "flotilla-connector".to_owned(),
+            set,
+            unset: vec![],
+        });
+    }
+
+    fn directory_entity_state() -> ControllerState {
+        let mut state = ControllerState::default();
+        state.set_template_catalog(None);
+        state.set_rail_config(RailConfig::default());
+        state
+    }
+
+    #[test]
+    fn an_entity_whose_facts_restate_its_kind_is_placed_once() {
+        // Producers do restate identity in their patches — flotilla's connector
+        // sets entity.kind and entity.id as facts — so the index sees the same
+        // (key, value) twice for one entity: once from the EntityRef, once from
+        // its facts. Without the dedup guard it gets two postings and renders
+        // twice.
+        let mut state = directory_entity_state();
+        apply_entity(
+            &mut state,
+            "vessel",
+            "dev/focus/worker@lab",
+            1,
+            &[
+                ("entity.kind", "vessel"),
+                ("entity.id", "dev/focus/worker@lab"),
+                ("flotilla.vessel", "dev/focus/worker@lab"),
+                ("display.label", "worker"),
+            ],
+        );
+
+        let entities = state.catalog_entities();
+        let index = PlacementIndex::build(&entities);
+        let placed = state.evaluate_placement(&placement_loop(&[("entity.kind", "vessel")]), &entities, &index, "full");
+
+        assert_eq!(
+            placed.len(),
+            1,
+            "restating identity in facts must not duplicate the placement: {:?}",
+            placed.iter().map(|e| &e.entity).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn action_targets_are_recognised_without_being_made() {
+        for entity in [
+            EntityRef::local(".group", "g"),
+            EntityRef::new("sub", "convoy", "fleet/convoy-1"),
+            EntityRef::new("sub@x", "kind:odd", "id@with:sep"),
+        ] {
+            let made = entity.action_target();
+            assert!(is_action_target(&entity, None, &made), "{made}");
+            for other in [format!("{made}x"), made[..made.len() - 1].to_owned(), String::new()] {
+                assert!(!is_action_target(&entity, None, &other), "{other} for {made}");
+            }
+            assert!(is_action_target(&entity, Some("own"), "own"));
+            assert!(!is_action_target(&entity, Some("own"), &made));
+        }
+    }
+
+    #[test]
+    fn a_loop_matching_nothing_places_nothing() {
+        let mut state = directory_entity_state();
+        apply_entity(&mut state, "vessel", "dev/focus/worker@lab", 1, &[("flotilla.vessel", "dev/focus/worker@lab")]);
+        let entities = state.catalog_entities();
+        let index = PlacementIndex::build(&entities);
+
+        assert!(state.evaluate_placement(&placement_loop(&[("entity.kind", "convoy")]), &entities, &index, "full").is_empty());
+        assert!(
+            state
+                .evaluate_placement(&placement_loop(&[("entity.kind", "vessel"), ("status.attention", "true")]), &entities, &index, "full")
+                .is_empty(),
+            "predicates intersect: an unmatched one empties the result"
+        );
+    }
+
+    #[test]
+    fn loops_over_the_same_kind_choose_independent_total_orders() {
+        let config = parse_template_config_kdl(
+            r#"
+version 1
+placement "urgent" {
+  for "item" kind="vessel" {
+    order "status.rank" direction="descending" absent="last"
+  }
+}
+placement "stable" {
+  for "item" kind="vessel" {
+    order "display.label" direction="ascending" absent="first"
+  }
+}
+placement "missing-first" {
+  for "item" kind="vessel" {
+    order "status.rank" direction="ascending" absent="first"
+  }
+}
+placement "identity-descending" {
+  for "item" kind="vessel" {
+    order "entity.id" direction="descending"
+  }
+}
+"#,
+        )
+        .expect("two independently ordered loops");
+        let mut state = directory_entity_state();
+        apply_entity(
+            &mut state,
+            "vessel",
+            "zeta-id",
+            1,
+            &[("flotilla.vessel", "zeta-id"), ("display.label", "alpha"), ("status.rank", "1")],
+        );
+        apply_entity(
+            &mut state,
+            "vessel",
+            "alpha-id",
+            1,
+            &[("flotilla.vessel", "alpha-id"), ("display.label", "zeta"), ("status.rank", "9")],
+        );
+        apply_entity(&mut state, "vessel", "missing-id", 1, &[("flotilla.vessel", "missing-id"), ("display.label", "middle")]);
+        let entities = state.catalog_entities();
+        let index = PlacementIndex::build(&entities);
+        let labels = |placement: &PlacementDefinition| {
+            state
+                .evaluate_placement(placement, &entities, &index, "full")
+                .into_iter()
+                .map(|entity| entity.label.clone())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(labels(&config.placements[0]), vec!["zeta", "alpha", "middle"]);
+        assert_eq!(labels(&config.placements[1]), vec!["alpha", "middle", "zeta"]);
+        assert_eq!(labels(&config.placements[2]), vec!["middle", "alpha", "zeta"], "absent-first is independent of ascending direction");
+        assert_eq!(
+            labels(&config.placements[3]),
+            vec!["alpha", "middle", "zeta"],
+            "canonical entity identity facts can be ordered explicitly"
+        );
+    }
+
+    #[test]
+    fn undeclared_and_equal_order_falls_back_to_stable_entity_identity() {
+        let mut state = directory_entity_state();
+        for id in ["zeta-id", "alpha-id"] {
+            apply_entity(&mut state, "vessel", id, 1, &[("flotilla.vessel", id), ("display.label", "same")]);
+        }
+        let entities = state.catalog_entities();
+        let index = PlacementIndex::build(&entities);
+        let placed = state.evaluate_placement(&placement_loop(&[("entity.kind", "vessel")]), &entities, &index, "full");
+
+        assert_eq!(placed.into_iter().map(|item| item.entity.id.clone()).collect::<Vec<_>>(), vec!["alpha-id", "zeta-id"]);
+    }
+
+    #[test]
+    fn placement_state_is_independent_per_appearance_and_survives_model_pushes() {
+        let entity = EntityRef::local("vessel", "dev/focus/worker@lab");
+        let key = |loop_name: &str| PlacementKey(vec![PlacementSegment { loop_name: loop_name.to_owned(), entity: entity.clone() }]);
+        let tree = key("tree-item");
+        let attention = key("attention-item");
+        let mut state = directory_entity_state();
+
+        assert!(state.apply_rail_ui_action(RailUiAction::TogglePlacement { key: tree.clone() }));
+        assert_eq!(state.view_model().collapsed_placements, vec![tree.clone()]);
+        assert!(!state.view_model().collapsed_placements.contains(&attention));
+
+        state.set_sort_mode(SortMode::Controller);
+        assert_eq!(state.view_model().collapsed_placements, vec![tree]);
+    }
+
+    #[test]
+    fn placement_layout_variables_are_scoped_by_the_full_key() {
+        let entity = EntityRef::local("vessel", "dev/focus/worker@lab");
+        let placement = |loop_name: &str| {
+            NodeKey::Placement(PlacementKey(vec![PlacementSegment { loop_name: loop_name.to_owned(), entity: entity.clone() }]))
+        };
+        let tree = placement("tree-item");
+        let attention = placement("attention-item");
+        let mut state = ControllerState::default();
+        assert!(state.set_node_variable(tree.clone(), "child-layout".to_owned(), Some("cards".to_owned()),));
+        assert!(state.set_node_variable(attention.clone(), "child-layout".to_owned(), Some("strip".to_owned()),));
+
+        let overrides = state.bootstrap_snapshot().node_variable_overrides;
+        assert!(overrides.iter().any(|item| item.node == tree && item.values.get("child-layout").map(String::as_str) == Some("cards")));
+        assert!(overrides
+            .iter()
+            .any(|item| item.node == attention && item.values.get("child-layout").map(String::as_str) == Some("strip")));
+    }
+
+    #[test]
+    fn renaming_a_loop_deliberately_resets_its_placement_subtree_state() {
+        let entity = EntityRef::local("vessel", "dev/focus/worker@lab");
+        let key = |loop_name: &str| PlacementKey(vec![PlacementSegment { loop_name: loop_name.to_owned(), entity: entity.clone() }]);
+        let old = key("vessel");
+        let renamed = key("worker");
+        let mut state = ControllerState::default();
+        state.apply_rail_ui_action(RailUiAction::TogglePlacement { key: old.clone() });
+
+        assert!(state.rail_ui_state().collapsed_placements.contains(&old));
+        assert!(!state.rail_ui_state().collapsed_placements.contains(&renamed));
+    }
+
+    #[test]
+    fn an_entity_without_workspace_or_recipe_falls_back_to_inspect() {
+        // A catalog issue without a workspace or recipe has no activation;
+        // the caller opens its inspector.
+        let mut state = directory_entity_state();
+        apply_entity(
+            &mut state,
+            "issue",
+            "github/flotilla-org/andamento#61",
+            1,
+            &[
+                ("flotilla.project", "dev"),
+                ("flotilla.issue", "github/flotilla-org/andamento#61"),
+                ("display.label", "Hover does nothing on UI elements"),
+                ("status.attention", "true"),
+            ],
+        );
+
+        let issue = entity_ref("issue", "github/flotilla-org/andamento#61");
+        assert!(
+            state.catalog_entities().iter().any(|entity| entity.entity == issue),
+            "the issue must be in the catalog for this test to mean anything"
+        );
+        assert_eq!(state.activation_for_entity(&issue), None, "an entity without a workspace or recipe cannot activate");
+    }
+
+    #[test]
+    fn unchanged_tab_update_is_not_a_controller_change() {
+        let mut state = ControllerState::default();
+        let tabs = vec![tab_info(1, 0, "work", true), tab_info(2, 1, "logs", false)];
+
+        assert!(state.observe_workspaces(tabs.clone()));
+        assert!(!state.observe_workspaces(tabs));
+    }
+
+    #[test]
+    fn tab_update_change_is_a_controller_change() {
+        let mut state = ControllerState::default();
+        state.observe_workspaces(vec![tab_info(1, 0, "work", true), tab_info(2, 1, "logs", false)]);
+
+        assert!(state.observe_workspaces(vec![tab_info(1, 0, "work", false), tab_info(2, 1, "logs", true),]));
+    }
+
+    #[test]
+    fn setting_same_pane_cwd_is_not_a_metadata_change() {
+        let mut state = ControllerState::default();
+        state.update_tabs(vec![ControllerTab { tab_id: tab_workspace_id(1), position: 0, name: "work".into(), active: true }]);
+        state.set_test_pane(PaneTarget::Terminal(10), tab_workspace_id(1), true, false, 0);
+
+        assert!(state.set_pane_cwd(PaneTarget::Terminal(10), "/repo/a".into()));
+        let receive_counter = state.receive_counter;
+
+        assert!(!state.set_pane_cwd(PaneTarget::Terminal(10), "/repo/a".into()));
+        assert_eq!(state.receive_counter, receive_counter);
+    }
+
+    #[test]
+    fn duplicate_metadata_patch_is_not_a_model_change() {
+        let mut state = ControllerState::default();
+        let patch = MetadataPatch {
+            target: MetadataTarget::Tab(tab_workspace_id(1)),
+            source_id: "watcher".to_owned(),
+            set: BTreeMap::from([(
+                "git.repo".to_owned(),
+                MetadataValueUpdate {
+                    value: MetadataValue::Text("zellij-org/zellij".into()),
+                    ttl_ms: None,
+                    precedence: None,
+                    ordinal: None,
+                },
+            )]),
+            unset: vec![],
+        };
+
+        assert!(state.apply_metadata_patch(patch.clone()));
+        let receive_counter = state.receive_counter;
+        assert!(!state.apply_metadata_patch(patch));
+        assert_eq!(state.receive_counter, receive_counter);
+    }
+
+    #[test]
+    fn duplicate_ttl_metadata_patch_refreshes_without_model_change() {
+        let mut state = ControllerState::default();
+        let patch = MetadataPatch {
+            target: MetadataTarget::Tab(tab_workspace_id(1)),
+            source_id: "watcher".to_owned(),
+            set: BTreeMap::from([(
+                "git.repo".to_owned(),
+                MetadataValueUpdate {
+                    value: MetadataValue::Text("zellij-org/zellij".into()),
+                    ttl_ms: Some(10_000),
+                    precedence: None,
+                    ordinal: None,
+                },
+            )]),
+            unset: vec![],
+        };
+
+        assert!(state.apply_metadata_patch(patch.clone()));
+        let receive_counter = state.receive_counter;
+        assert!(!state.apply_metadata_patch(patch));
+        assert!(state.receive_counter > receive_counter);
+    }
+
+    #[test]
+    fn unchanged_pane_manifest_is_not_a_controller_change() {
+        let mut state = ControllerState::default();
+        state.update_tabs(vec![ControllerTab { tab_id: tab_workspace_id(1), position: 0, name: "work".into(), active: true }]);
+        let manifest = vec![PaneObservation {
+            workspace_id: tab_workspace_id(1),
+            pane_id: PaneTarget::Terminal(10),
+            is_selectable: true,
+            is_focused: false,
+            ordinal: 0,
+        }];
+
+        assert!(state.observe_panes(manifest.clone()));
+        state.set_pane_cwd(PaneTarget::Terminal(10), "/repo/a".into());
+        let receive_counter = state.receive_counter;
+
+        assert!(!state.observe_panes(manifest));
+        assert_eq!(state.receive_counter, receive_counter);
+    }
+
+    #[test]
+    fn cwd_refresh_only_requests_selectable_terminals_with_unknown_cwd() {
+        let mut state = ControllerState::default();
+        state.set_test_pane(PaneTarget::Terminal(10), tab_workspace_id(1), true, false, 0);
+        state.set_test_pane(PaneTarget::Terminal(11), tab_workspace_id(1), true, false, 1);
+        state.set_test_pane(PaneTarget::Terminal(12), tab_workspace_id(1), false, false, 2);
+        state.set_test_pane(PaneTarget::Plugin(20), tab_workspace_id(1), true, false, 3);
+        state.set_pane_cwd(PaneTarget::Terminal(11), "/repo/known".into());
+
+        assert_eq!(state.terminal_panes_for_cwd_refresh(), vec![10]);
+    }
+
+    #[test]
+    fn cwd_refresh_requests_each_pane_at_most_once() {
+        let mut state = ControllerState::default();
+        state.update_tabs(vec![ControllerTab { tab_id: tab_workspace_id(1), position: 0, name: "work".into(), active: true }]);
+        let manifest = vec![PaneObservation {
+            workspace_id: tab_workspace_id(1),
+            pane_id: PaneTarget::Terminal(10),
+            is_selectable: true,
+            is_focused: false,
+            ordinal: 0,
+        }];
+        state.observe_panes(manifest.clone());
+
+        assert_eq!(state.terminal_panes_for_cwd_refresh(), vec![10]);
+        state.mark_pane_cwd_requested(PaneTarget::Terminal(10));
+
+        // A failed lookup must not be retried on the next manifest update.
+        state.observe_panes(manifest.clone());
+        assert_eq!(state.terminal_panes_for_cwd_refresh(), Vec::<u32>::new());
+
+        // CwdChanged still lands and keeps the pane out of the refresh set.
+        assert!(state.set_pane_cwd(PaneTarget::Terminal(10), "/repo/a".into()));
+        state.observe_panes(manifest);
+        assert_eq!(state.terminal_panes_for_cwd_refresh(), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn resolved_tab_metadata_follows_transitive_identity_facts() {
+        let mut state = ControllerState::default();
+        state.update_tabs(vec![ControllerTab { tab_id: tab_workspace_id(1), position: 0, name: "repo".into(), active: true }]);
+        state.apply_metadata_patch(MetadataPatch {
+            target: EntityId::Tab(tab_workspace_id(1)),
+            source_id: "dir-watcher".to_owned(),
+            set: BTreeMap::from([(
+                "git.repo".to_owned(),
+                MetadataValueUpdate {
+                    value: MetadataValue::Text("rjwittams/katzensteg".into()),
+                    ttl_ms: None,
+                    precedence: None,
+                    ordinal: None,
+                },
+            )]),
+            unset: vec![],
+        });
+        state.apply_metadata_patch(MetadataPatch {
+            target: EntityId::Identity(MetadataIdentity {
+                key: "git.repo".to_owned(),
+                value: MetadataValue::Text("rjwittams/katzensteg".into()),
+            }),
+            source_id: "gh".to_owned(),
+            set: BTreeMap::from([(
+                "vcs.pr".to_owned(),
+                MetadataValueUpdate { value: MetadataValue::Text("#45".into()), ttl_ms: None, precedence: None, ordinal: None },
+            )]),
+            unset: vec![],
+        });
+        state.apply_metadata_patch(MetadataPatch {
+            target: EntityId::Identity(MetadataIdentity { key: "vcs.pr".to_owned(), value: MetadataValue::Text("#45".into()) }),
+            source_id: "ci".to_owned(),
+            set: BTreeMap::from([(
+                "ci.status".to_owned(),
+                MetadataValueUpdate { value: MetadataValue::Text("failing".into()), ttl_ms: None, precedence: None, ordinal: None },
+            )]),
+            unset: vec![],
+        });
+
+        let model = state.view_model();
+        let tab_metadata = model
+            .resolved_metadata
+            .iter()
+            .find(|metadata| metadata.target == ResolvedMetadataTarget::Tab(tab_workspace_id(1)))
+            .expect("tab metadata");
+
+        assert_eq!(
+            tab_metadata.values.get("git.repo").map(|entry| &entry.value),
+            Some(&MetadataValue::Text("rjwittams/katzensteg".into()))
+        );
+        assert_eq!(tab_metadata.values.get("vcs.pr").map(|entry| &entry.value), Some(&MetadataValue::Text("#45".into())));
+        assert_eq!(tab_metadata.values.get("ci.status").map(|entry| &entry.value), Some(&MetadataValue::Text("failing".into())));
+        assert_eq!(
+            tab_metadata.reachable_identities,
+            vec![
+                ReachableMetadataIdentity {
+                    identity: MetadataIdentity { key: "git.repo".to_owned(), value: MetadataValue::Text("rjwittams/katzensteg".into()) },
+                    distance: 1,
+                },
+                ReachableMetadataIdentity {
+                    identity: MetadataIdentity { key: "vcs.pr".to_owned(), value: MetadataValue::Text("#45".into()) },
+                    distance: 2,
+                },
+                ReachableMetadataIdentity {
+                    identity: MetadataIdentity { key: "ci.status".to_owned(), value: MetadataValue::Text("failing".into()) },
+                    distance: 3,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resolved_tab_metadata_follows_selected_cwd_identity_facts() {
+        let mut state = ControllerState::default();
+        state.update_tabs(vec![ControllerTab { tab_id: tab_workspace_id(1), position: 0, name: "repo".into(), active: true }]);
+        state.set_test_pane(PaneTarget::Terminal(1), tab_workspace_id(1), true, true, 0);
+        state.set_pane_cwd(PaneTarget::Terminal(1), "/Users/robert/dev/katzensteg".to_owned());
+        state.apply_metadata_patch(MetadataPatch {
+            target: EntityId::Identity(MetadataIdentity {
+                key: KEY_PANE_CWD.to_owned(),
+                value: MetadataValue::Text("/Users/robert/dev/katzensteg".into()),
+            }),
+            source_id: "dir-watcher".to_owned(),
+            set: BTreeMap::from([(
+                "git.repo".to_owned(),
+                MetadataValueUpdate {
+                    value: MetadataValue::Text("rjwittams/katzensteg".into()),
+                    ttl_ms: None,
+                    precedence: None,
+                    ordinal: None,
+                },
+            )]),
+            unset: vec![],
+        });
+
+        let model = state.view_model();
+        let tab_metadata = model
+            .resolved_metadata
+            .iter()
+            .find(|metadata| metadata.target == ResolvedMetadataTarget::Tab(tab_workspace_id(1)))
+            .expect("tab metadata");
+
+        assert_eq!(
+            tab_metadata.values.get("git.repo").map(|entry| &entry.value),
+            Some(&MetadataValue::Text("rjwittams/katzensteg".into()))
+        );
+        assert!(tab_metadata.reachable_identities.iter().any(|reachable| reachable.identity
+            == MetadataIdentity { key: KEY_PANE_CWD.to_owned(), value: MetadataValue::Text("/Users/robert/dev/katzensteg".into()) }
+            && reachable.distance == 1));
+    }
+
+    #[test]
+    fn view_model_exposes_observed_metadata_identity_index() {
+        let mut state = ControllerState::default();
+        state.set_rail_config(RailConfig::default());
+        state.update_tabs(vec![ControllerTab { tab_id: tab_workspace_id(1), position: 0, name: "repo".into(), active: true }]);
+        state.set_test_pane(PaneTarget::Terminal(1), tab_workspace_id(1), true, true, 0);
+        let cwd = "/Users/robert/dev/katzensteg".to_owned();
+        state.set_pane_cwd(PaneTarget::Terminal(1), cwd.clone());
+        state.apply_metadata_patch(MetadataPatch {
+            target: EntityId::Identity(MetadataIdentity { key: KEY_PANE_CWD.to_owned(), value: MetadataValue::Text(cwd.as_str().into()) }),
+            source_id: "dir-watcher".to_owned(),
+            set: BTreeMap::from([(
+                "git.repo".to_owned(),
+                MetadataValueUpdate {
+                    value: MetadataValue::Text("rjwittams/katzensteg".into()),
+                    ttl_ms: None,
+                    precedence: None,
+                    ordinal: None,
+                },
+            )]),
+            unset: vec![],
+        });
+
+        let model = state.view_model();
+
+        assert!(model.observed_identities.iter().any(|observed| {
+            observed.identity == MetadataIdentity { key: KEY_PANE_CWD.to_owned(), value: MetadataValue::Text(cwd.as_str().into()) }
+                && observed.target_count == 1
+                && observed.nearest_distance == 1
+        }));
+        assert!(model.observed_identities.iter().any(|observed| {
+            observed.identity == MetadataIdentity { key: "git.repo".to_owned(), value: MetadataValue::Text("rjwittams/katzensteg".into()) }
+                && observed.target_count == 1
+                && observed.nearest_distance == 2
+        }));
+    }
+
+    #[test]
+    fn highest_priority_status_wins_for_tab() {
+        let mut state = ControllerState::default();
+        state.update_tabs(vec![ControllerTab { tab_id: tab_workspace_id(1), position: 0, name: "main".into(), active: true }]);
+        state.set_pane_tab(PaneTarget::Terminal(10), tab_workspace_id(1));
+        state.set_pane_tab(PaneTarget::Terminal(11), tab_workspace_id(1));
+        state.set_status(SetPaneStatus {
+            pane_id: PaneTarget::Terminal(10),
+            priority: Priority::Info,
+            title: "info".into(),
+            detail: None,
+            icon: None,
+            timestamp_ms: Some(100),
+        });
+        state.set_status(SetPaneStatus {
+            pane_id: PaneTarget::Terminal(11),
+            priority: Priority::Error,
+            title: "broken".into(),
+            detail: None,
+            icon: None,
+            timestamp_ms: Some(90),
+        });
+
+        let model = state.view_model();
+        let status = model.tabs[0].status.as_ref().unwrap();
+        assert_eq!(status.priority, Priority::Error);
+        assert_eq!(status.title, "broken");
+    }
+
+    #[test]
+    fn status_icon_is_carried_to_tab_summary() {
+        let mut state = ControllerState::default();
+        state.update_tabs(vec![ControllerTab { tab_id: tab_workspace_id(1), position: 0, name: "main".into(), active: true }]);
+        state.set_pane_tab(PaneTarget::Terminal(10), tab_workspace_id(1));
+        let mut status = status(PaneTarget::Terminal(10), Priority::Waiting, "waiting", 10);
+        status.icon = Some(StatusIcon::Builtin("waiting".to_owned()));
+        state.set_status(status);
+
+        let model = state.view_model();
+
+        assert_eq!(model.tabs[0].status.as_ref().and_then(|status| status.icon.as_ref()), Some(&StatusIcon::Builtin("waiting".to_owned())));
+    }
+
+    #[test]
+    fn bootstrap_snapshot_carries_external_state_without_zellij_tabs() {
+        let mut source = ControllerState::default();
+        source.set_sort_mode(SortMode::PinnedFirst);
+        source.set_rail_config(RailConfig { structure: RailStructure::BoxPerTab, segment_between_color: None });
+        source.toggle_pin(tab_workspace_id(7));
+        source.set_status(status(PaneTarget::Terminal(10), Priority::Waiting, "waiting", 10));
+        source.set_node_variable(NodeKey::Root, "child-layout".to_owned(), Some("strip".to_owned()));
+        source.apply_rail_ui_action(RailUiAction::ScrollBy { delta: 8 });
+
+        let snapshot = source.bootstrap_snapshot();
+        let mut target = ControllerState::default();
+        target.apply_bootstrap_snapshot(snapshot);
+
+        let target_snapshot = target.bootstrap_snapshot();
+        assert_eq!(target_snapshot.sort_mode, SortMode::PinnedFirst);
+        assert_eq!(target_snapshot.config.structure, RailStructure::BoxPerTab);
+        assert_eq!(target_snapshot.pinned_tabs, vec![tab_workspace_id(7)]);
+        assert_eq!(target_snapshot.pane_statuses.len(), 1);
+        assert_eq!(target_snapshot.pane_statuses[0].title, "waiting");
+        assert_eq!(
+            target_snapshot
+                .node_variable_overrides
+                .iter()
+                .find(|overrides| overrides.node == NodeKey::Root)
+                .and_then(|overrides| overrides.values.get("child-layout"))
+                .map(String::as_str),
+            Some("strip")
+        );
+        assert_eq!(
+            target_snapshot.rail_ui_state,
+            RailUiState {
+                revision: RailUiRevision { sequence: 1, writer_client_id: 0 },
+                collapsed_placements: vec![],
+                scroll_offset: 8,
+                variables: BTreeMap::new(),
+                sibling_orders: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn bootstrap_snapshot_keeps_only_persistent_display_variables() {
+        let mut state = ControllerState::default();
+        state.set_template_catalog(Some(TemplateConfigCatalog::from_config(
+            parse_template_config_kdl(
+                r#"
+                    version 1
+                    display-variable "persistent" type="bool" default=true label="Persistent" icon="P"
+                    display-variable "ephemeral" type="bool" default=true label="Ephemeral" icon="E" persist=false
+                    "#,
+            )
+            .unwrap(),
+        )));
+        state.apply_rail_ui_action(RailUiAction::ToggleVariable { name: "persistent".to_owned() });
+        state.apply_rail_ui_action(RailUiAction::ToggleVariable { name: "ephemeral".to_owned() });
+
+        assert_eq!(
+            state.bootstrap_snapshot().rail_ui_state.variables,
+            BTreeMap::from([("persistent".to_owned(), DisplayVariableValue::Bool(false))])
+        );
+    }
+
+    #[test]
+    fn stale_bootstrap_snapshot_cannot_overwrite_newer_rail_ui_state() {
+        let mut state = ControllerState::default();
+        state.apply_rail_ui_action(RailUiAction::ScrollBy { delta: 8 });
+        state.apply_rail_ui_action(RailUiAction::ScrollBy { delta: 2 });
+
+        assert!(!state.apply_rail_ui_state(RailUiState {
+            revision: RailUiRevision { sequence: 1, writer_client_id: 9 },
+            collapsed_placements: vec![],
+            scroll_offset: 99,
+            variables: BTreeMap::new(),
+            sibling_orders: vec![],
+        }));
+        assert_eq!(
+            state.rail_ui_state(),
+            RailUiState {
+                revision: RailUiRevision { sequence: 2, writer_client_id: 0 },
+                collapsed_placements: vec![],
+                scroll_offset: 10,
+                variables: BTreeMap::new(),
+                sibling_orders: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn sibling_orders_round_trip_through_rail_ui_state_json() {
+        let key = |binding: &str| PlacementLoopKey { region: "tree".to_owned(), parent: PlacementKey(vec![]), binding: binding.to_owned() };
+        let vessel = |id: &str| EntityRef::local("vessel", id);
+        let mut source = ControllerState::default();
+        source.apply_rail_ui_action(RailUiAction::SetSiblingOrder { loop_key: key("vessel"), order: vec![vessel("b"), vessel("a")] });
+        let mut saved = source.rail_ui_state();
+        // An empty order means data order, so restoring one stores nothing.
+        saved.sibling_orders.push((key("other"), vec![]));
+        let json = serde_json::to_string(&saved).unwrap();
+        let mut target = ControllerState::default();
+        assert!(target.apply_rail_ui_state(serde_json::from_str(&json).unwrap()));
+        assert_eq!(target.rail_ui_state().sibling_orders, vec![(key("vessel"), vec![vessel("b"), vessel("a")])]);
+    }
+
+    #[test]
+    fn bootstrap_snapshot_carries_metadata_patches() {
+        const KEY: &str = "tab.subject";
+        let mut source = ControllerState::default();
+        source.apply_metadata_patch(MetadataPatch {
+            target: EntityId::Tab(tab_workspace_id(7)),
+            source_id: "test".to_owned(),
+            set: BTreeMap::from([(
+                KEY.to_owned(),
+                MetadataValueUpdate {
+                    value: MetadataValue::Text("project:zellij".into()),
+                    ttl_ms: None,
+                    precedence: Some(4),
+                    ordinal: Some(2),
+                },
+            )]),
+            unset: vec![],
+        });
+
+        let snapshot = source.bootstrap_snapshot();
+        let mut target = ControllerState::default();
+        target.apply_bootstrap_snapshot(snapshot);
+        target.update_tabs(vec![ControllerTab { tab_id: tab_workspace_id(7), position: 0, name: "overview".into(), active: true }]);
+
+        let model = target.view_model();
+        let metadata = model
+            .resolved_metadata
+            .iter()
+            .find(|metadata| metadata.target == ResolvedMetadataTarget::Tab(tab_workspace_id(7)))
+            .expect("tab metadata");
+
+        assert_eq!(
+            metadata.values.get(KEY).map(|entry| (&entry.value, entry.precedence, entry.ordinal)),
+            Some((&MetadataValue::Text("project:zellij".into()), 4, 2))
+        );
+    }
+
+    #[test]
+    fn tab_update_does_not_drop_bootstrapped_status_before_pane_manifest() {
+        let mut source = ControllerState::default();
+        source.set_status(status(PaneTarget::Terminal(10), Priority::Waiting, "waiting", 10));
+
+        let mut target = ControllerState::default();
+        target.apply_bootstrap_snapshot(source.bootstrap_snapshot());
+        target.observe_workspaces(vec![tab_info(1, 0, "main", true)]);
+        target.set_pane_tab(PaneTarget::Terminal(10), tab_workspace_id(1));
+
+        let model = target.view_model();
+        assert_eq!(model.tabs[0].status.as_ref().unwrap().title, "waiting");
+    }
+
+    #[test]
+    fn recency_breaks_priority_ties() {
+        let mut state = ControllerState::default();
+        state.update_tabs(vec![ControllerTab { tab_id: tab_workspace_id(1), position: 0, name: "main".into(), active: true }]);
+        state.set_pane_tab(PaneTarget::Terminal(10), tab_workspace_id(1));
+        state.set_pane_tab(PaneTarget::Terminal(11), tab_workspace_id(1));
+        state.set_status(status(PaneTarget::Terminal(10), Priority::Waiting, "old", 10));
+        state.set_status(status(PaneTarget::Terminal(11), Priority::Waiting, "new", 20));
+
+        let model = state.view_model();
+        assert_eq!(model.tabs[0].status.as_ref().unwrap().title, "new");
+    }
+
+    #[test]
+    fn cleanup_removes_status_for_missing_panes() {
+        let mut state = ControllerState::default();
+        state.set_pane_tab(PaneTarget::Terminal(10), tab_workspace_id(1));
+        state.set_status(status(PaneTarget::Terminal(10), Priority::Error, "gone", 10));
+
+        state.retain_panes([PaneTarget::Terminal(99)].into_iter().collect());
+
+        assert!(state.pane_statuses.is_empty());
+    }
+
+    #[test]
+    fn cleanup_removes_missing_rail_renderers() {
+        let mut state = ControllerState::default();
+        state.register_rail(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 7, client_id: 1 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(1), pane_kind: PluginPaneKind::Tiled },
+        });
+        state.register_rail(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 8, client_id: 1 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(1), pane_kind: PluginPaneKind::Tiled },
+        });
+
+        state.retain_rails(&[8].into_iter().collect());
+
+        assert_eq!(state.known_rail_count(), 1);
+        assert_eq!(state.known_config_editor_count(), 0);
+        assert_eq!(state.rail_plugin_ids(), vec![8]);
+    }
+
+    #[test]
+    fn config_editor_target_prefers_same_client_and_tab() {
+        let mut state = ControllerState::default();
+        state.register_config_editor(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 30, client_id: 1 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(1), pane_kind: PluginPaneKind::Floating },
+        });
+        state.register_config_editor(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 31, client_id: 2 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(2), pane_kind: PluginPaneKind::Floating },
+        });
+        state.register_config_editor(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 32, client_id: 2 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(1), pane_kind: PluginPaneKind::Floating },
+        });
+
+        assert_eq!(state.config_editor_target_for_client_tab(2, tab_workspace_id(1)), Some(RendererHello { plugin_id: 32, client_id: 2 }));
+        assert_eq!(state.config_editor_target_for_client_tab(2, tab_workspace_id(2)), Some(RendererHello { plugin_id: 31, client_id: 2 }));
+        assert_eq!(state.config_editor_target_for_client_tab(2, tab_workspace_id(3)), None);
+    }
+
+    #[test]
+    fn config_editor_target_does_not_reuse_other_tab_floating_editor() {
+        let mut state = ControllerState::default();
+        state.register_config_editor(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 30, client_id: 1 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(1), pane_kind: PluginPaneKind::Floating },
+        });
+        state.register_config_editor(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 31, client_id: 2 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(9), pane_kind: PluginPaneKind::Floating },
+        });
+
+        assert_eq!(state.config_editor_target_for_client_tab(2, tab_workspace_id(3)), None);
+    }
+
+    #[test]
+    fn config_editor_target_does_not_reuse_other_tab_tiled_editor() {
+        let mut state = ControllerState::default();
+        state.register_config_editor(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 30, client_id: 2 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(9), pane_kind: PluginPaneKind::Tiled },
+        });
+
+        assert_eq!(state.config_editor_target_for_client_tab(2, tab_workspace_id(3)), None);
+    }
+
+    #[test]
+    fn config_editor_target_does_not_reuse_unknown_editor() {
+        let mut state = ControllerState::default();
+        state.register_config_editor(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 30, client_id: 1 },
+            placement: PluginPlacement::Unknown,
+        });
+        state.register_config_editor(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 31, client_id: 2 },
+            placement: PluginPlacement::Unknown,
+        });
+
+        assert_eq!(state.config_editor_target_for_client_tab(2, tab_workspace_id(3)), None);
+    }
+
+    #[test]
+    fn view_model_for_client_uses_that_clients_inspected_node() {
+        let mut state = ControllerState::default();
+        state.set_inspected_node(4, NodeKey::Tab(tab_workspace_id(7)));
+        state.set_inspected_node(5, NodeKey::Root);
+
+        assert_eq!(state.view_model_for_client(4).inspected_node, Some(NodeKey::Tab(tab_workspace_id(7))));
+        assert_eq!(state.view_model_for_client(5).inspected_node, Some(NodeKey::Root));
+    }
+
+    #[test]
+    fn registering_rail_places_it_under_client_and_tab() {
+        let mut state = ControllerState::default();
+        let hello = PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 10, client_id: 4 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(7), pane_kind: PluginPaneKind::Tiled },
+        };
+
+        assert!(state.register_rail(hello));
+        assert_eq!(
+            state.client(4).and_then(|client| client.tabs.get(&tab_workspace_id(7))).map(|tab| tab.rails.contains_key(&10)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn registering_config_places_it_under_client_and_tab() {
+        let mut state = ControllerState::default();
+        let hello = PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 11, client_id: 4 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(7), pane_kind: PluginPaneKind::Floating },
+        };
+
+        assert!(state.register_config_editor(hello));
+        assert_eq!(
+            state.client(4).and_then(|client| client.tabs.get(&tab_workspace_id(7))).map(|tab| tab.config_editors.contains_key(&11)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn rail_plugin_targets_include_rails_and_config_editors_across_clients() {
+        let mut state = ControllerState::default();
+        state.register_rail(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 1, client_id: 4 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(7), pane_kind: PluginPaneKind::Tiled },
+        });
+        state.register_config_editor(PluginRegistrationHello {
+            identity: RendererHello { plugin_id: 2, client_id: 4 },
+            placement: PluginPlacement::Tab { tab_id: tab_workspace_id(7), pane_kind: PluginPaneKind::Floating },
+        });
+
+        let targets = state.rail_plugin_targets();
+
+        assert_eq!(targets, vec![RendererHello { plugin_id: 1, client_id: 4 }, RendererHello { plugin_id: 2, client_id: 4 },]);
+    }
+}
+
+#[cfg(test)]
+impl ControllerState {
+    /// Count what the state holds and keeps between evaluations.
+    pub(crate) fn census(&self, census: &mut Census) {
+        self.metadata.census(census);
+        let kept = &self.kept;
+        if let Some(catalog) = &kept.catalog.borrow().evaluation {
+            for entity in &catalog.entities {
+                census.entity("catalog: entity refs", &entity.entity);
+                if census.first(&entity.facts) {
+                    entity.facts.census(census, "catalog facts (not shared)");
+                }
+            }
+        }
+        let index = kept.placement_index.borrow();
+        for key in index.by_fact.keys() {
+            if census.first(&key.0) {
+                census.string("index: posting keys (not shared)", &key.0);
+            }
+            match &key.1 {
+                IndexedValue::Scalar(value) => {
+                    if census.first_shared(value) {
+                        census.string("index: posting values (not shared)", value)
+                    }
+                }
+                IndexedValue::Entity(entity) => census.entity("index: posting values", entity),
+            }
+        }
+        drop(index);
+        for (entity, (_, _, display)) in kept.displays.borrow().iter() {
+            census.entity("displays: keys", entity);
+            display.census(census, "displays");
+        }
+        for slot in kept.resolutions.borrow().1.values().flatten() {
+            if census.first(slot) {
+                slot_census(census, "template resolutions", slot);
+            }
+        }
+        if let Some((_, regions)) = kept.placements.borrow().as_ref() {
+            for memo in regions.iter().flatten() {
+                memo.census(census);
+            }
+        }
+        for memo in kept.variables.borrow().nodes.values() {
+            if census.first(&memo.resolved) {
+                variables_census(census, "kept variables", &memo.resolved);
+            }
+        }
+        for memo in kept.surface.borrow().nodes_census() {
+            if census.first(memo) {
+                memo.census(census, "kept surface nodes");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl LoopMemo {
+    fn census(&self, census: &mut Census) {
+        self.reads.census(census);
+        for node in &self.nodes {
+            if census.first(&node.placement) {
+                node.placement.census(census, "placements");
+            }
+            node.related.iter().for_each(|reads| reads.census(census));
+            census.string("placement memo: bindings", &node.binding);
+            census.string("placement memo: bindings", &node.related_binding);
+            node.children.iter().for_each(|child| child.census(census));
+        }
+    }
+}
+
+#[cfg(test)]
+impl LoopReads {
+    fn census(&self, census: &mut Census) {
+        for (name, _) in &self.bound {
+            census.string("placement memo: reads", name);
+        }
+        for read in &self.postings {
+            if let PostingRead::Absent(key) = read {
+                if census.first(key) {
+                    census.string("placement memo: reads", &key.0);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl EvaluatedPlacement {
+    pub(crate) fn census(&self, census: &mut Census, prefix: &str) {
+        census.entity(&format!("{prefix}: entity refs"), &self.entity);
+        if let Some(key) = &self.placement {
+            census.key(&format!("{prefix}: keys"), key);
+        }
+        census.string(&format!("{prefix}: labels"), &self.label);
+        census.string(&format!("{prefix}: forms"), &self.form);
+        if census.first(&self.metadata) {
+            census.facts(&format!("{prefix}: facts"), &format!("{prefix}: fact keys (not shared)"), &self.metadata);
+        }
+        for slot in [&self.templates.compact, &self.templates.detail].into_iter().flatten() {
+            if census.first(slot) {
+                slot_census(census, &format!("{prefix}: templates"), slot);
+            }
+        }
+        if let Some(layout) = &self.annotation.layout {
+            census.string(&format!("{prefix}: layouts"), layout);
+        }
+        for field in &self.annotation.related_detail {
+            census.string(&format!("{prefix}: related detail"), &field.value);
+        }
+        for child in &self.children {
+            if census.first(child) {
+                child.census(census, prefix);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn slot_census(census: &mut Census, prefix: &str, slot: &ResolvedTemplateSlot) {
+    census.string(&format!("{prefix}: names"), &slot.template_name);
+    if let Some(kdl) = slot.effective_kdl.written().filter(|kdl| census.first(kdl)) {
+        census.string(&format!("{prefix}: effective KDL"), kdl);
+    }
+    for field in &slot.fields {
+        census.string(&format!("{prefix}: field text"), &field.text);
+    }
+    if let Some(ready) = &slot.render_ready {
+        census.blob(&format!("{prefix}: render data"), serde_json::to_string(ready).map(|json| json.len()).unwrap_or_default());
+    }
+    if !slot.setters.is_empty() {
+        census.blob(&format!("{prefix}: setters"), serde_json::to_string(&slot.setters).map(|json| json.len()).unwrap_or_default());
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn variables_census(census: &mut Census, prefix: &str, variables: &EffectiveNodeVariables) {
+    census.node_key(&format!("{prefix}: node keys"), &variables.node);
+    census.map(&format!("{prefix}: per node"), &format!("{prefix}: names"), variables.values.keys());
+    for value in variables.values.values() {
+        census.string(&format!("{prefix}: values"), &value.value);
+        for provenance in std::iter::once(&value.provenance).chain(&value.overridden) {
+            census.string(&format!("{prefix}: provenance"), &provenance.setter);
+            census.node_key(&format!("{prefix}: provenance"), &provenance.ancestor);
+            census.string(&format!("{prefix}: provenance"), &provenance.origin.source);
+            if let Some(membership) = &provenance.origin.membership {
+                census.string(&format!("{prefix}: provenance"), membership);
+            }
+        }
+    }
+    if !variables.declarations.is_empty() {
+        census.blob(
+            &format!("{prefix}: declarations"),
+            serde_json::to_string(&variables.declarations).map(|json| json.len()).unwrap_or_default(),
+        );
+    }
+}

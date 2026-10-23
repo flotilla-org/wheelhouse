@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compile real shell command/drag/restore code with an OS fault boundary.
 
-Pass the built Andamento and Cleat library directories; no display is required.
+Pass the built the core and Cleat library directories; no display is required.
 The interception boundary is the WM client rectangle. Review new production
 call sites at it; parser, settings, mounts, renderer, commands and checker
 remain real linked collaborators.
@@ -21,18 +21,18 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build'
 BUILD.mkdir(exist_ok=True)
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('andamento_lib', type=Path)
+parser.add_argument('core_lib', type=Path)
 parser.add_argument('cleat_lib', type=Path)
-parser.add_argument('--andamento-include', type=Path,
-                    default=Path(os.environ.get('WHEELHOUSE_ANDAMENTO_DIR', ROOT.parent/'andamento'))/'crates/andamento-ffi/include')
+parser.add_argument('--core-include', type=Path,
+                    default=ROOT/'crates/wheelhouse-ffi/include')
 parser.add_argument('--cleat-include', type=Path,
                     default=Path(os.environ.get('WHEELHOUSE_CLEAT_DIR', ROOT.parent/'cleat'))/'crates/cleat/include')
 args = parser.parse_args()
-andamento = args.andamento_lib.resolve()
+andamento = args.core_lib.resolve()
 cleat = args.cleat_lib.resolve()
 # Reuse the production amalgamation's includes, replacing only its application
 # entry point. This keeps the command routing and UI collaborators real.
-main = (ROOT / 'src/uishell/uishell_main.c').read_text()
+main = (ROOT / 'native/src/uishell/uishell_main.c').read_text()
 prefix = main[:main.index('internal void\nentry_point(CmdLine *cmd_line)')]
 arena_table_definition = '#define ARENA_TABLE_DEBUG BUILD_DEBUG'
 assert arena_table_definition in prefix, 'production arena table definition changed; review the capped harness boundary'
@@ -53,9 +53,9 @@ command = compiler + [
     '-DWM_STUB=1', '-DR_BACKEND=0', '-DFP_BACKEND=0', '-ffunction-sections', '-fdata-sections',
     '-Wno-initializer-overrides', '-Wno-unused-value',
     '-Wno-incompatible-pointer-types-discards-qualifiers',
-    '-I'+str(ROOT/'src'), '-I'+str(args.andamento_include.resolve()),
+    '-I'+str(ROOT/'native/src'), '-I'+str(args.core_include.resolve()), '-I'+str(ROOT/'crates/wheelhouse-ingress/include'),
     '-I'+str(args.cleat_include.resolve()), str(source), str(shell_embed_object(compiler)),
-    '-L'+str(andamento), '-landamento_ffi', '-lwheelhouse_ingress', '-Wl,-rpath,'+str(andamento),
+    '-L'+str(andamento), '-lwheelhouse_ffi', '-lwheelhouse_ingress', '-Wl,-rpath,'+str(andamento),
     '-L'+str(cleat), '-lcleat', '-Wl,-rpath,'+str(cleat), '-lpthread', '-lm', '-ldl',
     '-Wl,--gc-sections', '-o', str(BUILD/'docking_integration')]
 subprocess.run(command, check=True)

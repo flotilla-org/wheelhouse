@@ -5,7 +5,7 @@ joined to its top edge, or its bottom edge when there's no room above. It
 overlays what it covers and takes the pointer from it, so nothing reflows. A
 hover card shows its cap once the pointer moves into it, a pinned card or one
 expanded under its row while the pointer is over it, and a floating card
-always. The cap holds the entity's actions from Andamento as glyphs (their
+always. The cap holds the entity's actions from the core as glyphs (their
 labels are the tooltips; a narrow cap folds them into ⋯), Show details (ⓘ),
 Pin on hover and floating cards, ⤡ back to the row on an expanded card, and
 × elsewhere. Its controls are section-header controls: the same glyphs,
@@ -27,11 +27,11 @@ row. Removing the source placement or the current detail target closes the inlin
 card. Floats and inline cards last for the current run.
 
 Pins are ghosts in local groups (docs/design/drag-model.md, "Sections and
-groups as data"). Andamento owns the sections someone made, each holding
+groups as data"). The core owns the sections someone made, each holding
 groups, and each group's ghosts with exact kind/id, a ghost id, a fallback
 label and their form, as local `.section`, `.group` and `.ref` entities in its
-dashboard record; Wheelhouse changes them with `andamento_local_set` and
-`andamento_local_remove` and reads them from `andamento_dashboard_get`
+dashboard record; Wheelhouse changes them with `wheelhouse_local_set` and
+`wheelhouse_local_remove` and reads them from `wheelhouse_dashboard_get`
 (`uishell_sidebar_locals`). A pinned card knows its pin by the `.ref`'s ID,
 its ghost id.
 Local workspaces name their group (`lives_in`). The shipped KDL places them,

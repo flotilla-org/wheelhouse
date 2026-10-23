@@ -1,4 +1,4 @@
-# Andamento sidebar prototype
+# The core sidebar prototype
 
 Status: interactive design experiment, September 2026. Changes are not yet a
 settled UI contract. Run `./scripts/run-daily-driver.sh` from this checkout.
@@ -28,7 +28,7 @@ bar. Panel tabs continue to select views within a workspace.
 
 ## Experiment
 
-Use one Andamento model and snapshot for all sections. Each section owns its
+Use one core model and snapshot for all sections. Each section owns its
 height, collapse state and scroll position. Headers stay outside the scrollable
 body. Projects receives the remaining height; secondary sections start with
 bounded bodies and can be resized. Empty sections without controls are hidden.
@@ -80,7 +80,7 @@ indicators must not use arrow shapes.
 Section counts now count direct entries, independent of descendant expansion.
 Previously Projects counted visible rows, making collapse appear to remove
 projects from the catalog. Section collapse remains local viewport state; nested
-placement collapse belongs to Andamento. A typed-ABI regression checks that
+placement collapse belongs to the core. A typed-ABI regression checks that
 nested collapse survives producer updates, host observations and parent reopening.
 
 The automated launcher environment used during the experiment contained

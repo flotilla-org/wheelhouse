@@ -1,0 +1,173 @@
+version 1
+
+variable "convoy.tier" default="full" {
+  value "full"
+  value "medium"
+  value "short"
+}
+variable "issue.tier" default="full" {
+  value "full"
+  value "medium"
+  value "short"
+}
+
+region "attention" root-template="flotilla/region/attention" form="compact" placement="attention" pinned=true default-host="sidebar" order=10
+region "tree" root-template="flotilla/region/tree" form="compact" placement="projects" default-host="sidebar" order=20
+region "git" root-template="git/title" form="compact" placement="git" default-host="sidebar" order=30
+region "controls" root-template="flotilla/region/controls" form="compact" pinned=true default-host="sidebar" order=40
+
+placement "attention" {
+  for "attention" {
+    match "status.attention" value="true"
+  }
+}
+placement "projects" {
+  for "project" kind="project" layout="lines" {
+    order "display.label"
+    apply-template "project/line"
+  }
+}
+template "project/line" {
+  toggle collapsed="▶" expanded="▼"
+  field "label" key="display.label"
+  for "independent" kind="role" layout="inline" {
+    match "flotilla.project" of="project"
+    field "label" key="display.label"
+    field "state" key="status.state"
+    field "summary" key="summary.text"
+  }
+  for "convoy" kind="convoy" layout="lines" {
+    match "flotilla.project" of="project"
+    order "display.label"
+    apply-template "convoy/line"
+  }
+  for "issue" kind="issue" layout="row" {
+    match "flotilla.project" of="project"
+    field "label" source="metadata-first-token" key="display.label"
+  }
+}
+template "convoy/line" {
+  toggle collapsed="▶" expanded="▼"
+  field "label" key="display.label"
+  for "subject" kind="change_request" layout="row" {
+    match "flotilla.subject_of" of="convoy"
+    order "flotilla.subject.number" natural=true
+    field "label" key="display.label"
+    field "readiness" key="flotilla.change_request.readiness"
+  }
+  for "issue" kind="issue" layout="row" {
+    match "flotilla.subject_of" of="convoy"
+    order "flotilla.subject.number" natural=true
+    field "label" key="display.label"
+    field "state" key="flotilla.issue.state"
+  }
+  for "vessel" kind="vessel" layout="lines" {
+    match "flotilla.convoy" of="convoy"
+    apply-template "vessel/line"
+  }
+}
+template "vessel/line" {
+  toggle collapsed="▶" expanded="▼"
+  field "label" key="display.label"
+  for "session" kind="session" layout="lines" {
+    match "flotilla.vessel" of="vessel"
+    field "label" key="display.label"
+  }
+}
+template "flotilla/region/attention" slot="compact" node-kind="entity" {
+  field "label" source="literal" value="⚠ Attention"
+}
+template "flotilla/region/tree" slot="compact" node-kind="entity" {
+  field "label" source="literal" value=""
+}
+template "flotilla/region/controls" slot="compact" node-kind="entity" {
+  control "open-config" glyph="⚙"
+  control "scroll-down" glyph="▼"
+  control "scroll-up" glyph="▲"
+  control "inspect-root"
+}
+
+template "flotilla/issue/compact" slot="compact" node-kind="entity" {
+  field "label" class="required" source="metadata-first-token" key="display.label"
+}
+
+template "flotilla/entity/compact" slot="compact" node-kind="entity" {
+  field "label" class="required" {
+    value source="metadata-text" key="display.label"
+    value source="metadata-text" key="entity.id"
+  }
+  field "summary" class="priority" key="summary.text" priority=50
+}
+
+// Semantic detail sections do not prescribe frontend layout or styling.
+fragment "detail/common" {
+  field "label" role="title" section="header" class="required" {
+    value source="metadata-text" key="display.label"
+    value source="metadata-text" key="entity.id"
+  }
+  field "identity" structured-only=true role="identity" section="header" key="entity.id"
+  field "state" structured-only=true role="state" section="header" key="status.state"
+  field "summary" role="fact" section="facts" label="Summary" class="priority" key="summary.text" priority=50
+  field "related" structured-only=true role="relation" section="related" label="Related" key="related.entities"
+  field "produces" structured-only=true role="relation" section="related" label="Produces" key="flotilla.subject.produces"
+  field "works-on" structured-only=true role="relation" section="related" label="Works on" key="flotilla.subject.works_on"
+  field "subject-of" structured-only=true role="relation" section="related" label="Subject of" key="flotilla.subject_of"
+  field "attempt" structured-only=true role="relation" section="related" label="Current attempt" key="flotilla.role.current_attempt"
+}
+template "flotilla/entity/detail" slot="detail" node-kind="entity" {
+  use "detail/common"
+}
+template "flotilla/change_request/detail" slot="detail" node-kind="entity" {
+  use "detail/common"
+  field "readiness" structured-only=true role="fact" section="facts" label="Readiness" key="flotilla.change_request.readiness"
+  field "checks" structured-only=true role="fact" section="facts" label="Checks" key="flotilla.change_request.checks"
+}
+template "flotilla/issue/detail" slot="detail" node-kind="entity" {
+  use "detail/common"
+  field "label" role="title" section="header" class="required" key="display.label"
+  field "issue-state" structured-only=true role="fact" section="facts" label="State" key="flotilla.issue.state"
+}
+template "flotilla/convoy/detail" slot="detail" node-kind="entity" {
+  use "detail/common"
+  field "phase" structured-only=true role="fact" section="facts" label="Phase" key="flotilla.convoy.phase"
+}
+template "flotilla/role/detail" slot="detail" node-kind="entity" {
+  use "detail/common"
+  field "phase" structured-only=true role="fact" section="facts" label="Phase" key="flotilla.work.phase"
+}
+template "flotilla/project/detail" slot="detail" node-kind="entity" {
+  use "detail/common"
+  field "repo" structured-only=true role="fact" section="facts" label="Repository" key="vcs.repo"
+}
+template "flotilla/worktree/detail" slot="detail" node-kind="entity" {
+  use "detail/common"
+  field "branch" structured-only=true role="fact" section="facts" label="Branch" key="git.branch"
+  field "dirty" structured-only=true role="fact" section="facts" label="Dirty" key="git.dirty"
+}
+
+// Host-independent git inventory.
+
+placement "git" {
+  for "repo" kind="repo" layout="lines" tier="medium" {
+    order "display.label"
+    apply-template "repo/git"
+  }
+}
+template "git/title" slot="compact" node-kind="entity" {
+  field "label" source="literal" value="Git"
+}
+template "repo/git" {
+  toggle collapsed="▶" expanded="▼"
+  field "label" key="display.label"
+  for "worktree" kind="worktree" layout="lines" tier="full" {
+    match "git.repo" of="repo"
+    order "display.label"
+    apply-template "worktree/git"
+  }
+}
+template "worktree/git" {
+  field "label" key="display.label"
+  field "branch" key="git.branch"
+  field "dirty" key="git.dirty"
+  field "state" key="status.state"
+}
