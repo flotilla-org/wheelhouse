@@ -60,7 +60,7 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
   (`uishell_store_view_from_spec`). `wheelhouse:web` is the start page. **Web**
   ("+") opens it; **Open URL** prompts for an address (one without a scheme is
   https).
-- **The process** is supervised by the connector (`src/ingress/connector.rs`)
+- **The process** is supervised by the connector (`crates/wheelhouse-ingress/src/connector.rs`)
   with a *ready line*: the first stdout line is the endpoint, a run that exits
   before it is a failure that waits for Retry, and one that exits after it
   restarts with backoff. The View owns it with its Jackstay session

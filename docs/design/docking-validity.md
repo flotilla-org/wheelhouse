@@ -104,8 +104,8 @@ including same-axis sibling insertion, and compare feedback and command
 acceptance with the final rendered body. CI native builds also run it through `build.sh`.
 
 The runner accepts `--andamento-include <directory>` and `--cleat-include
-<directory>` for non-sibling checkouts. Defaults honor `WHEELHOUSE_ANDAMENTO_DIR`
-and `WHEELHOUSE_CLEAT_DIR`; `build.sh` passes the configured include directories.
+<directory>` for non-sibling checkouts. The Andamento default is this repo's
+`crates/andamento-ffi/include`; the Cleat default honors `WHEELHOUSE_CLEAT_DIR`; `build.sh` passes the configured include directories.
 Rendering and measurement share window-edge and panel-inset helpers. A drag
 builds one geometry context from its existing mount; command measurement frees
 its temporary panel tree before returning.

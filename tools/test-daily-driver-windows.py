@@ -4,7 +4,7 @@
 Wheelhouse runs the Flotilla connector for each Dashboard subscription; the
 launcher asks for a subscription to the configured daemon and names the
 Flotilla to run. Connector restarts and the job that owns its descendants
-belong to Wheelhouse's supervisor (src/ingress/connector.rs).
+belong to Wheelhouse's supervisor (crates/wheelhouse-ingress/src/connector.rs).
 """
 import ctypes as C
 from ctypes import wintypes as W

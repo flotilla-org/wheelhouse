@@ -62,8 +62,7 @@ elif name == 'cc':
                        CC=str(bin_dir / 'cc'), BUILD_TEST_LOG=str(log),
                        BUILD_TEST_FAIL=fail_stage, BUILD_TEST_PLATFORM=platform,
                        WHEELHOUSE_CLEAT_DIR=str(root / 'deps'),
-                       WHEELHOUSE_JACKSTAY_DIR=str(root / 'deps'),
-                       WHEELHOUSE_ANDAMENTO_DIR=str(root / 'deps'))
+                       WHEELHOUSE_JACKSTAY_DIR=str(root / 'deps'))
             result = subprocess.run(['bash', str(root / 'build.sh'), 'wheelhouse'],
                                     env=env, capture_output=True, text=True, timeout=10)
             calls = log.read_text().splitlines()

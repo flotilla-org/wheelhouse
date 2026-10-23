@@ -24,7 +24,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('andamento_lib', type=Path)
 parser.add_argument('cleat_lib', type=Path)
 parser.add_argument('--andamento-include', type=Path,
-                    default=Path(os.environ.get('WHEELHOUSE_ANDAMENTO_DIR', ROOT.parent/'andamento'))/'crates/andamento-ffi/include')
+                    default=ROOT/'crates/andamento-ffi/include')
 parser.add_argument('--cleat-include', type=Path,
                     default=Path(os.environ.get('WHEELHOUSE_CLEAT_DIR', ROOT.parent/'cleat'))/'crates/cleat/include')
 args = parser.parse_args()

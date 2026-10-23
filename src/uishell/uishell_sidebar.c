@@ -1,7 +1,7 @@
 // Native andamento control surface. Included after the workspace helpers.
 #include "andamento.h"
 #include "uishell/uishell_sidebar_chips.h"
-#include "ingress/ingress.h"
+#include "ingress.h"
 global WheelhouseIngress *uishell_ingress;
 global String8 uishell_sidebar_live_config;
 global B32 uishell_sidebar_live;

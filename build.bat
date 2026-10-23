@@ -97,14 +97,15 @@ if "%cleat%"=="1" (
 
 set andamento_link=
 if "%wheelhouse%"=="1" (
-  if "%WHEELHOUSE_ANDAMENTO_DIR%"=="" (set andamento_dir=%~dp0..\andamento) else (set andamento_dir=%WHEELHOUSE_ANDAMENTO_DIR%)
+  rem The core and the ingress are members of this repo's Cargo workspace (#440).
+  if not "%WHEELHOUSE_ANDAMENTO_DIR%"=="" echo build.bat: ignoring WHEELHOUSE_ANDAMENTO_DIR: the core is in this repo now ^(#440^) 1>&2
   for /f "tokens=2" %%t in ('rustc -vV ^| findstr /b "host:"') do set andamento_target=%%t
-  if "%WHEELHOUSE_ANDAMENTO_TARGET_DIR%"=="" (set andamento_target_dir=!andamento_dir!\target) else (set andamento_target_dir=%WHEELHOUSE_ANDAMENTO_TARGET_DIR%)
+  rem WHEELHOUSE_ANDAMENTO_TARGET_DIR stays a while as an alias for CARGO_TARGET_DIR.
+  if not "%WHEELHOUSE_ANDAMENTO_TARGET_DIR%"=="" (set andamento_target_dir=%WHEELHOUSE_ANDAMENTO_TARGET_DIR%) else if not "%CARGO_TARGET_DIR%"=="" (set andamento_target_dir=%CARGO_TARGET_DIR%) else (set andamento_target_dir=%~dp0target)
   set andamento_lib_dir=!andamento_target_dir!\!andamento_target!\!cargo_profile!
-  python tools\prepare-andamento-build.py "!andamento_dir!" || exit /b 1
   rem DAILY_DRIVER_WATCHER: daily-driver.py relies on this build including the native git watcher.
-  cargo build --manifest-path "%~dp0build\andamento\Cargo.toml" -p andamento-ffi -p wheelhouse-native-deps -p andamento-git-watcher --locked --target !andamento_target! --target-dir "!andamento_target_dir!" !cargo_profile_flags! || exit /b 1
-  set auto_compile_flags=!auto_compile_flags! -I"!andamento_dir!\crates\andamento-ffi\include"
+  cargo build --manifest-path "%~dp0Cargo.toml" -p andamento-ffi -p wheelhouse-ingress -p andamento-git-watcher --locked --target !andamento_target! --target-dir "!andamento_target_dir!" !cargo_profile_flags! || exit /b 1
+  set auto_compile_flags=!auto_compile_flags! -I"%~dp0crates\andamento-ffi\include" -I"%~dp0crates\wheelhouse-ingress\include"
   set andamento_link="!andamento_lib_dir!\andamento_ffi.dll.lib" "!andamento_lib_dir!\wheelhouse_ingress.dll.lib"
   python tools\embed-sidebar-fixture.py || exit /b 1
 )

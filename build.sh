@@ -64,14 +64,17 @@ fi
 # --- Embedded sidebar core ---------------------------------------------------
 andamento_link=''
 if [ -n "${wheelhouse+x}" ]; then
-  andamento_dir="${WHEELHOUSE_ANDAMENTO_DIR:-$repo_root/../andamento}"
+  # The core and the ingress are members of this repo's Cargo workspace (#440).
+  if [ -n "${WHEELHOUSE_ANDAMENTO_DIR:-}" ]; then
+    echo "build.sh: ignoring WHEELHOUSE_ANDAMENTO_DIR: the core is in this repo now (#440)" >&2
+  fi
   andamento_target=$(rustc -vV | sed -n 's/^host: //p')
-  andamento_target_dir="${WHEELHOUSE_ANDAMENTO_TARGET_DIR:-${CARGO_TARGET_DIR:-$andamento_dir/target}}"
-  python3 tools/prepare-andamento-build.py "$andamento_dir"
+  # WHEELHOUSE_ANDAMENTO_TARGET_DIR stays a while as an alias for CARGO_TARGET_DIR.
+  andamento_target_dir="${WHEELHOUSE_ANDAMENTO_TARGET_DIR:-${CARGO_TARGET_DIR:-$repo_root/target}}"
   # DAILY_DRIVER_WATCHER: daily-driver.py relies on this build including the native git watcher.
-  cargo build --manifest-path "$repo_root/build/andamento/Cargo.toml" -p andamento-ffi -p wheelhouse-native-deps -p andamento-git-watcher --locked --target "$andamento_target" --target-dir "$andamento_target_dir" $cargo_profile_flags
+  cargo build --manifest-path "$repo_root/Cargo.toml" -p andamento-ffi -p wheelhouse-ingress -p andamento-git-watcher --locked --target "$andamento_target" --target-dir "$andamento_target_dir" $cargo_profile_flags
   andamento_lib_dir="$andamento_target_dir/$andamento_target/$cargo_profile"
-  auto_compile_flags="$auto_compile_flags -I$andamento_dir/crates/andamento-ffi/include"
+  auto_compile_flags="$auto_compile_flags -I$repo_root/crates/andamento-ffi/include -I$repo_root/crates/wheelhouse-ingress/include"
   andamento_link="-L$andamento_lib_dir -landamento_ffi -lwheelhouse_ingress -Wl,-rpath,$andamento_lib_dir"
   python3 tools/embed-sidebar-fixture.py
 fi
@@ -229,12 +232,12 @@ then
     CC="$compiler" python3 ../tools/test-docking.py
     if [ "$host_os" = "Linux" ]; then
       CC="$compiler" python3 ../tools/test-docking-integration.py "$andamento_lib_dir" "$cleat_lib_dir" \
-        --andamento-include "$andamento_dir/crates/andamento-ffi/include" --cleat-include "$cleat_dir/crates/cleat/include"
+        --andamento-include "$repo_root/crates/andamento-ffi/include" --cleat-include "$cleat_dir/crates/cleat/include"
       # Restart behaviour against golden logical-state snapshots (#314).
       CC="$compiler" python3 ../tools/test-state-behaviour.py "$andamento_lib_dir" "$cleat_lib_dir" \
-        --andamento-include "$andamento_dir/crates/andamento-ffi/include" --cleat-include "$cleat_dir/crates/cleat/include"
-      # Ingress, its recorder, and connector supervision (src/ingress).
-      cargo test --manifest-path "$repo_root/build/andamento/Cargo.toml" -p wheelhouse-native-deps --lib --locked \
+        --andamento-include "$repo_root/crates/andamento-ffi/include" --cleat-include "$cleat_dir/crates/cleat/include"
+      # Ingress, its recorder, and connector supervision (crates/wheelhouse-ingress).
+      cargo test --manifest-path "$repo_root/Cargo.toml" -p wheelhouse-ingress --lib --locked \
         --target "$andamento_target" --target-dir "$andamento_target_dir" $cargo_profile_flags
     fi
   fi

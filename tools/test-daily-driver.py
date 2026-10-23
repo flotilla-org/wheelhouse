@@ -4,7 +4,7 @@
 Wheelhouse runs the Flotilla connector for each Dashboard subscription; the
 launcher only asks for a subscription and names the Flotilla to run, so these
 check what it passes. Connector restarts, backoff and the build-mismatch hint
-are tested with Wheelhouse's supervisor (src/ingress/connector.rs).
+are tested with Wheelhouse's supervisor (crates/wheelhouse-ingress/src/connector.rs).
 """
 import importlib.util
 import itertools
@@ -91,7 +91,6 @@ class WatcherBuildTests(unittest.TestCase):
                     path.touch()
                     path.chmod(0o755)
                 environment = {'FLOTILLA_BIN': str(flotilla), 'WHEELHOUSE_DAILY_DIR': str(root / 'state'),
-                               'WHEELHOUSE_ANDAMENTO_DIR': str(root / 'andamento'),
                                'WHEELHOUSE_ANDAMENTO_TARGET_DIR': str(target)}
                 if release_value is not None:
                     environment['release'] = release_value
@@ -118,16 +117,14 @@ class WatcherBuildTests(unittest.TestCase):
                     self.assertNotIn('release', host_build.kwargs['env'])
                 if supplied_host and not (supplied_watcher or no_build or no_git):
                     expected.extend([
-                        [sys.executable, str(root / 'tools/prepare-andamento-build.py'), str(root / 'andamento')],
-                        ['cargo', 'build', '--manifest-path', str(root / 'build/andamento/Cargo.toml'),
+                        ['cargo', 'build', '--manifest-path', str(root / 'Cargo.toml'),
                          '-p', 'andamento-git-watcher', '--bin', 'andamento-git-watcher', '--locked',
                          '--target', host, '--target-dir', str(target)],
                     ])
                 # Only build commands are this contract; unrelated main() subprocesses may change.
                 build_commands = [call.args[0] for call in commands.call_args_list
                                   if call.args[0][0] == 'cargo'
-                                  or call.args[0][:2] == ['bash', 'build.sh']
-                                  or call.args[0][:2] == [sys.executable, str(root / 'tools/prepare-andamento-build.py')]]
+                                  or call.args[0][:2] == ['bash', 'build.sh']]
                 self.assertEqual(build_commands, expected)
                 self.assertEqual(rustc.call_count, int(not (supplied_watcher or no_git)))
                 launch.assert_called_once()

@@ -57,7 +57,7 @@ the current open-ended visibility rule or companion pin.
 Reproduce the headless ABI acceptance after building:
 
 ```sh
-python3 tools/test-native-sidebar.py ../andamento/target/x86_64-unknown-linux-gnu/debug/libandamento_ffi.so
+python3 tools/test-native-sidebar.py target/x86_64-unknown-linux-gnu/debug/libandamento_ffi.so
 ```
 
 For a live presentation, use isolated user/project settings with

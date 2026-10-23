@@ -34,8 +34,8 @@ build wheelhouse
 run_tests
 ```
 
-`build.bat` builds the sibling `..\cleat`, `..\andamento` and `..\jackstay` checkouts
-(override with `WHEELHOUSE_CLEAT_DIR` / `WHEELHOUSE_ANDAMENTO_DIR` /
+`build.bat` builds this repo's Cargo workspace and the sibling `..\cleat` and
+`..\jackstay` checkouts (override with `WHEELHOUSE_CLEAT_DIR` /
 `WHEELHOUSE_JACKSTAY_DIR`) and copies their DLLs, including
 `ghostty-vt.dll`, next to the executable. Cleat's default `ghostty-vt` feature needs
 `tools\prepare-ghostty-vt.ps1` run in the Cleat checkout first. `run_tests` runs the
@@ -129,7 +129,7 @@ uses a single terminal. Each entry creates or focuses its own workspace. Close i
 with the toolbar control to make the example available again. The facts and
 status in this fixture are examples, not live git or Flotilla information.
 
-Builds require a sibling `../andamento` checkout at the revision CI pins (`ANDAMENTO_REV` in `.github/workflows/build.yml`), which provides C ABI 10. Wheelhouse builds the FFI and core through a separate Cargo consumer workspace with a committed lockfile in `tools/andamento-build/`, so no Zellij checkout is needed. Override its location with `WHEELHOUSE_ANDAMENTO_DIR`, or its Cargo output directory with `WHEELHOUSE_ANDAMENTO_TARGET_DIR`. The build explicitly selects the native Rust target rather than Andamento's WASM default. The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
+The sidebar core (`crates/andamento-core`), its C ABI (`crates/andamento-ffi`, C ABI 10) and the ingress (`crates/wheelhouse-ingress`) are members of this repo's Cargo workspace, with the lockfile at the root. Their Cargo output goes to `target/` unless `CARGO_TARGET_DIR` (or `WHEELHOUSE_ANDAMENTO_TARGET_DIR`) says otherwise. The build explicitly selects the native Rust target rather than Andamento's WASM default. The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
 
 On macOS (or Linux with a display), run the native workspace bridge checks with:
 
@@ -242,10 +242,9 @@ components in the profile's `logs/` directory are replaced on the next launch; s
 layouts are retained.
 
 `WHEELHOUSE_BIN` selects an existing binary and skips the build. `FLOTILLA_ROOT`
-overrides the sibling Flotilla checkout. `WHEELHOUSE_ANDAMENTO_DIR` (or
-`ANDAMENTO_ROOT`) selects Andamento; `WHEELHOUSE_ANDAMENTO_CONFIG` overrides the KDL
+overrides the sibling Flotilla checkout. `WHEELHOUSE_ANDAMENTO_CONFIG` overrides the KDL
 template. `ANDAMENTO_GIT_WATCHER_BIN` selects an existing watcher and skips its build;
-otherwise the launcher builds the native target of the sibling `andamento-git-watcher`
+otherwise the launcher builds the native target of the workspace's `andamento-git-watcher`
 crate. `--no-build` reuses both binaries, and `--no-git` omits the watcher entirely. The
 launcher defaults to debug builds; for release `--no-build` use `WHEELHOUSE_BIN` and
 `ANDAMENTO_GIT_WATCHER_BIN` to select the release binaries. Normal `WHEELHOUSE_CLEAT_*`
@@ -259,7 +258,7 @@ real C ABI.
 failure, producer failure, restart, the subscription and Flotilla it asks Wheelhouse
 for, and process cleanup with controlled UI and watcher processes. Real HTTP/UDS
 delivery is covered by `tools/test-andamento-ingress.py`; connector restarts and
-cleanup by `src/ingress/connector.rs`'s tests, and subscriptions end to end by the
+cleanup by `crates/wheelhouse-ingress/src/connector.rs`'s tests, and subscriptions end to end by the
 behaviour harness (`tools/test-state-behaviour.py`).
 
 ### Daily driver (Windows)

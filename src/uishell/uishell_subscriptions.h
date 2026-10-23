@@ -2,7 +2,7 @@
 #define UISHELL_SUBSCRIPTIONS_H
 
 #include "andamento.h"
-#include "ingress/ingress.h"
+#include "ingress.h"
 
 //- The Dashboard's provider subscriptions (uishell_subscriptions.c).
 typedef struct UIShell_Subscription UIShell_Subscription;

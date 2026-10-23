@@ -38,8 +38,7 @@ expire; it does not destroy the existing content.
 
 ## Local build and validation
 
-Build against an Andamento checkout at or after the pinned revision (the
-sibling `../andamento` by default, or `WHEELHOUSE_ANDAMENTO_DIR`):
+Build from the repo root:
 
 ```sh
 bash build.sh wheelhouse
