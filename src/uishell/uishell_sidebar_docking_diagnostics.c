@@ -578,10 +578,16 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       DockFailure(cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) == &cfg_nil_node);
       F32 dragged = uishell_sidebar_docking_weight(first_panel);
       DockFailure(abs_f32(dragged-default_pct) < .0001f);
-      // The drag keeps the saved sizes summing to one.
+      // The drag keeps the shown sections' saved sizes summing to one. The
+      // leftover section, standing aside, takes no share whatever it saved.
       F32 saved_sum = 0;
       RD_ArrangementPanel *parent = rd_arrangement_panel_from_id(rd_arrangement_live(sidebar_owner), first_panel.id)->parent;
-      for(RD_ArrangementPanel *c = parent->first; c != &rd_nil_arrangement_panel; c = c->next) { saved_sum += c->weight; }
+      for(RD_ArrangementPanel *c = parent->first; c != &rd_nil_arrangement_panel; c = c->next)
+      {
+        B32 hidden = c->first == &rd_nil_arrangement_panel;
+        for(RD_ArrangementTab *t = c->first_tab; t && hidden; t = t->next) { hidden = uishell_sidebar_view_hidden(rd_cfg_from_view(t->view)); }
+        if(!hidden) { saved_sum += c->weight; }
+      }
       DockFailure(abs_f32(saved_sum-1.f) > .001f);
       // Sizing the sidebar again keeps sizes set by hand.
       UIShell_WorkspaceMount sized_mount = uishell_workspace_mount_from_sidebar(scratch.arena, window);
