@@ -8902,10 +8902,14 @@ rd_window_frame(void)
         MemoryZeroArray(ui_top_parent()->parent->corner_radii);
         
         //- rjf: left column
+        // As wide as what it holds, which the chrome resolution fits to the
+        // bar: the right column fills the rest. Filling half each would clip
+        // the menus at the bar's middle in a narrow window.
         {
           ui_set_next_flags(UI_BoxFlag_Clip|UI_BoxFlag_ViewScrollX|UI_BoxFlag_ViewClamp);
           ui_set_next_min_width(native_title_bar_left_padding);
-          UI_WidthFill UI_NamedRow(str8_lit("###menu_bar"))
+          ui_set_next_pref_width(ui_children_sum(1));
+          UI_NamedRow(str8_lit("###menu_bar"))
           {
             //- rjf: icon
             if(native_title_bar_left_padding > 0)
