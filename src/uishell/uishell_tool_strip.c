@@ -62,10 +62,10 @@ uishell_tool_strip_view_icon(UIShell_StripView *view)
 }
 
 // One item: a flat button at `rect` (relative to its section), with `text`
-// in the icon font or, for a layout's
-// glyph, the main font. It hovers as the title bar's buttons do. A `marked`
-// item (the chosen layout, the focused View) has a faint wash, one hover
-// step over the strip; a `weak` one (not shown, not open, not found) is dimmed.
+// in the icon font or, for a layout's glyph, the main font. It hovers as the
+// title bar's buttons do. A `marked` item (the chosen layout, the focused
+// View) has a faint wash, one hover step over the strip; a `weak` one (not
+// shown, not open, not found) is dimmed.
 internal UI_Signal
 uishell_tool_strip_item(Rng2F32 rect, String8 text, B32 icon_font, B32 marked, B32 weak, UI_Key key)
 {
@@ -225,7 +225,7 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
   // open and close and as the Visible Workspace changes.
   F32 sizes[UIShell_StripSection_COUNT] = {0};
   for(U64 i = 0; i < ArrayCount(uishell_tool_strip_size_settings); i++)
-  { sizes[i] = rd_setting_f32_from_name(uishell_tool_strip_size_settings[i]); }
+  { sizes[i] = Clamp(0.f, rd_setting_f32_from_name(uishell_tool_strip_size_settings[i]), (F32)UISHELL_TOOL_STRIP_SECTION_MAX); }
   F32 shown_above = 0;
   for(UIShell_StripSection section = 0; section < UIShell_StripSection_COUNT; section++)
   {
