@@ -7,7 +7,7 @@
 #ifndef UISHELL_RENDERERS_H
 #define UISHELL_RENDERERS_H
 
-// The View Spec content a Renderer can show. The first five follow
+// The View Spec content a Renderer can show. The first six follow
 // ANDAMENTO_SLOT_*'s order (checked in uishell_workspace_store.c).
 typedef U32 WH_ContentKinds;
 enum
@@ -17,12 +17,13 @@ enum
   WH_Content_Url       = 1<<2, // a URL other than this Wheelhouse's own pages
   WH_Content_Jackstay  = 1<<3, // local recipe: a Jackstay launcher
   WH_Content_Facet     = 1<<4, // a provider facet
+  WH_Content_CleatSession = 1<<5, // local recipe: a Cleat endpoint's session
   // `wheelhouse:<kind>`: this frontend's own page of the Renderer's kind.
-  WH_Content_Page      = 1<<5,
+  WH_Content_Page      = 1<<6,
   // Content no other Renderer here can show, named rather than dropped.
-  WH_Content_Unshown   = 1<<6,
+  WH_Content_Unshown   = 1<<7,
   // A control view: the Dashboard's arrangement, not a Slot's content.
-  WH_Content_Dashboard = 1<<7,
+  WH_Content_Dashboard = 1<<8,
 };
 
 // Presentation-settings schemas: the config schema of a Renderer's Views.
@@ -96,7 +97,7 @@ enum
   X(binary, binary, WH_STATE(UIShell_BinaryViewState), WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_LegacyEval|RD_ViewTrait_Listed, \
     0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_BINARY_SETTINGS, WH_NO_PLACEHOLDER) \
-  X(terminal, terminal, WH_STATE(UIShell_TerminalViewState), WH_Content_Command|WH_Content_Facet|WH_Content_Page, \
+  X(terminal, terminal, WH_STATE(UIShell_TerminalViewState), WH_Content_Command|WH_Content_Facet|WH_Content_CleatSession|WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_VersionedSurface|RD_ViewTrait_Listed, \
     0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_TERMINAL_SETTINGS, WH_PLACEHOLDER(terminal)) \
   X(terminal_fixture, terminal, WH_STATE(UIShell_TerminalViewState), WH_Content_Page, \

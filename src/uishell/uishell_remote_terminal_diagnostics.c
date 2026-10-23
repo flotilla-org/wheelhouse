@@ -178,6 +178,31 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
                 str8_find_needle(capture, 0, str8_lit("WH-REMOTE-42"), 0) < capture.size, "reconnect reaches the same live session");
     uishell_terminal_runtime_release(tv);
   }
+  // A local endpoint attaches through the shared daemon provider for its
+  // runtime root, with no bridge.
+  CFG_Node *local = rd_fixture_view(panel, str8_lit("terminal"), str8_zero(), 1);
+  String8 local_settings[][2] =
+  {
+    {str8_lit("cleat_transport"), str8_lit("local")}, {str8_lit("cleat_runtime_root"), root}, {str8_lit("cleat_session"), session},
+  };
+  for(U64 i = 0; i < ArrayCount(local_settings); i++)
+  { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, local, local_settings[i][0]), local_settings[i][1]); }
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = rd_view_address_from_cfg(local), .view = rd_view_address_from_cfg(local))
+  {
+    UIShell_TerminalViewState *tv = rd_view_state(UIShell_TerminalViewState);
+    U64 deadline = now_time_us()+15*Million(1);
+    for(;;)
+    {
+      uishell_remote_diag_build(scratch.arena, ws, local, v2f32(640, 480));
+      if((tv->session && cleat_session_connection_state(tv->session) == CLEAT_SESSION_STREAMING) || now_time_us() > deadline) { break; }
+      sleep_ms(20);
+    }
+    cleat_str hosting = {0};
+    RemoteCheck(!tv->remote_backend && tv->session && cleat_session_connection_state(tv->session) == CLEAT_SESSION_STREAMING &&
+                cleat_session_hosting(tv->session, &hosting) && str8_match(str8_prefix(str8((U8 *)hosting.ptr, hosting.len), 7), str8_lit("daemon:"), 0),
+                "a local endpoint attaches through its daemon");
+    uishell_terminal_runtime_release(tv);
+  }
   ui_select_state(saved_ui);
   ui_state_release(test_ui);
 #undef RemoteCheck

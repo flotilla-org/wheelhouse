@@ -19,6 +19,8 @@ A direct view's View Spec names a **Cleat endpoint**, the way a Jackstay view's 
 
 A `local` endpoint attaches through the shared daemon provider for that runtime root and daemon. An `ssh` endpoint gets a provider of its own.
 
+**Opening from the sidebar.** When a workspace subject publishes a complete direct endpoint, Andamento ([andamento#186](https://github.com/flotilla-org/andamento/pull/186)) resolves its primary to the `cleat-session` recipe (`ANDAMENTO_SLOT_CLEAT_SESSION`) instead of the command recipe. Opening the subject creates the workspace with its primary waiting, and the first slot plan fills it with a terminal of that session. A Cleat session is attached to, never started, so an update always makes a new View; it never replaces a terminal in place. When the endpoint goes away, the primary falls back to the command recipe, which still opens `flotilla attach` in a local terminal.
+
 ## The transport seam
 
 Wheelhouse dials out. For an `ssh` endpoint the View opens its provider with `cleat_provider_open_transport` and a command transport:
@@ -64,6 +66,7 @@ The remote output-admission warning ("cycle protection does not cover remote rel
   - the warning staying out of the content;
   - a killed bridge showing the reconnect within 3 s, with the session still running and nothing reconnecting by itself;
   - reconnect reaching the same live session.
+- `--managed_content_diagnostics` covers opening a subject with a direct endpoint: its primary waits, then becomes the endpoint's terminal, and the next plan finds it current.
 - By default the script runs through a PATH `ssh` shim, so it needs no sshd, and CI runs it on macOS and Linux. Setting `WH_REMOTE_HOST=localhost` runs it over real ssh.
 
 ## Not covered

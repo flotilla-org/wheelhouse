@@ -38,6 +38,9 @@
 // View kinds and their View Specs (CONTEXT.md, "View Spec"):
 //
 //   terminal   with a command       local recipe: the command (a shell line) and cwd
+//              with a cleat_session local recipe: that Cleat endpoint's session
+//                                   (cleat_transport, cleat_host, ...); it
+//                                   is attached to, never started in place
 //              without one          wheelhouse:terminal[?cwd=..]
 //              the `primary` slot of a subject publishing workspace.primary.*:
 //                                   the provider's facet; Wheelhouse never sets
@@ -90,7 +93,29 @@
 
 StaticAssert(WH_Content_Command == 1<<ANDAMENTO_SLOT_COMMAND && WH_Content_File == 1<<ANDAMENTO_SLOT_FILE &&
              WH_Content_Url == 1<<ANDAMENTO_SLOT_URL && WH_Content_Jackstay == 1<<ANDAMENTO_SLOT_JACKSTAY &&
-             WH_Content_Facet == 1<<ANDAMENTO_SLOT_FACET, uishell_store_content_kinds);
+             WH_Content_Facet == 1<<ANDAMENTO_SLOT_FACET && WH_Content_CleatSession == 1<<ANDAMENTO_SLOT_CLEAT_SESSION,
+             uishell_store_content_kinds);
+
+// Terminal View settings that name a Cleat endpoint, in the order of
+// UIShell_ViewSpec's cleat_* fields. A terminal with a `cleat_session` shows
+// that session (docs/design/remote-terminals.md).
+read_only global String8 uishell_store_cleat_keys[] =
+{
+  str8_lit_comp("cleat_transport"), str8_lit_comp("cleat_host"), str8_lit_comp("cleat_runtime_root"),
+  str8_lit_comp("cleat_daemon"), str8_lit_comp("cleat_session"),
+};
+
+// The most settings one View's spec takes (uishell_store_spec_from_view):
+// a Cleat endpoint's, with the expression and cwd.
+#define UISHELL_STORE_TAKEN_MAX 8
+
+internal String8 *
+uishell_store_cleat_fields(UIShell_ViewSpec *spec, U64 i)
+{
+  String8 *fields[] = {&spec->cleat_transport, &spec->cleat_host, &spec->cleat_runtime_root, &spec->cleat_daemon, &spec->cleat_session};
+  StaticAssert(ArrayCount(fields) == ArrayCount(uishell_store_cleat_keys), uishell_store_cleat_field_count);
+  return fields[i];
+}
 
 typedef struct UIShell_StoreFlag UIShell_StoreFlag;
 struct UIShell_StoreFlag
@@ -312,8 +337,8 @@ uishell_store_file_from_expr(Arena *arena, String8 expr)
 }
 
 // What defines `view`'s content, and which of its settings that took (at
-// most four). Returns 0 for a placeholder, whose slot keeps the spec it was
-// made from.
+// most UISHELL_STORE_TAKEN_MAX). Returns 0 for a placeholder, whose slot
+// keeps the spec it was made from.
 internal B32
 uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spec, String8 *taken, U64 *taken_count)
 {
@@ -329,6 +354,16 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
   if(str8_match(kind, str8_lit("terminal"), 0))
   {
     taken[(*taken_count)++] = str8_lit("cwd");
+    if(uishell_store_setting(view, str8_lit("cleat_session")).size)
+    {
+      spec->content = ANDAMENTO_SLOT_CLEAT_SESSION;
+      for(U64 i = 0; i < ArrayCount(uishell_store_cleat_keys); i++)
+      {
+        *uishell_store_cleat_fields(spec, i) = uishell_store_setting(view, uishell_store_cleat_keys[i]);
+        taken[(*taken_count)++] = uishell_store_cleat_keys[i];
+      }
+      return 1;
+    }
     if(expr.size)
     {
       spec->content = ANDAMENTO_SLOT_COMMAND;
@@ -452,7 +487,7 @@ uishell_store_view_slot(Arena *arena, CFG_Node *view, WH_SlotAddress *slot, UISh
     return;
   }
   UIShell_ViewSpec *view_spec = push_array(arena, UIShell_ViewSpec, 1);
-  String8 taken[4];
+  String8 taken[UISHELL_STORE_TAKEN_MAX];
   U64 taken_count = 0;
   if(uishell_store_spec_from_view(arena, view, view_spec, taken, &taken_count)) { *spec = view_spec; }
 }
@@ -561,6 +596,8 @@ uishell_store_spec_from_andamento(Arena *arena, AndamentoViewSpec *s)
   spec.launcher = uishell_sidebar_string(s->launcher);
   spec.endpoint = uishell_sidebar_string(s->endpoint);
   spec.presentation = s->has_presentation ? uishell_sidebar_string(s->presentation) : str8_zero();
+  AndamentoText cleat[] = {s->cleat_transport, s->cleat_host, s->cleat_runtime_root, s->cleat_daemon, s->cleat_session};
+  for(U64 i = 0; i < ArrayCount(cleat); i++) { *uishell_store_cleat_fields(&spec, i) = uishell_sidebar_string(cleat[i]); }
   return spec;
 }
 
@@ -595,6 +632,8 @@ uishell_store_andamento_spec(Arena *arena, UIShell_ViewSpec *spec, AndamentoView
   s.endpoint = uishell_sidebar_text(spec->endpoint);
   s.has_presentation = spec->presentation.size != 0;
   s.presentation = uishell_sidebar_text(spec->presentation);
+  AndamentoText *cleat[] = {&s.cleat_transport, &s.cleat_host, &s.cleat_runtime_root, &s.cleat_daemon, &s.cleat_session};
+  for(U64 i = 0; i < ArrayCount(cleat); i++) { *cleat[i] = uishell_sidebar_text(*uishell_store_cleat_fields(spec, i)); }
   return s;
 }
 
@@ -605,7 +644,10 @@ uishell_store_spec_match(UIShell_ViewSpec *a, UIShell_ViewSpec *b)
           str8_match(a->id, b->id, 0) && str8_match(a->facet, b->facet, 0) && str8_match(a->command, b->command, 0) &&
           a->has_cwd == b->has_cwd && str8_match(a->cwd, b->cwd, 0) && str8_match(a->path, b->path, 0) &&
           str8_match(a->url, b->url, 0) && str8_match(a->launcher, b->launcher, 0) &&
-          str8_match(a->endpoint, b->endpoint, 0) && str8_match(a->presentation, b->presentation, 0));
+          str8_match(a->endpoint, b->endpoint, 0) && str8_match(a->presentation, b->presentation, 0) &&
+          str8_match(a->cleat_transport, b->cleat_transport, 0) && str8_match(a->cleat_host, b->cleat_host, 0) &&
+          str8_match(a->cleat_runtime_root, b->cleat_runtime_root, 0) && str8_match(a->cleat_daemon, b->cleat_daemon, 0) &&
+          str8_match(a->cleat_session, b->cleat_session, 0));
 }
 
 internal U64
@@ -621,7 +663,8 @@ uishell_store_spec_hash(U64 hash, UIShell_ViewSpec *spec)
 {
   hash = hash*33 + spec->content;
   String8 fields[] = {spec->provider, spec->kind, spec->id, spec->facet, spec->command, spec->cwd, spec->path,
-                      spec->url, spec->launcher, spec->endpoint, spec->presentation};
+                      spec->url, spec->launcher, spec->endpoint, spec->presentation, spec->cleat_transport,
+                      spec->cleat_host, spec->cleat_runtime_root, spec->cleat_daemon, spec->cleat_session};
   for(U64 i = 0; i < ArrayCount(fields); i++) { hash = uishell_store_hash_text(hash, fields[i]); }
   return hash*33 + spec->has_cwd;
 }
@@ -632,7 +675,7 @@ uishell_store_view_spec_hash(CFG_Node *view)
 {
   Temp scratch = scratch_begin(0, 0);
   UIShell_ViewSpec spec = {0};
-  String8 taken[4];
+  String8 taken[UISHELL_STORE_TAKEN_MAX];
   U64 taken_count = 0;
   U64 hash = uishell_store_hash_text(5381, view->string);
   if(uishell_store_spec_from_view(scratch.arena, view, &spec, taken, &taken_count)) { hash = uishell_store_spec_hash(hash, &spec); }
@@ -648,6 +691,13 @@ uishell_store_unshown(Arena *arena, String8 key, UIShell_ViewSpec *spec)
   switch(spec->content)
   {
     case ANDAMENTO_SLOT_COMMAND: case ANDAMENTO_SLOT_FILE: return str8_zero();
+    case ANDAMENTO_SLOT_CLEAT_SESSION:
+    {
+      // Cleat's ssh bridge is Unix only.
+      if(OS_WINDOWS && str8_match(spec->cleat_transport, str8_lit("ssh"), 0))
+      { return push_str8f(arena, "Cleat session %S on %S", spec->cleat_session, spec->cleat_host); }
+      return str8_zero();
+    }
     case ANDAMENTO_SLOT_JACKSTAY:
     {
       if(uishell_store_key_in(spec->launcher, uishell_store_jackstay_keys, ArrayCount(uishell_store_jackstay_keys))) { return str8_zero(); }
@@ -706,6 +756,14 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
   if(has_cwd) { uishell_store_set_setting(view, str8_lit("cwd"), cwd); }
   if(url.size) { uishell_store_set_setting(view, str8_lit("url"), url); }
   if(!unshown.size && spec->content == ANDAMENTO_SLOT_JACKSTAY) { uishell_store_set_setting(view, spec->launcher, spec->endpoint); }
+  if(!unshown.size && spec->content == ANDAMENTO_SLOT_CLEAT_SESSION)
+  {
+    for(U64 i = 0; i < ArrayCount(uishell_store_cleat_keys); i++)
+    {
+      String8 value = *uishell_store_cleat_fields(spec, i);
+      if(value.size) { uishell_store_set_setting(view, uishell_store_cleat_keys[i], value); }
+    }
+  }
   if(spec && spec->content == ANDAMENTO_SLOT_FACET)
   {
     uishell_store_set_setting(view, str8_lit("resource_id"), key);
@@ -883,7 +941,7 @@ uishell_store_specs(UIShell_StoreDoc *doc)
     hash = uishell_store_hash_text(hash, doc->keys[i]);
     hash = uishell_store_hash_text(hash, doc->views[i]->string);
     UIShell_ViewSpec spec = {0};
-    String8 taken[4];
+    String8 taken[UISHELL_STORE_TAKEN_MAX];
     U64 taken_count = 0;
     if(uishell_store_spec_from_view(scratch.arena, doc->views[i], &spec, taken, &taken_count)) { hash = uishell_store_spec_hash(hash, &spec); }
   }
@@ -1372,7 +1430,7 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
 
 // What an update would show, for its prompt.
 internal String8
-uishell_store_recipe_text(UIShell_ViewSpec *recipe)
+uishell_store_recipe_text(Arena *arena, UIShell_ViewSpec *recipe)
 {
   switch(recipe->content)
   {
@@ -1380,6 +1438,12 @@ uishell_store_recipe_text(UIShell_ViewSpec *recipe)
     case ANDAMENTO_SLOT_FILE: return recipe->path;
     case ANDAMENTO_SLOT_URL: return recipe->url;
     case ANDAMENTO_SLOT_JACKSTAY: return recipe->endpoint;
+    case ANDAMENTO_SLOT_CLEAT_SESSION:
+    {
+      if(str8_match(recipe->cleat_transport, str8_lit("ssh"), 0))
+      { return push_str8f(arena, "session %S on %S", recipe->cleat_session, recipe->cleat_host); }
+      return push_str8f(arena, "session %S", recipe->cleat_session);
+    }
   }
   return str8_lit("new content");
 }
@@ -1404,7 +1468,7 @@ uishell_store_view_shows(Arena *arena, CFG_Node *view, String8 key, UIShell_View
   if(!str8_match(view->string, kind, 0)) { return 0; }
   if(unshown.size) { return str8_match(uishell_store_setting(view, str8_lit("content")), unshown, 0); }
   UIShell_ViewSpec current = {0};
-  String8 taken[4];
+  String8 taken[UISHELL_STORE_TAKEN_MAX];
   U64 taken_count = 0;
   if(!uishell_store_spec_from_view(arena, view, &current, taken, &taken_count)) { return 0; }
   current.presentation = str8_zero();
@@ -1441,7 +1505,9 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
   B32 terminal = str8_match(view->string, str8_lit("terminal"), 0);
   if(!shows && terminal && uishell_managed_daemon_backed(view)) { keep_previous = 1; }
   if(str8_match(view->string, str8_lit("placeholder"), 0)) { keep_previous = 0; }
-  B32 in_place = !shows && terminal && str8_match(kind, view->string, 0) && !keep_previous;
+  // A Cleat session is attached to, not started: its View is a new one.
+  B32 in_place = !shows && terminal && str8_match(kind, view->string, 0) && !keep_previous &&
+                 recipe.content != ANDAMENTO_SLOT_CLEAT_SESSION;
   UIShell_ManagedPrepared prepared = {0};
   B32 ok = !in_place || uishell_managed_prepare(rd_view_state_from_view(rd_view_address_from_cfg(view), 0)->user_data, recipe.command, recipe.has_cwd, recipe.cwd, &prepared);
   char *error = 0;
@@ -1610,7 +1676,7 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
       // applied nothing yet (just made, or after a restart) has none.
       UIShell_ViewSpec recipe = uishell_store_spec_from_andamento(arena, &content.recipe);
       if(applied.size && content.rebind == ANDAMENTO_REBIND_ASK && !uishell_store_view_shows(arena, view, key, &recipe))
-      { asks = uishell_store_recipe_text(&recipe); }
+      { asks = uishell_store_recipe_text(arena, &recipe); }
       else
       {
         CFG_Node *shown = uishell_store_apply(state, owner, view, key, &content, applied.size && content.rebind == ANDAMENTO_REBIND_KEEP_PREVIOUS);
@@ -2150,7 +2216,7 @@ uishell_store_keep(CFG_Node *view)
   UIShell_SidebarState *state = uishell_store_state_from_view(view, &owner);
   String8 key = uishell_store_setting(view, str8_lit("slot"));
   UIShell_ViewSpec spec = {0};
-  String8 taken[4];
+  String8 taken[UISHELL_STORE_TAKEN_MAX];
   U64 taken_count = 0;
   Temp scratch = scratch_begin(0, 0);
   if(state && key.size && uishell_store_spec_from_view(scratch.arena, view, &spec, taken, &taken_count))
@@ -2528,7 +2594,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   for(U64 i = 0; i < doc.tab_count && ok; i++)
   {
     UIShell_ViewSpec spec = {0};
-    String8 taken[4];
+    String8 taken[UISHELL_STORE_TAKEN_MAX];
     U64 taken_count = 0;
     if(!uishell_store_spec_from_view(arena, doc.views[i], &spec, taken, &taken_count)) { continue; }
     AndamentoSlot slot = {0};
@@ -2785,7 +2851,7 @@ uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *w
         }
         if(!key.size) { continue; }
         UIShell_ViewSpec spec = {0};
-        String8 taken[4];
+        String8 taken[UISHELL_STORE_TAKEN_MAX];
         U64 taken_count = 0;
         uishell_store_spec_from_view(scratch.arena, view, &spec, taken, &taken_count);
         if(cfg_node_child_from_string(view, str8_lit("follows_provider")) != &cfg_nil_node) { taken_count = 0; }
