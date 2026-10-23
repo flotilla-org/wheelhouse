@@ -335,7 +335,7 @@ fn kept_state_presents_what_a_fresh_evaluation_does() {
 /// cold one, for the fixture template and for Wheelhouse's daily driver.
 #[test]
 fn kept_evaluation_matches_a_cold_one_at_every_step() {
-    for config in [CONFIG, include_str!("../tests/fixtures/daily-driver.kdl")] {
+    for config in [CONFIG, include_str!("../../../data/sidebar/daily-driver.kdl")] {
         kept_matches_cold_through_a_session(config);
     }
 }

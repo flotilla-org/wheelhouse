@@ -1,6 +1,0 @@
-layout {
-    pane split_direction="horizontal" {
-        plugin location="file:/Users/robert/dev/andamento/target/wasm32-wasip1/release/andamento.wasm" width=18
-        children
-    }
-}
