@@ -1,0 +1,48 @@
+[package]
+name = "andamento"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ansi_term = "0.12"
+unicode-width = "0.1.14"
+zellij-tile = { path = "../zellij/zellij-tile" }
+zellij-tile-utils = { path = "../zellij/zellij-tile-utils" }
+
+[workspace]
+members = [
+    "crates/andamento-git-watcher",
+    "crates/andamento-ffi",
+    "crates/andamento-html",
+    "crates/andamento-terminal",
+    "crates/andamento-core",
+    "crates/andamento-shared",
+    "crates/andamento-controller",
+    "crates/andamento-rail",
+    "crates/andamento-config",
+    "crates/andamento-tui",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+ansi_term = "0.12"
+crossterm = "0.28.1"
+insta = "1"
+kdl = { version = "4.7.1", default-features = false }
+ratatui = { version = "0.30.0", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+unicode-width = "0.1.14"
+zellij-tile = { path = "../zellij/zellij-tile" }
+zellij-tile-utils = { path = "../zellij/zellij-tile-utils" }
+andamento-shared = { path = "crates/andamento-shared" }
+andamento-rail = { path = "crates/andamento-rail" }
+
+andamento-core = { path = "crates/andamento-core" }
+andamento-terminal = { path = "crates/andamento-terminal" }
+andamento-tui = { path = "crates/andamento-tui" }

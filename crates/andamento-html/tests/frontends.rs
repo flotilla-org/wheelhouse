@@ -1,0 +1,33 @@
+use andamento_core::{replay, sidebar::Action, MetadataPatch, Sidebar};
+use andamento_html::{escape, render};
+use andamento_terminal::surface;
+
+#[test]
+fn native_and_terminal_geometry_share_actions_and_placement_state() {
+    let mut sidebar = Sidebar::new(include_str!("../../andamento-core/tests/fixtures/sidebar.kdl")).unwrap();
+    let patches = include_str!("../../andamento-core/tests/fixtures/sidebar.jsonl")
+        .lines()
+        .map(|l| serde_json::from_str::<MetadataPatch>(l).unwrap())
+        .collect::<Vec<_>>();
+    sidebar.apply(0, replay::PROVIDER, patches).unwrap();
+    let before = sidebar.snapshot();
+    let terminal = surface::render(&before.surface, 32);
+    let html = render(&before);
+    assert!(terminal.lines.iter().any(|l| l.contains("Worker <one>")));
+    assert!(html.contains("Worker &lt;one&gt;"));
+    assert!(!html.contains("Worker <one>"));
+    assert!(!html.contains('\u{1b}'));
+    // The workspace fallback is emitted while empty, but these frontends have
+    // no affordance on its header, so neither shows it.
+    assert!(before.surface.sections.iter().any(|s| s.is_empty_workspace_fallback()));
+    assert!(!html.contains("Other workspaces"));
+    assert!(!terminal.lines.iter().any(|l| l.contains("Other workspaces")));
+    let action = terminal.hits.iter().map(|hit| &hit.action).find(|a| matches!(a, Action::TogglePlacement { .. })).unwrap().clone();
+    assert!(html.contains(&escape(&serde_json::to_string(&action).unwrap())));
+    sidebar.dispatch(action).unwrap();
+    let after = sidebar.snapshot();
+    let collapsed = surface::render(&after.surface, 32);
+    assert!(collapsed.lines.len() < terminal.lines.len());
+    assert_eq!(after.surface.sections[1].nodes, before.surface.sections[1].nodes);
+    assert!(render(&after).contains("<details  data-toggle="));
+}
