@@ -178,11 +178,12 @@ Settled for #122 on 2026-10-23 (`src/uishell/uishell_tool_strip.c`):
   and stays while the sidebar is collapsed. *Toggle Tool Strip* (Window menu
   and palette) hides it in every window: it is the user setting
   `show_tool_strip`.
-- **Section sizes** are counted in items and global, in the user settings
-  `tool_strip_subject_size`, `_layouts_size`, `_views_size` and
+- **Section sizes** are heights in items, fractions allowed, and global, in the
+  user settings `tool_strip_subject_size`, `_layouts_size`, `_views_size` and
   `_related_size` (defaults 1, 2, 6 and 4). The linked items take the rest.
-  Dragging a divider resizes the section above it; double-clicking it restores
-  the default. A section with more items than fit scrolls by whole items.
+  Dragging a divider resizes the section above it smoothly, following the
+  pointer; double-clicking it restores the default. A section with more items
+  than fit fades out its last visible item and scrolls by whole items.
 - **Icons only:** each item has a tooltip, or its hover card, which opens beside
   the strip, level with the item.
 - **Subject:** a click reveals its row in the sidebar, opening the sidebar if

@@ -176,19 +176,19 @@ uishell_border_diagnostics(RD_WindowState *ws)
     if(had_show) { cfg_node_new_replace(rd_state->cfg, show, old_show); }
     else { cfg_node_release(rd_state->cfg, show); }
   }
-  // A divider drag resizes by the nearest whole item from where the section
+  // A divider drag resizes smoothly with the pointer from where the section
   // ended, never below none or above the setting's range.
   {
-    struct { U64 start; F32 delta; U64 size; } drags[] = {
-      {2, 0, 2}, {2, 14, 2}, {2, 16, 3}, {2, -16, 1}, {2, -200, 0},
+    struct { F32 start; F32 delta; F32 size; } drags[] = {
+      {2, 0, 2}, {2, 15, 2.5f}, {2, -45, 0.5f}, {1.5f, 30, 2.5f}, {2, -200, 0},
       {6, 30*UISHELL_TOOL_STRIP_SECTION_MAX, UISHELL_TOOL_STRIP_SECTION_MAX},
     };
     for(U64 i = 0; i < ArrayCount(drags); i++)
     {
-      U64 size = uishell_tool_strip_size_from_drag(drags[i].start, drags[i].delta, 30.f);
-      if(size != drags[i].size)
+      F32 size = uishell_tool_strip_size_from_drag(drags[i].start, drags[i].delta, 30.f);
+      if(abs_f32(size - drags[i].size) > 0.001f)
       {
-        fprintf(stderr, "FAIL tool strip divider drag: %llu items dragged %.0fpx gives %llu, not %llu\n",
+        fprintf(stderr, "FAIL tool strip divider drag: %.2f items dragged %.0fpx gives %.2f, not %.2f\n",
                 drags[i].start, drags[i].delta, size, drags[i].size);
         ok = 0;
       }

@@ -122,27 +122,41 @@ uishell_tool_strip_entity(UIShell_SidebarState *state, Rng2F32 rect, AndamentoEn
 }
 
 internal void
-uishell_tool_strip_set_size(String8 name, U64 size)
+uishell_tool_strip_set_size(String8 name, F32 size)
 {
   CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
   CFG_Node *node = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, name);
-  cfg_node_new_replacef(rd_state->cfg, node, "%I64u", size);
+  cfg_node_new_replacef(rd_state->cfg, node, "%.2f", size);
 }
 
-// A section's size after dragging its divider `delta` pixels from where a
-// section of `start` items ended: the nearest whole item, within the setting's range.
-internal U64
-uishell_tool_strip_size_from_drag(U64 start, F32 delta, F32 item_h)
+// A section's size, in items (fractions too, so it follows the pointer, and
+// scales with the font), after dragging its divider `delta` pixels from
+// where a section of `start` items ended; within the setting's range.
+internal F32
+uishell_tool_strip_size_from_drag(F32 start, F32 delta, F32 item_h)
 {
-  F32 items = round_f32(((F32)start*item_h + delta)/item_h);
-  return (U64)Clamp(0.f, items, (F32)UISHELL_TOOL_STRIP_SECTION_MAX);
+  return Clamp(0.f, start + delta/item_h, (F32)UISHELL_TOOL_STRIP_SECTION_MAX);
 }
 
-// The divider below section `section`: dragging it resizes the section, in
-// whole items, from the `shown` items it shows (fewer than its setting asks
-// for when the window is short); a double click restores its default.
+// A section's fade: the strip's background colour (`user_data`), clear at
+// the top and solid at the bottom, over items its edge cuts off or that wait
+// below it.
+internal UI_BOX_CUSTOM_DRAW(uishell_tool_strip_fade_draw)
+{
+  Vec4F32 solid = *(Vec4F32 *)user_data, clear = solid;
+  clear.w = 0;
+  R_Rect2DInst *inst = dr_rect(box->rect, solid, 0, 0, 0);
+  inst->colors[Corner_00] = clear;
+  inst->colors[Corner_10] = clear;
+  inst->colors[Corner_01] = solid;
+  inst->colors[Corner_11] = solid;
+}
+
+// The divider below section `section`: dragging it resizes the section from
+// the `shown` items it shows (fewer than its setting asks for when the
+// window is short); a double click restores its default.
 internal void
-uishell_tool_strip_divider(Rng2F32 rect, UIShell_StripSection section, U64 size, U64 shown)
+uishell_tool_strip_divider(Rng2F32 rect, UIShell_StripSection section, F32 size, F32 shown)
 {
   F32 item_h = uishell_tool_strip_item_height();
   UI_Rect(r2f32p(rect.x0+4, floor_f32((rect.y0+rect.y1)/2), rect.x1-4, floor_f32((rect.y0+rect.y1)/2)+1))
@@ -162,13 +176,13 @@ uishell_tool_strip_divider(Rng2F32 rect, UIShell_StripSection section, U64 size,
     }
     else if(ui_pressed(sig))
     {
-      U64 start = Min(size, shown);
+      F32 start = Min(size, shown);
       ui_store_drag_struct(&start);
     }
     else if(ui_dragging(sig))
     {
-      U64 next = uishell_tool_strip_size_from_drag(*ui_get_drag_struct(U64), ui_drag_delta().y, item_h);
-      if(next != size) { uishell_tool_strip_set_size(name, next); }
+      F32 next = uishell_tool_strip_size_from_drag(*ui_get_drag_struct(F32), ui_drag_delta().y, item_h);
+      if(abs_f32(next - size) >= 0.005f) { uishell_tool_strip_set_size(name, next); }
     }
   }
 }
@@ -209,10 +223,10 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
   F32 y = rect.y0 + pad;
   // Each section keeps its area, empty or not, so items stay put as Views
   // open and close and as the Visible Workspace changes.
-  U64 sizes[UIShell_StripSection_COUNT] = {0};
+  F32 sizes[UIShell_StripSection_COUNT] = {0};
   for(U64 i = 0; i < ArrayCount(uishell_tool_strip_size_settings); i++)
-  { sizes[i] = rd_setting_u64_from_name(uishell_tool_strip_size_settings[i]); }
-  U64 shown_above = 0;
+  { sizes[i] = rd_setting_f32_from_name(uishell_tool_strip_size_settings[i]); }
+  F32 shown_above = 0;
   for(UIShell_StripSection section = 0; section < UIShell_StripSection_COUNT; section++)
   {
     U64 count = counts[section];
@@ -224,23 +238,36 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
       y += divider_h;
     }
     F32 height = Max(0.f, rect.y1-pad-y);
-    if(!last) { height = Min((F32)sizes[section]*item_h, height); }
-    U64 shown = (U64)(height/item_h);
-    shown_above = shown;
+    if(!last) { height = Min(floor_f32(sizes[section]*item_h), height); }
+    shown_above = height/item_h;
     Rng2F32 section_rect = r2f32p(rect.x0, y, rect.x1-border, y+height);
     y += height;
     if(height <= 0) { continue; }
 
-    // Overflow scrolls by whole items.
+    // Overflow scrolls by whole items, until the last one is wholly in view.
+    U64 whole = (U64)(height/item_h);
     U64 *scroll = &state->strip_scroll[section];
-    U64 max_scroll = count > shown ? count-shown : 0;
+    U64 max_scroll = count > whole ? count-whole : 0;
     *scroll = Min(*scroll, max_scroll);
     UI_Box *clip = &ui_nil_box;
     UI_Rect(section_rect)
     { clip = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_Scroll|UI_BoxFlag_Clickable, "###tool_strip_section_%i", section); }
     UI_Parent(clip)
     {
-      for(U64 i = *scroll; i < count && i < *scroll+shown+1; i++)
+      // Items the edge cuts off, or that wait below it, fade out into it.
+      // Built first, it draws over them.
+      if((F32)(count - *scroll)*item_h > height + 0.5f)
+      {
+        F32 fade_h = Min(floor_f32(item_h*0.75f), height);
+        Vec4F32 *color = push_array(ui_build_arena(), Vec4F32, 1);
+        *color = ui_color_from_name(str8_lit("background"));
+        UI_Rect(r2f32p(0, height-fade_h, dim_2f32(section_rect).x, height))
+        {
+          UI_Box *fade = ui_build_box_from_key(0, ui_key_zero());
+          ui_box_equip_custom_draw(fade, uishell_tool_strip_fade_draw, color);
+        }
+      }
+      for(U64 i = *scroll; i < count && (F32)(i-*scroll)*item_h < height; i++)
       {
         F32 top = (F32)(i-*scroll)*item_h;
         Rng2F32 r = r2f32p(item_x.min-section_rect.x0, top+1, item_x.max-section_rect.x0, top+item_h-1);
