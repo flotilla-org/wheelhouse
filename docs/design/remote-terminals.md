@@ -55,7 +55,7 @@ A remote View follows [Stopped and disconnected terminals](stopped-and-disconnec
 
 ## Diagnostics
 
-The remote output-admission warning ("cycle protection does not cover remote relationships") is diagnostics, not content. Cleat reports it through `cleat_provider_transport_state_json`, and Wheelhouse writes it to the log once per connection, with the host. When an established bridge gives up, its error is logged too. Neither ever reaches the terminal.
+The remote output-admission warning ("cycle protection does not cover remote relationships") is diagnostics, not content. Cleat reports it through `cleat_provider_transport_state_json`, and Wheelhouse writes it to the log once per connection, with the host. When a bridge gives up, its error is logged once too, including one that never streamed, such as a bad host or refused auth. Neither ever reaches the terminal.
 
 ## Tests
 
@@ -65,7 +65,8 @@ The remote output-admission warning ("cycle protection does not cover remote rel
   - input and resize reaching the remote PTY;
   - the warning staying out of the content;
   - a killed bridge showing the reconnect within 3 s, with the session still running and nothing reconnecting by itself;
-  - reconnect reaching the same live session.
+  - reconnect reaching the same live session;
+  - a bridge that fails before it streams giving up with its reason, logged.
 - `--managed_content_diagnostics` covers opening a subject with a direct endpoint: its primary waits, then becomes the endpoint's terminal, and the next plan finds it current.
 - By default the script runs through a PATH `ssh` shim, so it needs no sshd. CI runs it on macOS; the Linux job builds Cleat without a VT engine, which `cleat launch` refuses. Setting `WH_REMOTE_HOST=localhost` runs it over real ssh.
 

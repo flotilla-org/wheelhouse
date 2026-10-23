@@ -180,6 +180,33 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
                 str8_find_needle(capture, 0, str8_lit("WH-REMOTE-42"), 0) < capture.size, "reconnect reaches the same live session");
     uishell_terminal_runtime_release(tv);
   }
+  // A bridge that fails before it ever streams (here, no Cleat at that
+  // path, as a bad host or refused auth would be) gives up with its reason,
+  // logged once.
+  CFG_Node *bad = rd_fixture_view(panel, str8_lit("terminal"), str8_zero(), 1);
+  String8 bad_settings[][2] =
+  {
+    {str8_lit("cleat_transport"), str8_lit("ssh")}, {str8_lit("cleat_host"), host}, {str8_lit("cleat_runtime_root"), root},
+    {str8_lit("cleat_session"), session}, {str8_lit("cleat_command"), str8_lit("/nonexistent/cleat")},
+  };
+  for(U64 i = 0; i < ArrayCount(bad_settings); i++)
+  { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, bad, bad_settings[i][0]), bad_settings[i][1]); }
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = rd_view_address_from_cfg(bad), .view = rd_view_address_from_cfg(bad))
+  {
+    UIShell_TerminalViewState *tv = rd_view_state(UIShell_TerminalViewState);
+    String8 pill = str8_zero();
+    U64 deadline = now_time_us()+10*Million(1);
+    for(;;)
+    {
+      pill = uishell_remote_diag_build(scratch.arena, ws, bad, v2f32(640, 480));
+      if(str8_find_needle(pill, 0, str8_lit("click to reconnect"), 0) < pill.size || now_time_us() > deadline) { break; }
+      sleep_ms(20);
+    }
+    RemoteCheck(str8_match(str8_prefix(pill, 14), str8_lit("disconnected: "), 0) && str8_find_needle(pill, 0, str8_lit("click to reconnect"), 0) < pill.size,
+                "a bridge that never streams gives up with its reason");
+    RemoteCheck(tv->remote_disconnect_logged, "the startup failure reaches the log");
+    uishell_terminal_runtime_release(tv);
+  }
   // A local endpoint attaches through the shared daemon provider for its
   // runtime root, with no bridge.
   CFG_Node *local = rd_fixture_view(panel, str8_lit("terminal"), str8_zero(), 1);

@@ -62,6 +62,9 @@ struct UIShell_TerminalViewState
   B32 remote_reconnect;
   // The bridge's admission warning went to the log for this connection.
   B32 remote_warning_logged;
+  // This give-up's reason went to the log, whether or not the bridge ever
+  // streamed (a bad host or failed auth never does).
+  B32 remote_disconnect_logged;
   cleat_session_colors session_colors;
 
   // retained terminal draw bucket: the cell feed's draw output, rebuilt only
@@ -4350,6 +4353,10 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     String8 endpoint_transport = wh_view_setting(ctx, str8_lit("cleat_transport"));
     String8 endpoint_root = wh_view_setting(ctx, str8_lit("cleat_runtime_root"));
     B32 remote_backend = endpoint_session.size != 0 && str8_match(endpoint_transport, str8_lit("ssh"), 0);
+    if(endpoint_session.size != 0 && !remote_backend && !str8_match(endpoint_transport, str8_lit("local"), 0))
+    {
+      log_infof("Terminal endpoint %S: unknown cleat_transport \"%S\", attaching locally\n", endpoint_session, endpoint_transport);
+    }
     if(endpoint_session.size != 0)
     {
       attach_session_id = endpoint_session;
@@ -4516,10 +4523,10 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
       tv->remote_warning_logged = 1;
     }
     B32 given_up = tv->remote_backend && (remote_unstarted || (connection_state == CLEAT_SESSION_DISCONNECTED && !transport.retrying));
-    if(given_up && tv->remote_warning_logged)
+    if(given_up && !tv->remote_disconnect_logged)
     {
       log_infof("Remote terminal %S disconnected: %S\n", wh_view_setting(ctx, str8_lit("cleat_host")), transport.error);
-      tv->remote_warning_logged = 0;
+      tv->remote_disconnect_logged = 1;
     }
     if(connection_state != CLEAT_SESSION_STREAMING || watching)
     {
