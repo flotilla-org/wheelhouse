@@ -1163,7 +1163,31 @@ uishell_local_groups_diagnostics(CFG_Node *window)
   if(made != &cfg_nil_node) { UIShell_RegsScope(.window = window->id, .cfg = made->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); } }
   uishell_local_groups_publish(state, window, arena);
 
-  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, New section, header holds its panel's Views, right click on a tab, section collapse, × and drag, collapse gives space back)\n",
+  //- The leftover section, standing aside for Workspaces, takes no share of
+  //  the sidebar, sized by content or by hand: collapsed away, its share
+  //  would pad Workspaces with space no boundary can take back.
+  {
+    UIShell_ControlledSplit owner_split = uishell_root_controlled_split_from_window(arena, window);
+    B32 had_sized = cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized")) != &cfg_nil_node;
+    B32 seen = 0, none = 1, filled = 1;
+    for(U32 by_hand = 0; by_hand < 2; by_hand++)
+    {
+      if(by_hand && !had_sized) { cfg_node_new(rd_state->cfg, window, str8_lit("sidebar_layout_sized")); }
+      UIShell_WorkspaceMount mount = uishell_workspace_mount_from_sidebar(arena, window);
+      UI_FontSize(11) { uishell_sidebar_size_panels_saved(&owner_split, &mount, r2f32p(0, 0, 300, 600)); }
+      F32 shown = 0;
+      for(RD_PanelNode *panel = mount.panel_tree.root->first; panel != &rd_nil_panel_node; panel = panel->next)
+      {
+        if(panel->tabs.count != 0 && uishell_sidebar_panel_absent(panel)) { seen = 1; none &= panel->pct_of_parent == 0; }
+        else { shown += panel->pct_of_parent; }
+      }
+      filled &= abs_f32(shown-1.f) < .001f;
+    }
+    if(!had_sized) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_layout_sized"))); }
+    GroupsCheck(seen && none && filled, "the leftover section, standing aside, takes no share of the sidebar");
+  }
+
+  fprintf(stderr, "Local groups diagnostics: %s (borrowed titles, rename, second group, new workspace here, delete group, delete section, default kept, rename in place, Esc, section menu, new group renamed in its header, group menu, make footers, header click, count, rename and ⋯, group drag between sections from the header edge, group to a docking site, one-group section title drag, default group stays, View label follows, New section, header holds its panel's Views, right click on a tab, section collapse, × and drag, collapse gives space back, hidden leftover takes no space)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

@@ -92,17 +92,17 @@ window 1
   sidebar arrangement
     docked
       panel split=y
-        panel weight=0.14
+        panel weight=0.23
           section "Projects" view=dashboard:"tree" selected
         panel weight=0.32
           section "Sessions" view=dashboard:"sessions" selected
         panel weight=0.04
           section "Attention" view=dashboard:"attention" selected collapsed
-        panel weight=0.23
+        panel weight=0.25
           section "Workspaces" view=dashboard:".section" selected
-        panel weight=0.16
+        panel weight=0.19
           section "Other workspaces" view=dashboard:".unplaced" selected hidden
-        panel weight=0.11
+        panel weight=0.16
           section "Builds" view=dashboard:".section" selected
     closed "Git"
 presentation
