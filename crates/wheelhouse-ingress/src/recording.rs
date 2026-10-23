@@ -29,16 +29,7 @@ impl Record {
         match self {
             #[cfg(test)]
             Self::Value(value) => value,
-            Self::Request {
-                recording_id,
-                sequence,
-                received_ms,
-                timestamp_ms,
-                path,
-                method,
-                body,
-                status,
-            } => {
+            Self::Request { recording_id, sequence, received_ms, timestamp_ms, path, method, body, status } => {
                 let text = body.as_ref().and_then(|b| std::str::from_utf8(b).ok());
                 let decoded = text.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
                 let producer = decoded.as_ref().and_then(|v| v.get("source_id")).cloned();
@@ -60,10 +51,7 @@ pub struct Recorder {
 }
 fn disable(disabled: &AtomicBool, error: impl std::fmt::Display) {
     if !disabled.swap(true, Ordering::Relaxed) {
-        let _ = writeln!(
-            io::stderr(),
-            "wheelhouse ingress: recording disabled: {error}"
-        );
+        let _ = writeln!(io::stderr(), "wheelhouse ingress: recording disabled: {error}");
     }
 }
 impl Recorder {
@@ -71,25 +59,23 @@ impl Recorder {
         let (sender, receiver) = mpsc::sync_channel::<Record>(64);
         let disabled = Arc::new(AtomicBool::new(false));
         let worker_disabled = disabled.clone();
-        let result = thread::Builder::new()
-            .name("ingress-recorder".into())
-            .spawn(move || {
-                let result = (|| -> io::Result<()> {
-                    let mut writer = Rotating::new(path, bytes, files)?;
-                    while let Ok(value) = receiver.recv() {
-                        if worker_disabled.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        let mut line = serde_json::to_vec(&value.into_value())?;
-                        line.push(b'\n');
-                        writer.write(&line)?;
+        let result = thread::Builder::new().name("ingress-recorder".into()).spawn(move || {
+            let result = (|| -> io::Result<()> {
+                let mut writer = Rotating::new(path, bytes, files)?;
+                while let Ok(value) = receiver.recv() {
+                    if worker_disabled.load(Ordering::Relaxed) {
+                        break;
                     }
-                    Ok(())
-                })();
-                if let Err(error) = result {
-                    disable(&worker_disabled, error);
+                    let mut line = serde_json::to_vec(&value.into_value())?;
+                    line.push(b'\n');
+                    writer.write(&line)?;
                 }
-            });
+                Ok(())
+            })();
+            if let Err(error) = result {
+                disable(&worker_disabled, error);
+            }
+        });
         let worker = match result {
             Ok(worker) => Some(worker),
             Err(error) => {
@@ -104,18 +90,13 @@ impl Recorder {
             sequence: AtomicU64::new(0),
             recording_id: format!(
                 "{:039}-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos(),
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos(),
                 std::process::id()
             ),
         })
     }
     fn record(&self, value: Record) {
-        if !self.disabled.load(Ordering::Relaxed)
-            && self.sender.as_ref().unwrap().try_send(value).is_err()
-        {
+        if !self.disabled.load(Ordering::Relaxed) && self.sender.as_ref().unwrap().try_send(value).is_err() {
             disable(&self.disabled, "writer queue full or unavailable");
         }
     }
@@ -163,14 +144,8 @@ impl Rotating {
             return Err(io::Error::other("invalid retention limits"));
         }
         // Apply reduced retention across restarts as well as within this run.
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| std::path::Path::new("."));
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| io::Error::other("recording filename must be UTF-8"))?;
+        let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| std::path::Path::new("."));
+        let name = path.file_name().and_then(|s| s.to_str()).ok_or_else(|| io::Error::other("recording filename must be UTF-8"))?;
         for entry in fs::read_dir(parent)? {
             let entry = entry?;
             let entry_name = entry.file_name();
@@ -180,9 +155,7 @@ impl Rotating {
             let generation = if entry_name == name {
                 Some(0)
             } else {
-                entry_name
-                    .strip_prefix(&format!("{name}."))
-                    .and_then(|suffix| suffix.parse::<usize>().ok())
+                entry_name.strip_prefix(&format!("{name}.")).and_then(|suffix| suffix.parse::<usize>().ok())
             };
             if let Some(n) = generation {
                 // Invalid output targets must not alter directories/socket access.
@@ -204,26 +177,14 @@ impl Rotating {
         // An interrupted write from an earlier run must not join two JSONL entries.
         let previous = fs::read(&path)?;
         let size = if previous.last().is_some_and(|last| *last != b'\n') {
-            let complete = previous
-                .iter()
-                .rposition(|b| *b == b'\n')
-                .map_or(0, |i| i + 1) as u64;
+            let complete = previous.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1) as u64;
             // Windows append-only handles cannot truncate; repair with write access.
-            OpenOptions::new()
-                .write(true)
-                .open(&path)?
-                .set_len(complete)?;
+            OpenOptions::new().write(true).open(&path)?.set_len(complete)?;
             complete
         } else {
             previous.len() as u64
         };
-        Ok(Self {
-            path,
-            bytes,
-            files,
-            file: Some(file),
-            size,
-        })
+        Ok(Self { path, bytes, files, file: Some(file), size })
     }
     fn numbered(&self, n: usize) -> PathBuf {
         if n == 0 {
@@ -273,9 +234,7 @@ pub async fn capture(
     if method != "POST" || (path != "/v1/metadata/patch" && path != "/v1/metadata/snapshot") {
         let (received_ms, timestamp_ms) = received_time();
         let sequence = recorder.sequence.fetch_add(1, Ordering::Relaxed);
-        let response = next
-            .run(axum::extract::Request::from_parts(parts, body))
-            .await;
+        let response = next.run(axum::extract::Request::from_parts(parts, body)).await;
         recorder.record(Record::Request {
             recording_id: recorder.recording_id.clone(),
             sequence,
@@ -288,23 +247,14 @@ pub async fn capture(
         });
         return response;
     }
-    let bytes = axum::body::Bytes::from_request(
-        axum::extract::Request::from_parts(parts.clone(), body),
-        &(),
-    )
-    .await;
+    let bytes = axum::body::Bytes::from_request(axum::extract::Request::from_parts(parts.clone(), body), &()).await;
     // Assign order/time when a complete request reaches the router, before admission.
     let (received_ms, timestamp_ms) = received_time();
     let sequence = recorder.sequence.fetch_add(1, Ordering::Relaxed);
     let (body, response) = match bytes {
         Ok(bytes) => {
             let copy = bytes.clone();
-            let response = next
-                .run(axum::extract::Request::from_parts(
-                    parts,
-                    axum::body::Body::from(bytes),
-                ))
-                .await;
+            let response = next.run(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes))).await;
             (Some(copy), response)
         }
         Err(error) => (None, error.into_response()),
@@ -325,10 +275,7 @@ pub async fn capture(
 fn received_time() -> (u64, u64) {
     (
         crate::wheelhouse_ingress_now_ms(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64,
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
     )
 }
 
@@ -339,10 +286,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!(
             "wh-recorder-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
         fs::create_dir(&path).unwrap();
         path
@@ -402,13 +346,7 @@ mod tests {
         writer.write(b"new\n").unwrap();
         let entries: Vec<_> = fs::read_dir(&dir).unwrap().map(Result::unwrap).collect();
         assert!(entries.len() <= 2);
-        assert!(
-            entries
-                .iter()
-                .map(|e| e.metadata().unwrap().len())
-                .sum::<u64>()
-                <= 32
-        );
+        assert!(entries.iter().map(|e| e.metadata().unwrap().len()).sum::<u64>() <= 32);
         drop(writer);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -508,23 +446,9 @@ mod tests {
             writer.write(b"5678\n").unwrap();
         }
         for n in 0..3 {
-            assert_eq!(
-                fs::metadata(writer.numbered(n))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
+            assert_eq!(fs::metadata(writer.numbered(n)).unwrap().permissions().mode() & 0o777, 0o600);
         }
-        assert_eq!(
-            fs::metadata(dir.join("unrelated.log"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o644
-        );
+        assert_eq!(fs::metadata(dir.join("unrelated.log")).unwrap().permissions().mode() & 0o777, 0o644);
         drop(writer);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -535,16 +459,10 @@ mod tests {
         let path = dir.join("ingress.jsonl");
         let recorder = Recorder::start(path.clone(), 4096, 2);
         for sequence in 0..20 {
-            recorder.record(Record::Value(
-                serde_json::json!({"sequence": sequence, "body_utf8": "{  \"path\": \"/東京\" }"}),
-            ));
+            recorder.record(Record::Value(serde_json::json!({"sequence": sequence, "body_utf8": "{  \"path\": \"/東京\" }"})));
         }
         drop(recorder);
-        let values: Vec<serde_json::Value> = fs::read_to_string(path)
-            .unwrap()
-            .lines()
-            .map(|s| serde_json::from_str(s).unwrap())
-            .collect();
+        let values: Vec<serde_json::Value> = fs::read_to_string(path).unwrap().lines().map(|s| serde_json::from_str(s).unwrap()).collect();
         assert_eq!(values.len(), 20);
         for (i, value) in values.iter().enumerate() {
             assert_eq!(value["sequence"], i);

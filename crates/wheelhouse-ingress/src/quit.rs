@@ -24,11 +24,7 @@ extern "C" fn handle(signal: libc::c_int) {
     let saved = unsafe { *errno() };
     let byte = 1u8;
     unsafe {
-        libc::write(
-            PIPE.load(Ordering::SeqCst),
-            &byte as *const u8 as *const _,
-            1,
-        );
+        libc::write(PIPE.load(Ordering::SeqCst), &byte as *const u8 as *const _, 1);
         *errno() = saved;
     }
 }
@@ -50,15 +46,13 @@ pub fn install(wake: super::Wake) -> std::io::Result<()> {
         return Ok(());
     }
     let (mut reader, writer) = std::io::pipe()?;
-    std::thread::Builder::new()
-        .name("wheelhouse-quit-signals".into())
-        .spawn(move || {
-            use std::io::Read;
-            let mut byte = [0u8; 1];
-            if matches!(reader.read(&mut byte), Ok(1)) {
-                wake();
-            }
-        })?;
+    std::thread::Builder::new().name("wheelhouse-quit-signals".into()).spawn(move || {
+        use std::io::Read;
+        let mut byte = [0u8; 1];
+        if matches!(reader.read(&mut byte), Ok(1)) {
+            wake();
+        }
+    })?;
     use std::os::fd::IntoRawFd;
     PIPE.store(writer.into_raw_fd(), Ordering::SeqCst);
     for signal in HANDLED {

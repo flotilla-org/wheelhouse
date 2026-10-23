@@ -10,10 +10,7 @@ use tokio::net::windows::named_pipe::{NamedPipeServer, PipeMode, ServerOptions};
 use windows_sys::Win32::{
     Foundation::LocalFree,
     Security::{
-        Authorization::{
-            ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-            SDDL_REVISION_1,
-        },
+        Authorization::{ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1},
         GetTokenInformation, TokenUser, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
     },
     System::Threading::{GetCurrentProcess, OpenProcessToken},
@@ -44,68 +41,38 @@ impl Descriptor {
         let token = unsafe { OwnedHandle::from_raw_handle(raw) };
         let mut len = 0;
         unsafe {
-            GetTokenInformation(
-                token.as_raw_handle(),
-                TokenUser,
-                ptr::null_mut(),
-                0,
-                &mut len,
-            );
+            GetTokenInformation(token.as_raw_handle(), TokenUser, ptr::null_mut(), 0, &mut len);
         }
         if len == 0 {
             return Err(io::Error::last_os_error());
         }
         let mut buffer = vec![0u64; (len as usize).div_ceil(size_of::<u64>())];
         // SAFETY: aligned buffer with at least len writable bytes.
-        check(unsafe {
-            GetTokenInformation(
-                token.as_raw_handle(),
-                TokenUser,
-                buffer.as_mut_ptr().cast(),
-                len,
-                &mut len,
-            )
-        })?;
+        check(unsafe { GetTokenInformation(token.as_raw_handle(), TokenUser, buffer.as_mut_ptr().cast(), len, &mut len) })?;
         let mut sid = ptr::null_mut();
-        check(unsafe {
-            ConvertSidToStringSidW((*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid, &mut sid)
-        })?;
+        check(unsafe { ConvertSidToStringSidW((*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid, &mut sid) })?;
         let count = (0..).take_while(|&i| unsafe { *sid.add(i) } != 0).count();
         let user = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(sid, count) });
         unsafe {
             LocalFree(sid.cast());
         }
-        let sddl: Vec<u16> = format!("D:P(A;;GA;;;SY)(A;;GA;;;{user})")
-            .encode_utf16()
-            .chain(Some(0))
-            .collect();
+        let sddl: Vec<u16> = format!("D:P(A;;GA;;;SY)(A;;GA;;;{user})").encode_utf16().chain(Some(0)).collect();
         let mut descriptor = ptr::null_mut();
         check(unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                sddl.as_ptr(),
-                SDDL_REVISION_1,
-                &mut descriptor,
-                ptr::null_mut(),
-            )
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut descriptor, ptr::null_mut())
         })?;
         Ok(Self(descriptor))
     }
     fn instance(&self, name: &Path, first: bool) -> io::Result<NamedPipeServer> {
-        let mut attributes = SECURITY_ATTRIBUTES {
-            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: self.0,
-            bInheritHandle: 0,
-        };
+        let mut attributes =
+            SECURITY_ATTRIBUTES { nLength: size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: self.0, bInheritHandle: 0 };
         // SAFETY: attributes and its descriptor remain valid throughout creation.
         unsafe {
             ServerOptions::new()
                 .pipe_mode(PipeMode::Byte)
                 .reject_remote_clients(true)
                 .first_pipe_instance(first)
-                .create_with_security_attributes_raw(
-                    name,
-                    (&mut attributes as *mut SECURITY_ATTRIBUTES).cast(),
-                )
+                .create_with_security_attributes_raw(name, (&mut attributes as *mut SECURITY_ATTRIBUTES).cast())
         }
     }
 }
@@ -117,26 +84,13 @@ pub(super) struct Listener {
 }
 impl Listener {
     pub(super) fn bind(name: &Path) -> io::Result<Self> {
-        let text = name
-            .to_str()
-            .ok_or_else(|| io::Error::other("pipe name must be UTF-8"))?;
-        if !text
-            .get(..9)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\.\pipe\"))
-            || text.len() <= 9
-            || text.contains('\0')
-        {
-            return Err(io::Error::other(
-                r"expected a local \\.\pipe\<name> endpoint",
-            ));
+        let text = name.to_str().ok_or_else(|| io::Error::other("pipe name must be UTF-8"))?;
+        if !text.get(..9).is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\.\pipe\")) || text.len() <= 9 || text.contains('\0') {
+            return Err(io::Error::other(r"expected a local \\.\pipe\<name> endpoint"));
         }
         let descriptor = Descriptor::current_user()?;
         let pending = descriptor.instance(name, true)?;
-        Ok(Self {
-            name: name.into(),
-            descriptor,
-            pending,
-        })
+        Ok(Self { name: name.into(), descriptor, pending })
     }
 }
 impl axum::serve::Listener for Listener {
@@ -162,9 +116,7 @@ impl axum::serve::Listener for Listener {
                     Ok(next) => return (std::mem::replace(&mut self.pending, next), ()),
                     Err(error) => {
                         if !reported {
-                            eprintln!(
-                                "wheelhouse ingress: cannot create next pipe instance: {error}"
-                            );
+                            eprintln!("wheelhouse ingress: cannot create next pipe instance: {error}");
                             reported = true;
                         }
                         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -186,14 +138,8 @@ mod tests {
     // This lifecycle scenario uses real Windows pipe handles.
     #[tokio::test(flavor = "current_thread")]
     async fn duplicate_bind_preserves_the_original_listener() {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let name = PathBuf::from(format!(
-            r"\\.\pipe\wheelhouse-bind-{}-{nonce}",
-            std::process::id()
-        ));
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let name = PathBuf::from(format!(r"\\.\pipe\wheelhouse-bind-{}-{nonce}", std::process::id()));
         let owner = Listener::bind(&name).unwrap();
         assert!(Listener::bind(&name).is_err());
         drop(owner);

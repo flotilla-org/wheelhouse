@@ -122,9 +122,7 @@ impl Run {
         #[cfg(unix)]
         let (mut command, lifeline) = {
             let mut command = Command::new("/bin/sh");
-            command
-                .args(["-c", GUARDIAN, "wheelhouse-connector"])
-                .args(&spec.argv);
+            command.args(["-c", GUARDIAN, "wheelhouse-connector"]).args(&spec.argv);
             // Both ends close on exec: only this process holds the write end.
             let (reader, writer) = std::io::pipe()?;
             command.stdin(reader);
@@ -133,9 +131,7 @@ impl Run {
         #[cfg(not(unix))]
         let mut command = {
             let mut command = Command::new(&spec.argv[0]);
-            command
-                .args(&spec.argv[1..])
-                .stdin(std::process::Stdio::null());
+            command.args(&spec.argv[1..]).stdin(std::process::Stdio::null());
             command
         };
         for (name, value) in &spec.env {
@@ -281,14 +277,7 @@ fn tail(text: &str, limit: usize) -> &str {
 
 /// Reads run `run`'s stdout: its first line makes it ready, unless a later
 /// run has started; the rest goes to the log.
-fn read_ready(
-    stdout: ChildStdout,
-    mut log: File,
-    run: u64,
-    starts: Arc<AtomicU64>,
-    state: Arc<Mutex<State>>,
-    wake: super::Wake,
-) {
+fn read_ready(stdout: ChildStdout, mut log: File, run: u64, starts: Arc<AtomicU64>, state: Arc<Mutex<State>>, wake: super::Wake) {
     let mut lines = BufReader::new(stdout).lines();
     if let Some(Ok(line)) = lines.next() {
         let mut state = state.lock().unwrap();
@@ -311,12 +300,7 @@ impl Connector {
         if let Some(parent) = spec.log.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let mut log = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .read(true)
-            .open(&spec.log)
-            .map_err(|e| e.to_string())?;
+        let mut log = OpenOptions::new().create(true).append(true).read(true).open(&spec.log).map_err(|e| e.to_string())?;
         let running = Arc::new(AtomicBool::new(false));
         let starts = Arc::new(AtomicU64::new(0));
         let state = Arc::new(Mutex::new(State::Waiting));
@@ -341,10 +325,7 @@ impl Connector {
                         // It never got as far as being ready.
                         Err(error) if spec.ready_line => {
                             note(&mut log, &format!("Could not start: {error}"));
-                            set(State::Failed(format!(
-                                "Couldn't start {}: {error}",
-                                spec.argv[0]
-                            )));
+                            set(State::Failed(format!("Couldn't start {}: {error}", spec.argv[0])));
                             wake();
                             match stopped.recv() {
                                 Ok(Restart) => {
@@ -355,10 +336,7 @@ impl Connector {
                             }
                         }
                         Err(error) => {
-                            let message = format!(
-                                "Connector could not start: {error}; retrying in {}s",
-                                backoff.as_secs()
-                            );
+                            let message = format!("Connector could not start: {error}; retrying in {}s", backoff.as_secs());
                             note(&mut log, &message);
                             match wait(backoff) {
                                 Wait::Stop => return,
@@ -377,12 +355,10 @@ impl Connector {
                     if let (Some(stdout), Ok(log)) = (run.stdout.take(), log.try_clone()) {
                         let (starts, state) = (starts_.clone(), state_t.clone());
                         let (done, finished) = mpsc::channel::<()>();
-                        let spawned = thread::Builder::new()
-                            .name("wheelhouse-connector-stdout".into())
-                            .spawn(move || {
-                                read_ready(stdout, log, this, starts, state, wake);
-                                drop(done);
-                            });
+                        let spawned = thread::Builder::new().name("wheelhouse-connector-stdout".into()).spawn(move || {
+                            read_ready(stdout, log, this, starts, state, wake);
+                            drop(done);
+                        });
                         if spawned.is_ok() {
                             reader = Some(finished);
                         }
@@ -429,10 +405,7 @@ impl Connector {
                     if spec.ready_line && !ready {
                         let output = written_since(&mut log, from);
                         let output = tail(output.trim_end(), FAILURE_TAIL);
-                        note(
-                            &mut log,
-                            &format!("Exited before it was ready, with {status}"),
-                        );
+                        note(&mut log, &format!("Exited before it was ready, with {status}"));
                         let failure = match output {
                             "" => format!("Exited with {status}"),
                             output => format!("Exited with {status}:\n{output}"),
@@ -457,10 +430,7 @@ impl Connector {
                     if let Some(hint) = mismatch_hint(&written_since(&mut log, from)) {
                         note(&mut log, &hint);
                     }
-                    let message = format!(
-                        "Connector exited with {status}; restarting in {}s",
-                        backoff.as_secs()
-                    );
+                    let message = format!("Connector exited with {status}; restarting in {}s", backoff.as_secs());
                     note(&mut log, &message);
                     match wait(backoff) {
                         Wait::Stop => return,
@@ -470,13 +440,7 @@ impl Connector {
                 }
             })
             .map_err(|e| e.to_string())?;
-        Ok(Self {
-            running,
-            starts,
-            state,
-            stop: Some(stop),
-            thread: Some(thread),
-        })
+        Ok(Self { running, starts, state, stop: Some(stop), thread: Some(thread) })
     }
 
     pub fn running(&self) -> bool {
@@ -521,9 +485,8 @@ mod windows {
     use windows_sys::Win32::{
         Foundation::{CloseHandle, HANDLE},
         System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-            SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         },
     };
 
@@ -599,11 +562,7 @@ mod tests {
         let log = dir.join("connector.log");
         let connector = Connector::start(
             Spec {
-                argv: vec![
-                    "/bin/sh".into(),
-                    "-c".into(),
-                    "echo started; exec sleep 60".into(),
-                ],
+                argv: vec!["/bin/sh".into(), "-c".into(), "echo started; exec sleep 60".into()],
                 env: vec![],
                 log: log.clone(),
                 ready_line: false,
@@ -611,13 +570,9 @@ mod tests {
             wake,
         )
         .unwrap();
-        wait_for("the first run", || {
-            connector.starts() == 1 && connector.running()
-        });
+        wait_for("the first run", || connector.starts() == 1 && connector.running());
         connector.restart();
-        wait_for("the next run", || {
-            connector.starts() == 2 && connector.running()
-        });
+        wait_for("the next run", || connector.starts() == 2 && connector.running());
         let text = std::fs::read_to_string(&log).unwrap();
         assert!(text.contains("Connector restarted on request"), "{text}");
         // Started again at once, not after an exit's backoff.
@@ -642,35 +597,22 @@ mod tests {
         let connector = Connector::start(
             Spec {
                 argv: vec!["/bin/sh".into(), "-c".into(), script],
-                env: vec![
-                    ("FLOTILLA_DAEMON".into(), Some("ssh://alpha".into())),
-                    ("HOME".into(), None),
-                ],
+                env: vec![("FLOTILLA_DAEMON".into(), Some("ssh://alpha".into())), ("HOME".into(), None)],
                 log: log.clone(),
                 ready_line: false,
             },
             wake,
         )
         .unwrap();
-        wait_for("a restart", || {
-            connector.starts() == 2
-                && std::fs::read_to_string(&marker).is_ok_and(|t| t.ends_with('\n'))
-        });
+        wait_for("a restart", || connector.starts() == 2 && std::fs::read_to_string(&marker).is_ok_and(|t| t.ends_with('\n')));
         assert!(connector.running());
         let text = std::fs::read_to_string(&log).unwrap();
         assert!(text.contains("daemon=ssh://alpha home=unset"), "{text}");
         assert!(text.contains("exit status: 7; restarting in 1s"), "{text}");
-        let grandchild: libc::pid_t = std::fs::read_to_string(&marker)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
+        let grandchild: libc::pid_t = std::fs::read_to_string(&marker).unwrap().trim().parse().unwrap();
         drop(connector);
         // Stopping took the grandchild too.
-        wait_for(
-            "the grandchild to go",
-            || unsafe { libc::kill(grandchild, 0) } != 0,
-        );
+        wait_for("the grandchild to go", || unsafe { libc::kill(grandchild, 0) } != 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -683,26 +625,16 @@ mod tests {
     fn stubborn(dir: &std::path::Path) -> (Spec, PathBuf) {
         std::fs::create_dir_all(dir).unwrap();
         let marker = dir.join("pids");
-        let script = format!(
-            "trap '' TERM; sleep 60 & echo \"$$ $!\" > {m}.tmp && mv {m}.tmp {m}; wait",
-            m = marker.display()
-        );
-        let spec = Spec {
-            argv: vec!["/bin/sh".into(), "-c".into(), script],
-            env: Vec::new(),
-            log: dir.join("connector.log"),
-            ready_line: false,
-        };
+        let script = format!("trap '' TERM; sleep 60 & echo \"$$ $!\" > {m}.tmp && mv {m}.tmp {m}; wait", m = marker.display());
+        let spec =
+            Spec { argv: vec!["/bin/sh".into(), "-c".into(), script], env: Vec::new(), log: dir.join("connector.log"), ready_line: false };
         (spec, marker)
     }
 
     fn pids(marker: &std::path::Path) -> Vec<libc::pid_t> {
         wait_for("the connector to start", || marker.exists());
         let text = std::fs::read_to_string(marker).unwrap();
-        let pids: Vec<libc::pid_t> = text
-            .split_whitespace()
-            .map(|p| p.parse().unwrap())
-            .collect();
+        let pids: Vec<libc::pid_t> = text.split_whitespace().map(|p| p.parse().unwrap()).collect();
         assert_eq!(pids.len(), 2, "{text}");
         assert!(pids.iter().all(|&pid| alive(pid)));
         pids
@@ -716,14 +648,8 @@ mod tests {
         let pids = pids(&marker);
         let started = Instant::now();
         drop(connector);
-        assert!(
-            started.elapsed() < GRACE + Duration::from_secs(2),
-            "{:?}",
-            started.elapsed()
-        );
-        wait_for("the connector and its child to go", || {
-            !pids.iter().any(|&pid| alive(pid))
-        });
+        assert!(started.elapsed() < GRACE + Duration::from_secs(2), "{:?}", started.elapsed());
+        wait_for("the connector and its child to go", || !pids.iter().any(|&pid| alive(pid)));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -731,26 +657,15 @@ mod tests {
     // as dropping it here does; the guardian ends the group.
     #[test]
     fn closing_the_lifeline_ends_the_connector_and_its_children() {
-        let dir =
-            std::env::temp_dir().join(format!("wh-connector-lifeline-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("wh-connector-lifeline-{}", std::process::id()));
         let (spec, marker) = stubborn(&dir);
-        let log = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&spec.log)
-            .unwrap();
+        let log = OpenOptions::new().create(true).append(true).open(&spec.log).unwrap();
         let mut run = Run::spawn(&spec, &log).unwrap();
         let pids = pids(&marker);
         let closed = Instant::now();
         drop(run.lifeline.take());
-        wait_for("the connector and its child to go", || {
-            !pids.iter().any(|&pid| alive(pid))
-        });
-        assert!(
-            closed.elapsed() < GRACE + Duration::from_secs(3),
-            "{:?}",
-            closed.elapsed()
-        );
+        wait_for("the connector and its child to go", || !pids.iter().any(|&pid| alive(pid)));
+        assert!(closed.elapsed() < GRACE + Duration::from_secs(3), "{:?}", closed.elapsed());
         // The guardian went with them.
         let status = run.child.wait().unwrap();
         assert!(!status.success(), "{status}");
@@ -759,35 +674,19 @@ mod tests {
 
     fn ready_spec(dir: &std::path::Path, script: String) -> Spec {
         std::fs::create_dir_all(dir).unwrap();
-        Spec {
-            argv: vec!["/bin/sh".into(), "-c".into(), script],
-            env: Vec::new(),
-            log: dir.join("connector.log"),
-            ready_line: true,
-        }
+        Spec { argv: vec!["/bin/sh".into(), "-c".into(), script], env: Vec::new(), log: dir.join("connector.log"), ready_line: true }
     }
 
     #[test]
     fn the_first_stdout_line_is_the_ready_line_and_the_rest_is_logged() {
         let dir = std::env::temp_dir().join(format!("wh-connector-ready-{}", std::process::id()));
-        let spec = ready_spec(
-            &dir,
-            "echo booting >&2; sleep 0.2; echo /run/endpoint.sock; echo afterwards; exec sleep 60"
-                .into(),
-        );
+        let spec = ready_spec(&dir, "echo booting >&2; sleep 0.2; echo /run/endpoint.sock; echo afterwards; exec sleep 60".into());
         let log = spec.log.clone();
         let connector = Connector::start(spec, wake).unwrap();
-        wait_for("the ready line", || {
-            connector.state() == State::Ready("/run/endpoint.sock".into())
-        });
-        wait_for("the rest in the log", || {
-            std::fs::read_to_string(&log).is_ok_and(|t| t.contains("afterwards"))
-        });
+        wait_for("the ready line", || connector.state() == State::Ready("/run/endpoint.sock".into()));
+        wait_for("the rest in the log", || std::fs::read_to_string(&log).is_ok_and(|t| t.contains("afterwards")));
         let text = std::fs::read_to_string(&log).unwrap();
-        assert!(
-            text.contains("booting") && !text.contains("endpoint.sock"),
-            "{text}"
-        );
+        assert!(text.contains("booting") && !text.contains("endpoint.sock"), "{text}");
         drop(connector);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -796,20 +695,10 @@ mod tests {
     fn exiting_before_ready_fails_and_waits_for_a_restart() {
         let dir = std::env::temp_dir().join(format!("wh-connector-fail-{}", std::process::id()));
         let runs = dir.join("runs");
-        let spec = ready_spec(
-            &dir,
-            format!(
-                "echo run >> {}; echo 'page did not load' >&2; exit 3",
-                runs.display()
-            ),
-        );
+        let spec = ready_spec(&dir, format!("echo run >> {}; echo 'page did not load' >&2; exit 3", runs.display()));
         let connector = Connector::start(spec, wake).unwrap();
-        wait_for("the failure", || {
-            matches!(connector.state(), State::Failed(_))
-        });
-        let State::Failed(why) = connector.state() else {
-            unreachable!()
-        };
+        wait_for("the failure", || matches!(connector.state(), State::Failed(_)));
+        let State::Failed(why) = connector.state() else { unreachable!() };
         assert!(why.starts_with("Exited with exit status: 3"), "{why}");
         assert!(why.contains("page did not load"), "{why}");
         // Not restarted on its own: past the first backoff, one run.
@@ -818,9 +707,7 @@ mod tests {
         assert!(matches!(connector.state(), State::Failed(_)));
         connector.restart();
         wait_for("the retry", || connector.starts() == 2);
-        wait_for("it to fail again", || {
-            matches!(connector.state(), State::Failed(_))
-        });
+        wait_for("it to fail again", || matches!(connector.state(), State::Failed(_)));
         assert_eq!(std::fs::read_to_string(&runs).unwrap(), "run\nrun\n");
         drop(connector);
         let _ = std::fs::remove_dir_all(&dir);
@@ -840,15 +727,10 @@ mod tests {
         );
         let log = spec.log.clone();
         let connector = Connector::start(spec, wake).unwrap();
-        wait_for("the second run to be ready", || {
-            connector.state() == State::Ready("second".into())
-        });
+        wait_for("the second run to be ready", || connector.state() == State::Ready("second".into()));
         // Restarted (it had been ready), with what followed its ready line logged.
         let text = std::fs::read_to_string(&log).unwrap();
-        assert!(
-            text.contains("trailing") && text.contains("restarting in 1s"),
-            "{text}"
-        );
+        assert!(text.contains("trailing") && text.contains("restarting in 1s"), "{text}");
         drop(connector);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -871,12 +753,8 @@ mod tests {
             ready_line: true,
         };
         let connector = Connector::start(spec, wake).unwrap();
-        wait_for("the failure", || {
-            matches!(connector.state(), State::Failed(_))
-        });
-        let State::Failed(why) = connector.state() else {
-            unreachable!()
-        };
+        wait_for("the failure", || matches!(connector.state(), State::Failed(_)));
+        let State::Failed(why) = connector.state() else { unreachable!() };
         assert!(why.contains("no-such-program"), "{why}");
         drop(connector);
         let _ = std::fs::remove_dir_all(&dir);
@@ -884,8 +762,7 @@ mod tests {
 
     #[test]
     fn a_ready_run_that_exits_restarts_and_is_ready_again() {
-        let dir =
-            std::env::temp_dir().join(format!("wh-connector-ready-again-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("wh-connector-ready-again-{}", std::process::id()));
         let once = dir.join("once");
         let spec = ready_spec(
             &dir,
@@ -895,9 +772,7 @@ mod tests {
             ),
         );
         let connector = Connector::start(spec, wake).unwrap();
-        wait_for("the second run to be ready", || {
-            connector.state() == State::Ready("second".into())
-        });
+        wait_for("the second run to be ready", || connector.state() == State::Ready("second".into()));
         assert_eq!(connector.starts(), 2);
         drop(connector);
         let _ = std::fs::remove_dir_all(&dir);
@@ -905,8 +780,7 @@ mod tests {
 
     #[test]
     fn mismatch_hint_names_both_builds() {
-        let output =
-            "wire generation mismatch: client fingerprint old speaks proto 21 (build old+dirty); \
+        let output = "wire generation mismatch: client fingerprint old speaks proto 21 (build old+dirty); \
                       daemon fingerprint new speaks proto 21 (build new)";
         let hint = mismatch_hint(output).unwrap();
         assert!(hint.starts_with("Flotilla build mismatch: client old+dirty, daemon new;"));

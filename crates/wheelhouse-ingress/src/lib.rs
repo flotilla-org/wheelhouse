@@ -86,15 +86,8 @@ mod transport {
     // A replacing snapshot carries the provider's whole catalog. Select its
     // larger bound before recording so capture and delivery enforce the same
     // limit; ordinary patches and the other routes retain their 1 MiB bound.
-    async fn limit_body(
-        mut request: axum::extract::Request,
-        next: axum::middleware::Next,
-    ) -> Response {
-        let limit = if request.uri().path() == "/v1/metadata/snapshot" {
-            16 * 1024 * 1024
-        } else {
-            1024 * 1024
-        };
+    async fn limit_body(mut request: axum::extract::Request, next: axum::middleware::Next) -> Response {
+        let limit = if request.uri().path() == "/v1/metadata/snapshot" { 16 * 1024 * 1024 } else { 1024 * 1024 };
         DefaultBodyLimit::max(limit).apply(&mut request);
         next.run(request).await
     }
@@ -102,11 +95,7 @@ mod transport {
     // A metadata patch, or an array of them applied together. A snapshot is
     // an array that replaces everything the endpoint's provider published.
     async fn catalog(state: Shared, headers: HeaderMap, body: Bytes, replace: bool) -> StatusCode {
-        if headers
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(';').next())
-            .map(str::trim)
+        if headers.get("content-type").and_then(|v| v.to_str().ok()).and_then(|v| v.split(';').next()).map(str::trim)
             != Some("application/json")
         {
             return StatusCode::UNSUPPORTED_MEDIA_TYPE;
@@ -114,9 +103,7 @@ mod transport {
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(&body) else {
             return StatusCode::BAD_REQUEST;
         };
-        let is_patch = |v: &serde_json::Value| {
-            v.get("type").and_then(|t| t.as_str()) == Some("metadata-patch")
-        };
+        let is_patch = |v: &serde_json::Value| v.get("type").and_then(|t| t.as_str()) == Some("metadata-patch");
         let patches = match value {
             serde_json::Value::Array(items) if items.iter().all(is_patch) => items,
             single if !replace && is_patch(&single) => vec![single],
@@ -126,21 +113,10 @@ mod transport {
         let bodies = if patches.len() == 1 && !replace && body.first() == Some(&b'{') {
             vec![body]
         } else {
-            patches
-                .iter()
-                .map(|patch| Bytes::from(serde_json::to_vec(patch).expect("JSON value serializes")))
-                .collect()
+            patches.iter().map(|patch| Bytes::from(serde_json::to_vec(patch).expect("JSON value serializes"))).collect()
         };
         let (reply, response) = oneshot::channel();
-        if state
-            .queue
-            .try_send(Pending::Patch {
-                bodies,
-                replace,
-                reply,
-            })
-            .is_err()
-        {
+        if state.queue.try_send(Pending::Patch { bodies, replace, reply }).is_err() {
             return StatusCode::SERVICE_UNAVAILABLE;
         }
         (state.wake)();
@@ -159,14 +135,9 @@ mod transport {
         }
         (state.wake)();
         match tokio::time::timeout(Duration::from_secs(5), response).await {
-            Ok(Ok(Some(value))) => (
-                [
-                    ("cache-control", "no-store"),
-                    ("content-type", "application/json"),
-                ],
-                value.to_string(),
-            )
-                .into_response(),
+            Ok(Ok(Some(value))) => {
+                ([("cache-control", "no-store"), ("content-type", "application/json")], value.to_string()).into_response()
+            }
             _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         }
     }
@@ -186,50 +157,28 @@ mod transport {
     #[cfg(unix)]
     impl Drop for SocketGuard {
         fn drop(&mut self) {
-            if std::fs::symlink_metadata(&self.path)
-                .is_ok_and(|m| m.dev() == self.dev && m.ino() == self.ino)
-            {
+            if std::fs::symlink_metadata(&self.path).is_ok_and(|m| m.dev() == self.dev && m.ino() == self.ino) {
                 let _ = std::fs::remove_file(&self.path);
             }
         }
     }
     impl Ingress {
-        pub fn start(
-            path: PathBuf,
-            wake: Wake,
-            recording: Option<(PathBuf, u64, usize)>,
-        ) -> Result<Self, String> {
+        pub fn start(path: PathBuf, wake: Wake, recording: Option<(PathBuf, u64, usize)>) -> Result<Self, String> {
             #[cfg(unix)]
             let (listener, guard) = {
-                let parent = path
-                    .parent()
-                    .ok_or("socket needs a private parent directory")?;
+                let parent = path.parent().ok_or("socket needs a private parent directory")?;
                 let meta = std::fs::metadata(parent).map_err(|e| e.to_string())?;
-                if !meta.is_dir()
-                    || meta.mode() & 0o077 != 0
-                    || meta.uid() != unsafe { libc::geteuid() }
-                {
-                    return Err(
-                        "socket parent must be owned by this user and private (mode 0700)".into(),
-                    );
+                if !meta.is_dir() || meta.mode() & 0o077 != 0 || meta.uid() != unsafe { libc::geteuid() } {
+                    return Err("socket parent must be owned by this user and private (mode 0700)".into());
                 }
-                let listener =
-                    std::os::unix::net::UnixListener::bind(&path).map_err(|e| e.to_string())?;
+                let listener = std::os::unix::net::UnixListener::bind(&path).map_err(|e| e.to_string())?;
                 let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-                let guard = SocketGuard {
-                    path: path.clone(),
-                    dev: meta.dev(),
-                    ino: meta.ino(),
-                };
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-                    .map_err(|e| e.to_string())?;
+                let guard = SocketGuard { path: path.clone(), dev: meta.dev(), ino: meta.ino() };
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
                 listener.set_nonblocking(true).map_err(|e| e.to_string())?;
                 (listener, guard)
             };
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| e.to_string())?;
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
             #[cfg(windows)]
             let listener = {
                 let _entered = runtime.enter();
@@ -247,8 +196,7 @@ mod transport {
                     let _guard = guard;
                     runtime.block_on(async move {
                         #[cfg(unix)]
-                        let listener = tokio::net::UnixListener::from_std(listener)
-                            .expect("registered Unix listener");
+                        let listener = tokio::net::UnixListener::from_std(listener).expect("registered Unix listener");
                         let mut app = Router::new()
                             .route("/v1/health", get(|| async { StatusCode::NO_CONTENT }))
                             .route("/v1/metadata/patch", post(patch))
@@ -257,10 +205,7 @@ mod transport {
                             .with_state(Shared { queue, wake });
                         if let Some((path, bytes, files)) = recording {
                             let recorder = crate::recording::Recorder::start(path, bytes, files);
-                            app = app.layer(axum::middleware::from_fn_with_state(
-                                recorder,
-                                crate::recording::capture,
-                            ));
+                            app = app.layer(axum::middleware::from_fn_with_state(recorder, crate::recording::capture));
                         }
                         let app = app.layer(axum::middleware::from_fn(limit_body));
                         let server = axum::serve(listener, app);
@@ -274,11 +219,7 @@ mod transport {
                     });
                 })
                 .map_err(|e| e.to_string())?;
-            Ok(Self {
-                queue: receiver,
-                shutdown: Some(shutdown),
-                thread: Some(thread),
-            })
+            Ok(Self { queue: receiver, shutdown: Some(shutdown), thread: Some(thread) })
         }
     }
     impl Drop for Ingress {
@@ -300,46 +241,25 @@ mod transport {
             let request: &'static [u8] = br#"{ "type":"metadata-patch", "source_id":"provider", "target":{"kind":"entity","value":{"kind":"vessel","id":"a"}}, "set":{"label":{"value":{"type":"text","value":"A"}}}, "unset":["removed"] }"#;
             let (queue, receiver) = mpsc::sync_channel(1);
             let host = thread::spawn(move || {
-                let Pending::Patch {
-                    bodies,
-                    replace,
-                    reply,
-                } = receiver.recv().unwrap()
-                else {
-                    panic!("expected patch")
-                };
+                let Pending::Patch { bodies, replace, reply } = receiver.recv().unwrap() else { panic!("expected patch") };
                 assert!(!replace);
                 assert_eq!(bodies, [Bytes::from_static(request)]);
                 reply.send(1).unwrap();
             });
             let mut headers = HeaderMap::new();
             headers.insert("content-type", "application/json".parse().unwrap());
-            let response = patch(
-                State(Shared { queue, wake }),
-                headers,
-                Bytes::from_static(request),
-            )
-            .await;
+            let response = patch(State(Shared { queue, wake }), headers, Bytes::from_static(request)).await;
             assert_eq!(response, StatusCode::NO_CONTENT);
             host.join().unwrap();
         }
 
         // What a request's handler queues, with its HTTP status once the
         // host replies `outcome`.
-        async fn queued(
-            body: &'static [u8],
-            replace: bool,
-            outcome: u32,
-        ) -> (Option<(Vec<Bytes>, bool)>, StatusCode) {
+        async fn queued(body: &'static [u8], replace: bool, outcome: u32) -> (Option<(Vec<Bytes>, bool)>, StatusCode) {
             extern "C" fn wake() {}
             let (queue, receiver) = mpsc::sync_channel(1);
             let host = thread::spawn(move || {
-                let Ok(Pending::Patch {
-                    bodies,
-                    replace,
-                    reply,
-                }) = receiver.recv()
-                else {
+                let Ok(Pending::Patch { bodies, replace, reply }) = receiver.recv() else {
                     return None;
                 };
                 reply.send(outcome).unwrap();
@@ -347,13 +267,7 @@ mod transport {
             });
             let mut headers = HeaderMap::new();
             headers.insert("content-type", "application/json".parse().unwrap());
-            let status = catalog(
-                Shared { queue, wake },
-                headers,
-                Bytes::from_static(body),
-                replace,
-            )
-            .await;
+            let status = catalog(Shared { queue, wake }, headers, Bytes::from_static(body), replace).await;
             (host.join().unwrap(), status)
         }
         #[tokio::test]
@@ -365,45 +279,19 @@ mod transport {
             assert_eq!(status, StatusCode::NO_CONTENT);
             let (bodies, replace) = request.unwrap();
             assert_eq!((bodies.len(), replace), (2, false));
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&bodies[1]).unwrap()["target"]["value"]
-                    ["id"],
-                "a"
-            );
+            assert_eq!(serde_json::from_slice::<serde_json::Value>(&bodies[1]).unwrap()["target"]["value"]["id"], "a");
             let (request, status) = queued(array, true, APPLIED).await;
-            assert_eq!(
-                (status, request.map(|(b, r)| (b.len(), r))),
-                (StatusCode::NO_CONTENT, Some((2, true)))
-            );
+            assert_eq!((status, request.map(|(b, r)| (b.len(), r))), (StatusCode::NO_CONTENT, Some((2, true))));
             // A snapshot of nothing retracts everything.
             let (request, status) = queued(b"[]", true, APPLIED).await;
-            assert_eq!(
-                (status, request.map(|(b, _)| b.len())),
-                (StatusCode::NO_CONTENT, Some(0))
-            );
-            assert_eq!(
-                queued(array, true, UNSUPPORTED).await.1,
-                StatusCode::NOT_FOUND
-            );
-            assert_eq!(
-                queued(array, false, REJECTED).await.1,
-                StatusCode::UNPROCESSABLE_ENTITY
-            );
+            assert_eq!((status, request.map(|(b, _)| b.len())), (StatusCode::NO_CONTENT, Some(0)));
+            assert_eq!(queued(array, true, UNSUPPORTED).await.1, StatusCode::NOT_FOUND);
+            assert_eq!(queued(array, false, REJECTED).await.1, StatusCode::UNPROCESSABLE_ENTITY);
             // Every element must be a patch, and a snapshot must be an array.
-            let mixed: &'static [u8] = Box::leak(
-                format!("[{a},{{\"type\":\"other\"}}]")
-                    .into_bytes()
-                    .into_boxed_slice(),
-            );
-            assert_eq!(
-                queued(mixed, false, APPLIED).await,
-                (None, StatusCode::BAD_REQUEST)
-            );
+            let mixed: &'static [u8] = Box::leak(format!("[{a},{{\"type\":\"other\"}}]").into_bytes().into_boxed_slice());
+            assert_eq!(queued(mixed, false, APPLIED).await, (None, StatusCode::BAD_REQUEST));
             let single: &'static [u8] = Box::leak(a.as_bytes().to_vec().into_boxed_slice());
-            assert_eq!(
-                queued(single, true, APPLIED).await,
-                (None, StatusCode::BAD_REQUEST)
-            );
+            assert_eq!(queued(single, true, APPLIED).await, (None, StatusCode::BAD_REQUEST));
         }
         #[test]
         fn a_request_applies_in_one_drain_and_a_snapshot_retracts_first() {
@@ -420,53 +308,17 @@ mod transport {
             }
             for (replace, retract, retracted, outcome, calls) in [
                 (false, None, 0, APPLIED, &["apply", "apply"][..]),
-                (
-                    true,
-                    Some(record_retract as Retract),
-                    1,
-                    APPLIED,
-                    &["retract", "apply", "apply"][..],
-                ),
-                (
-                    true,
-                    Some(record_retract as Retract),
-                    0,
-                    UNSUPPORTED,
-                    &["retract"][..],
-                ),
-                (
-                    true,
-                    Some(record_retract as Retract),
-                    UNAVAILABLE,
-                    UNAVAILABLE,
-                    &["retract", "apply", "apply"][..],
-                ),
+                (true, Some(record_retract as Retract), 1, APPLIED, &["retract", "apply", "apply"][..]),
+                (true, Some(record_retract as Retract), 0, UNSUPPORTED, &["retract"][..]),
+                (true, Some(record_retract as Retract), UNAVAILABLE, UNAVAILABLE, &["retract", "apply", "apply"][..]),
                 (true, None, 1, UNSUPPORTED, &[][..]),
             ] {
                 let (queue, receiver) = mpsc::sync_channel(4);
-                let mut server = Ingress {
-                    queue: receiver,
-                    shutdown: None,
-                    thread: None,
-                };
+                let mut server = Ingress { queue: receiver, shutdown: None, thread: None };
                 let (reply, ack) = oneshot::channel();
-                queue
-                    .send(Pending::Patch {
-                        bodies: vec![Bytes::new(), Bytes::new()],
-                        replace,
-                        reply,
-                    })
-                    .unwrap();
+                queue.send(Pending::Patch { bodies: vec![Bytes::new(), Bytes::new()], replace, reply }).unwrap();
                 let mut host = Calls(Vec::new(), retracted);
-                unsafe {
-                    wheelhouse_ingress_poll_observed(
-                        &mut server,
-                        record_apply,
-                        retract,
-                        None,
-                        &mut host as *mut _ as *mut c_void,
-                    )
-                };
+                unsafe { wheelhouse_ingress_poll_observed(&mut server, record_apply, retract, None, &mut host as *mut _ as *mut c_void) };
                 assert_eq!(ack.blocking_recv().unwrap(), outcome);
                 assert_eq!(host.0, calls);
             }
@@ -487,10 +339,7 @@ mod transport {
             if host.fail {
                 return 0;
             }
-            let empty = || Text {
-                data: std::ptr::null(),
-                len: 0,
-            };
+            let empty = || Text { data: std::ptr::null(), len: 0 };
             emit(
                 output,
                 &Workdir {
@@ -499,17 +348,12 @@ mod transport {
                     entity_kind: empty(),
                     entity_id: empty(),
                     live_cwd: empty(),
-                    cwd: Text {
-                        data: b"/repo".as_ptr(),
-                        len: 5,
-                    },
+                    cwd: Text { data: b"/repo".as_ptr(), len: 5 },
                 },
             );
             1
         }
-        fn read(
-            queue: &mpsc::SyncSender<Pending>,
-        ) -> oneshot::Receiver<Option<std::sync::Arc<serde_json::Value>>> {
+        fn read(queue: &mpsc::SyncSender<Pending>) -> oneshot::Receiver<Option<std::sync::Arc<serde_json::Value>>> {
             let (reply, response) = oneshot::channel();
             assert!(queue.send(Pending::Workdirs { reply }).is_ok());
             response
@@ -517,24 +361,11 @@ mod transport {
         #[test]
         fn failed_observation_is_shared_only_within_the_drain() {
             let (queue, receiver) = mpsc::sync_channel(64);
-            let mut server = Ingress {
-                queue: receiver,
-                shutdown: None,
-                thread: None,
-            };
-            let mut host = Host {
-                fail: true,
-                ..Host::default()
-            };
+            let mut server = Ingress { queue: receiver, shutdown: None, thread: None };
+            let mut host = Host { fail: true, ..Host::default() };
             let reads: Vec<_> = (0..4).map(|_| read(&queue)).collect();
             unsafe {
-                wheelhouse_ingress_poll_observed(
-                    &mut server,
-                    apply,
-                    None,
-                    Some(observe),
-                    &mut host as *mut _ as *mut c_void,
-                );
+                wheelhouse_ingress_poll_observed(&mut server, apply, None, Some(observe), &mut host as *mut _ as *mut c_void);
             }
             assert_eq!(host.reads, 1);
             for response in reads {
@@ -543,13 +374,7 @@ mod transport {
             host.fail = false;
             let response = read(&queue);
             unsafe {
-                wheelhouse_ingress_poll_observed(
-                    &mut server,
-                    apply,
-                    None,
-                    Some(observe),
-                    &mut host as *mut _ as *mut c_void,
-                );
+                wheelhouse_ingress_poll_observed(&mut server, apply, None, Some(observe), &mut host as *mut _ as *mut c_void);
             }
             assert!(response.blocking_recv().unwrap().is_some());
             assert_eq!(host.reads, 2);
@@ -557,11 +382,7 @@ mod transport {
         #[test]
         fn burst_reads_share_snapshot_but_patches_invalidate_it() {
             let (queue, receiver) = mpsc::sync_channel(64);
-            let mut server = Ingress {
-                queue: receiver,
-                shutdown: None,
-                thread: None,
-            };
+            let mut server = Ingress { queue: receiver, shutdown: None, thread: None };
             let mut host = Host::default();
             let mut reads = Vec::new();
             drop(read(&queue)); // Cancelled reads do not call the observer.
@@ -569,43 +390,22 @@ mod transport {
                 reads.push(read(&queue));
             }
             let (reply, ack) = oneshot::channel();
-            assert!(queue
-                .send(Pending::Patch {
-                    bodies: vec![Bytes::new()],
-                    replace: false,
-                    reply
-                })
-                .is_ok());
+            assert!(queue.send(Pending::Patch { bodies: vec![Bytes::new()], replace: false, reply }).is_ok());
             for _ in 0..4 {
                 reads.push(read(&queue));
             }
             unsafe {
-                wheelhouse_ingress_poll_observed(
-                    &mut server,
-                    apply,
-                    None,
-                    Some(observe),
-                    &mut host as *mut _ as *mut c_void,
-                );
+                wheelhouse_ingress_poll_observed(&mut server, apply, None, Some(observe), &mut host as *mut _ as *mut c_void);
             }
             assert_eq!(host.reads, 2);
             assert_eq!(ack.blocking_recv().unwrap(), 1);
             for (index, response) in reads.into_iter().enumerate() {
                 let value = response.blocking_recv().unwrap().unwrap();
-                assert_eq!(
-                    value["workdirs"][0]["workspace_id"],
-                    if index < 4 { 0 } else { 1 }
-                );
+                assert_eq!(value["workdirs"][0]["workspace_id"], if index < 4 { 0 } else { 1 });
             }
             let response = read(&queue);
             unsafe {
-                wheelhouse_ingress_poll_observed(
-                    &mut server,
-                    apply,
-                    None,
-                    Some(observe),
-                    &mut host as *mut _ as *mut c_void,
-                );
+                wheelhouse_ingress_poll_observed(&mut server, apply, None, Some(observe), &mut host as *mut _ as *mut c_void);
             }
             assert!(response.blocking_recv().unwrap().is_some());
             assert_eq!(host.reads, 3); // The cache never survives a UI drain.
@@ -655,21 +455,15 @@ pub unsafe extern "C" fn wheelhouse_ingress_start_recorded(
     let result = if path.is_null() || len == 0 {
         Err("socket path must not be null or empty".into())
     } else {
-        std::str::from_utf8(std::slice::from_raw_parts(path, len))
-            .map_err(|e| e.to_string())
-            .and_then(|p| {
-                let recording = if recording_path.is_null() {
-                    None
-                } else {
-                    let path = std::str::from_utf8(std::slice::from_raw_parts(
-                        recording_path,
-                        recording_len,
-                    ))
-                    .map_err(|e| e.to_string())?;
-                    Some((path.into(), bytes, files))
-                };
-                Ingress::start(p.into(), wake, recording)
-            })
+        std::str::from_utf8(std::slice::from_raw_parts(path, len)).map_err(|e| e.to_string()).and_then(|p| {
+            let recording = if recording_path.is_null() {
+                None
+            } else {
+                let path = std::str::from_utf8(std::slice::from_raw_parts(recording_path, recording_len)).map_err(|e| e.to_string())?;
+                Some((path.into(), bytes, files))
+            };
+            Ingress::start(p.into(), wake, recording)
+        })
     };
     #[cfg(not(any(unix, windows)))]
     let result: Result<Ingress, String> = {
@@ -724,18 +518,13 @@ pub unsafe extern "C" fn wheelhouse_connector_start(
         if t.len == 0 {
             return Ok(String::new());
         }
-        std::str::from_utf8(std::slice::from_raw_parts(t.data, t.len))
-            .map(str::to_owned)
-            .map_err(|e| e.to_string())
+        std::str::from_utf8(std::slice::from_raw_parts(t.data, t.len)).map(str::to_owned).map_err(|e| e.to_string())
     }
     unsafe fn list(items: *const Text, count: usize) -> Result<Vec<String>, String> {
         if count == 0 {
             return Ok(Vec::new());
         }
-        std::slice::from_raw_parts(items, count)
-            .iter()
-            .map(|t| text(t))
-            .collect()
+        std::slice::from_raw_parts(items, count).iter().map(|t| text(t)).collect()
     }
     #[cfg(any(unix, windows))]
     let result = (|| {
@@ -743,28 +532,16 @@ pub unsafe extern "C" fn wheelhouse_connector_start(
         let env = list(env, env_count)?
             .into_iter()
             .map(|entry| match entry.split_once('=') {
-                Some((name, value)) if !name.is_empty() => {
-                    Ok((name.to_owned(), Some(value.to_owned())))
-                }
+                Some((name, value)) if !name.is_empty() => Ok((name.to_owned(), Some(value.to_owned()))),
                 None if !entry.is_empty() => Ok((entry, None)),
-                _ => Err(format!(
-                    "environment entry must be NAME=value or NAME: {entry}"
-                )),
+                _ => Err(format!("environment entry must be NAME=value or NAME: {entry}")),
             })
             .collect::<Result<Vec<_>, _>>()?;
         let log = text(&log)?;
         if log.is_empty() {
             return Err("connector log path must not be empty".to_owned());
         }
-        Connector::start(
-            connector::Spec {
-                argv,
-                env,
-                log: log.into(),
-                ready_line: flags & CONNECTOR_READY_LINE != 0,
-            },
-            wake,
-        )
+        Connector::start(connector::Spec { argv, env, log: log.into(), ready_line: flags & CONNECTOR_READY_LINE != 0 }, wake)
     })();
     #[cfg(not(any(unix, windows)))]
     let result: Result<Connector, String> = {
@@ -780,10 +557,7 @@ pub unsafe extern "C" fn wheelhouse_connector_start(
 /// # Safety
 /// `connector` must be NULL or a live handle; `starts` NULL or writable.
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_connector_running(
-    connector: *const Connector,
-    starts: *mut u64,
-) -> u32 {
+pub unsafe extern "C" fn wheelhouse_connector_running(connector: *const Connector, starts: *mut u64) -> u32 {
     #[cfg(any(unix, windows))]
     if let Some(connector) = connector.as_ref() {
         if !starts.is_null() {
@@ -811,12 +585,7 @@ pub const CONNECTOR_READY_LINE: u32 = 1;
 /// `connector` must be NULL or a live handle; `text` writable for `capacity`
 /// bytes (or NULL with 0); `len` NULL or writable.
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_connector_state(
-    connector: *const Connector,
-    text: *mut u8,
-    capacity: usize,
-    len: *mut usize,
-) -> u32 {
+pub unsafe extern "C" fn wheelhouse_connector_state(connector: *const Connector, text: *mut u8, capacity: usize, len: *mut usize) -> u32 {
     #[cfg(any(unix, windows))]
     let (code, detail) = match connector.as_ref().map(Connector::state) {
         None | Some(connector::State::Waiting) => (0, String::new()),
@@ -915,12 +684,7 @@ pub extern "C" fn wheelhouse_quit_signalled() -> u32 {
 /// `apply` and its context must remain valid for the call. The callback may
 /// borrow its byte slice only until it returns and must not unwind.
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_ingress_poll(
-    server: *mut Ingress,
-    apply: Apply,
-    retract: Option<Retract>,
-    context: *mut c_void,
-) {
+pub unsafe extern "C" fn wheelhouse_ingress_poll(server: *mut Ingress, apply: Apply, retract: Option<Retract>, context: *mut c_void) {
     wheelhouse_ingress_poll_observed(server, apply, retract, None, context);
 }
 
@@ -954,22 +718,16 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
                     std::str::from_utf8(std::slice::from_raw_parts(t.data, t.len)).map(Some)
                 }
             }
-            let (Ok(cwd), Ok(live_cwd), Ok(kind), Ok(id)) = (
-                text(&r.cwd),
-                text(&r.live_cwd),
-                text(&r.entity_kind),
-                text(&r.entity_id),
-            ) else {
+            let (Ok(cwd), Ok(live_cwd), Ok(kind), Ok(id)) = (text(&r.cwd), text(&r.live_cwd), text(&r.entity_kind), text(&r.entity_id))
+            else {
                 snapshot.valid = false;
                 return;
             };
             if cwd.is_none() && live_cwd.is_none() {
                 return;
             }
-            snapshot.values.push(
-                serde_json::json!({"workspace_id": r.workspace_id, "view_id": r.view_id,
-                "entity_kind": kind, "entity_id": id, "cwd": cwd, "live_cwd": live_cwd}),
-            );
+            snapshot.values.push(serde_json::json!({"workspace_id": r.workspace_id, "view_id": r.view_id,
+                "entity_kind": kind, "entity_id": id, "cwd": cwd, "live_cwd": live_cwd}));
         }
         // Coalesce adjacent reads within this UI drain. A patch invalidates the
         // snapshot so a later read still observes preceding host mutations.
@@ -979,32 +737,18 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
                 break;
             };
             match pending {
-                transport::Pending::Patch {
-                    bodies,
-                    replace,
-                    reply,
-                } => {
+                transport::Pending::Patch { bodies, replace, reply } => {
                     if !reply.is_closed() {
                         cached = None;
-                        let _ =
-                            reply.send(apply_request(context, apply, retract, &bodies, replace));
+                        let _ = reply.send(apply_request(context, apply, retract, &bodies, replace));
                     }
                 }
                 transport::Pending::Workdirs { reply } => {
                     if !reply.is_closed() {
                         let value = cached.get_or_insert_with(|| {
-                            let mut snapshot = Snapshot {
-                                values: Vec::new(),
-                                valid: true,
-                            };
-                            let ok = observe.is_some_and(|f| {
-                                f(context, emit, &mut snapshot as *mut _ as *mut c_void) == 1
-                            });
-                            (ok && snapshot.valid).then(|| {
-                                std::sync::Arc::new(
-                                    serde_json::json!({"workdirs": snapshot.values}),
-                                )
-                            })
+                            let mut snapshot = Snapshot { values: Vec::new(), valid: true };
+                            let ok = observe.is_some_and(|f| f(context, emit, &mut snapshot as *mut _ as *mut c_void) == 1);
+                            (ok && snapshot.valid).then(|| std::sync::Arc::new(serde_json::json!({"workdirs": snapshot.values})))
                         });
                         let _ = reply.send(value.clone());
                     }
@@ -1021,13 +765,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
 /// rejected patch rejects the request; one the host couldn't take yet makes
 /// it unavailable.
 #[cfg(any(unix, windows))]
-unsafe fn apply_request(
-    context: *mut c_void,
-    apply: Apply,
-    retract: Option<Retract>,
-    bodies: &[axum::body::Bytes],
-    replace: bool,
-) -> u32 {
+unsafe fn apply_request(context: *mut c_void, apply: Apply, retract: Option<Retract>, bodies: &[axum::body::Bytes], replace: bool) -> u32 {
     use transport::{APPLIED, REJECTED, UNAVAILABLE, UNSUPPORTED};
     // A retract some window couldn't take still lets the patches reach the
     // others; the request is unavailable, so the producer resends it.
@@ -1066,8 +804,5 @@ pub unsafe extern "C" fn wheelhouse_ingress_stop(server: *mut Ingress) {
 #[no_mangle]
 pub extern "C" fn wheelhouse_ingress_now_ms() -> u64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    START
-        .get_or_init(std::time::Instant::now)
-        .elapsed()
-        .as_millis() as u64
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
 }
