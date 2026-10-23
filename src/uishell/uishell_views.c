@@ -3830,6 +3830,7 @@ uishell_cleat_remote_argv(Arena *arena, String8 host, String8 cleat, String8 run
   StringJoin join = {.sep = str8_lit(" ")};
   String8 words[] = {str8_lit("ssh"), str8_lit("-T"), str8_lit("-o"), str8_lit("BatchMode=yes"), str8_lit("--"), host,
                      str8_list_join(arena, &remote, &join)};
+  Assert(cap >= ArrayCount(words));
   U64 count = Min(cap, ArrayCount(words));
   for(U64 i = 0; i < count; i++) { argv[i] = words[i]; }
   return count;
@@ -3873,7 +3874,8 @@ struct UIShell_CleatTransportState
 };
 
 // A JSON string member's value, unescaped for display; empty when absent or
-// null. The state JSON is flat and Cleat's own, so this reads only that.
+// null. The state JSON is flat and Cleat's own, so this reads only that. The
+// needle can't match inside another string value: quotes there are escaped.
 internal String8
 uishell_cleat_json_string(Arena *arena, String8 json, String8 key)
 {
