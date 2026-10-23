@@ -5036,7 +5036,7 @@ uishell_tool_strip_rect(UIShell_ControlledSplit *split, Rng2F32 rect)
 {
   F32 control_width = uishell_controlled_split_control_width_px(split, rect);
   F32 x0 = rect.x0 + (control_width != 0 ? control_width + 1.f : 0.f);
-  return r2f32p(x0, rect.y0, Min(rect.x1, x0 + uishell_tool_strip_width_px(ui_top_font_size())), rect.y1);
+  return r2f32p(x0, rect.y0, Min(rect.x1, x0 + uishell_tool_strip_width_px(rd_font_size())), rect.y1);
 }
 
 internal Rng2F32
@@ -7670,7 +7670,7 @@ rd_window_frame(void)
     // The tool strip is a source too: its cards stay while the sidebar is collapsed.
     uishell_sidebar_cards_ui(ws, (dim_2f32(control_surface_rect).x > control_surface_border &&
                                   dim_2f32(control_surface_rect).y > control_surface_border) ||
-                                 uishell_tool_strip_width_px(ui_top_font_size()) > 0);
+                                 uishell_tool_strip_width_px(rd_font_size()) > 0);
 
     
     ////////////////////////////

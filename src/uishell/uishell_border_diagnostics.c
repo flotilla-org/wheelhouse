@@ -176,6 +176,24 @@ uishell_border_diagnostics(RD_WindowState *ws)
     if(had_show) { cfg_node_new_replace(rd_state->cfg, show, old_show); }
     else { cfg_node_release(rd_state->cfg, show); }
   }
+  // A divider drag resizes by the nearest whole item from where the section
+  // ended, never below none or above the setting's range.
+  {
+    struct { U64 start; F32 delta; U64 size; } drags[] = {
+      {2, 0, 2}, {2, 14, 2}, {2, 16, 3}, {2, -16, 1}, {2, -200, 0},
+      {6, 30*UISHELL_TOOL_STRIP_SECTION_MAX, UISHELL_TOOL_STRIP_SECTION_MAX},
+    };
+    for(U64 i = 0; i < ArrayCount(drags); i++)
+    {
+      U64 size = uishell_tool_strip_size_from_drag(drags[i].start, drags[i].delta, 30.f);
+      if(size != drags[i].size)
+      {
+        fprintf(stderr, "FAIL tool strip divider drag: %llu items dragged %.0fpx gives %llu, not %llu\n",
+                drags[i].start, drags[i].delta, size, drags[i].size);
+        ok = 0;
+      }
+    }
+  }
   if(had_pct) { cfg_node_new_replace(rd_state->cfg, pct, old_pct); }
   else { cfg_node_release(rd_state->cfg, pct); }
   rd_state->frame_replay.suppress_input = saved_suppress;

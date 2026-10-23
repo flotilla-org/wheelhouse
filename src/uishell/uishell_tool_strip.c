@@ -38,17 +38,26 @@ uishell_tool_strip_divider_height(void)
   return floor_f32(ui_top_font_size()*0.6f);
 }
 
+// The most items a section's setting may ask for (its @range in uishell_meta.h).
+#define UISHELL_TOOL_STRIP_SECTION_MAX 64
+
 // A View's icon, by its slot's role.
+read_only global struct { String8 role; RD_IconKind kind; } uishell_tool_strip_view_icons[] =
+{
+  {str8_lit_comp("shell"), RD_IconKind_Machine}, {str8_lit_comp("tui"), RD_IconKind_Window},
+  {str8_lit_comp("agent"), RD_IconKind_Person}, {str8_lit_comp("files"), RD_IconKind_FolderClosedOutline},
+  {str8_lit_comp("overview"), RD_IconKind_Thumbnails}, {str8_lit_comp("review"), RD_IconKind_Glasses},
+  {str8_lit_comp("code"), RD_IconKind_Module},
+};
+
 internal String8
 uishell_tool_strip_view_icon(UIShell_StripView *view)
 {
-  struct { char *role; RD_IconKind kind; } icons[] = {
-    {"shell", RD_IconKind_Machine}, {"tui", RD_IconKind_Window}, {"agent", RD_IconKind_Person},
-    {"files", RD_IconKind_FolderClosedOutline}, {"overview", RD_IconKind_Thumbnails},
-    {"review", RD_IconKind_Glasses}, {"code", RD_IconKind_Module},
-  };
-  for(U64 i = 0; i < ArrayCount(icons); i++)
-  { if(str8_match(view->role, str8_cstring(icons[i].role), 0)) { return rd_icon_kind_text_table[icons[i].kind]; } }
+  for(U64 i = 0; i < ArrayCount(uishell_tool_strip_view_icons); i++)
+  {
+    if(str8_match(view->role, uishell_tool_strip_view_icons[i].role, 0))
+    { return rd_icon_kind_text_table[uishell_tool_strip_view_icons[i].kind]; }
+  }
   return rd_icon_kind_text_table[RD_IconKind_FileOutline];
 }
 
@@ -90,12 +99,9 @@ uishell_tool_strip_entity(UIShell_SidebarState *state, Rng2F32 rect, AndamentoEn
   U64 index = uishell_sidebar_card_find(state, entity, &node);
   B32 found = index != ANDAMENTO_NONE;
   RD_IconKind icon = uishell_sidebar_card_icon(entity.kind);
-  // A workspace not open yet is weak, as its row's latent state.
-  B32 workspace_kind = str8_match(uishell_sidebar_string(entity.kind), str8_lit("project"), 0) ||
-    str8_match(uishell_sidebar_string(entity.kind), str8_lit("convoy"), 0) ||
-    str8_match(uishell_sidebar_string(entity.kind), str8_lit("vessel"), 0);
-  UI_Signal sig = uishell_tool_strip_item(rect, rd_icon_kind_text_table[icon], 1, 0,
-                                          !found || (workspace_kind && node.state != ANDAMENTO_LIVE), key);
+  // A workspace not open yet is weak, as its row is.
+  B32 unopened = node.state == ANDAMENTO_LATENT || node.state == ANDAMENTO_OPENING;
+  UI_Signal sig = uishell_tool_strip_item(rect, rd_icon_kind_text_table[icon], 1, 0, !found || unopened, key);
   if(!found)
   {
     uishell_tool_strip_tooltip(sig, uishell_sidebar_string(entity.id));
@@ -115,10 +121,20 @@ uishell_tool_strip_set_size(String8 name, U64 size)
   cfg_node_new_replacef(rd_state->cfg, node, "%I64u", size);
 }
 
+// A section's size after dragging its divider `delta` pixels from where a
+// section of `start` items ended: the nearest whole item, within the setting's range.
+internal U64
+uishell_tool_strip_size_from_drag(U64 start, F32 delta, F32 item_h)
+{
+  F32 items = round_f32(((F32)start*item_h + delta)/item_h);
+  return (U64)Clamp(0.f, items, (F32)UISHELL_TOOL_STRIP_SECTION_MAX);
+}
+
 // The divider below section `section`: dragging it resizes the section, in
-// whole items; a double click restores its default.
+// whole items, from the `shown` items it shows (fewer than its setting asks
+// for when the window is short); a double click restores its default.
 internal void
-uishell_tool_strip_divider(Rng2F32 rect, UIShell_StripSection section, U64 size)
+uishell_tool_strip_divider(Rng2F32 rect, UIShell_StripSection section, U64 size, U64 shown)
 {
   F32 item_h = uishell_tool_strip_item_height();
   UI_Rect(r2f32p(rect.x0+4, floor_f32((rect.y0+rect.y1)/2), rect.x1-4, floor_f32((rect.y0+rect.y1)/2)+1))
@@ -138,14 +154,12 @@ uishell_tool_strip_divider(Rng2F32 rect, UIShell_StripSection section, U64 size)
     }
     else if(ui_pressed(sig))
     {
-      F32 start = (F32)size*item_h;
+      U64 start = Min(size, shown);
       ui_store_drag_struct(&start);
     }
     else if(ui_dragging(sig))
     {
-      F32 start = *ui_get_drag_struct(F32);
-      F32 items = round_f32((start + ui_drag_delta().y)/item_h);
-      U64 next = (U64)Clamp(0.f, items, 64.f);
+      U64 next = uishell_tool_strip_size_from_drag(*ui_get_drag_struct(U64), ui_drag_delta().y, item_h);
       if(next != size) { uishell_tool_strip_set_size(name, next); }
     }
   }
@@ -190,6 +204,7 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
   U64 sizes[UIShell_StripSection_COUNT] = {0};
   for(U64 i = 0; i < ArrayCount(uishell_tool_strip_size_settings); i++)
   { sizes[i] = rd_setting_u64_from_name(uishell_tool_strip_size_settings[i]); }
+  U64 shown_above = 0;
   for(UIShell_StripSection section = 0; section < UIShell_StripSection_COUNT; section++)
   {
     U64 count = counts[section];
@@ -197,12 +212,13 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
     // The divider above each section after the first resizes the one above.
     if(section != 0)
     {
-      uishell_tool_strip_divider(r2f32p(rect.x0, y, rect.x1-border, y+divider_h), section-1, sizes[section-1]);
+      uishell_tool_strip_divider(r2f32p(rect.x0, y, rect.x1-border, y+divider_h), section-1, sizes[section-1], shown_above);
       y += divider_h;
     }
     F32 height = Max(0.f, rect.y1-pad-y);
     if(!last) { height = Min((F32)sizes[section]*item_h, height); }
     U64 shown = (U64)(height/item_h);
+    shown_above = shown;
     Rng2F32 section_rect = r2f32p(rect.x0, y, rect.x1-border, y+height);
     y += height;
     if(height <= 0) { continue; }
@@ -242,7 +258,8 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
           case UIShell_StripSection_Layouts:
           {
             String8 name = layouts.names[i], glyph = layouts.glyphs[i];
-            if(!glyph.size) { glyph = str8_prefix(name, utf8_decode(name.str, name.size).inc); }
+            if(!glyph.size && name.size) { glyph = str8_prefix(name, utf8_decode(name.str, name.size).inc); }
+            if(!glyph.size) { glyph = str8_lit("?"); }
             UI_Signal sig = uishell_tool_strip_item(r, glyph, 0, i == layouts.current, 0, key);
             String8 tip = i == layouts.fallback ? push_str8f(scratch.arena, "%S (default)", name) : name;
             if(i == layouts.current && layouts.owned) { tip = push_str8f(scratch.arena, "%S, rearranged", tip); }
