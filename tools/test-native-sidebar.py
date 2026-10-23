@@ -79,6 +79,14 @@ class Effect(C.Structure):
     workspace_id = property(lambda self: workspace_number(self.workspace))
 
 
+class StripEntry(C.Structure):
+    _fields_ = [('section', U32), ('entity', Entity)]
+
+
+class Strip(C.Structure):
+    _fields_ = [('entries', C.POINTER(StripEntry)), ('count', Size)]
+
+
 class Workspace(C.Structure):
     _fields_ = [('id', WorkspaceId), ('position', Size), ('name', Text), ('selected', U32)]
 
@@ -109,11 +117,12 @@ def load(path):
         'effects_count': (Size, [Ptr]), 'effects_get': (U32, [Ptr, Size, C.POINTER(Effect)]),
         'effects_release': (None, [Ptr]), 'complete': (U32, [Ptr, U64, U32, WorkspaceId, Text, Ptr]),
         'observe': (U32, [Ptr, C.POINTER(Workspace), Size, Ptr, Size, Ptr]),
+        'strip_get': (C.POINTER(Strip), [Ptr, Entity, Ptr]), 'strip_free': (None, [C.POINTER(Strip)]),
     }
     for name, (result, args) in signatures.items():
         fn = getattr(lib, 'andamento_' + name)
         fn.restype, fn.argtypes = result, args
-    assert lib.andamento_abi_version() == 9
+    assert lib.andamento_abi_version() == 10
     # The tests' own forms: patches from PROVIDER, workspaces by number.
     apply_patch_json, complete = lib.andamento_apply_patch_json, lib.andamento_complete
     lib.andamento_apply_patch_json = lambda core, now, json, error: apply_patch_json(core, now, PROVIDER, json, error)
@@ -1082,7 +1091,7 @@ int main(void) {
 
     def test_abbreviated_row_retains_full_label_and_declared_field_slots(self):
         config = (ROOT / 'data/sidebar/daily-driver.kdl').read_text().replace(
-            'for "vessel" kind="vessel"', 'for "vessel" kind="vessel" tier="short"')
+            'for "vessel" kind="vessel" visibility=', 'for "vessel" kind="vessel" tier="short" visibility=')
         self.assertEqual(lib.andamento_configure(self.core, Text.of(config), None), 1)
         update = patch('vessel', 'v', **{'display.label': 'Full worker label', 'display.label.short': 'w'})
         self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
@@ -1110,6 +1119,35 @@ int main(void) {
             keys.setdefault(node.entity_id.string(), []).append(node.loop_key.string())
         self.assertEqual(keys['v'][0], keys['v2'][0])
         self.assertNotEqual(keys['v'][0], keys['v'][1])
+
+    def strip(self, kind, identity):
+        strip = lib.andamento_strip_get(self.core, Entity(PROVIDER, Text.of(kind), Text.of(identity)), None)
+        self.assertTrue(strip)
+        try:
+            entries = [strip.contents.entries[i] for i in range(strip.contents.count)]
+            return [('related' if e.section == 0 else 'linked', e.entity.kind.string() + '/' + e.entity.id.string()) for e in entries]
+        finally:
+            lib.andamento_strip_free(strip)
+
+    def test_shipped_strips_list_related_workspaces_and_linked_items(self):
+        # The hierarchy facts are text ids, as Flotilla publishes them.
+        for item in [patch('vessel', 'v2', **{'display.label': 'a', 'flotilla.project': 'p', 'flotilla.convoy': 'c'}),
+                     patch('convoy', 'landed', **{'flotilla.project': 'p', 'flotilla.convoy': 'landed', 'flotilla.convoy.phase': 'landed'}),
+                     patch('role', 'p/governor', **{'flotilla.project': 'p', 'flotilla.role': 'p/governor'}),
+                     patch('change_request', 'cr', **{'flotilla.subject.number': '12', 'flotilla.subject_of': [{'kind': 'convoy', 'id': 'c'}]}),
+                     patch('issue', 'i3', **{'flotilla.subject.number': '3', 'flotilla.subject_of': [{'kind': 'convoy', 'id': 'c'}]}),
+                     patch('issue', 'other', **{'flotilla.subject.number': '1', 'flotilla.subject_of': [{'kind': 'convoy', 'id': 'c2'}]})]:
+            self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
+        # A convoy: its project, its vessels by label, then its PRs and issues.
+        self.assertEqual(self.strip('convoy', 'c'), [
+            ('related', 'project/p'), ('related', 'vessel/v2'), ('related', 'vessel/v'),
+            ('linked', 'change_request/cr'), ('linked', 'issue/i3')])
+        # A vessel: its project and convoy, never its siblings.
+        self.assertEqual(self.strip('vessel', 'v'), [('related', 'project/p'), ('related', 'convoy/c')])
+        # A project: its governors, then its convoys that haven't landed.
+        self.assertEqual(self.strip('project', 'p'), [
+            ('related', 'role/p/governor'), ('related', 'convoy/c'), ('related', 'convoy/c2')])
+        self.assertEqual(self.strip('session', 'session'), [])
 
     def test_checkout_opens_instead_of_inspecting(self):
         snapshot, nodes = self.snapshot()

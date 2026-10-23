@@ -2049,11 +2049,13 @@ uishell_store_layouts(Arena *arena, CFG_Node *owner)
   if(list && list->count)
   {
     result.names = push_array(arena, String8, list->count);
+    result.glyphs = push_array(arena, String8, list->count);
     result.count = list->count;
     result.current = result.fallback = list->count;
     for(U64 i = 0; i < list->count; i++)
     {
       result.names[i] = push_str8_copy(arena, uishell_sidebar_string(list->layouts[i].name));
+      result.glyphs[i] = push_str8_copy(arena, uishell_sidebar_string(list->layouts[i].glyph));
       if(list->layouts[i].flags & ANDAMENTO_LAYOUT_CURRENT) { result.current = i; }
       if(list->layouts[i].flags & ANDAMENTO_LAYOUT_DEFAULT) { result.fallback = i; }
     }
@@ -2123,7 +2125,8 @@ uishell_store_slot_title(String8 key)
 
 // Places unplaced slot `key` of `owner` as the selected tab of `panel`, or
 // of its first tab panel: a commit that gives it a tab, then a follow,
-// which builds its View.
+// which builds its View. With `panel` 0 it goes to the panel Andamento
+// names for it, the one its layout's matchers would give it.
 internal void
 uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
 {
@@ -2138,13 +2141,22 @@ uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
   RD_Arrangement *a = rd_arrangement_live(uishell_store_owner(owner));
   UIShell_StoreDoc doc = uishell_store_doc(arena, a);
   AndamentoWorkspaceArrangement *stored = UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0));
-  // The target: `panel` if it holds tabs, else the first that does.
+  String8 home = str8_zero();
+  for(U64 i = 0; stored && !panel && i < stored->note_count; i++)
+  {
+    AndamentoNote *note = &stored->notes[i];
+    if(note->kind == ANDAMENTO_NOTE_UNPLACED && str8_match(uishell_sidebar_string(note->key), key, 0))
+    { home = uishell_sidebar_string(note->panel); }
+  }
+  // The target: `panel`, or the home panel, if it holds tabs, else the
+  // first that does.
   U64 target = doc.panel_count, index = 0;
   for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p), index++)
   {
     if(doc.panels[index].kind != ANDAMENTO_PANEL_TABS) { continue; }
-    if(target == doc.panel_count || p->id == panel) { target = index; }
-    if(p->id == panel) { break; }
+    B32 wanted = panel ? p->id == panel : home.size && str8_match(uishell_sidebar_string(doc.panels[index].id), home, 0);
+    if(target == doc.panel_count || wanted) { target = index; }
+    if(wanted) { break; }
   }
   if(stored && target < doc.panel_count && !uishell_store_key_in(key, doc.keys, doc.tab_count))
   {
@@ -2186,6 +2198,73 @@ uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
   andamento_arrangement_free(stored);
   scratch_end(scratch);
   rd_request_frame();
+}
+
+//- Tool strip
+//
+// What the strip at the workspace's edge lists (docs/design/subject-workspaces.md,
+// "Tool strip"): the workspace's slots, placed or not, and what its subject
+// kind's `strip` lists, the related workspaces and linked items.
+
+internal UIShell_StripViews
+uishell_store_strip_views(Arena *arena, CFG_Node *owner)
+{
+  UIShell_StripViews result = {0};
+  UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
+  if(!state) { return result; }
+  AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0));
+  if(slots && slots->slot_count)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    UIShell_StoreDoc doc = uishell_store_doc(scratch.arena, rd_arrangement_live(uishell_store_owner(owner)));
+    result.v = push_array(arena, UIShell_StripView, slots->slot_count);
+    for(U64 i = 0; i < slots->slot_count; i++)
+    {
+      AndamentoSlot *slot = &slots->slots[i];
+      if(slot->flags & ANDAMENTO_SLOT_FLAG_REMOVED) { continue; }
+      UIShell_StripView *out = &result.v[result.count++];
+      out->key = push_str8_copy(arena, uishell_sidebar_string(slot->key));
+      out->role = slot->spec.has_role ? push_str8_copy(arena, uishell_sidebar_string(slot->spec.role)) : str8_zero();
+      out->presentation = slot->spec.has_presentation ? push_str8_copy(arena, uishell_sidebar_string(slot->spec.presentation)) : str8_zero();
+      out->view = &cfg_nil_node;
+      for(U64 t = 0; t < doc.tab_count; t++)
+      { if(str8_match(doc.keys[t], out->key, 0)) { out->view = doc.views[t]; break; } }
+    }
+    scratch_end(scratch);
+  }
+  andamento_slots_free(slots);
+  return result;
+}
+
+internal AndamentoEntity
+uishell_store_subject(Arena *arena, CFG_Node *owner)
+{
+  if(owner == &cfg_nil_node || !uishell_workspace_cfg_has_subject(owner)) { return (AndamentoEntity){0}; }
+  String8 kind = cfg_node_child_from_string(owner, str8_lit("sidebar_entity_kind"))->first->string;
+  String8 id = cfg_node_child_from_string(owner, str8_lit("sidebar_entity_id"))->first->string;
+  return uishell_sidebar_entity(push_str8_copy(arena, uishell_workspace_cfg_subject_provider(owner)), push_str8_copy(arena, kind), push_str8_copy(arena, id));
+}
+
+internal UIShell_StripEntries
+uishell_store_strip_entries(Arena *arena, CFG_Node *owner)
+{
+  UIShell_StripEntries result = {0};
+  UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
+  AndamentoEntity subject = state ? uishell_store_subject(arena, owner) : (AndamentoEntity){0};
+  if(!subject.kind.len) { return result; }
+  AndamentoStrip *strip = UIShell_StoreCall(state, andamento_strip_get(state->core, subject, 0));
+  if(strip && strip->count)
+  {
+    result.v = push_array(arena, UIShell_StripEntry, strip->count);
+    result.count = strip->count;
+    for(U64 i = 0; i < strip->count; i++)
+    {
+      result.v[i].section = strip->entries[i].section;
+      result.v[i].entity = uishell_sidebar_card_entity_copy(arena, strip->entries[i].entity);
+    }
+  }
+  andamento_strip_free(strip);
+  return result;
 }
 
 // Drops the user's edit of `view`'s Slot: the provider's content, or the

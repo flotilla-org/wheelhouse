@@ -22,9 +22,9 @@ env:
   # Jackstay main: ABI 0.17, the v3 track handshake (jackstay#119) with
   # affordances as a track.
   JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
-  # Cleat session recipes for direct endpoints (andamento#186, for #104), on
-  # Workspace Layouts (andamento#182) and quoted template facts (#185). ABI 9.
-  ANDAMENTO_REV: bdcf4bbfcc70bf2f2aaa6c9e50ec7f340bc0cc97
+  # The tool strip (andamento#187, for #122), on #186's Cleat sessions: its
+  # merge commit. ABI 10.
+  ANDAMENTO_REV: 78bf15fdc4b36ea6fde896bd8fc6db9bd2e62032
 
 jobs:
   daily-driver:

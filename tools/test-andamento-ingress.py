@@ -134,7 +134,7 @@ core.andamento_snapshot_release.argtypes = [C.c_void_p]
 PROVIDER_NAME = b'wheelhouse'
 PROVIDER = Text(C.cast(C.c_char_p(PROVIDER_NAME), C.c_void_p), len(PROVIDER_NAME))
 core.andamento_abi_version.restype = C.c_uint32
-assert core.andamento_abi_version() == 9
+assert core.andamento_abi_version() == 10
 
 lib.wheelhouse_ingress_start_recorded.argtypes = [C.c_char_p, C.c_size_t, WAKE,
     C.c_char_p, C.c_size_t, C.c_uint64, C.c_size_t, C.c_void_p, C.c_size_t]

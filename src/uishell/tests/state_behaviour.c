@@ -1007,7 +1007,23 @@ entry_point(CmdLine *cmdline)
     String8Array unplaced = uishell_store_unplaced(scratch.arena, chip);
     StateCheck(unplaced.count == 1 && str8_match(unplaced.v[0], str8_lit("t:shell"), 0));
     StateCheck(str8_match(uishell_store_slot_title(unplaced.v[0]), str8_lit("shell"), 0));
-    uishell_store_show_slot(chip, 0, str8_lit("t:shell"));
+    // Its home, where showing it with no panel puts it (the tool strip's
+    // click), is the files panel: its matchers' but for `hide`.
+    arranged = andamento_arrangement_get(state->core, chip_id, 0);
+    B32 home_files = 0;
+    for(U64 i = 0; arranged && i < arranged->note_count; i++)
+    {
+      AndamentoNote *note = &arranged->notes[i];
+      home_files |= note->kind == ANDAMENTO_NOTE_UNPLACED && str8_match(uishell_sidebar_string(note->key), str8_lit("t:shell"), 0) &&
+        str8_match(uishell_sidebar_string(note->panel), str8_lit("files"), 0);
+    }
+    StateCheck(home_files);
+    andamento_arrangement_free(arranged);
+    // Shown beside the agent, so closing it leaves no panel empty: closing
+    // the last tab of a layout's panel closes the panel (#445).
+    RD_PanelID agents = rd_panel_from_cfg(state_slot_view(chip, str8_lit("primary"))).id;
+    StateCheck(agents != 0);
+    uishell_store_show_slot(chip, agents, str8_lit("t:shell"));
     state_frame(ws);
     CFG_Node *shell = state_slot_view(chip, str8_lit("t:shell"));
     StateCheck(shell != &cfg_nil_node);
@@ -1018,6 +1034,7 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     StateCheck(state_slot_view(chip, str8_lit("t:shell")) == &cfg_nil_node);
     StateCheck(uishell_store_unplaced(scratch.arena, chip).count == 1);
+    state_check_committed(ws);
     AndamentoSlots *chip_slots = andamento_slots_get(state->core, chip_id, 0);
     StateCheck(uishell_store_slot_find(chip_slots, str8_lit("t:shell"), 0));
     andamento_slots_free(chip_slots);

@@ -139,6 +139,61 @@ uishell_border_diagnostics(RD_WindowState *ws)
     }
     scratch_end(scratch);
   }
+  // The Workspace Region starts where the tool strip ends, in the frame and
+  // in the docking checker's geometry alike; without the strip, just past
+  // the sidebar's seam.
+  {
+    CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    CFG_Node *show = cfg_node_child_from_string(user, str8_lit("show_tool_strip"));
+    B32 had_show = show != &cfg_nil_node;
+    String8 old_show = str8_copy(saved.arena, show->first->string);
+    for(U32 shown = 0; shown < 2; shown++)
+    {
+      Temp scratch = scratch_begin(&saved.arena, 1);
+      show = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("show_tool_strip"));
+      cfg_node_new_replace(rd_state->cfg, show, shown ? str8_lit("1") : str8_lit("0"));
+      fnt_frame();
+      dr_begin_frame(rd_font_from_slot(RD_FontSlot_Icons));
+      rd_window_frame();
+      F32 font_size = 0;
+      UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_nil_panel_address, .view = rd_nil_view_address, .tab = rd_nil_view_address)
+      { font_size = rd_font_size(); }
+      UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+      UIShell_WorkspaceMount *mount = uishell_controlled_split_selected_mount(&split);
+      Rng2F32 strip = ws->sidebar->strip_rect;
+      RD_DockGeometry geometry = mount ? rd_dock_geometry_from_mount(mount) : (RD_DockGeometry){0};
+      B32 width_ok = dim_2f32(strip).x == (shown ? ceil_f32(font_size*3.5f) : 0.f);
+      B32 seam_ok = strip.x0 == ws->sidebar->rect.x1 + 1.f;
+      B32 region_ok = mount && geometry.area.x0 == strip.x1;
+      if(!width_ok || !seam_ok || !region_ok)
+      {
+        fprintf(stderr, "FAIL tool strip geometry (%s): strip %.2f..%.2f, sidebar ends %.2f, docking region starts %.2f\n",
+                shown ? "shown" : "hidden", strip.x0, strip.x1, ws->sidebar->rect.x1, geometry.area.x0);
+        ok = 0;
+      }
+      scratch_end(scratch);
+    }
+    if(had_show) { cfg_node_new_replace(rd_state->cfg, show, old_show); }
+    else { cfg_node_release(rd_state->cfg, show); }
+  }
+  // A divider drag resizes smoothly with the pointer from where the section
+  // ended, never below none or above the setting's range.
+  {
+    struct { F32 start; F32 delta; F32 size; } drags[] = {
+      {2, 0, 2}, {2, 15, 2.5f}, {2, -45, 0.5f}, {1.5f, 30, 2.5f}, {2, -200, 0},
+      {6, 30*UISHELL_TOOL_STRIP_SECTION_MAX, UISHELL_TOOL_STRIP_SECTION_MAX},
+    };
+    for(U64 i = 0; i < ArrayCount(drags); i++)
+    {
+      F32 size = uishell_tool_strip_size_from_drag(drags[i].start, drags[i].delta, 30.f);
+      if(abs_f32(size - drags[i].size) > 0.001f)
+      {
+        fprintf(stderr, "FAIL tool strip divider drag: %.2f items dragged %.0fpx gives %.2f, not %.2f\n",
+                drags[i].start, drags[i].delta, size, drags[i].size);
+        ok = 0;
+      }
+    }
+  }
   if(had_pct) { cfg_node_new_replace(rd_state->cfg, pct, old_pct); }
   else { cfg_node_release(rd_state->cfg, pct); }
   rd_state->frame_replay.suppress_input = saved_suppress;

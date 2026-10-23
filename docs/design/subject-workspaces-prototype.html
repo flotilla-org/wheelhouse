@@ -6,7 +6,9 @@
   docs/design/subject-workspaces.md read well (sections, dividers, any edge),
   does switching task-focused layouts over one set of Slots feel right, and
   what do the Slot Host's placeholders look like (unavailable, unverified,
-  gone), and do workspace switches read better with a zoom transition? Subjects, agents and convoys are made up. The light bar at the top is
+  gone), and do workspace switches read better with a zoom transition? Also:
+  which "selected" style reads best for the chosen layout and for a View that
+  is focused, shown or not shown (the Selected style picker). Subjects, agents and convoys are made up. The light bar at the top is
   prototype chrome, deliberately not Wheelhouse-styled.
   Run: open docs/design/subject-workspaces-prototype.html
 -->
@@ -67,6 +69,9 @@ svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .sec{display:flex;gap:2px;align-items:center;min-width:0;min-height:0;overflow:auto;scrollbar-width:none}
 .sec::-webkit-scrollbar{display:none}
 #app[data-edge="left"] .sec,#app[data-edge="right"] .sec{flex-direction:column}
+/* Reach into the strip's padding, so an edge marker isn't clipped. */
+#app[data-edge="left"] .sec,#app[data-edge="right"] .sec{margin:0 -4px;padding:0 4px}
+#app[data-edge="top"] .sec,#app[data-edge="bottom"] .sec{margin:-4px 0;padding:4px 0}
 .divider{flex:none;display:block}
 .divider.fixed{pointer-events:none}
 #app[data-edge="left"] .divider,#app[data-edge="right"] .divider{height:9px;width:100%;cursor:row-resize;background:linear-gradient(to bottom,transparent 4px,var(--line) 4px,var(--line) 5px,transparent 5px) no-repeat center/24px 100%}
@@ -75,11 +80,39 @@ svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-widt
 .si{position:relative;width:32px;height:32px;flex:none;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:5px;background:none;color:var(--text);cursor:pointer;padding:0}
 .si:hover{background:#ffffff12}
 .si:focus-visible{outline:1px solid var(--accent);outline-offset:-1px}
-.si.cur{border-color:var(--accent);background:#e0b34a1a}
 .si.subject{color:var(--accent)}
+#app[data-plain-subject="true"] .si.subject{color:var(--text)}
 .si.left-out{color:var(--dim)}
-.si.on{background:#ffffff14}
-.si.on::after{content:"";position:absolute;left:9px;right:9px;bottom:2px;height:2px;border-radius:1px;background:var(--text)}
+
+/* Selected styles. A layout is "chosen"; a View is "focus" (its tab has the
+   focused panel), "shown" (visible in some panel) or "left-out" (not shown). */
+#app[data-sel="box"] .si.chosen,#app[data-sel="box"] .si.shown{background:var(--sel)}
+#app[data-sel="box"] .si.chosen:hover,#app[data-sel="box"] .si.shown:hover{background:#4a505a}
+
+#app[data-sel="edge"] .si.chosen::before,#app[data-sel="edge"] .si.focus::before,
+#app[data-sel="edge-wash"] .si.chosen::before,#app[data-sel="edge-wash"] .si.focus::before{content:"";position:absolute;background:var(--accent);border-radius:1.5px}
+#app[data-edge="left"] .si.chosen::before,#app[data-edge="left"] .si.focus::before{left:-5px;top:22%;bottom:22%;width:3px}
+#app[data-edge="right"] .si.chosen::before,#app[data-edge="right"] .si.focus::before{right:-5px;top:22%;bottom:22%;width:3px}
+#app[data-edge="top"] .si.chosen::before,#app[data-edge="top"] .si.focus::before{top:-5px;left:22%;right:22%;height:3px}
+#app[data-edge="bottom"] .si.chosen::before,#app[data-edge="bottom"] .si.focus::before{bottom:-5px;left:22%;right:22%;height:3px}
+#app[data-sel="edge-wash"] .si.chosen,#app[data-sel="edge-wash"] .si.focus{background:#ffffff10}
+
+#app[data-sel="accent"] .si.chosen,#app[data-sel="accent"] .si.focus{color:var(--accent)}
+
+#app[data-sel="wash"] .si.chosen,#app[data-sel="wash"] .si.focus{background:#ffffff16}
+#app[data-sel="wash"] .si.chosen:hover,#app[data-sel="wash"] .si.focus:hover{background:#ffffff22}
+
+#app[data-sel="underline"] .si.chosen{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+#app[data-sel="underline"] .si.shown::after,#app[data-sel="underline"] .si.focus::after{content:"";position:absolute;left:9px;right:9px;bottom:2px;height:2px;border-radius:1px;background:var(--dim)}
+#app[data-sel="underline"] .si.focus::after{background:var(--accent)}
+
+#app[data-sel="dot"] .si.chosen::after,#app[data-sel="dot"] .si.shown::after,#app[data-sel="dot"] .si.focus::after{content:"";position:absolute;left:50%;bottom:1px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--dim)}
+#app[data-sel="dot"] .si.chosen::after,#app[data-sel="dot"] .si.focus::after{background:var(--accent)}
+
+#app[data-sel="ring"] .si.chosen,#app[data-sel="ring"] .si.focus{box-shadow:inset 0 0 0 1px var(--accent)}
+#app[data-sel="ring"] .si.shown{box-shadow:inset 0 0 0 1px var(--line)}
+
+.panel.focused{border-color:color-mix(in srgb,var(--accent) 70%,var(--line))}
 .si .dot{position:absolute;right:3px;bottom:3px}
 .si .new{position:absolute;right:2px;top:2px;width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--side)}
 .si svg.thumb{width:20px;height:20px}
@@ -172,6 +205,21 @@ table.ov td .dot{display:inline-block;margin-right:6px;vertical-align:0}
       <button type="button" id="p-convoy" data-subject="convoy">Convoy</button>
       <button type="button" id="p-vessel" data-subject="vessel">Vessel</button>
     </div>
+    <div class="grp"><label for="p-sel" class="lbl">Selected style</label>
+      <select id="p-sel" title="How the chosen layout and the focused or shown Views look">
+        <option value="wash">faint wash (Wheelhouse now)</option>
+        <option value="edge">edge marker</option>
+        <option value="edge-wash">edge marker + wash</option>
+        <option value="accent">accent icon</option>
+        <option value="underline">underline (first mockup)</option>
+        <option value="dot">dock dot</option>
+        <option value="ring">accent ring</option>
+        <option value="box">grey box (Wheelhouse before)</option>
+      </select>
+      <label for="p-accent" class="lbl">accent</label>
+      <select id="p-accent"><option value="#2392eb">focus blue</option><option value="#e0b34a">gold</option></select>
+      <label for="p-plain"><input type="checkbox" id="p-plain" checked> plain subject icon</label>
+    </div>
     <div class="grp"><label for="p-edge" class="lbl">Strip edge</label>
       <select id="p-edge"><option value="left">left</option><option value="top">top</option><option value="right">right</option><option value="bottom">bottom</option></select>
       <label for="p-anim"><input type="checkbox" id="p-anim" checked> transitions</label>
@@ -183,7 +231,7 @@ table.ov td .dot{display:inline-block;margin-right:6px;vertical-align:0}
       <button type="button" id="p-reset">Reset</button>
     </div>
   </header>
-  <div id="app" data-edge="left">
+  <div id="app" data-edge="left" data-sel="wash">
     <aside id="control" aria-label="Sidebar"><div class="h">Tree</div><div class="rows" id="tree"></div></aside>
     <div id="wsregion">
       <nav id="strip" aria-label="Tool strip"></nav>
@@ -331,21 +379,45 @@ function relatedInfo(r){
   const state = states.includes('current') ? 'current' : states.includes('unavailable') ? 'unavailable' : 'gone';
   return {key:r, title:v.name+' on '+v.host, icon:'vessel', subject:r === 'v51' ? 'vessel' : null, state, isNew:v.isNew};
 }
+// The panel with the focus (the last one clicked or shown into), and the
+// View whose tab is selected there.
+let focusPanel = null;
+function focusOf(L, A){
+  const fp = A.map[focusPanel] ? focusPanel : A.panels[0].id;
+  const sel = (W[subject].sel[L.id] || {})[fp], slots = A.map[fp];
+  return {panel:fp, key:(slots.find(s => s.key === sel) || slots[0] || {}).key};
+}
+// The tab showing in each panel: what "shown" means for a View.
+function shownKeys(L, A){
+  const keys = new Set();
+  for(const p of A.panels){
+    const slots = A.map[p.id];
+    // A grid shows every View it holds; a tab panel, its selected tab.
+    if(isGrid(L.tree, p.id)){ slots.forEach(s => keys.add(s.key)); continue; }
+    const sel = (W[subject].sel[L.id] || {})[p.id];
+    const cur = slots.find(s => s.key === sel) || slots[0];
+    if(cur) keys.add(cur.key);
+  }
+  return keys;
+}
+function isGrid(node, id){ return node.split ? node.c.some(c => isGrid(c, id)) : !!node.grid && node.grid === id; }
+function viewClass(key, visible, focus){ return key === focus.key ? ' focus' : visible.has(key) ? ' shown' : ' left-out'; }
 function renderStrip(){
   const S = SUBJECTS[subject], L = layoutOf(subject), A = arrange(subject, L);
-  const visible = new Set(Object.values(A.map).flat().map(s => s.key));
+  const visible = shownKeys(L, A), focus = focusOf(L, A);
   const unplaced = s => (L.liveOnly && slotState(s) === 'gone') || !A.panels.some(p => p.kinds.includes(s.kind));
   const why = s => L.liveOnly && slotState(s) === 'gone' ? 'Ended. This layout shows live agents only.' : 'Not placed by this layout.';
   const parts = {};
   parts.subject = `<button type="button" class="si subject" id="s-subject" aria-label="${esc(S.title)}">${ic(S.kind)}</button>`;
   parts.layouts = LAYOUTS[subject].map(l =>
-    `<button type="button" class="si${l.id===L.id?' cur':''}" data-layout="${l.id}" title="Layout: ${esc(l.name)}" aria-pressed="${l.id===L.id}">${thumb(l.tree)}</button>`).join('');
-  // Views stay in the strip once open; open ones are toggled on.
+    `<button type="button" class="si${l.id===L.id?' chosen':''}" data-layout="${l.id}" title="Layout: ${esc(l.name)}" aria-pressed="${l.id===L.id}">${thumb(l.tree)}</button>`).join('');
+  // Every Slot of the subject, placed or not: focused, shown or left out.
+  const placed = new Set(Object.values(A.map).flat().map(s => s.key));
   const views = [
-    ...S.slots().filter(s => !W[subject].closed.has(s.key) && unplaced(s)).map(s => { const on = visible.has(s.key);
-      return `<button type="button" class="si${on?' on':' left-out'}" draggable="true" data-view="${s.key}" aria-pressed="${on}" title="${esc(s.title)}: ${on?'open. Click to show it.':esc(why(s))+' Click to place, or drag to a panel.'}">${ic(s.icon||s.kind)}${s.kind==='agent'?`<span class="dot ${slotState(s)}"></span>`:''}</button>`; }),
-    ...S.add.map(a => { const s = addedSlot(a.key), on = !!s && visible.has(s.key);
-      return `<button type="button" class="si${on?' on':''}" draggable="true" data-add="${a.key}" aria-pressed="${on}" title="${esc(a.title)}${a.note?' ('+esc(a.note)+')':''}: ${on?'open. Click to show it.':'Click to place, or drag to a panel.'}${a.multi?' Double-click or drag for another one.':''}">${ic(a.icon||a.kind)}</button>`; })
+    ...S.slots().filter(s => !W[subject].closed.has(s.key)).map(s => { const on = placed.has(s.key);
+      return `<button type="button" class="si${viewClass(s.key, visible, focus)}" draggable="true" data-view="${s.key}" aria-pressed="${s.key===focus.key}" title="${esc(s.title)}: ${on?'in this layout. Click to show it.':esc(unplaced(s)?why(s):'Not placed.')+' Click to place, or drag to a panel.'}">${ic(s.icon||s.kind)}${s.kind==='agent'?`<span class="dot ${slotState(s)}"></span>`:''}</button>`; }),
+    ...S.add.map(a => { const s = addedSlot(a.key);
+      return `<button type="button" class="si${s?viewClass(s.key, visible, focus):' left-out'}" draggable="true" data-add="${a.key}" aria-pressed="${!!s && s.key===focus.key}" title="${esc(a.title)}${a.note?' ('+esc(a.note)+')':''}: ${s?'open. Click to show it.':'Click to place, or drag to a panel.'}${a.multi?' Double-click or drag for another one.':''}">${ic(a.icon||a.kind)}</button>`; })
   ];
   parts.views = views.join('');
   parts.related = S.related.map(r => { const i = relatedInfo(r);
@@ -422,7 +494,8 @@ function renderNode(n, A, L){
   }
   const sel = (W[subject].sel[L.id] || {})[id];
   const cur = slots.find(s => s.key === sel) || slots[0];
-  return `<section class="panel panel-drop" data-panel="${id}" style="flex:1">
+  const focused = focusOf(L, A).panel === id;
+  return `<section class="panel panel-drop${focused?' focused':''}" data-panel="${id}" style="flex:1">
     <div class="tabs" role="tablist">${slots.map(s => `<button type="button" role="tab" class="tab${s===cur?' on':''}" aria-selected="${s===cur}" data-tab="${s.key}" data-in="${id}">${tabLabel(s)}</button>`).join('')}</div>
     <div class="body">${cur ? host(cur) : '<div class="empty">Nothing here in this layout. Drag a view from the strip.</div>'}</div></section>`;
 }
@@ -439,7 +512,11 @@ function renderTree(){
   document.getElementById('tree').innerHTML = row('project', 'flotilla/wheelhouse', 'project', 0) + row(null, 'governor', 'convoy', 1, F.agents.governor.state, ' static') + row('convoy', 'Ship sidebar subjects', 'convoy', 1) + vs;
 }
 function render(){
-  document.getElementById('app').dataset.edge = document.getElementById('p-edge').value;
+  const app = document.getElementById('app');
+  app.dataset.edge = document.getElementById('p-edge').value;
+  app.dataset.sel = document.getElementById('p-sel').value;
+  app.dataset.plainSubject = document.getElementById('p-plain').checked;
+  app.style.setProperty('--accent', document.getElementById('p-accent').value);
   for(const b of document.querySelectorAll('#proto [data-subject]')) b.setAttribute('aria-pressed', b.dataset.subject === subject);
   renderTree(); renderStrip(); renderWs();
 }
@@ -448,7 +525,7 @@ function render(){
 let toastTimer;
 function toast(msg){ const t = document.getElementById('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2200); }
 function pin(key, panel){ const L = layoutOf(subject); (W[subject].place[L.id] ||= {})[key] = panel; select(key, panel); }
-function select(key, panel){ const L = layoutOf(subject); (W[subject].sel[L.id] ||= {})[panel] = key; }
+function select(key, panel){ const L = layoutOf(subject); (W[subject].sel[L.id] ||= {})[panel] = key; focusPanel = panel; }
 function defaultPanel(s){ const P = panelsOf(layoutOf(subject).tree); return (P.find(p => p.kinds.includes(s.kind)) || P[0]).id; }
 function addSlot(spec, panel){
   const n = W[subject].added.filter(x => x.addKey === spec.key).length + 1;
@@ -470,7 +547,7 @@ function panelHolding(key){ const A = arrange(subject, layoutOf(subject)); retur
 function showOrPlace(key, spec){
   if(!key){ addSlot(spec); return; }
   const pid = panelHolding(key);
-  if(pid){ select(key, pid); renderWs(); } else placeLeftOut(key);
+  if(pid){ select(key, pid); render(); } else placeLeftOut(key);
 }
 
 // Switching workspaces: zoom in to a child, out to a parent, out-then-in across.
@@ -624,7 +701,7 @@ wsEl.addEventListener('drop', e => {
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-tab],[data-close],[data-toast],[data-open-linked],[data-go]');
   if(!t){ if(!pop.contains(e.target) && !strip.contains(e.target)) pop.hidden = true; return; }
-  if(t.dataset.tab){ select(t.dataset.tab, t.dataset.in); renderWs(); }
+  if(t.dataset.tab){ select(t.dataset.tab, t.dataset.in); render(); }
   else if(t.dataset.close){ W[subject].closed.add(t.dataset.close); render(); }
   else if(t.dataset.openLinked){ pop.hidden = true; openLinked(SUBJECTS[subject].linked.find(l => l.key === t.dataset.openLinked)); }
   else if(t.dataset.go){ go(t.dataset.go, t); }
@@ -633,6 +710,13 @@ document.addEventListener('click', e => {
 document.getElementById('tree').addEventListener('keydown', e => { const r = e.target.closest('[data-go]'); if(r && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); go(r.dataset.go, r); } });
 for(const b of document.querySelectorAll('#proto [data-subject]')) b.addEventListener('click', () => go(b.dataset.subject));
 document.getElementById('p-edge').addEventListener('change', () => { pop.hidden = true; render(); });
+for(const id of ['p-sel','p-accent','p-plain']) document.getElementById(id).addEventListener('change', render);
+// A click in a panel gives it the focus, as in Wheelhouse.
+document.getElementById('ws').addEventListener('pointerdown', e => {
+  const p = e.target.closest('[data-panel]'); if(!p || p.dataset.panel === focusPanel) return;
+  focusPanel = p.dataset.panel; renderStrip();
+  document.querySelectorAll('#ws .panel').forEach(x => x.classList.toggle('focused', x.dataset.panel === focusPanel));
+});
 
 // ---- scenario --------------------------------------------------------------
 let flapTimer = null, reviewerTimer = null;
