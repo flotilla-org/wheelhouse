@@ -1,5 +1,5 @@
 [package]
-name = "andamento-scenario"
+name = "wheelhouse-scenario"
 version = "0.1.0"
 edition = "2021"
 publish = false

@@ -103,9 +103,9 @@ between feedback and commit. Last-View moves combine removal and insertion,
 including same-axis sibling insertion, and compare feedback and command
 acceptance with the final rendered body. CI native builds also run it through `native/build.sh`.
 
-The runner accepts `--andamento-include <directory>` and `--cleat-include
+The runner accepts `--core-include <directory>` and `--cleat-include
 <directory>` for non-sibling checkouts. The Andamento default is this repo's
-`crates/andamento-ffi/include`; the Cleat default honors `WHEELHOUSE_CLEAT_DIR`; `native/build.sh` passes the configured include directories.
+`crates/wheelhouse-ffi/include`; the Cleat default honors `WHEELHOUSE_CLEAT_DIR`; `native/build.sh` passes the configured include directories.
 Rendering and measurement share window-edge and panel-inset helpers. A drag
 builds one geometry context from its existing mount; command measurement frees
 its temporary panel tree before returning.

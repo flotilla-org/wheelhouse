@@ -120,13 +120,13 @@ def load(path):
         'strip_get': (C.POINTER(Strip), [Ptr, Entity, Ptr]), 'strip_free': (None, [C.POINTER(Strip)]),
     }
     for name, (result, args) in signatures.items():
-        fn = getattr(lib, 'andamento_' + name)
+        fn = getattr(lib, 'wheelhouse_' + name)
         fn.restype, fn.argtypes = result, args
-    assert lib.andamento_abi_version() == 10
+    assert lib.wheelhouse_abi_version() == 10
     # The tests' own forms: patches from PROVIDER, workspaces by number.
-    apply_patch_json, complete = lib.andamento_apply_patch_json, lib.andamento_complete
-    lib.andamento_apply_patch_json = lambda core, now, json, error: apply_patch_json(core, now, PROVIDER, json, error)
-    lib.andamento_complete = lambda core, request, outcome, number, message, error: complete(
+    apply_patch_json, complete = lib.wheelhouse_apply_patch_json, lib.wheelhouse_complete
+    lib.wheelhouse_apply_patch_json = lambda core, now, json, error: apply_patch_json(core, now, PROVIDER, json, error)
+    lib.wheelhouse_complete = lambda core, request, outcome, number, message, error: complete(
         core, request, outcome, workspace_id(number), message, error)
     return lib
 
@@ -142,7 +142,7 @@ class NativeSidebarTests(unittest.TestCase):
     def setUp(self):
         config = (ROOT / 'data/sidebar/daily-driver.kdl').read_bytes()
         error = C.c_char_p()
-        self.core = lib.andamento_create(config, len(config), C.byref(error))
+        self.core = lib.wheelhouse_create(config, len(config), C.byref(error))
         self.assertTrue(self.core, error.value)
         facts = [patch('project', 'p', **{'flotilla.project': 'p'}),
                  patch('checkout', 'checkout', **{'flotilla.project': 'p', 'action.primary.recipe': 'exec /bin/sh'}),
@@ -158,7 +158,7 @@ class NativeSidebarTests(unittest.TestCase):
                  patch('session', 'session', **{'action.primary.recipe': 'flotilla attach terminal'}),
                  patch('issue', 'issue', **{'flotilla.project': 'p'})]
         for item in facts:
-            self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
+            self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
         self.snapshots = []
 
     def test_region_hints_match_shipped_order(self):
@@ -176,22 +176,22 @@ class NativeSidebarTests(unittest.TestCase):
         node = next(n for n in nodes if n.entity_id.string() == identity)
         kind, request, _, _ = self.dispatch(snapshot, node.activate)
         self.assertEqual(kind, 1)
-        self.assertTrue(lib.andamento_complete(self.core, request, 1, workspace_id, Text.of(''), None))
+        self.assertTrue(lib.wheelhouse_complete(self.core, request, 1, workspace_id, Text.of(''), None))
         workspace = Workspace(workspace_id, 0, Text.of(identity), 1)
-        self.assertTrue(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None))
+        self.assertTrue(lib.wheelhouse_observe(self.core, C.byref(workspace), 1, None, 0, None))
 
     def publish_fixture(self):
         for line in (ROOT / 'data/sidebar/fixture.jsonl').read_text().splitlines():
             item = json.loads(line)
             item['source_id'] = 'native-test'
-            self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
+            self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
 
     def values(self, snapshot, node, detail=False):
         start, count = (node.first_detail, node.detail_count) if detail else (node.first_field, node.field_count)
         result = []
         for index in range(start, start + count):
             field = Field()
-            self.assertTrue(lib.andamento_snapshot_field(snapshot, index, C.byref(field)))
+            self.assertTrue(lib.wheelhouse_snapshot_field(snapshot, index, C.byref(field)))
             result.append(field.text.string())
         return result
 
@@ -285,7 +285,7 @@ int main(void) {
         _, nodes = self.snapshot()
         self.assertNotIn('issue-137', [n.entity_id.string() for n in nodes])
         config = (ROOT / 'data/sidebar/daily-driver.kdl').read_text().replace('tier="medium"', 'tier="short"')
-        self.assertTrue(lib.andamento_configure(self.core, Text.of(config), None))
+        self.assertTrue(lib.wheelhouse_configure(self.core, Text.of(config), None))
         snapshot, nodes = self.snapshot()
         pr = next(n for n in self.children(nodes, 'build') if n.entity_id.string() == 'pr-1000')
         self.assertEqual(self.values(snapshot, pr)[0], '!1000')
@@ -303,7 +303,7 @@ int main(void) {
             # Patch identity/label are omitted, matching producer partial updates.
             for key in ('entity.kind', 'entity.id', 'display.label'):
                 update['set'].pop(key)
-            self.assertTrue(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
+            self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
             for show in (False, True):
                 snapshot, nodes = self.snapshot()
                 tree = self.children(nodes, 'build')
@@ -315,7 +315,7 @@ int main(void) {
                 self.toggle_variable('Show finished')
         update = patch('issue', 'issue-137', **{'flotilla.issue.state': 'closed'})
         update['set'].pop('display.label')
-        self.assertTrue(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
+        self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
         _, nodes = self.snapshot()
         self.assertNotIn('issue-137', [n.entity_id.string() for n in nodes])
         self.toggle_variable('Show finished')
@@ -347,8 +347,8 @@ int main(void) {
                          'Mergeable: mergeable', 'Checks observed: 2026-10-03T09:19:00Z']:
             self.assertIn(expected, details)
         forge = patch('forge', 'fixture', **{'flotilla.forge.web_url': 'https://new.example'})
-        self.assertTrue(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(forge)), None))
-        self.assertFalse(lib.andamento_dispatch(self.core, snapshot, pr.activate, None))
+        self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 0, Text.of(json.dumps(forge)), None))
+        self.assertFalse(lib.wheelhouse_dispatch(self.core, snapshot, pr.activate, None))
         fresh, nodes = self.snapshot()
         pr = next(n for n in nodes if n.entity_id.string() == 'pr-281')
         self.assertEqual(self.dispatch(fresh, pr.activate)[3], 'https://new.example/org/wheelhouse/review/281')
@@ -358,7 +358,7 @@ int main(void) {
         self.publish_fixture()
         for template in ('file:///tmp/program', 'javascript:alert(1)', '/tmp/program', 'custom:handler'):
             update = patch('forge', 'fixture', **{'flotilla.forge.change_request_url_template': template})
-            self.assertTrue(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
+            self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 0, Text.of(json.dumps(update)), None))
             snapshot, nodes = self.snapshot()
             index = next(i for i, n in enumerate(nodes) if n.entity_id.string() == 'pr-281')
             self.assertEqual(nodes[index].copy_url, Size(-1).value)
@@ -395,17 +395,17 @@ int main(void) {
     def reset_core(self):
         # A fresh core is the process boundary used by the host restart path.
         for snapshot in self.snapshots:
-            lib.andamento_snapshot_release(snapshot)
+            lib.wheelhouse_snapshot_release(snapshot)
         self.snapshots.clear()
-        lib.andamento_destroy(self.core)
+        lib.wheelhouse_destroy(self.core)
         config = (ROOT / 'data/sidebar/daily-driver.kdl').read_bytes()
-        self.core = lib.andamento_create(config, len(config), None)
+        self.core = lib.wheelhouse_create(config, len(config), None)
         self.assertTrue(self.core)
         # These governor scenarios need only a project, unlike the broader setUp fixture.
         self.apply_fact(patch('project', 'p', **{'flotilla.project': 'p'}))
 
     def apply_fact(self, item):
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
 
     def assert_running_governor(self, workspace_id=None, current=None, expect_history=False):
         snapshot, nodes = self.snapshot()
@@ -514,9 +514,9 @@ int main(void) {
                 self.assertEqual(node.state, 1)  # latent, before host restore
                 kind, request, _, _ = self.dispatch(snapshot, node.activate)
                 self.assertEqual(kind, 1)
-                self.assertTrue(lib.andamento_complete(self.core, request, 1, saved['workspace_id'], Text.of(''), None))
+                self.assertTrue(lib.wheelhouse_complete(self.core, request, 1, saved['workspace_id'], Text.of(''), None))
                 workspace = Workspace(saved['workspace_id'], 0, Text.of('governor'), 1)
-                self.assertTrue(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None))
+                self.assertTrue(lib.wheelhouse_observe(self.core, C.byref(workspace), 1, None, 0, None))
                 self.assert_running_governor(44, attempts, expect_history=history)
 
                 # Deleting terminal catalog records must leave the same live role
@@ -534,7 +534,7 @@ int main(void) {
 
     def test_git_fixture_groups_and_materializes_worktrees(self):
         for line in (ROOT / 'data/sidebar/git-fixture.jsonl').read_text().splitlines():
-            self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(line), None), 1)
+            self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 0, Text.of(line), None), 1)
         snapshot, nodes = self.snapshot()
         repos = [node for node in nodes if node.entity_kind.string() == 'repo']
         worktrees = [node for node in nodes if node.entity_kind.string() == 'worktree']
@@ -548,31 +548,31 @@ int main(void) {
             fields = []
             for index in range(node.first_field, node.first_field + node.field_count):
                 field = Field()
-                self.assertEqual(lib.andamento_snapshot_field(snapshot, index, C.byref(field)), 1)
+                self.assertEqual(lib.wheelhouse_snapshot_field(snapshot, index, C.byref(field)), 1)
                 fields.append(field.text.string())
             self.assertTrue(any(text.startswith('dirty:') for text in fields), fields)
-        self.assertEqual(lib.andamento_dispatch(self.core, snapshot, worktrees[0].activate, None), 1)
-        batch = lib.andamento_effects_take(self.core, None)
+        self.assertEqual(lib.wheelhouse_dispatch(self.core, snapshot, worktrees[0].activate, None), 1)
+        batch = lib.wheelhouse_effects_take(self.core, None)
         effect = Effect()
-        self.assertEqual(lib.andamento_effects_get(batch, 0, C.byref(effect)), 1)
+        self.assertEqual(lib.wheelhouse_effects_get(batch, 0, C.byref(effect)), 1)
         self.assertEqual(effect.recipe.string(), '/bin/sh')
         self.assertEqual(effect.has_cwd, 1)
         self.assertEqual(effect.cwd.string(), worktrees[0].entity_id.string())
-        lib.andamento_effects_release(batch)
+        lib.wheelhouse_effects_release(batch)
 
     def test_snapshot_validity_tracks_core_changes(self):
-        displayed = lib.andamento_snapshot_acquire(self.core, None)
+        displayed = lib.wheelhouse_snapshot_acquire(self.core, None)
         self.snapshots.append(displayed)
-        self.assertEqual(lib.andamento_snapshot_is_current(self.core, displayed, None), 1)
-        self.assertEqual(lib.andamento_tick(self.core, 100, None), 1)
-        self.assertEqual(lib.andamento_snapshot_is_current(self.core, displayed, None), 1)
+        self.assertEqual(lib.wheelhouse_snapshot_is_current(self.core, displayed, None), 1)
+        self.assertEqual(lib.wheelhouse_tick(self.core, 100, None), 1)
+        self.assertEqual(lib.wheelhouse_snapshot_is_current(self.core, displayed, None), 1)
         update = patch('vessel', 'v', **{'action.primary.recipe': 'exec changed'})
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 100, Text.of(json.dumps(update)), None), 1)
-        self.assertEqual(lib.andamento_snapshot_is_current(self.core, displayed, None), 0)
-        fresh = lib.andamento_snapshot_acquire(self.core, None)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 100, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.wheelhouse_snapshot_is_current(self.core, displayed, None), 0)
+        fresh = lib.wheelhouse_snapshot_acquire(self.core, None)
         self.snapshots.append(fresh)
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 200, Text.of(json.dumps(update)), None), 1)
-        self.assertEqual(lib.andamento_snapshot_is_current(self.core, fresh, None), 1)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 200, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.wheelhouse_snapshot_is_current(self.core, fresh, None), 1)
 
     def test_finished_toggle_keeps_failures_and_active_entries(self):
         for phase in ('active', 'landed', 'cancelled', 'abandoned', 'failed', 'pending'):
@@ -580,7 +580,7 @@ int main(void) {
                                                   'flotilla.convoy.phase': phase, 'status.attention': True}),
                          patch('vessel', phase + '-worker', **{'flotilla.convoy': phase,
                                    'flotilla.convoy.phase': phase, 'status.attention': True})]:
-                self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+                self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
         for show in (False, True, False):
             snapshot, nodes = self.snapshot()
             ids = {node.entity_id.string() for node in nodes}
@@ -594,12 +594,12 @@ int main(void) {
             for node in nodes:
                 for index in range(node.first_control, node.first_control + node.control_count):
                     control = Control()
-                    self.assertTrue(lib.andamento_snapshot_control(snapshot, index, C.byref(control)))
+                    self.assertTrue(lib.wheelhouse_snapshot_control(snapshot, index, C.byref(control)))
                     if control.label.string() == 'Show finished':
                         controls.append(control)
             self.assertEqual(len(controls), 1)
             self.assertEqual(bool(controls[0].checked), show)
-            self.assertTrue(lib.andamento_dispatch(self.core, snapshot, controls[0].action, None))
+            self.assertTrue(lib.wheelhouse_dispatch(self.core, snapshot, controls[0].action, None))
 
     def test_superseded_failure_is_hidden_but_current_failure_remains(self):
         for identity, superseded in [('old-governor', True), ('current-governor', False)]:
@@ -607,7 +607,7 @@ int main(void) {
                 item = patch(kind, name, **{'flotilla.project': 'p', 'flotilla.convoy': identity,
                              'flotilla.convoy.phase': 'failed', 'flotilla.convoy.superseded': superseded,
                              'status.state': 'failed', 'status.attention': True})
-                self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+                self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
         snapshot, nodes = self.snapshot()
         ids = {node.entity_id.string() for node in nodes}
         self.assertNotIn('old-governor', ids)
@@ -617,9 +617,9 @@ int main(void) {
         for node in nodes:
             for index in range(node.first_control, node.first_control + node.control_count):
                 control = Control()
-                self.assertTrue(lib.andamento_snapshot_control(snapshot, index, C.byref(control)))
+                self.assertTrue(lib.wheelhouse_snapshot_control(snapshot, index, C.byref(control)))
                 if control.label.string() == 'Show finished':
-                    self.assertTrue(lib.andamento_dispatch(self.core, snapshot, control.action, None))
+                    self.assertTrue(lib.wheelhouse_dispatch(self.core, snapshot, control.action, None))
         _, shown = self.snapshot()
         shown_ids = {node.entity_id.string() for node in shown}
         for identity in ('old-governor', 'old-governor-worker', 'current-governor', 'current-governor-worker'):
@@ -627,29 +627,29 @@ int main(void) {
 
     def tearDown(self):
         for snapshot in self.snapshots:
-            lib.andamento_snapshot_release(snapshot)
-        lib.andamento_destroy(self.core)
+            lib.wheelhouse_snapshot_release(snapshot)
+        lib.wheelhouse_destroy(self.core)
 
     def snapshot(self):
-        snapshot = lib.andamento_snapshot_acquire(self.core, None)
+        snapshot = lib.wheelhouse_snapshot_acquire(self.core, None)
         self.assertTrue(snapshot)
         self.snapshots.append(snapshot)
-        self.assertEqual(lib.andamento_snapshot_diagnostic_count(snapshot), 0)
+        self.assertEqual(lib.wheelhouse_snapshot_diagnostic_count(snapshot), 0)
         nodes = []
-        for i in range(lib.andamento_snapshot_node_count(snapshot)):
+        for i in range(lib.wheelhouse_snapshot_node_count(snapshot)):
             node = Node()
-            self.assertEqual(lib.andamento_snapshot_node(snapshot, i, C.byref(node)), 1)
+            self.assertEqual(lib.wheelhouse_snapshot_node(snapshot, i, C.byref(node)), 1)
             nodes.append(node)
         return snapshot, nodes
 
     def dispatch(self, snapshot, action):
-        self.assertEqual(lib.andamento_dispatch(self.core, snapshot, action, None), 1)
-        batch = lib.andamento_effects_take(self.core, None)
-        self.assertEqual(lib.andamento_effects_count(batch), 1)
+        self.assertEqual(lib.wheelhouse_dispatch(self.core, snapshot, action, None), 1)
+        batch = lib.wheelhouse_effects_take(self.core, None)
+        self.assertEqual(lib.wheelhouse_effects_count(batch), 1)
         effect = Effect()
-        lib.andamento_effects_get(batch, 0, C.byref(effect))
+        lib.wheelhouse_effects_get(batch, 0, C.byref(effect))
         result = (effect.kind, effect.request_id, effect.workspace_id, effect.recipe.string())
-        lib.andamento_effects_release(batch)
+        lib.wheelhouse_effects_release(batch)
         return result
 
     # Facts shaped as flotilla pm connect publishes standing roles (flotilla#1908).
@@ -664,22 +664,22 @@ int main(void) {
         item = patch('role', identity, **facts)
         if not ready:
             item['unset'] = ['workspace.primary.target', 'action.primary.recipe']
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
 
     def publish_attempt(self, convoy, role, **facts):
         for kind, identity in [('convoy', convoy), ('vessel', convoy + '-v')]:
             item = patch(kind, identity, **{'flotilla.project': 'p', 'flotilla.convoy': convoy,
                          'flotilla.convoy.standing': True, **({'flotilla.role': 'p/' + role} if role else {}), **facts})
-            self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+            self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
 
     def toggle_variable(self, label):
         snapshot, nodes = self.snapshot()
         for node in nodes:
             for index in range(node.first_control, node.first_control + node.control_count):
                 control = Control()
-                self.assertTrue(lib.andamento_snapshot_control(snapshot, index, C.byref(control)))
+                self.assertTrue(lib.wheelhouse_snapshot_control(snapshot, index, C.byref(control)))
                 if control.label.string() == label:
-                    self.assertTrue(lib.andamento_dispatch(self.core, snapshot, control.action, None))
+                    self.assertTrue(lib.wheelhouse_dispatch(self.core, snapshot, control.action, None))
                     return
         self.fail('no control ' + label)
 
@@ -715,14 +715,14 @@ int main(void) {
         self.publish_role('governor', attempt='g-v')
         snapshot, nodes = self.snapshot()
         role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
-        self.assertEqual(lib.andamento_dispatch(self.core, snapshot, role.activate, None), 1)
-        batch = lib.andamento_effects_take(self.core, None)
+        self.assertEqual(lib.wheelhouse_dispatch(self.core, snapshot, role.activate, None), 1)
+        batch = lib.wheelhouse_effects_take(self.core, None)
         effect = Effect()
-        self.assertEqual(lib.andamento_effects_get(batch, 0, C.byref(effect)), 1)
+        self.assertEqual(lib.wheelhouse_effects_get(batch, 0, C.byref(effect)), 1)
         self.assertEqual((effect.kind, effect.recipe.string()), (1, 'flotilla attach --host test g-v'))
         self.assertEqual(effect.has_primary_target, 1)
         self.assertEqual(effect.primary_target.string(), 'vessel:g-v')
-        lib.andamento_effects_release(batch)
+        lib.wheelhouse_effects_release(batch)
 
     def test_held_and_removed_roles(self):
         self.publish_role('governor', ready=False)
@@ -742,7 +742,7 @@ int main(void) {
         removed['unset'] = ['entity.kind', 'entity.id', 'display.label', 'flotilla.project', 'flotilla.role',
                             'flotilla.role.name', 'action.primary.target', 'action.primary.recipe',
                             'workspace.primary.state', 'workspace.primary.target']
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(removed)), None), 1)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(removed)), None), 1)
         _, nodes = self.snapshot()
         # An open removed role remains visible with its ended marker.
         self.assertTrue(any(n.entity_id.string() == 'p/governor' and n.workspace_id == 44 for n in nodes))
@@ -764,13 +764,13 @@ int main(void) {
                  patch('project', 'q', **{'flotilla.project': 'q'}),
                  patch('project_repository', 'm-other', **{'flotilla.project': 'q', 'display.label': 'org/other'})]
         for item in items:
-            self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
+            self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(item)), None), 1)
         snapshot, nodes = self.snapshot()
         project = next(n for n in nodes if n.entity_id.string() == 'p' and not n.is_section)
         detail = []
         for index in range(project.first_detail, project.first_detail + project.detail_count):
             field = Field()
-            self.assertEqual(lib.andamento_snapshot_field(snapshot, index, C.byref(field)), 1)
+            self.assertEqual(lib.wheelhouse_snapshot_field(snapshot, index, C.byref(field)), 1)
             detail.append(field.text.string())
         start = detail.index('Repositories: 2')
         self.assertEqual(detail[start:], ['Repositories: 2', '  org/docs', '    path: guide', '  org/web'])
@@ -785,7 +785,7 @@ int main(void) {
         removal['set'] = {'source': removal['set']['source']}
         removal['unset'] = ['entity.kind', 'entity.id', 'display.label', 'flotilla.project',
                             'flotilla.convoy', 'flotilla.vessel', 'action.primary.recipe', 'status.attention']
-        self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(removal)), None))
+        self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(removal)), None))
         _, nodes = self.snapshot()
         self.assertTrue(any(n.workspace_id == 42 for n in nodes))
         self.toggle_variable('Show finished')
@@ -798,8 +798,8 @@ int main(void) {
         self.assertFalse(any(n.entity_kind.string() == '.workspace' for n in nodes))
         kind, request, identity, _ = self.dispatch(snapshot, retained.activate)
         self.assertEqual((kind, identity), (0, 42))
-        self.assertTrue(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None))
-        self.assertTrue(lib.andamento_observe(self.core, None, 0, None, 0, None))
+        self.assertTrue(lib.wheelhouse_complete(self.core, request, 0, 0, Text.of(''), None))
+        self.assertTrue(lib.wheelhouse_observe(self.core, None, 0, None, 0, None))
         _, nodes = self.snapshot()
         self.assertFalse(any(n.workspace_id == 42 for n in nodes))
 
@@ -808,26 +808,26 @@ int main(void) {
         # original project path, marked ended, without enabling Show finished.
         self.open_workspace('v', 42)
         update = patch('vessel', 'v', **{'flotilla.convoy.phase': 'landed'})
-        self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
+        self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
         snapshot, nodes = self.snapshot()
         live = [n for n in nodes if n.workspace_id == 42]
         self.assertTrue(live, 'open ended workspace has no sidebar entry')
         self.assertTrue(any(n.entity_kind.string() == 'vessel' for n in live))
         self.assertEqual(self.values(snapshot, next(n for n in live if n.entity_kind.string() == 'vessel'))[2], 'ended')
-        self.assertTrue(lib.andamento_observe(self.core, None, 0, None, 0, None))
+        self.assertTrue(lib.wheelhouse_observe(self.core, None, 0, None, 0, None))
         _, nodes = self.snapshot()
         self.assertFalse(any(n.entity_id.string() == 'v' for n in nodes))
 
     def test_local_sidebar_has_only_observed_workspaces(self):
-        lib.andamento_destroy(self.core)
+        lib.wheelhouse_destroy(self.core)
         config = (ROOT / 'data/sidebar/local.kdl').read_bytes()
-        self.core = lib.andamento_create(config, len(config), None)
+        self.core = lib.wheelhouse_create(config, len(config), None)
         self.assertTrue(self.core)
         _, nodes = self.snapshot()
         self.assertFalse(any(not n.is_section or n.control_count for n in nodes))
         workspaces = (Workspace * 2)(Workspace(70, 0, Text.of('local'), 0),
                                      Workspace(71, 1, Text.of('local'), 1))
-        self.assertEqual(lib.andamento_observe(self.core, workspaces, 2, None, 0, None), 1)
+        self.assertEqual(lib.wheelhouse_observe(self.core, workspaces, 2, None, 0, None), 1)
         snapshot, nodes = self.snapshot()
         entries = [n for n in nodes if not n.is_section]
         self.assertEqual([n.workspace_id for n in entries], [70, 71])
@@ -835,9 +835,9 @@ int main(void) {
         self.assertTrue(all(n.control_count == 0 for n in nodes))
         kind, request, identity, _ = self.dispatch(snapshot, entries[1].activate)
         self.assertEqual((kind, identity), (0, 71))
-        self.assertEqual(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None), 1)
+        self.assertEqual(lib.wheelhouse_complete(self.core, request, 0, 0, Text.of(''), None), 1)
         workspaces[0].name = Text.of('Renamed')
-        self.assertEqual(lib.andamento_observe(self.core, workspaces, 1, None, 0, None), 1)
+        self.assertEqual(lib.wheelhouse_observe(self.core, workspaces, 1, None, 0, None), 1)
         _, nodes = self.snapshot()
         self.assertEqual([(n.workspace_id, n.label.string()) for n in nodes if not n.is_section], [(70, 'Renamed')])
 
@@ -847,24 +847,24 @@ int main(void) {
         for scenario in ('withdrawn', 'restart', 'unplaced-kind'):
             with self.subTest(scenario=scenario):
                 if scenario == 'restart':
-                    lib.andamento_destroy(self.core)
+                    lib.wheelhouse_destroy(self.core)
                     config = (ROOT / 'data/sidebar/daily-driver.kdl').read_bytes()
-                    self.core = lib.andamento_create(config, len(config), None)
+                    self.core = lib.wheelhouse_create(config, len(config), None)
                 kind = 'unplaced' if scenario == 'unplaced-kind' else 'vessel'
                 identity = 'missing'
                 update = patch(kind, identity, **{'flotilla.project': 'p', 'action.primary.recipe': 'exec sh'})
                 if scenario == 'withdrawn':
                     # Entity facts don't expire: the producer unsets them.
-                    self.assertTrue(lib.andamento_apply_patch_json(self.core, 10, Text.of(json.dumps(update)), None))
+                    self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 10, Text.of(json.dumps(update)), None))
                     withdrawal = dict(update, set={}, unset=list(update['set']))
-                    self.assertTrue(lib.andamento_apply_patch_json(self.core, 12, Text.of(json.dumps(withdrawal)), None))
+                    self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 12, Text.of(json.dumps(withdrawal)), None))
                 elif scenario == 'unplaced-kind':
-                    self.assertTrue(lib.andamento_apply_patch_json(self.core, 12, Text.of(json.dumps(update)), None))
+                    self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 12, Text.of(json.dumps(update)), None))
                 binding = patch(kind, identity)
                 binding['target'] = {'kind': 'tab', 'value': workspace_text(70)}
-                self.assertTrue(lib.andamento_apply_patch_json(self.core, 12, Text.of(json.dumps(binding)), None))
+                self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 12, Text.of(json.dumps(binding)), None))
                 workspace = Workspace(70, 0, Text.of('Open workspace'), 1)
-                self.assertTrue(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None))
+                self.assertTrue(lib.wheelhouse_observe(self.core, C.byref(workspace), 1, None, 0, None))
                 snapshot, nodes = self.snapshot()
                 entries = [n for n in nodes if n.workspace_id == 70]
                 self.assertEqual(len(entries), 1)
@@ -872,13 +872,13 @@ int main(void) {
                 self.assertEqual(self.values(snapshot, nodes[entries[0].parent]), ['Other workspaces'])
                 kind, request, identity, _ = self.dispatch(snapshot, entries[0].activate)
                 self.assertEqual((kind, identity), (0, 70))
-                self.assertTrue(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None))
-                self.assertTrue(lib.andamento_observe(self.core, None, 0, None, 0, None))
+                self.assertTrue(lib.wheelhouse_complete(self.core, request, 0, 0, Text.of(''), None))
+                self.assertTrue(lib.wheelhouse_observe(self.core, None, 0, None, 0, None))
 
     def test_unplaced_workspaces_focus_exact_ids_and_reject_stale_actions(self):
         workspaces = (Workspace * 2)(Workspace(70, 0, Text.of('local'), 0),
                                      Workspace(71, 1, Text.of('local'), 1))
-        self.assertEqual(lib.andamento_observe(self.core, workspaces, 2, None, 0, None), 1)
+        self.assertEqual(lib.wheelhouse_observe(self.core, workspaces, 2, None, 0, None), 1)
         snapshot, nodes = self.snapshot()
         fallback = [n for n in nodes if n.entity_kind.string() == '.workspace']
         self.assertEqual([n.workspace_id for n in fallback], [70, 71])
@@ -886,9 +886,9 @@ int main(void) {
         self.assertNotEqual(fallback[0].key.string(), fallback[1].key.string())
         kind, request, identity, _ = self.dispatch(snapshot, fallback[1].activate)
         self.assertEqual((kind, identity), (0, 71))
-        self.assertEqual(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None), 1)
-        self.assertEqual(lib.andamento_observe(self.core, workspaces, 1, None, 0, None), 1)
-        self.assertEqual(lib.andamento_dispatch(self.core, snapshot, fallback[1].activate, None), 0)
+        self.assertEqual(lib.wheelhouse_complete(self.core, request, 0, 0, Text.of(''), None), 1)
+        self.assertEqual(lib.wheelhouse_observe(self.core, workspaces, 1, None, 0, None), 1)
+        self.assertEqual(lib.wheelhouse_dispatch(self.core, snapshot, fallback[1].activate, None), 0)
         _, nodes = self.snapshot()
         self.assertEqual([n.workspace_id for n in nodes if n.entity_kind.string() == '.workspace'], [70])
 
@@ -898,10 +898,10 @@ int main(void) {
         self.open_workspace('v', 42)
         for phase in ('landed', 'active'):
             if phase == 'active':
-                self.assertTrue(lib.andamento_provider_set_stale(self.core, PROVIDER, 1, None))
+                self.assertTrue(lib.wheelhouse_provider_set_stale(self.core, PROVIDER, 1, None))
             for kind, identity in [('convoy', 'c'), ('vessel', 'v')]:
                 update = patch(kind, identity, **{'flotilla.convoy.phase': phase})
-                self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
+                self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
             _, nodes = self.snapshot()
             self.assertTrue(any(n.workspace_id == 42 for n in nodes))
         self.toggle_variable('Show finished')
@@ -909,28 +909,28 @@ int main(void) {
         live = next(n for n in nodes if n.entity_id.string() == 'v' and n.workspace_id == 42)
         self.assertEqual(self.values(snapshot, live)[2], 'ended')
         self.assertTrue(live.stale)
-        self.assertTrue(lib.andamento_provider_set_stale(self.core, PROVIDER, 0, None))
+        self.assertTrue(lib.wheelhouse_provider_set_stale(self.core, PROVIDER, 0, None))
         snapshot, nodes = self.snapshot()
         live = next(n for n in nodes if n.entity_id.string() == 'v' and n.workspace_id == 42)
         self.assertNotEqual(self.values(snapshot, live)[2], 'ended')
         self.assertFalse(live.stale)
         kind, request, identity, _ = self.dispatch(snapshot, live.activate)
         self.assertEqual((kind, identity), (0, 42))
-        self.assertTrue(lib.andamento_complete(self.core, request, 0, 0, Text.of(''), None))
+        self.assertTrue(lib.wheelhouse_complete(self.core, request, 0, 0, Text.of(''), None))
 
     def test_hover_details_use_templates_without_changing_compact_rows(self):
         update = patch('vessel', 'v', **{'flotilla.vessel.host': 'remote',
                        'vcs.repo': 'github.com/example/repo', 'checkout.path': '/work/repo'})
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
         update = patch('project', 'p')
         update['set']['count.convoys'] = {'value': {'type': 'integer', 'value': 3}}
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
         snapshot, nodes = self.snapshot()
         def fields(start, count):
             values = []
             for index in range(start, start + count):
                 field = Field()
-                self.assertEqual(lib.andamento_snapshot_field(snapshot, index, C.byref(field)), 1)
+                self.assertEqual(lib.wheelhouse_snapshot_field(snapshot, index, C.byref(field)), 1)
                 values.append(field.text.string())
             return values
         for vessel in [n for n in nodes if n.entity_id.string() == 'v']:
@@ -961,7 +961,7 @@ int main(void) {
     def test_inline_siblings_keep_independent_bindings_when_parent_collapses(self):
         update = patch('vessel', 'review', **{'flotilla.convoy': 'c',
                                              'action.primary.recipe': 'exec review'})
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
         snapshot, nodes = self.snapshot()
         convoy = next(n for n in nodes if n.entity_id.string() == 'c')
         children = [n for n in nodes if n.parent != Size(-1).value and
@@ -973,9 +973,9 @@ int main(void) {
         review = next(n for n in nodes if n.entity_id.string() == 'review')
         kind, request, _, recipe = self.dispatch(snapshot, review.activate)
         self.assertEqual((kind, recipe), (1, 'exec review'))
-        self.assertEqual(lib.andamento_complete(self.core, request, 1, 43, Text.of(''), None), 1)
+        self.assertEqual(lib.wheelhouse_complete(self.core, request, 1, 43, Text.of(''), None), 1)
         workspace = Workspace(43, 0, Text.of('review'), 1)
-        self.assertEqual(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None), 1)
+        self.assertEqual(lib.wheelhouse_observe(self.core, C.byref(workspace), 1, None, 0, None), 1)
         snapshot, nodes = self.snapshot()
         review = next(n for n in nodes if n.entity_id.string() == 'review')
         worker = next(n for n in nodes if n.entity_id.string() == 'v')
@@ -991,11 +991,11 @@ int main(void) {
         # A convoy and its vessel can both own open workspaces even when the
         # convoy action subsequently aliases the vessel. Only the subject owns selection.
         update = patch('convoy', 'c', **{'action.primary.target': 'convoy:c'})
-        self.assertTrue(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
+        self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None))
         self.open_workspace('c', 43)
         self.open_workspace('v', 42)
         update = patch('convoy', 'c', **{'action.primary.target': 'vessel:v'})
-        self.assertTrue(lib.andamento_apply_patch_json(self.core, 2, Text.of(json.dumps(update)), None))
+        self.assertTrue(lib.wheelhouse_apply_patch_json(self.core, 2, Text.of(json.dumps(update)), None))
         for selected in (42, 43):
             for project_closed in (False, True):
                 for convoy_closed in (False, True):
@@ -1004,10 +1004,10 @@ int main(void) {
                             snap, nodes = self.snapshot()
                             node = next(n for n in nodes if n.entity_id.string() == identity)
                             if bool(node.collapsed) != closed:
-                                self.assertTrue(lib.andamento_dispatch(self.core, snap, node.toggle, None))
+                                self.assertTrue(lib.wheelhouse_dispatch(self.core, snap, node.toggle, None))
                         workspaces = (Workspace * 2)(Workspace(42, 0, Text.of('v'), selected == 42),
                                                      Workspace(43, 1, Text.of('c'), selected == 43))
-                        self.assertTrue(lib.andamento_observe(self.core, workspaces, 2, None, 0, None))
+                        self.assertTrue(lib.wheelhouse_observe(self.core, workspaces, 2, None, 0, None))
                         _, nodes = self.snapshot()
                         convoy = next(n for n in nodes if n.entity_id.string() == 'c')
                         vessels = [n for n in nodes if n.entity_id.string() == 'v']
@@ -1021,9 +1021,9 @@ int main(void) {
         kind, request, _, recipe = self.dispatch(snapshot, vessels[1].activate)
         self.assertEqual(kind, 1)  # materialize, never inspect
         self.assertIn('flotilla attach', recipe)
-        self.assertEqual(lib.andamento_complete(self.core, request, 1, 42, Text.of(''), None), 1)
+        self.assertEqual(lib.wheelhouse_complete(self.core, request, 1, 42, Text.of(''), None), 1)
         workspace = Workspace(42, 0, Text.of('v'), 1)
-        self.assertEqual(lib.andamento_observe(self.core, C.byref(workspace), 1, None, 0, None), 1)
+        self.assertEqual(lib.wheelhouse_observe(self.core, C.byref(workspace), 1, None, 0, None), 1)
         snapshot, nodes = self.snapshot()
         vessels = [n for n in nodes if n.entity_id.string() == 'v']
         self.assertTrue(all(n.state == 3 and n.workspace_id == 42 and n.selected for n in vessels))
@@ -1037,7 +1037,7 @@ int main(void) {
             snapshot, nodes = self.snapshot()
             node = next(n for n in nodes if n.entity_id.string() == identity)
             self.assertNotEqual(node.toggle, Size(-1).value)
-            self.assertEqual(lib.andamento_dispatch(self.core, snapshot, node.toggle, None), 1)
+            self.assertEqual(lib.wheelhouse_dispatch(self.core, snapshot, node.toggle, None), 1)
 
         # Convoys start closed; c2 is opened away from that default.
         _, before = self.snapshot()
@@ -1049,8 +1049,8 @@ int main(void) {
         # A producer update and host observation must not reset collapse, change
         # placement identities, or remove the children needed for reopening.
         update = patch('vessel', 'v', **{'display.label': 'renamed vessel'})
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
-        self.assertEqual(lib.andamento_observe(self.core, None, 0, None, 0, None), 1)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.wheelhouse_observe(self.core, None, 0, None, 0, None), 1)
         _, after = self.snapshot()
         self.assertEqual([(n.key.string(), n.parent) for n in after], keys)
         find = lambda identity: next(n for n in after if n.entity_id.string() == identity)
@@ -1078,12 +1078,12 @@ int main(void) {
             for node in nodes:
                 for index in range(node.first_control, node.first_control + node.control_count):
                     control = Control()
-                    self.assertTrue(lib.andamento_snapshot_control(snapshot, index, C.byref(control)))
+                    self.assertTrue(lib.wheelhouse_snapshot_control(snapshot, index, C.byref(control)))
                     if control.label.string() == 'Issues':
                         controls.append(control)
             self.assertEqual(len(controls), 1)
             self.assertEqual((controls[0].value_kind, bool(controls[0].checked)), (1, checked))
-            self.assertTrue(lib.andamento_dispatch(self.core, snapshot, controls[0].action, None))
+            self.assertTrue(lib.wheelhouse_dispatch(self.core, snapshot, controls[0].action, None))
             snapshot, nodes = self.snapshot()
             self.assertEqual(any(n.entity_id.string() == 'issue' for n in nodes), not checked)
             self.assertTrue(any(n.entity_id.string() == 'v' for n in nodes))
@@ -1092,15 +1092,15 @@ int main(void) {
     def test_abbreviated_row_retains_full_label_and_declared_field_slots(self):
         config = (ROOT / 'data/sidebar/daily-driver.kdl').read_text().replace(
             'for "vessel" kind="vessel" visibility=', 'for "vessel" kind="vessel" tier="short" visibility=')
-        self.assertEqual(lib.andamento_configure(self.core, Text.of(config), None), 1)
+        self.assertEqual(lib.wheelhouse_configure(self.core, Text.of(config), None), 1)
         update = patch('vessel', 'v', **{'display.label': 'Full worker label', 'display.label.short': 'w'})
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
         snapshot, nodes = self.snapshot()
         vessel = next(n for n in nodes if n.entity_id.string() == 'v')
         fields = []
         for index in range(vessel.first_field, vessel.first_field + vessel.field_count):
             field = Field()
-            self.assertEqual(lib.andamento_snapshot_field(snapshot, index, C.byref(field)), 1)
+            self.assertEqual(lib.wheelhouse_snapshot_field(snapshot, index, C.byref(field)), 1)
             fields.append(field.text.string())
         self.assertEqual(fields[:3], ['w', 'vessel', ''])
         self.assertIn('chip-short:w', fields)
@@ -1109,7 +1109,7 @@ int main(void) {
 
     def test_loop_keys_group_siblings_but_separate_attention_aliases(self):
         update = patch('vessel', 'v2', **{'flotilla.project': 'p', 'flotilla.convoy': 'c'})
-        self.assertEqual(lib.andamento_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
+        self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
         snapshot, nodes = self.snapshot()
         keys = {}
         for index, node in enumerate(nodes):
@@ -1121,13 +1121,13 @@ int main(void) {
         self.assertNotEqual(keys['v'][0], keys['v'][1])
 
     def strip(self, kind, identity):
-        strip = lib.andamento_strip_get(self.core, Entity(PROVIDER, Text.of(kind), Text.of(identity)), None)
+        strip = lib.wheelhouse_strip_get(self.core, Entity(PROVIDER, Text.of(kind), Text.of(identity)), None)
         self.assertTrue(strip)
         try:
             entries = [strip.contents.entries[i] for i in range(strip.contents.count)]
             return [('related' if e.section == 0 else 'linked', e.entity.kind.string() + '/' + e.entity.id.string()) for e in entries]
         finally:
-            lib.andamento_strip_free(strip)
+            lib.wheelhouse_strip_free(strip)
 
     def test_shipped_strips_list_related_workspaces_and_linked_items(self):
         # The hierarchy facts are text ids, as Flotilla publishes them.
@@ -1137,7 +1137,7 @@ int main(void) {
                      patch('change_request', 'cr', **{'flotilla.subject.number': '12', 'flotilla.subject_of': [{'kind': 'convoy', 'id': 'c'}]}),
                      patch('issue', 'i3', **{'flotilla.subject.number': '3', 'flotilla.subject_of': [{'kind': 'convoy', 'id': 'c'}]}),
                      patch('issue', 'other', **{'flotilla.subject.number': '1', 'flotilla.subject_of': [{'kind': 'convoy', 'id': 'c2'}]})]:
-            self.assertEqual(lib.andamento_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
+            self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 0, Text.of(json.dumps(item)), None), 1)
         # A convoy: its project, its vessels by label, then its PRs and issues.
         self.assertEqual(self.strip('convoy', 'c'), [
             ('related', 'project/p'), ('related', 'vessel/v2'), ('related', 'vessel/v'),

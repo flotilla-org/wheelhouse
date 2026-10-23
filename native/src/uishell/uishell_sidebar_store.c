@@ -1,4 +1,4 @@
-//- The Dashboard's sidebar arrangement in Andamento (ADR 0012; andamento.h,
+//- The Dashboard's sidebar arrangement in Andamento (ADR 0012; wheelhouse.h,
 // "the Dashboard's sidebar arrangement"; Andamento's
 // docs/sidebar-design/sidebar-arrangement.md). Which sections are docked
 // where, and which are closed, is Dashboard state: Andamento keeps it as one
@@ -12,12 +12,12 @@
 //
 //   load    A window saved since has no sidebar in the presentation file,
 //           only `sidebar_presentation`: the dock follows
-//           andamento_sidebar_arrangement_get, with this device's settings
+//           wheelhouse_sidebar_arrangement_get, with this device's settings
 //           merged back in. A new Dashboard's take Andamento's placement
 //           (uishell_sidebar_store_load).
 //   commit  Once no gesture is in flight, a sidebar whose arrangements were
 //           set since is committed whole at the generation last seen
-//           (andamento_sidebar_arrangement_commit). Closing a section is
+//           (wheelhouse_sidebar_arrangement_commit). Closing a section is
 //           committing without it. A stale commit is made again at the new
 //           generation, as a workspace's is (uishell_workspace_store.c): only
 //           Andamento's own reconciliation moves it. A section it placed
@@ -30,8 +30,8 @@
 //           (before Wheelhouse first publishes them), is not shown once they
 //           exist: they are, in its place.
 //   restore, reset   The Sections menu's Restore and Reset To Default Panel
-//           Layout are andamento_sidebar_restore_section and
-//           andamento_sidebar_reset, then a follow.
+//           Layout are wheelhouse_sidebar_restore_section and
+//           wheelhouse_sidebar_reset, then a follow.
 //
 // What stays here needs pixels or this host's config: the docking checker
 // (shell_docking.h: a section never docks inside a child Workspace level); a
@@ -75,10 +75,10 @@ typedef struct UIShell_SidebarDoc UIShell_SidebarDoc;
 struct UIShell_SidebarDoc
 {
   // The dock's panels, in preorder, each naming its parent by index.
-  AndamentoDocPanel *panels;
+  WheelhouseDocPanel *panels;
   U64 panel_count;
   // Each tab panel's keys, adjacent in tree order.
-  AndamentoText *tabs;
+  WheelhouseText *tabs;
   String8 *keys;
   U64 tab_count;
   // Sections a safety restore moved (section_hint_pending): left out, and
@@ -245,8 +245,8 @@ uishell_sidebar_store_doc(Arena *arena, UIShell_SidebarState *state, CFG_Node *w
   U64 panels = 0, tabs = 0;
   for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
   { panels += 1; tabs += p->tab_count; }
-  doc.panels = push_array(arena, AndamentoDocPanel, panels);
-  doc.tabs = push_array(arena, AndamentoText, tabs);
+  doc.panels = push_array(arena, WheelhouseDocPanel, panels);
+  doc.tabs = push_array(arena, WheelhouseText, tabs);
   doc.keys = push_array(arena, String8, tabs);
   doc.pending = push_array(arena, String8, tabs);
   RD_ArrangementPanel **order = push_array(arena, RD_ArrangementPanel *, panels);
@@ -269,23 +269,23 @@ uishell_sidebar_store_doc(Arena *arena, UIShell_SidebarState *state, CFG_Node *w
     }
     U64 index = doc.panel_count++;
     order[index] = p;
-    AndamentoDocPanel *out = &doc.panels[index];
-    out->parent = ANDAMENTO_NONE;
-    for(U64 j = index; j > 0 && out->parent == ANDAMENTO_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1; } }
+    WheelhouseDocPanel *out = &doc.panels[index];
+    out->parent = WHEELHOUSE_NONE;
+    for(U64 j = index; j > 0 && out->parent == WHEELHOUSE_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1; } }
     out->id = uishell_sidebar_text(push_str8f(arena, "%I64u", p->id));
     // A root's weight means nothing to Andamento, and the size the sidebar
     // gives a docked section from its content is this device's.
     F32 weight = p->weight;
     if(p == a->root || (!manual && uishell_sidebar_store_content_sized(a, p))) { weight = 1.f; }
     out->weight = (weight > 0 && weight < 1e30f) ? f64_from_str8(rd_arrangement_weight_string(arena, weight)) : 0.01;
-    out->selected = ANDAMENTO_NONE;
+    out->selected = WHEELHOUSE_NONE;
     if(p->first != &rd_nil_arrangement_panel)
     {
-      out->kind = ANDAMENTO_PANEL_SPLIT;
-      out->axis = rd_arrangement_split_axis(a, p) == Axis2_X ? ANDAMENTO_AXIS_ROW : ANDAMENTO_AXIS_COLUMN;
+      out->kind = WHEELHOUSE_PANEL_SPLIT;
+      out->axis = rd_arrangement_split_axis(a, p) == Axis2_X ? WHEELHOUSE_AXIS_ROW : WHEELHOUSE_AXIS_COLUMN;
       continue;
     }
-    out->kind = ANDAMENTO_PANEL_TABS;
+    out->kind = WHEELHOUSE_PANEL_TABS;
     out->tabs = doc.tabs+doc.tab_count;
     for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
     {
@@ -307,25 +307,25 @@ uishell_sidebar_store_doc(Arena *arena, UIShell_SidebarState *state, CFG_Node *w
 }
 
 // The document as Andamento takes it.
-internal AndamentoSidebarDoc
-uishell_sidebar_store_andamento_doc(UIShell_SidebarDoc *doc)
+internal WheelhouseSidebarDoc
+uishell_sidebar_store_core_doc(UIShell_SidebarDoc *doc)
 {
-  AndamentoSidebarDoc result = {{doc->panels, doc->panel_count}};
+  WheelhouseSidebarDoc result = {{doc->panels, doc->panel_count}};
   return result;
 }
 
 // Whether Andamento made `after` of `sent` as it was: the same panels, with
 // the same tabs.
 internal B32
-uishell_sidebar_store_same(AndamentoSidebarDoc *after, AndamentoSidebarDoc *sent)
+uishell_sidebar_store_same(WheelhouseSidebarDoc *after, WheelhouseSidebarDoc *sent)
 {
-  AndamentoArrangementDoc *a = &after->dock, *b = &sent->dock;
+  WheelhouseArrangementDoc *a = &after->dock, *b = &sent->dock;
   if(a->panel_count != b->panel_count) { return 0; }
   for(U64 i = 0; i < a->panel_count; i++)
   {
-    AndamentoDocPanel const *p = &a->panels[i], *q = &b->panels[i];
+    WheelhouseDocPanel const *p = &a->panels[i], *q = &b->panels[i];
     if(!str8_match(uishell_sidebar_string(p->id), uishell_sidebar_string(q->id), 0) || p->parent != q->parent || p->weight != q->weight ||
-       p->kind != q->kind || (p->kind == ANDAMENTO_PANEL_SPLIT && p->axis != q->axis) || p->tab_count != q->tab_count || p->selected != q->selected) { return 0; }
+       p->kind != q->kind || (p->kind == WHEELHOUSE_PANEL_SPLIT && p->axis != q->axis) || p->tab_count != q->tab_count || p->selected != q->selected) { return 0; }
     for(U64 t = 0; t < p->tab_count; t++) { if(!str8_match(uishell_sidebar_string(p->tabs[t]), uishell_sidebar_string(q->tabs[t]), 0)) { return 0; } }
   }
   return 1;
@@ -335,19 +335,19 @@ uishell_sidebar_store_same(AndamentoSidebarDoc *after, AndamentoSidebarDoc *sent
 // again would change nothing, though its arrangements were set since (and
 // set back), so it isn't.
 internal void
-uishell_sidebar_store_saw(UIShell_SidebarState *state, AndamentoSidebarDoc *doc)
+uishell_sidebar_store_saw(UIShell_SidebarState *state, WheelhouseSidebarDoc *doc)
 {
   if(!state->sidebar_seen_arena) { state->sidebar_seen_arena = arena_alloc(); }
   arena_clear(state->sidebar_seen_arena);
   Arena *arena = state->sidebar_seen_arena;
-  AndamentoSidebarDoc result = {0};
-  AndamentoArrangementDoc *from = &doc->dock;
-  AndamentoDocPanel *panels = push_array(arena, AndamentoDocPanel, from->panel_count);
+  WheelhouseSidebarDoc result = {0};
+  WheelhouseArrangementDoc *from = &doc->dock;
+  WheelhouseDocPanel *panels = push_array(arena, WheelhouseDocPanel, from->panel_count);
   for(U64 i = 0; i < from->panel_count; i++)
   {
     panels[i] = from->panels[i];
     panels[i].id = uishell_sidebar_text(push_str8_copy(arena, uishell_sidebar_string(from->panels[i].id)));
-    AndamentoText *tabs = push_array(arena, AndamentoText, panels[i].tab_count);
+    WheelhouseText *tabs = push_array(arena, WheelhouseText, panels[i].tab_count);
     for(U64 t = 0; t < panels[i].tab_count; t++) { tabs[t] = uishell_sidebar_text(push_str8_copy(arena, uishell_sidebar_string(from->panels[i].tabs[t]))); }
     panels[i].tabs = tabs;
   }
@@ -376,7 +376,7 @@ uishell_sidebar_section_gone(UIShell_SidebarState *state, String8 key)
 
 // What Andamento's notes say is closed, and what no longer resolves.
 internal void
-uishell_sidebar_store_notes(UIShell_SidebarState *state, AndamentoSidebarArrangement *arrangement)
+uishell_sidebar_store_notes(UIShell_SidebarState *state, WheelhouseSidebarArrangement *arrangement)
 {
   if(!state->sidebar_notes_arena) { state->sidebar_notes_arena = arena_alloc(); }
   arena_clear(state->sidebar_notes_arena);
@@ -387,10 +387,10 @@ uishell_sidebar_store_notes(UIShell_SidebarState *state, AndamentoSidebarArrange
   state->sidebar_closed_count = state->sidebar_gone_count = 0;
   for(U64 i = 0; i < count; i++)
   {
-    AndamentoNote *note = &arrangement->notes[i];
+    WheelhouseNote *note = &arrangement->notes[i];
     String8 key = push_str8_copy(arena, uishell_sidebar_string(note->key));
-    if(note->kind == ANDAMENTO_NOTE_CLOSED) { state->sidebar_closed[state->sidebar_closed_count++] = key; }
-    if(note->kind == ANDAMENTO_NOTE_UNRESOLVED) { state->sidebar_gone[state->sidebar_gone_count++] = key; }
+    if(note->kind == WHEELHOUSE_NOTE_CLOSED) { state->sidebar_closed[state->sidebar_closed_count++] = key; }
+    if(note->kind == WHEELHOUSE_NOTE_UNRESOLVED) { state->sidebar_gone[state->sidebar_gone_count++] = key; }
   }
 }
 
@@ -399,9 +399,9 @@ uishell_sidebar_store_notes(UIShell_SidebarState *state, AndamentoSidebarArrange
 internal void
 uishell_sidebar_store_read_notes(UIShell_SidebarState *state)
 {
-  AndamentoSidebarArrangement *stored = UIShell_StoreCall(state, andamento_sidebar_arrangement_get(state->core, 0));
+  WheelhouseSidebarArrangement *stored = UIShell_StoreCall(state, wheelhouse_sidebar_arrangement_get(state->core, 0));
   uishell_sidebar_store_notes(state, stored);
-  andamento_sidebar_arrangement_free(stored);
+  wheelhouse_sidebar_arrangement_free(stored);
 }
 
 //- Following Andamento's document
@@ -438,9 +438,9 @@ uishell_sidebar_store_device_view(CFG_Node *device, String8 key)
   return &cfg_nil_node;
 }
 
-// Whether Andamento noted `key` as `kind` (ANDAMENTO_NOTE_*).
+// Whether Andamento noted `key` as `kind` (WHEELHOUSE_NOTE_*).
 internal B32
-uishell_sidebar_store_noted(AndamentoSidebarArrangement *a, U32 kind, String8 key)
+uishell_sidebar_store_noted(WheelhouseSidebarArrangement *a, U32 kind, String8 key)
 {
   for(U64 i = 0; a && i < a->note_count; i++)
   { if(a->notes[i].kind == kind && str8_match(uishell_sidebar_string(a->notes[i].key), key, 0)) { return 1; } }
@@ -453,7 +453,7 @@ struct UIShell_SidebarFollow
   Arena *arena;
   // Every tab, the dock's first, and each tab's View (nil: none to show
   // here). A panel's first tab is first_tab[] of its document.
-  AndamentoText *tabs;
+  WheelhouseText *tabs;
   U64 tab_count;
   RD_ViewAddress *views;
   // The sizes this device gave the dock's sections from their content, by key.
@@ -468,7 +468,7 @@ struct UIShell_SidebarFollow
 // Fills the cleared `a` with the tree under panel `root` of `doc`. `old_ids`
 // are the IDs the arrangement had, which new panels stay clear of.
 internal void
-uishell_sidebar_store_fill(UIShell_SidebarFollow *f, RD_Arrangement *a, AndamentoArrangementDoc *doc, UIShell_DocShape *shape,
+uishell_sidebar_store_fill(UIShell_SidebarFollow *f, RD_Arrangement *a, WheelhouseArrangementDoc *doc, UIShell_DocShape *shape,
                            U64 *first_tab, U64 root, B32 dock, RD_PanelID *old_ids, U64 old_count)
 {
   Arena *arena = f->arena;
@@ -488,24 +488,24 @@ uishell_sidebar_store_fill(UIShell_SidebarFollow *f, RD_Arrangement *a, Andament
   U64 fresh = max_id+1;
   // Allocations stay clear of the IDs set below until they are all set.
   a->next_id = max_id + (1ull << 40);
-  if(doc->panels[root].kind == ANDAMENTO_PANEL_SPLIT) { a->root_axis = doc->panels[root].axis == ANDAMENTO_AXIS_ROW ? Axis2_X : Axis2_Y; }
+  if(doc->panels[root].kind == WHEELHOUSE_PANEL_SPLIT) { a->root_axis = doc->panels[root].axis == WHEELHOUSE_AXIS_ROW ? Axis2_X : Axis2_Y; }
   U64 ids_used = 0;
   RD_PanelID *ids = push_array(arena, RD_PanelID, panel_count+1);
   RD_PanelID *made = push_array(arena, RD_PanelID, count+1);
   for(U64 index = root; index < count; index++)
   {
     if(!in_tree[index]) { continue; }
-    AndamentoDocPanel *src = &doc->panels[index];
-    U64 up = index == root ? ANDAMENTO_NONE : shape->parent[index];
+    WheelhouseDocPanel *src = &doc->panels[index];
+    U64 up = index == root ? WHEELHOUSE_NONE : shape->parent[index];
     if(index != root && shape->lifted[index]) { made[index] = made[up]; continue; }
     F32 weight = shape->weight[index];
     // A docked section's size that content decided stays this device's.
-    if(dock && !f->manual && up == root && src->kind == ANDAMENTO_PANEL_TABS && src->tab_count == 1)
+    if(dock && !f->manual && up == root && src->kind == WHEELHOUSE_PANEL_TABS && src->tab_count == 1)
     {
       String8 key = uishell_sidebar_string(src->tabs[0]);
       for(U64 i = 0; i < f->size_count; i++) { if(str8_match(f->size_keys[i], key, 0)) { weight = f->sizes[i]; break; } }
     }
-    RD_PanelID panel_id = up != ANDAMENTO_NONE ? rd_arrangement_add(a, made[up], weight) : a->root->id;
+    RD_PanelID panel_id = up != WHEELHOUSE_NONE ? rd_arrangement_add(a, made[up], weight) : a->root->id;
     RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(a, panel_id);
     // A panel keeps its ID, and so its Presentation State. A leaf Andamento
     // lifted out of the root keeps the root's ID, and its Presentation State.
@@ -515,7 +515,7 @@ uishell_sidebar_store_fill(UIShell_SidebarFollow *f, RD_Arrangement *a, Andament
     panel->id = wanted;
     made[index] = wanted;
     ids[ids_used++] = wanted;
-    if(src->kind != ANDAMENTO_PANEL_TABS) { continue; }
+    if(src->kind != WHEELHOUSE_PANEL_TABS) { continue; }
     RD_ViewAddress prev = rd_nil_view_address, selected = rd_nil_view_address, first = rd_nil_view_address;
     for(U64 t = 0; t < src->tab_count && first_tab[index]+t < f->tab_count; t++)
     {
@@ -545,14 +545,14 @@ uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
 {
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
-  AndamentoSidebarArrangement *stored = UIShell_StoreCall(state, andamento_sidebar_arrangement_get(state->core, 0));
+  WheelhouseSidebarArrangement *stored = UIShell_StoreCall(state, wheelhouse_sidebar_arrangement_get(state->core, 0));
   if(!stored)
   {
     scratch_end(scratch);
     return 0;
   }
   uishell_sidebar_store_notes(state, stored);
-  AndamentoArrangementDoc *doc = &stored->doc.dock;
+  WheelhouseArrangementDoc *doc = &stored->doc.dock;
   UIShell_DocShape shape = uishell_store_doc_shape(arena, doc);
   CFG_Node *device = cfg_node_child_from_string(window, str8_lit("sidebar_presentation"));
   UIShell_SidebarFollow f = {arena};
@@ -560,11 +560,11 @@ uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
   // Every tab, in order.
   U64 *first_tab = push_array(arena, U64, doc->panel_count+1);
   for(U64 i = 0; i < doc->panel_count; i++) { first_tab[i] = f.tab_count; f.tab_count += doc->panels[i].tab_count; }
-  f.tabs = push_array(arena, AndamentoText, f.tab_count+1);
+  f.tabs = push_array(arena, WheelhouseText, f.tab_count+1);
   f.views = push_array(arena, RD_ViewAddress, f.tab_count+1);
   for(U64 i = 0; i < doc->panel_count; i++)
   {
-    AndamentoDocPanel *p = &doc->panels[i];
+    WheelhouseDocPanel *p = &doc->panels[i];
     for(U64 t = 0; t < p->tab_count; t++) { f.tabs[first_tab[i]+t] = p->tabs[t]; }
   }
 
@@ -624,7 +624,7 @@ uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
     if(!rd_view_address_is_nil(f.views[t])) { continue; }
     // The container of local sections, placed while there were none (as
     // before they are first published), shows them in its place instead.
-    if(uishell_sidebar_store_noted(stored, ANDAMENTO_NOTE_UNRESOLVED, key) && uishell_sidebar_section_container(state, key)) { continue; }
+    if(uishell_sidebar_store_noted(stored, WHEELHOUSE_NOTE_UNRESOLVED, key) && uishell_sidebar_section_container(state, key)) { continue; }
     if(str8_match(str8_prefix(key, 2), str8_lit("u:"), 0))
     {
       // A View of this host's own: as this device saved it. Another
@@ -671,7 +671,7 @@ uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
   if(device != &cfg_nil_node) { cfg_node_release(rd_state->cfg, device); }
   uishell_store_set_setting(window, str8_lit("sidebar_generation"), push_str8f(arena, "%I64u", stored->generation));
   state->sidebar_generation = stored->generation;
-  andamento_sidebar_arrangement_free(stored);
+  wheelhouse_sidebar_arrangement_free(stored);
   state->sidebar_version = uishell_sidebar_store_version(window);
   // A selection the document lacked is the sidebar's change: the next sync
   // commits it.
@@ -680,7 +680,7 @@ uishell_sidebar_store_follow(UIShell_SidebarState *state, CFG_Node *window)
   else
   {
     UIShell_SidebarDoc seen = uishell_sidebar_store_doc(arena, state, window);
-    AndamentoSidebarDoc seen_doc = uishell_sidebar_store_andamento_doc(&seen);
+    WheelhouseSidebarDoc seen_doc = uishell_sidebar_store_core_doc(&seen);
     uishell_sidebar_store_saw(state, &seen_doc);
   }
   scratch_end(scratch);
@@ -739,34 +739,34 @@ uishell_sidebar_store_load(UIShell_SidebarState *state, CFG_Node *window)
 // can't have, is added to *placed_out (from `arena`): committing without it
 // closed it, so the caller restores it. Returns the arrangement after
 // (COMMITTED, or STALE twice over), or 0 with the sidebar's error set.
-internal AndamentoSidebarArrangement *
+internal WheelhouseSidebarArrangement *
 uishell_sidebar_store_commit(Arena *arena, UIShell_SidebarState *state, UIShell_SidebarDoc *doc, U64 expected, String8List *placed_out)
 {
-  AndamentoSidebarDoc out = uishell_sidebar_store_andamento_doc(doc);
-  AndamentoSidebarArrangement *after = 0;
+  WheelhouseSidebarDoc out = uishell_sidebar_store_core_doc(doc);
+  WheelhouseSidebarArrangement *after = 0;
   char *error = 0;
   for(U32 attempt = 0; attempt < 2; attempt++)
   {
-    andamento_string_free(error);
+    wheelhouse_string_free(error);
     error = 0;
-    andamento_sidebar_arrangement_free(after);
-    after = UIShell_StoreCall(state, andamento_sidebar_arrangement_commit(state->core, &out, expected, &error));
+    wheelhouse_sidebar_arrangement_free(after);
+    after = UIShell_StoreCall(state, wheelhouse_sidebar_arrangement_commit(state->core, &out, expected, &error));
     state->sidebar_commits += 1;
-    if(!after || after->status != ANDAMENTO_STALE) { break; }
+    if(!after || after->status != WHEELHOUSE_STALE) { break; }
     // Stale: Andamento reconciled what was declared since, and this is its
     // document now. The edit is committed again at its generation, keeping
     // what it placed.
     for(U64 i = 0; i < after->note_count; i++)
     {
       String8 key = uishell_sidebar_string(after->notes[i].key);
-      if(after->notes[i].kind != ANDAMENTO_NOTE_PLACED || uishell_sidebar_store_listed(doc->keys, doc->tab_count, key)) { continue; }
+      if(after->notes[i].kind != WHEELHOUSE_NOTE_PLACED || uishell_sidebar_store_listed(doc->keys, doc->tab_count, key)) { continue; }
       str8_list_push(arena, placed_out, push_str8_copy(arena, key));
     }
     expected = after->generation;
   }
-  if(!after || after->status != ANDAMENTO_COMMITTED)
+  if(!after || after->status != WHEELHOUSE_COMMITTED)
   { uishell_sidebar_set_error(state, error ? str8_cstring(error) : str8_lit("The sidebar's arrangement was not committed")); }
-  andamento_string_free(error);
+  wheelhouse_string_free(error);
   return after;
 }
 
@@ -787,14 +787,14 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
   if(marked && state->sidebar_seen_valid && uishell_sidebar_store_version(window) != state->sidebar_version)
   {
     UIShell_SidebarDoc doc = uishell_sidebar_store_doc(scratch.arena, state, window);
-    AndamentoSidebarDoc unsent = uishell_sidebar_store_andamento_doc(&doc);
+    WheelhouseSidebarDoc unsent = uishell_sidebar_store_core_doc(&doc);
     if(doc.pending_count == 0 && uishell_sidebar_store_same(&state->sidebar_seen, &unsent)) { state->sidebar_version = uishell_sidebar_store_version(window); }
   }
   // Andamento moved the document, and the live copy hasn't changed since:
   // it follows.
   char *error = 0;
-  U64 generation = UIShell_StoreCall(state, andamento_sidebar_arrangement_generation(state->core, &error));
-  andamento_string_free(error);
+  U64 generation = UIShell_StoreCall(state, wheelhouse_sidebar_arrangement_generation(state->core, &error));
+  wheelhouse_string_free(error);
   B32 followed = 0;
   if(marked && generation != state->sidebar_generation && uishell_sidebar_store_version(window) == state->sidebar_version)
   { followed = uishell_sidebar_store_follow(state, window); }
@@ -813,11 +813,11 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
       // At the generation last seen; not followed this session (generations
       // aren't kept across sessions), at Andamento's own.
       U64 expected = state->sidebar_generation ? state->sidebar_generation :
-        UIShell_StoreCall(state, andamento_sidebar_arrangement_generation(state->core, 0));
+        UIShell_StoreCall(state, wheelhouse_sidebar_arrangement_generation(state->core, 0));
       String8List restore = {0};
       state->sidebar_version = version;
-      AndamentoSidebarArrangement *after = uishell_sidebar_store_commit(scratch.arena, state, &doc, expected, &restore);
-      if(after && after->status == ANDAMENTO_COMMITTED)
+      WheelhouseSidebarArrangement *after = uishell_sidebar_store_commit(scratch.arena, state, &doc, expected, &restore);
+      if(after && after->status == WHEELHOUSE_COMMITTED)
       {
         U64 committed = after->generation;
         state->sidebar_generation = committed;
@@ -828,24 +828,24 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
         for(String8Node *n = restore.first; n; n = n->next)
         {
           char *restore_error = 0;
-          AndamentoSidebarArrangement *restored = UIShell_StoreCall(state, andamento_sidebar_restore_section(state->core,
+          WheelhouseSidebarArrangement *restored = UIShell_StoreCall(state, wheelhouse_sidebar_restore_section(state->core,
             uishell_sidebar_text(n->string), committed, &restore_error));
-          andamento_string_free(restore_error);
-          if(restored && restored->status == ANDAMENTO_COMMITTED)
+          wheelhouse_string_free(restore_error);
+          if(restored && restored->status == WHEELHOUSE_COMMITTED)
           {
             committed = restored->generation;
-            andamento_sidebar_arrangement_free(after);
+            wheelhouse_sidebar_arrangement_free(after);
             after = restored;
           }
-          else { andamento_sidebar_arrangement_free(restored); }
+          else { wheelhouse_sidebar_arrangement_free(restored); }
         }
         // Whatever Andamento made of it (a section placed, a duplicate
         // removed) joins the live copy.
-        AndamentoSidebarDoc sent = uishell_sidebar_store_andamento_doc(&doc);
+        WheelhouseSidebarDoc sent = uishell_sidebar_store_core_doc(&doc);
         if(!restore.node_count && uishell_sidebar_store_same(&after->doc, &sent)) { uishell_sidebar_store_notes(state, after); uishell_sidebar_store_saw(state, &sent); }
         else { uishell_sidebar_store_follow(state, window); }
       }
-      andamento_sidebar_arrangement_free(after);
+      wheelhouse_sidebar_arrangement_free(after);
     }
     else if(!followed && generation != state->sidebar_generation) { uishell_sidebar_store_follow(state, window); }
   }
@@ -863,7 +863,7 @@ uishell_sidebar_store_current(UIShell_SidebarState *state, CFG_Node *window)
 {
   state->sidebar_synced = 0;
   uishell_sidebar_store_sync(state, window, 1);
-  return UIShell_StoreCall(state, andamento_sidebar_arrangement_generation(state->core, 0));
+  return UIShell_StoreCall(state, wheelhouse_sidebar_arrangement_generation(state->core, 0));
 }
 
 // Restores the declared section `key` by its hints, with an equal share of
@@ -874,11 +874,11 @@ uishell_sidebar_store_restore(UIShell_SidebarState *state, CFG_Node *window, Str
   if(!state->core || !state->window || window->id != state->window) { return 0; }
   U64 generation = uishell_sidebar_store_current(state, window);
   char *error = 0;
-  AndamentoSidebarArrangement *after = UIShell_StoreCall(state, andamento_sidebar_restore_section(state->core, uishell_sidebar_text(key),
+  WheelhouseSidebarArrangement *after = UIShell_StoreCall(state, wheelhouse_sidebar_restore_section(state->core, uishell_sidebar_text(key),
                                                                                                  generation, &error));
-  andamento_string_free(error);
-  B32 restored = after && after->status == ANDAMENTO_COMMITTED;
-  andamento_sidebar_arrangement_free(after);
+  wheelhouse_string_free(error);
+  B32 restored = after && after->status == WHEELHOUSE_COMMITTED;
+  wheelhouse_sidebar_arrangement_free(after);
   if(!restored) { return 0; }
   uishell_sidebar_store_follow(state, window);
   return 1;
@@ -895,9 +895,9 @@ uishell_sidebar_reset_regions(CFG_Node *window)
   UIShell_SidebarState *state = ws->sidebar;
   U64 generation = uishell_sidebar_store_current(state, window);
   char *error = 0;
-  AndamentoSidebarArrangement *after = UIShell_StoreCall(state, andamento_sidebar_reset(state->core, generation, &error));
-  uishell_sidebar_result(state, after && after->status == ANDAMENTO_COMMITTED, error);
-  andamento_sidebar_arrangement_free(after);
+  WheelhouseSidebarArrangement *after = UIShell_StoreCall(state, wheelhouse_sidebar_reset(state->core, generation, &error));
+  uishell_sidebar_result(state, after && after->status == WHEELHOUSE_COMMITTED, error);
+  wheelhouse_sidebar_arrangement_free(after);
   uishell_sidebar_store_follow(state, window);
 }
 

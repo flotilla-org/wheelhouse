@@ -761,7 +761,7 @@ entry_point(CmdLine *cmdline)
     UIShell_WorkspaceId id = {0};
     IntegrationCheck(uishell_workspace_id_from_string(id_text, &id) && uishell_workspace_id_match(ctx.slot.workspace, id));
     IntegrationCheck(str8_match(ctx.slot.key, str8_lit("u:1"), 0) && ctx.status == WH_SlotStatus_Slot);
-    IntegrationCheck(ctx.spec && ctx.spec->content == ANDAMENTO_SLOT_COMMAND && str8_match(ctx.spec->command, str8_lit("make test"), 0));
+    IntegrationCheck(ctx.spec && ctx.spec->content == WHEELHOUSE_SLOT_COMMAND && str8_match(ctx.spec->command, str8_lit("make test"), 0));
     IntegrationCheck(str8_match(ctx.resolution.session, str8_lit("s-1"), 0) && ctx.rect.x1 == 64);
     IntegrationCheck(wh_view_state(&ctx, UIShell_TerminalViewState) == vs->user_data);
     cfg_node_release(rd_state->cfg, workspace);

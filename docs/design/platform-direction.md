@@ -27,7 +27,7 @@ is small when it comes.
 | Piece | What it is | Where |
 |---|---|---|
 | Wheelhouse | native frontend, C (RAD-derived UI, Metal/D3D11/OpenGL) | this repo |
-| Andamento | placement core, sidebar templates, FFI; also `andamento-tui`, `andamento-html`, `andamento-terminal`, `andamento-rail` | flotilla-org/andamento, pinned by `ANDAMENTO_REV` |
+| Andamento | placement core, sidebar templates, FFI; also `wheelhouse-tui`, `wheelhouse-html`, `wheelhouse-terminal`, `andamento-rail` | flotilla-org/andamento, pinned by `ANDAMENTO_REV` |
 | Cleat | terminal sessions and their daemon | flotilla-org/cleat |
 | Jackstay | frame and input transport between producers and consumers | flotilla-org/jackstay |
 | Luchs | web page producer for Jackstay (WebKit; CEF on a branch) | flotilla-org/luchs |

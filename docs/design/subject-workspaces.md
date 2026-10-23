@@ -196,7 +196,7 @@ Settled for #122 on 2026-10-23 (`native/src/uishell/uishell_tool_strip.c`):
 - **Views:** every slot of the workspace, in slot order, with an icon by role.
   A placed View is drawn normally, and marked when its tab is selected; a click
   selects its tab. An unplaced one is drawn weak, and a click shows it in the
-  panel its layout's matchers would give it (`AndamentoNote.panel`). Closing
+  panel its layout's matchers would give it (`WheelhouseNote.panel`). Closing
   it from a panel it was alone in closes that panel too, collapsing the
   layout (#445). Dragging
   a View into place waits for creation drags into the Workspace Region, which

@@ -1,11 +1,11 @@
 # Embedding the sidebar core
 
-`andamento-core` owns metadata, placement evaluation, template resolution and
+`wheelhouse-core` owns metadata, placement evaluation, template resolution and
 activation decisions. `Sidebar` is the interface for a new presentation
 client. Zellij's existing adapters use the extracted `ControllerState` to
 retain plugin registration and rail synchronization behavior.
 
-The terminal implementation lives in `andamento-terminal`; the plugin in
+The terminal implementation lives in `wheelhouse-terminal`; the plugin in
 `andamento-rail` supplies its Zellij theme, cell size and event handling.
 `andamento-shared` re-exports the core types for existing plugins and keeps
 host filesystem/config adapters. Neither the core nor terminal crate links
@@ -55,12 +55,12 @@ URL template, and substitutes `{web_url}`, `{scope}`, and `{number}` from the
 current resolved facts. Missing facts, unknown placeholders and non-HTTP(S)
 results produce no URL. Open/copy effects need no completion.
 
-The C ABI retains its existing effect structure: `ANDAMENTO_EFFECT_OPEN_URL`
-and `ANDAMENTO_EFFECT_COPY_URL` carry the URL in `recipe`. A subject row with
+The C ABI retains its existing effect structure: `WHEELHOUSE_EFFECT_OPEN_URL`
+and `WHEELHOUSE_EFFECT_COPY_URL` carry the URL in `recipe`. A subject row with
 a resolvable URL sets `openable`; dispatch its normal activation to open it.
-`AndamentoNode.copy_url` is a snapshot-scoped copy action, or
-`ANDAMENTO_NONE`; dispatch it through the usual retained-snapshot validation.
-`andamento_copy_subject_url` also accepts an entity directly. Hosts execute browser and clipboard operations.
+`WheelhouseNode.copy_url` is a snapshot-scoped copy action, or
+`WHEELHOUSE_NONE`; dispatch it through the usual retained-snapshot validation.
+`wheelhouse_copy_subject_url` also accepts an entity directly. Hosts execute browser and clipboard operations.
 
 These facts require a fleet generation carrying the projection from
 [flotilla#2448](https://github.com/flotilla-org/flotilla/pull/2448), merge commit
@@ -106,18 +106,18 @@ and grouping configuration are removed. Sections may declare a placement query
 or contain only static content/controls. Unmatched catalog entities are listed
 in the existing Inspect surface pending #72. See the shipped
 `templates/flotilla-default.kdl` and the native fixture
-`crates/andamento-core/tests/fixtures/sidebar.kdl`.
+`crates/wheelhouse-core/tests/fixtures/sidebar.kdl`.
 
 ## C ABI
 
-The header is `crates/andamento-ffi/include/andamento.h`. Build the library for
+The header is `crates/wheelhouse-ffi/include/wheelhouse.h`. Build the library for
 the native host target, overriding this repository's WASM default:
 
 ```sh
-cargo build -p andamento-ffi --target aarch64-apple-darwin
+cargo build -p wheelhouse-ffi --target aarch64-apple-darwin
 ```
 
-It produces `libandamento_ffi.a` and a dynamic library in the native target's
+It produces `libwheelhouse_ffi.a` and a dynamic library in the native target's
 debug directory. The C interface is ABI version **4**, which
 [The host interface](host-interface.md) maps, with what changed from ABI 3.
 Each call has one form and no earlier version is accepted. It is not yet a
@@ -125,7 +125,7 @@ frozen embedding contract.
 
 ### Workspace IDs
 
-A Workspace ID is 16 opaque bytes (`AndamentoWorkspaceId`, `WorkspaceId` in
+A Workspace ID is 16 opaque bytes (`WheelhouseWorkspaceId`, `WorkspaceId` in
 Rust). The host generates it, a UUIDv7 in practice, when it first saves a
 workspace. Andamento only compares, orders and prints IDs (as hyphenated
 UUIDs, which is also their JSON form) and never generates one, so the core
@@ -134,7 +134,7 @@ Zellij and tmux hosts) use `tab_workspace_id(tab)`, which puts the tab number
 in a UUID.
 
 Users create workspaces that never go through MATERIALIZE. The host declares
-them with `andamento_workspace_register` (`Sidebar::register_workspace`); a
+them with `wheelhouse_workspace_register` (`Sidebar::register_workspace`); a
 successful MATERIALIZE completion registers its workspace too. Registration is
 independent of topology: either may come first, and closing a workspace does
 not forget it. Forget a workspace the host deleted rather than kept.
@@ -153,13 +153,13 @@ own sections, groups and refs have the provider `local` (`LOCAL_PROVIDER`),
 which no host subscription may use.
 
 - **Stamping.** `apply(now_ms, provider, patches)`
-  (`andamento_apply_patch_json`, `andamento_apply_entity`,
-  `andamento_apply_workspace`) requires a provider and stamps it over every
+  (`wheelhouse_apply_patch_json`, `wheelhouse_apply_entity`,
+  `wheelhouse_apply_workspace`) requires a provider and stamps it over every
   entity a patch names: its target, entity references among its values, and
   the entity a workspace's `entity.kind`/`entity.id` (or
   `.host.kind`/`.host.id`) facts name, recorded as `entity.provider`
   (`.host.provider`). Any provider the patch itself names is overwritten.
-  Every entity a host passes otherwise (to `andamento_local_set`, sibling
+  Every entity a host passes otherwise (to `wheelhouse_local_set`, sibling
   orders, detail lookups) names its provider.
 - **Joins stay within a provider.** A placement loop that matches on a bound
   entity (`match "<key>" of="<loop>"`) only matches that entity's provider's
@@ -170,7 +170,7 @@ which no host subscription may use.
   `kind:id`; any other provider's is `kind:id@provider`, so the same kind and
   ID never alias across providers. Explicit `action.primary.target` facts are
   producer text and are not qualified.
-- **Retraction.** `retract_provider` (`andamento_provider_retract`) removes
+- **Retraction.** `retract_provider` (`wheelhouse_provider_retract`) removes
   every fact a provider contributed in one call, as when its subscription is
   removed. It reuses the retained/ended machinery: subjects on open workspace
   paths and the targets of local refs (pins) are retained with their last
@@ -178,17 +178,17 @@ which no host subscription may use.
   binding, and nothing is marked ended. Closing the workspace or removing the
   ref lets the retained entity go.
 - **Stale facts.** `set_provider_stale(provider, true)`
-  (`andamento_provider_set_stale`) is for a dropped connection. A stale
+  (`wheelhouse_provider_set_stale`) is for a dropped connection. A stale
   provider's facts are kept as they were, and snapshot nodes presenting its
-  entities (a ref presenting its target included) set `AndamentoNode.stale`,
+  entities (a ref presenting its target included) set `WheelhouseNode.stale`,
   as do their detail fields' `stale`. A non-entity TTL fact live when its
   provider became stale stays live until it is fresh again, then renews its
   lease from that moment. Retraction clears staleness.
 
 Placement keys carry the provider. `PlacementLoopKey::encode`
-(`AndamentoNode.loop_key`) is length-prefixed parts with each parent
+(`WheelhouseNode.loop_key`) is length-prefixed parts with each parent
 segment's loop name, provider, kind and ID. The opaque node key
-(`AndamentoNode.key`) includes each segment's provider.
+(`WheelhouseNode.key`) includes each segment's provider.
 
 ### Records
 
@@ -215,12 +215,12 @@ are presentation state and are not recorded.
   The full fact set is not saved: producers republish it.
 - A workspace's record follows it while it is open; a closed workspace keeps
   the record it had, and forgetting the workspace drops it.
-- **Generations.** `record_generation` (`andamento_record_generation`) is a
+- **Generations.** `record_generation` (`wheelhouse_record_generation`) is a
   nonzero counter that changes whenever the record does, and is cheap to poll.
   Store a record when its generation differs from the one last stored. All
   generations come from one clock per sidebar, so none is reused, not even by
   an import; they are never persisted.
-- **Import** (`import_record`, `andamento_record_put`) may come before the
+- **Import** (`import_record`, `wheelhouse_record_put`) may come before the
   first observation and needs no facts. Importing a workspace record registers
   the workspace and binds it to its subject, as a materialize completion does;
   when the workspace is observed, its recorded path is drawn until a producer
@@ -228,13 +228,13 @@ are presentation state and are not recorded.
   record, is rejected without changing anything.
 
 A host that shows the Dashboard's own state reads it with
-`andamento_dashboard_get` rather than from the record: its local entities with
+`wheelhouse_dashboard_get` rather than from the record: its local entities with
 their facts, and its sibling orders by loop key.
 
 Display variables are set directly with `set_display_variable`
-(`andamento_set_display_variable`): no snapshot action, so restoring one needs
+(`wheelhouse_set_display_variable`): no snapshot action, so restoring one needs
 no retry. Local sections, groups and refs are set and removed with
-`set_local`/`remove_local` (`andamento_local_set`/`remove`), which replace an
+`set_local`/`remove_local` (`wheelhouse_local_set`/`remove`), which replace an
 entity's facts in full; see Sections, groups and references.
 
 ### Update and ownership rules
@@ -243,18 +243,18 @@ Create one opaque `Andamento` handle per presentation client. Serialize calls
 on that handle, usually by queueing transport events onto the UI thread.
 Input arrays and UTF-8 byte strings are borrowed only during each call; they
 need not be NUL-terminated. Every mutation returns success/failure and an
-optional owned error string, freed with `andamento_string_free`. Invalid input
+optional owned error string, freed with `wheelhouse_string_free`. Invalid input
 is rejected before mutation. A caught panic poisons the sidebar; recreate it.
 
-Use typed `andamento_observe` for full workspace/pane topology and
-`andamento_complete` for host outcomes. Apply incoming facts and completions,
-then explicitly call `andamento_snapshot_acquire` once for rendering. Mutations
+Use typed `wheelhouse_observe` for full workspace/pane topology and
+`wheelhouse_complete` for host outcomes. Apply incoming facts and completions,
+then explicitly call `wheelhouse_snapshot_acquire` once for rendering. Mutations
 do not produce output snapshots. Action validation can still resolve state
 internally; this interface does not promise incremental evaluation. Caching and
 conditional resolution are tracked in [#96](https://github.com/flotilla-org/andamento/issues/96).
 
 The snapshot owns its nodes, fields, controls and borrowed text until
-`andamento_snapshot_release`. It survives updates to or destruction of the
+`wheelhouse_snapshot_release`. It survives updates to or destruction of the
 sidebar. Nodes are in preorder with parent indices; section nodes have no
 parent. Collapsed children remain present. Placement keys are opaque stable
 widget identities, not strings for the host to parse. The host owns geometry,
@@ -270,7 +270,7 @@ sites; do not reconstruct the template resolver in Wheelhouse.
 
 Nodes expose activation/collapse action references; display controls expose
 their own action references. Pass the snapshot and reference to
-`andamento_dispatch`. References are snapshot-local, and dispatch rejects a
+`wheelhouse_dispatch`. References are snapshot-local, and dispatch rejects a
 snapshot from another client or from before a revision-changing mutation.
 
 Capture the action reference together with the displayed snapshot. Process
@@ -286,7 +286,7 @@ expiry deadline, identical topology observations, unknown completions and failed
 input validation preserve actions. Retaining an older snapshot keeps its text
 alive, but does not make stale actions valid.
 
-After draining an update batch, call `andamento_snapshot_is_current` with the
+After draining an update batch, call `wheelhouse_snapshot_is_current` with the
 currently displayed snapshot. It returns 1 when both client and revision match;
 otherwise acquire a replacement. NULL or other-client snapshots return 0 without
 an error; invalid or poisoned clients return 0 with an error. The query does no
@@ -294,7 +294,7 @@ snapshot construction. The shared Rust `Sidebar` retains one immutable snapshot
 per revision (`snapshot_shared` borrows it; `snapshot` makes an owned clone).
 Expiry lookup uses a deadline index whose entries are replaced on lease renewal.
 
-Dispatch queues tagged host effects. `andamento_effects_take` drains them into
+Dispatch queues tagged host effects. `wheelhouse_effects_take` drains them into
 an independently owned batch; a second take returns an empty batch. Execute
 focus/materialize locally and complete every request, including failure,
 cancellation and timeout. An inspect effect needs no completion. Copy strings
@@ -305,30 +305,30 @@ A typical update is:
 
 ```c
 /* Apply queued facts, topology and effect completions first. */
-AndamentoSnapshot *frame = andamento_snapshot_acquire(sidebar, &error);
+WheelhouseSnapshot *frame = wheelhouse_snapshot_acquire(sidebar, &error);
 /* Read typed nodes/fields/controls and build native widgets. */
 /* On a hit, dispatch the action reference from this exact frame. */
-andamento_dispatch(sidebar, frame, hit_action, &error);
-AndamentoEffects *effects = andamento_effects_take(sidebar, &error);
+wheelhouse_dispatch(sidebar, frame, hit_action, &error);
+WheelhouseEffects *effects = wheelhouse_effects_take(sidebar, &error);
 /* Execute effects, retaining/copying any data needed asynchronously. */
-andamento_effects_release(effects);
-andamento_snapshot_release(frame);
+wheelhouse_effects_release(effects);
+wheelhouse_snapshot_release(frame);
 ```
 
 Check each result before continuing. The complete, compiled consumer is
-`crates/andamento-ffi/tests/smoke.c`; the header specifies tags, pointer validity,
+`crates/wheelhouse-ffi/tests/smoke.c`; the header specifies tags, pointer validity,
 nullable arguments and ownership for every operation.
 
 ### Facts, encoding and transport
 
 The semantic producer model, its encoding and its transport are separate
 choices. Rust accepts typed `MetadataPatch` values. The native scalar
-`andamento_apply_entity` convenience interface supports text, boolean and
+`wheelhouse_apply_entity` convenience interface supports text, boolean and
 integer entity facts and unsets without encoding those values; entity facts
 ignore its TTL, precedence and ordinal. It intentionally does not duplicate every producer target and
 value type in the C header.
 
-`andamento_apply_patch_json` is an optional decoder for one existing producer
+`wheelhouse_apply_patch_json` is an optional decoder for one existing producer
 patch, parsed inside Rust. It accepts no local request envelope and produces
 no JSON response. It is enabled by the default Cargo feature `json`; build
 with `--no-default-features` to omit the entry point. Other producer targets,
@@ -336,16 +336,16 @@ lists and path values currently use that decoder or Rust's typed interface.
 A future CBOR decoder can feed the same model without changing the renderer
 or host-effect interface. Neither JSON nor HTTP/UDS is a core requirement.
 
-`andamento_tick` advances expiry when no facts arrive. Supply monotonic
+`wheelhouse_tick` advances expiry when no facts arrive. Supply monotonic
 milliseconds scoped to this client. JSON `Request`/`Response` replay tooling
 remains available in Rust/HTML, but does not define the embedding interface.
 
 ## Proof and validation
 
 ```sh
-cargo run -p andamento-html --target aarch64-apple-darwin -- \
-  crates/andamento-core/tests/fixtures/sidebar.kdl \
-  crates/andamento-core/tests/fixtures/sidebar.jsonl > /tmp/andamento-sidebar.html
+cargo run -p wheelhouse-html --target aarch64-apple-darwin -- \
+  crates/wheelhouse-core/tests/fixtures/sidebar.kdl \
+  crates/wheelhouse-core/tests/fixtures/sidebar.jsonl > /tmp/andamento-sidebar.html
 python3 scripts/check-independent-core.py
 ```
 
@@ -378,9 +378,9 @@ binding of the loop invocation that produced it. Sibling items share this key;
 repeated invocations under different parents do not. Sibling loop bindings must
 be distinct and duplicate declarations are rejected during configuration.
 
-C consumers read `AndamentoNode.loop_key`. The text is opaque, snapshot-owned
+C consumers read `WheelhouseNode.loop_key`. The text is opaque, snapshot-owned
 and empty for a section; compare it for equality only. It is also the key
-`andamento_set_sibling_order` and `andamento_dashboard_get` use.
+`wheelhouse_set_sibling_order` and `wheelhouse_dashboard_get` use.
 Group adjacent nodes by loop key and use the existing layout intent to choose
 native geometry. Keep each node's activation/collapse reference and state when
 presenting several items on one line. Width measurement stays in the frontend.
@@ -470,7 +470,7 @@ entity coverage:
 People can make their own sections and groups, holding workspaces and references
 to other entities. They are Dashboard state, so Andamento owns them: the host
 sets and removes them with `set_local`/`remove_local`
-(`andamento_local_set`/`andamento_local_remove`), and they are kept in the
+(`wheelhouse_local_set`/`wheelhouse_local_remove`), and they are kept in the
 `dashboard` record. A host may still publish them as facts, as Wheelhouse does
 from its window layout until it moves; both are placed the same way. Local
 workspaces' `.workspace` host entities stay host-published: they follow the

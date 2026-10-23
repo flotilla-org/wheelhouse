@@ -252,14 +252,14 @@ entry_point(CmdLine *cmd_line)
         }
         // Validate configuration before accepting producers, even before a window opens.
         char *config_error = 0;
-        Andamento *probe = andamento_create(uishell_sidebar_live_config.str, uishell_sidebar_live_config.size, &config_error);
+        WheelhouseCore *probe = wheelhouse_create(uishell_sidebar_live_config.str, uishell_sidebar_live_config.size, &config_error);
         if(probe == 0)
         {
           fprintf(stderr, "Invalid live sidebar configuration: %s\n", config_error ? config_error : "unknown error");
-          andamento_string_free(config_error);
+          wheelhouse_string_free(config_error);
           abort_self(1);
         }
-        andamento_destroy(probe);
+        wheelhouse_destroy(probe);
         String8 recording_path = str8_zero();
         U64 recording_bytes = 4*1024*1024, recording_files = 4;
         if(cmd_line_has_flag(cmd_line, str8_lit("ingress_record")))

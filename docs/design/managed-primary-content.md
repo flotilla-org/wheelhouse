@@ -80,7 +80,7 @@ that shares a role name is unaffected. When a declaration is removed, its open
 workspace moves to Other workspaces.
 
 Opening a role records the managed target its recipe resolves
-(`andamento_effects_primary_target`) on the new primary slot. Without it, the
+(`wheelhouse_effects_primary_target`) on the new primary slot. Without it, the
 first reconciliation would restart the attachment that was just created.
 
 Validation: `tools/test-native-sidebar.py` covers inline placement, two roles on
@@ -98,7 +98,7 @@ other projects' memberships, and that memberships are never placed.
 ## Observed worktree directories
 
 The host now supplies a full list of terminal launch directories through
-`andamento_observe_workdirs`, after workspace topology. Andamento matches exact
+`wheelhouse_observe_workdirs`, after workspace topology. Andamento matches exact
 nonempty materialization roots without selecting an entity kind. An existing
 terminal at a producer's `git.root` makes its row live and activation focuses
 that workspace. Explicit materialization bindings take precedence; changing a

@@ -133,7 +133,7 @@ uses a single terminal. Each entry creates or focuses its own workspace. Close i
 with the toolbar control to make the example available again. The facts and
 status in this fixture are examples, not live git or Flotilla information.
 
-The sidebar core (`crates/andamento-core`), its C ABI (`crates/andamento-ffi`, C ABI 10) and the ingress (`crates/wheelhouse-ingress`) are members of this repo's Cargo workspace, with the lockfile at the root. Their Cargo output goes to `target/` unless `CARGO_TARGET_DIR` (or `WHEELHOUSE_ANDAMENTO_TARGET_DIR`) says otherwise. The build explicitly selects the native Rust target rather than Andamento's WASM default. The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
+The sidebar core (`crates/wheelhouse-core`), its C ABI (`crates/wheelhouse-ffi`, C ABI 10) and the ingress (`crates/wheelhouse-ingress`) are members of this repo's Cargo workspace, with the lockfile at the root. Their Cargo output goes to `target/` unless `CARGO_TARGET_DIR` (or `WHEELHOUSE_ANDAMENTO_TARGET_DIR`) says otherwise. The build explicitly selects the native Rust target rather than Andamento's WASM default. The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
 
 On macOS (or Linux with a display), run the native workspace bridge checks with:
 
@@ -246,22 +246,22 @@ components in the profile's `logs/` directory are replaced on the next launch; s
 layouts are retained.
 
 `WHEELHOUSE_BIN` selects an existing binary and skips the build. `FLOTILLA_ROOT`
-overrides the sibling Flotilla checkout. `WHEELHOUSE_ANDAMENTO_CONFIG` overrides the KDL
-template. `ANDAMENTO_GIT_WATCHER_BIN` selects an existing watcher and skips its build;
-otherwise the launcher builds the native target of the workspace's `andamento-git-watcher`
+overrides the sibling Flotilla checkout. `WHEELHOUSE_SIDEBAR_CONFIG` overrides the KDL
+template. `WHEELHOUSE_GIT_WATCHER_BIN` selects an existing watcher and skips its build;
+otherwise the launcher builds the native target of the workspace's `wheelhouse-git-watcher`
 crate. `--no-build` reuses both binaries, and `--no-git` omits the watcher entirely. The
 launcher defaults to debug builds; for release `--no-build` use `WHEELHOUSE_BIN` and
-`ANDAMENTO_GIT_WATCHER_BIN` to select the release binaries. Normal `WHEELHOUSE_CLEAT_*`
+`WHEELHOUSE_GIT_WATCHER_BIN` to select the release binaries. Normal `WHEELHOUSE_CLEAT_*`
 build overrides also apply.
 
-`python3 tools/test-native-sidebar.py /path/to/libandamento_ffi.dylib` (or `.so`) checks
+`python3 tools/test-native-sidebar.py /path/to/libwheelhouse_ffi.dylib` (or `.so`) checks
 the shipped hierarchy, opening capability, and shared Open/Focus identity through the
 real C ABI.
 
 `python3 tools/test-daily-driver.py` checks producer delivery, profile locking, startup
 failure, producer failure, restart, the subscription and Flotilla it asks Wheelhouse
 for, and process cleanup with controlled UI and watcher processes. Real HTTP/UDS
-delivery is covered by `tools/test-andamento-ingress.py`; connector restarts and
+delivery is covered by `tools/test-ingress.py`; connector restarts and
 cleanup by `crates/wheelhouse-ingress/src/connector.rs`'s tests, and subscriptions end to end by the
 behaviour harness (`tools/test-state-behaviour.py`).
 
@@ -320,7 +320,7 @@ retains the existing retry policy.
 locking, endpoint inheritance and subscription, settings retention, UI closure,
 Ctrl-C, abrupt termination and descendant cleanup. These contracts use controlled
 processes and a health-only named-pipe server, independently of a fleet or native
-Wheelhouse build. Real metadata ingress is covered by `tools/test-andamento-ingress.py`.
+Wheelhouse build. Real metadata ingress is covered by `tools/test-ingress.py`.
 
 ### Live Andamento facts (Unix)
 
@@ -339,7 +339,7 @@ runtime_dir=$(mktemp -d /tmp/wheelhouse.XXXXXX)
 From another terminal, publish real git facts without Flotilla:
 
 ```sh
-andamento-git-watcher --transport wheelhouse --socket /path/to/facts.sock --roots /path/to/checkout
+wheelhouse-git-watcher --transport wheelhouse --socket /path/to/facts.sock --roots /path/to/checkout
 ```
 
 Or use a Flotilla build with the HTTP sink: `flotilla pm connect --wheelhouse-socket
@@ -421,7 +421,7 @@ Invalid paths are never rewritten with replacement characters. The existing `POS
 The Rust watcher from [Andamento
 #107](https://github.com/flotilla-org/andamento/issues/107) replaces
 `tools/andamento-publish.py`. Migration: replace the old Python invocation with
-`andamento-git-watcher --transport wheelhouse --socket PATH --roots DIR` (`--roots`
+`wheelhouse-git-watcher --transport wheelhouse --socket PATH --roots DIR` (`--roots`
 replaces `--repo`). Its repo/worktree facts populate the Git section using `git.repo`
 relationships, `git.root`, branch and dirty state. The native `layout="fields"`
 presentation measures template fields and removes optional, then low-priority fields as

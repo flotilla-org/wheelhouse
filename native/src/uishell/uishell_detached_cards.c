@@ -161,7 +161,7 @@ uishell_sidebar_detached_copy(RD_WindowState *ws, UIShell_HoverCard *source)
   UIShell_HoverCard *c = uishell_sidebar_detached_alloc(ws);
   c->arena = arena_alloc();
   c->capacity = Max(UIShell_HoverCardInitialPathCapacity, source->depth);
-  c->path = push_array(c->arena, AndamentoEntity, c->capacity);
+  c->path = push_array(c->arena, WheelhouseEntity, c->capacity);
   c->depth = source->depth;
   for(U64 i = 0; i < c->depth; i++) { c->path[i] = uishell_sidebar_card_entity_copy(c->arena, source->path[i]); }
   c->source_key = push_str8_copy(c->arena, source->source_key);
@@ -175,7 +175,7 @@ uishell_sidebar_detached_copy(RD_WindowState *ws, UIShell_HoverCard *source)
 // still shows, with its retained label or as missing. The first pin of
 // `entity`, or 0.
 internal UIShell_LocalPin *
-uishell_sidebar_pin_find(CFG_Node *window, AndamentoEntity entity)
+uishell_sidebar_pin_find(CFG_Node *window, WheelhouseEntity entity)
 {
   UIShell_Locals *locals = uishell_sidebar_window_locals(window);
   for(U64 s = 0; s < locals->section_count; s++)
@@ -343,7 +343,7 @@ uishell_sidebar_drop_claimable(void)
 // group `group` before the pin at `index`, or last, and reveals it. A
 // dropped row becomes a row (`compact`); a pinned card stays a card.
 internal UIShell_LocalPin *
-uishell_sidebar_pin_add(RD_WindowState *ws, String8 group, U64 index, AndamentoEntity entity,
+uishell_sidebar_pin_add(RD_WindowState *ws, String8 group, U64 index, WheelhouseEntity entity,
                         String8 fallback_label, String8 source, B32 compact)
 {
   UIShell_SidebarState *state = ws->sidebar;
@@ -351,11 +351,11 @@ uishell_sidebar_pin_add(RD_WindowState *ws, String8 group, U64 index, AndamentoE
   UIShell_LocalGroup *area = uishell_sidebar_local_group(window, group);
   if(!area) { return 0; }
   Temp scratch = scratch_begin(0, 0);
-  AndamentoNode node = {0};
+  WheelhouseNode node = {0};
   UIShell_LocalPin pin = {0};
   pin.ghost = string_from_guid(scratch.arena, make_guid());
   pin.target = entity;
-  pin.label = uishell_sidebar_card_find(state, entity, &node) != ANDAMENTO_NONE ? uishell_sidebar_string(node.label) : fallback_label;
+  pin.label = uishell_sidebar_card_find(state, entity, &node) != WHEELHOUSE_NONE ? uishell_sidebar_string(node.label) : fallback_label;
   pin.source = source;
   pin.compact = compact;
   uishell_sidebar_local_put_pin(state, &pin, area->id, area->pin_count);
@@ -378,7 +378,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
 {
   UIShell_SidebarState *state = ws->sidebar;
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
-  AndamentoEntity entity = card->path[card->depth-1];
+  WheelhouseEntity entity = card->path[card->depth-1];
   // A pinned card moves its own ghost. Pin on any other card reveals the
   // entity's ghost in the group Pin uses (the topmost showing one), or adds
   // one there; a drop is explicit placement, so it always adds one.
@@ -557,9 +557,9 @@ uishell_sidebar_pin_area(RD_WindowState *ws, B32 new_area)
 
 internal size_t
 uishell_sidebar_detached_content(UIShell_SidebarState *state, RD_WindowState *ws, UIShell_HoverCard *card,
-                                U64 slot, AndamentoNode node, U64 index, F32 width, B32 interactive)
+                                U64 slot, WheelhouseNode node, U64 index, F32 width, B32 interactive)
 {
-  if(index != ANDAMENTO_NONE)
+  if(index != WHEELHOUSE_NONE)
   {
     String8 label = uishell_sidebar_string(node.label);
     uishell_sidebar_card_retain_label(card, label);
@@ -570,7 +570,7 @@ uishell_sidebar_detached_content(UIShell_SidebarState *state, RD_WindowState *ws
   { uishell_sidebar_card_title_handle(card, card->retained_label); }
   UI_TagF("weak") { ui_label(str8_lit("No longer present")); }
   ui_label_multiline(width, uishell_sidebar_string(card->path[card->depth-1].id));
-  return ANDAMENTO_NONE;
+  return WHEELHOUSE_NONE;
 }
 
 internal UIShell_CardPlacement
@@ -628,19 +628,19 @@ uishell_sidebar_detached_apply(RD_WindowState *ws, UIShell_HoverCard *card)
     if(placement == UIShell_CardPlacement_Inline)
     {
       c->source_row = c->source_key;
-      for(U64 i = 0; ws->sidebar->snapshot && i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
+      for(U64 i = 0; ws->sidebar->snapshot && i < wheelhouse_snapshot_node_count(ws->sidebar->snapshot); i++)
       {
-        AndamentoNode node = {0}; andamento_snapshot_node(ws->sidebar->snapshot, i, &node);
+        WheelhouseNode node = {0}; wheelhouse_snapshot_node(ws->sidebar->snapshot, i, &node);
         if(str8_match(c->source_key, uishell_sidebar_string(node.key), 0) &&
-           str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0) && node.parent != ANDAMENTO_NONE)
+           str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0) && node.parent != WHEELHOUSE_NONE)
         {
-          AndamentoNode parent = {0}; andamento_snapshot_node(ws->sidebar->snapshot, node.parent, &parent);
+          WheelhouseNode parent = {0}; wheelhouse_snapshot_node(ws->sidebar->snapshot, node.parent, &parent);
           c->source_row = push_str8_copy(c->arena, uishell_sidebar_string(parent.key)); break;
         }
       }
     }
     c->source_seen = 0;
-    c->previous = (AndamentoEntity){0};
+    c->previous = (WheelhouseEntity){0};
   }
 }
 
@@ -677,7 +677,7 @@ uishell_sidebar_drag_clear(UIShell_SidebarState *state)
   if(state->drag_card) { state->drag_card->moving = state->drag_card->drag_released = 0; }
   state->drag_card = 0;
   state->row_drag_key = state->row_drag_loop = state->row_drag_label = str8_zero();
-  state->row_drag_entity = (AndamentoEntity){0};
+  state->row_drag_entity = (WheelhouseEntity){0};
   state->row_drag_released = 0;
   state->drop_panel = rd_nil_panel_address; state->reorder_build = 0;
   state->row_drag_workspace = 0; state->home_build = 0; state->group_claim_build = 0;
@@ -721,14 +721,14 @@ uishell_sidebar_groups_drop(UIShell_SidebarState *state, CFG_Node *window, Strin
 // Saves the claimed group's item order with `placed` at the claimed index.
 // An empty group has no run yet, and its first item needs no order.
 internal void
-uishell_sidebar_group_order(UIShell_SidebarState *state, AndamentoEntity placed)
+uishell_sidebar_group_order(UIShell_SidebarState *state, WheelhouseEntity placed)
 {
   if(!state->group_claim_loop.size) { return; }
   Arena *arena = ui_build_arena();
-  AndamentoEntity *all = 0;
+  WheelhouseEntity *all = 0;
   U64 total = uishell_sidebar_siblings(arena, state->snapshot, state->group_claim_loop, &all);
   U64 index = state->group_claim_index;
-  AndamentoEntity *order = push_array(arena, AndamentoEntity, total+1);
+  WheelhouseEntity *order = push_array(arena, WheelhouseEntity, total+1);
   U64 n = 0;
   for(U64 k = 0; k < total; k++)
   {
@@ -750,9 +750,9 @@ internal void
 uishell_sidebar_reorder_commit(UIShell_SidebarState *state)
 {
   Arena *arena = ui_build_arena();
-  AndamentoEntity *all = 0;
+  WheelhouseEntity *all = 0;
   U64 total = uishell_sidebar_siblings(arena, state->snapshot, state->row_drag_loop, &all);
-  AndamentoEntity *order = push_array(arena, AndamentoEntity, total+1);
+  WheelhouseEntity *order = push_array(arena, WheelhouseEntity, total+1);
   U64 n = 0;
   for(U64 k = 0; k < total; k++)
   {
@@ -810,7 +810,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   if(!released) { return; }
   rd_drag_kill();
   rd_request_frame();
-  AndamentoEntity entity = card ? card->path[card->depth-1] : state->row_drag_entity;
+  WheelhouseEntity entity = card ? card->path[card->depth-1] : state->row_drag_entity;
   String8 label = card ? card->retained_label : state->row_drag_label;
   String8 source = card ? card->source_key : state->row_drag_key;
   Temp scratch = scratch_begin(0, 0);
@@ -885,7 +885,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
     String8 group_id = push_str8_copy(scratch.arena, group->id);
     CFG_Node *workspace = row ? uishell_sidebar_drag_local(state) : &cfg_nil_node;
     B32 as_ghost = !!((wm_get_modifiers()|uishell_sidebar_test_modifiers) & WM_Modifier_Alt);
-    AndamentoEntity placed = {0};
+    WheelhouseEntity placed = {0};
     if(workspace != &cfg_nil_node && !as_ghost)
     {
       // One home: this group.
@@ -980,12 +980,12 @@ uishell_sidebar_detached_finish(RD_WindowState *ws)
     if(c->placement == UIShell_CardPlacement_Inline && c->open)
     {
       B32 present = 0;
-      for(U64 i = 0; ws->sidebar->snapshot && i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
+      for(U64 i = 0; ws->sidebar->snapshot && i < wheelhouse_snapshot_node_count(ws->sidebar->snapshot); i++)
       {
-        AndamentoNode node = {0}; andamento_snapshot_node(ws->sidebar->snapshot, i, &node);
+        WheelhouseNode node = {0}; wheelhouse_snapshot_node(ws->sidebar->snapshot, i, &node);
         if(str8_match(c->source_key, uishell_sidebar_string(node.key), 0)) { present = 1; break; }
       }
-      if(!present || uishell_sidebar_card_find(ws->sidebar, c->path[c->depth-1], 0) == ANDAMENTO_NONE)
+      if(!present || uishell_sidebar_card_find(ws->sidebar, c->path[c->depth-1], 0) == WHEELHOUSE_NONE)
       { uishell_sidebar_card_close(c); }
     }
   }
@@ -1001,8 +1001,8 @@ uishell_sidebar_saved_card(RD_WindowState *ws, UIShell_LocalPin *saved)
   { if(c->pin_size && str8_match(uishell_sidebar_card_pin_id(c), saved->ghost, 0)) { return c; } }
   UIShell_HoverCard *c = uishell_sidebar_detached_alloc(ws);
   c->arena = arena_alloc(); c->capacity = UIShell_HoverCardInitialPathCapacity; c->depth = 1;
-  c->path = push_array(c->arena, AndamentoEntity, c->capacity);
-  AndamentoEntity entity = uishell_sidebar_pin_entity(saved);
+  c->path = push_array(c->arena, WheelhouseEntity, c->capacity);
+  WheelhouseEntity entity = uishell_sidebar_pin_entity(saved);
   c->path[0] = uishell_sidebar_card_entity_copy(c->arena, entity);
   c->source_key = push_str8_copy(c->arena, saved->source);
   uishell_sidebar_card_retain_label(c, saved->label);
@@ -1053,9 +1053,9 @@ uishell_sidebar_inline_ui(RD_WindowState *ws, String8 key, F32 width)
         ui_set_next_fixed_x(6.f);
         UI_PrefWidth(ui_px(content_width, 1)) UI_PrefHeight(ui_children_sum(1)) UI_Column UI_PrefHeight(ui_em(1.6f, 1))
         {
-          AndamentoNode node = {0}; U64 index = uishell_sidebar_card_find(ws->sidebar, c->path[c->depth-1], &node);
+          WheelhouseNode node = {0}; U64 index = uishell_sidebar_card_find(ws->sidebar, c->path[c->depth-1], &node);
           size_t action = uishell_sidebar_detached_content(ws->sidebar, ws, c, (U64)c, node, index, content_width, 1);
-          if(action != ANDAMENTO_NONE) { uishell_sidebar_card_queue_action(ws->sidebar, node, action); }
+          if(action != WHEELHOUSE_NONE) { uishell_sidebar_card_queue_action(ws->sidebar, node, action); }
         }
         ui_spacer(ui_px(4.f, 1));
         ui_layout_root(root, Axis2_X); ui_layout_root(root, Axis2_Y);
@@ -1077,8 +1077,8 @@ uishell_sidebar_pinned_card_extent(UIShell_HoverCard *card, F32 em)
 }
 
 internal Vec4F32 uishell_sidebar_ended_color(void);
-internal String8 uishell_sidebar_status_mark(AndamentoNode node, String8 status);
-internal String8 uishell_sidebar_chip_status(UIShell_SidebarState *state, AndamentoNode node);
+internal String8 uishell_sidebar_status_mark(WheelhouseNode node, String8 status);
+internal String8 uishell_sidebar_chip_status(UIShell_SidebarState *state, WheelhouseNode node);
 
 // Pinning a card keeps the card. Its header's disclosure collapses the ghost
 // to a compact row (saved as `compact`), and the row's disclosure restores it.
@@ -1131,9 +1131,9 @@ uishell_sidebar_ghost_card(UIShell_SidebarState *state, RD_WindowState *ws, UISh
         ui_set_next_fixed_x(6.f);
         UI_PrefWidth(ui_px(content_width, 1)) UI_PrefHeight(ui_children_sum(1)) UI_Column UI_PrefHeight(ui_em(1.6f, 1))
         {
-          AndamentoNode node = {0}; U64 index = uishell_sidebar_card_find(state, c->path[c->depth-1], &node);
+          WheelhouseNode node = {0}; U64 index = uishell_sidebar_card_find(state, c->path[c->depth-1], &node);
           size_t action = uishell_sidebar_detached_content(state, ws, c, u64_hash_from_str8(saved->ghost), node, index, content_width, 1);
-          if(action != ANDAMENTO_NONE) { uishell_sidebar_card_queue_action(state, node, action); }
+          if(action != WHEELHOUSE_NONE) { uishell_sidebar_card_queue_action(state, node, action); }
         }
         ui_spacer(ui_px(4.f, 1));
         ui_layout_root(body, Axis2_X); ui_layout_root(body, Axis2_Y);

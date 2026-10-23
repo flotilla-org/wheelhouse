@@ -80,7 +80,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - run: cargo check -p andamento-core --target wasm32-unknown-unknown --locked
+      - run: cargo check -p wheelhouse-core --target wasm32-unknown-unknown --locked
 
   header:
     name: C header is generated

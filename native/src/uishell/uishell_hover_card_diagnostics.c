@@ -1,8 +1,8 @@
 internal size_t
 action_node_copy(UIShell_SidebarState *state, U64 index)
 {
-  AndamentoDetail detail = {0};
-  return andamento_snapshot_detail(state->snapshot, index, &detail) ? detail.copy_url : ANDAMENTO_NONE;
+  WheelhouseDetail detail = {0};
+  return wheelhouse_snapshot_detail(state->snapshot, index, &detail) ? detail.copy_url : WHEELHOUSE_NONE;
 }
 
 // Commit through the same creation-drag routing and finish phases as a center
@@ -62,9 +62,9 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
     if(frame) { ui_event_list_push(ws->ui->arena, &events, &event); }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = mouse; MemoryZeroArray(ui_state->hover_card_keys); ui_state->hover_card_extra = 0;
-    AndamentoNode node = {0};
+    WheelhouseNode node = {0};
     U64 index = uishell_sidebar_card_find(state, card->path[card->depth-1], &node);
-    if(index == ANDAMENTO_NONE) { ui_end_build(); return 0; }
+    if(index == WHEELHOUSE_NONE) { ui_end_build(); return 0; }
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
     UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
     {
@@ -81,8 +81,8 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
     ui_end_build();
     if(frame == 0)
     {
-      AndamentoNode source = {0};
-      if(card->depth > 1 && uishell_sidebar_card_find(state, card->path[0], &source) != ANDAMENTO_NONE)
+      WheelhouseNode source = {0};
+      if(card->depth > 1 && uishell_sidebar_card_find(state, card->path[0], &source) != WHEELHOUSE_NONE)
       {
         for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
         {
@@ -111,9 +111,9 @@ uishell_hover_card_test_restart_pin(Arena *arena, UIShell_SidebarState *state, S
   String8 record = uishell_sidebar_record_get(scratch.arena, state->core, str8_lit("dashboard"));
   String8 config = str8_cstring((char *)uishell_sidebar_local_config);
   UIShell_SidebarState fresh = {0};
-  fresh.core = andamento_create(config.str, config.size, 0);
+  fresh.core = wheelhouse_create(config.str, config.size, 0);
   UIShell_LocalPin result = {0};
-  if(fresh.core && andamento_record_put(fresh.core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0))
+  if(fresh.core && wheelhouse_record_put(fresh.core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0))
   {
     UIShell_Locals *locals = uishell_sidebar_locals(&fresh);
     for(U64 s = 0; s < locals->section_count && !result.ghost.size; s++)
@@ -177,8 +177,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   ui_select_state(test);
   UI_Box source = {.key = ui_key_make(700), .rect = r2f32p(10, 100, 100, 130)};
   UI_Signal hover = {.box = &source, .f = UI_SignalFlag_Hovering};
-  AndamentoNode a = {.entity.kind = uishell_sidebar_text(str8_lit("issue")), .entity.id = uishell_sidebar_text(str8_lit("a"))};
-  AndamentoNode b = {.entity.kind = uishell_sidebar_text(str8_lit("issue")), .entity.id = uishell_sidebar_text(str8_lit("b"))};
+  WheelhouseNode a = {.entity.kind = uishell_sidebar_text(str8_lit("issue")), .entity.id = uishell_sidebar_text(str8_lit("a"))};
+  WheelhouseNode b = {.entity.kind = uishell_sidebar_text(str8_lit("issue")), .entity.id = uishell_sidebar_text(str8_lit("b"))};
   UIShell_HoverCard *card = &fixture.cards[0];
   test->mouse = v2f32(50, 115);
   uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1000000);
@@ -383,16 +383,16 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   // Real host demand lifecycle: card identities survive a changed revision,
   // while snapshot-owned output and action currency remain core-owned.
   UIShell_SidebarState demand = {0};
-  demand.core = andamento_create(0, 0, 0);
-  AndamentoEntity demand_entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("issue"), str8_lit("demand-only"));
-  AndamentoFact demand_fact = {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = ANDAMENTO_FACT_TEXT,
+  demand.core = wheelhouse_create(0, 0, 0);
+  WheelhouseEntity demand_entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("issue"), str8_lit("demand-only"));
+  WheelhouseFact demand_fact = {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = WHEELHOUSE_FACT_TEXT,
                               .text = uishell_sidebar_text(str8_lit("Before"))};
-  CardCheck(andamento_apply_entity(demand.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
+  CardCheck(wheelhouse_apply_entity(demand.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
             "demand-only target is published");
   uishell_sidebar_refresh(&demand);
-  CardCheck(andamento_snapshot_detail_count(demand.snapshot) == 0, "plain revision starts without details");
-  AndamentoNode demand_node = {0};
-  CardCheck(uishell_sidebar_card_find(&demand, demand_entity, &demand_node) != ANDAMENTO_NONE,
+  CardCheck(wheelhouse_snapshot_detail_count(demand.snapshot) == 0, "plain revision starts without details");
+  WheelhouseNode demand_node = {0};
+  CardCheck(uishell_sidebar_card_find(&demand, demand_entity, &demand_node) != WHEELHOUSE_NONE,
             "identity without placement can be demanded");
   // One held card, with no navigation: slot cards[0] and root path[0] are
   // deliberate. The host clock supplies only the UI transition timestamp;
@@ -400,21 +400,21 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   // fixes its core clock at acquisition, including subsequently demanded cards.
   uishell_sidebar_card_set(&demand.cards[0], demand_node, ui_key_zero(), str8_zero(), 0, now_time_us());
   demand_fact.text = uishell_sidebar_text(str8_lit("After"));
-  CardCheck(andamento_apply_entity(demand.core, 1, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
+  CardCheck(wheelhouse_apply_entity(demand.core, 1, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
             "held target label changes");
   CardCheck(str8_match(uishell_sidebar_string(demand_node.label), str8_lit("Before"), 0) &&
-            !andamento_dispatch(demand.core, demand.snapshot, demand_node.activate, 0),
+            !wheelhouse_dispatch(demand.core, demand.snapshot, demand_node.activate, 0),
             "old output remains readable with stale actions rejected");
   uishell_sidebar_refresh(&demand);
-  CardCheck(andamento_snapshot_detail_count(demand.snapshot) == 0 &&
-            uishell_sidebar_card_find(&demand, demand.cards[0].path[0], &demand_node) != ANDAMENTO_NONE &&
+  CardCheck(wheelhouse_snapshot_detail_count(demand.snapshot) == 0 &&
+            uishell_sidebar_card_find(&demand, demand.cards[0].path[0], &demand_node) != WHEELHOUSE_NONE &&
             str8_match(uishell_sidebar_string(demand_node.label), str8_lit("After"), 0),
             "held exact identity demands current output after refresh");
   String8 demand_remove = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"issue\",\"id\":\"demand-only\"}},\"source_id\":\"demand\",\"unset\":[\"display.label\"]}");
-  CardCheck(andamento_apply_patch_json(demand.core, 2, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(demand_remove), 0), "held target is removed");
+  CardCheck(wheelhouse_apply_patch_json(demand.core, 2, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(demand_remove), 0), "held target is removed");
   uishell_sidebar_refresh(&demand);
-  CardCheck(uishell_sidebar_card_find(&demand, demand.cards[0].path[0], 0) == ANDAMENTO_NONE &&
-            andamento_snapshot_detail_count(demand.snapshot) == 0,
+  CardCheck(uishell_sidebar_card_find(&demand, demand.cards[0].path[0], 0) == WHEELHOUSE_NONE &&
+            wheelhouse_snapshot_detail_count(demand.snapshot) == 0,
             "disappearing held identity is unavailable without eager details");
   uishell_sidebar_release(&demand);
 
@@ -422,26 +422,26 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   // never-published identity must stay error-free and append nothing on every
   // repeated host request, while ordinary entities ensure a nonempty catalog.
   UIShell_SidebarState missing = {0};
-  missing.core = andamento_create(0, 0, 0);
+  missing.core = wheelhouse_create(0, 0, 0);
   CardCheck(missing.core != 0, "missing-target fixture initializes");
   if(missing.core)
   {
-    AndamentoEntity absent = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("issue"), str8_lit("never-existing"));
+    WheelhouseEntity absent = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("issue"), str8_lit("never-existing"));
     for(U64 revision = 0; revision < 4; revision++)
     {
       demand_fact.text = uishell_sidebar_text(revision % 2 ? str8_lit("Odd") : str8_lit("Even"));
-      CardCheck(andamento_apply_entity(missing.core, revision, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id,
+      CardCheck(wheelhouse_apply_entity(missing.core, revision, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id,
                                       uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
                 "card-free fixture advances revision");
       uishell_sidebar_refresh(&missing);
-      CardCheck(andamento_snapshot_detail_count(missing.snapshot) == 0,
+      CardCheck(wheelhouse_snapshot_detail_count(missing.snapshot) == 0,
                 "card-free refresh stays plain across revisions");
       for(U64 repeat = 0; repeat < 3; repeat++)
       {
-        CardCheck(uishell_sidebar_card_find(&missing, absent, 0) == ANDAMENTO_NONE,
+        CardCheck(uishell_sidebar_card_find(&missing, absent, 0) == WHEELHOUSE_NONE,
                   "never-existing host identity repeatedly returns NONE");
         CardCheck(missing.error[0] == 0, "never-existing host identity has no error");
-        CardCheck(andamento_snapshot_detail_count(missing.snapshot) == 0,
+        CardCheck(wheelhouse_snapshot_detail_count(missing.snapshot) == 0,
                   "never-existing host identity appends zero cards");
       }
     }
@@ -451,7 +451,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     for(U64 repeat = 0; repeat < 3; repeat++)
     {
       char *error = 0;
-      B32 accepted = andamento_apply_patch_json(missing.core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("{")), &error);
+      B32 accepted = wheelhouse_apply_patch_json(missing.core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("{")), &error);
       CardCheck(!accepted && error != 0, "malformed patch returns an owned ABI error");
       CardCheck(!uishell_sidebar_result(&missing, accepted, error), "host reports repeated ABI failure");
       CardCheck(missing.error[0] != 0, "ABI failure populates fixed status buffer");
@@ -470,7 +470,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   // A LIVE observation exercises the existing preview demand and drawing box,
   // without starting a test terminal or altering the daily-driver inventory.
   String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
-  fixture.core = andamento_create(config.str, config.size, 0);
+  fixture.core = wheelhouse_create(config.str, config.size, 0);
   CardCheck(fixture.core != 0, "render fixture initializes");
   if(fixture.core)
   {
@@ -479,33 +479,33 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     {
       U64 end = start;
       while(end < patches.size && patches.str[end] != '\n') { end++; }
-      CardCheck(andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0), "render fixture patch applies");
+      CardCheck(wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0), "render fixture patch applies");
       start = end+1;
     }
     uishell_sidebar_refresh(&fixture);
     CardCheck(fixture.snapshot != 0, "render snapshot exists");
-    CardCheck(andamento_snapshot_detail_count(fixture.snapshot) == 0,
+    CardCheck(wheelhouse_snapshot_detail_count(fixture.snapshot) == 0,
               "refresh without live cards resolves no catalog details");
-    U64 index = ANDAMENTO_NONE; AndamentoNode live = {0};
-    for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    U64 index = WHEELHOUSE_NONE; WheelhouseNode live = {0};
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("pr-281"), 0))
       { index = i; live = node; break; }
     }
-    CardCheck(index != ANDAMENTO_NONE, "subject details exist");
-    if(index != ANDAMENTO_NONE)
+    CardCheck(index != WHEELHOUSE_NONE, "subject details exist");
+    if(index != WHEELHOUSE_NONE)
     {
       index = uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(live), 0);
-      CardCheck(index != ANDAMENTO_NONE && andamento_snapshot_detail_count(fixture.snapshot) == 1,
+      CardCheck(index != WHEELHOUSE_NONE && wheelhouse_snapshot_detail_count(fixture.snapshot) == 1,
                 "first card resolves only its exact identity");
       CardCheck(uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(live), 0) == index &&
-                andamento_snapshot_detail_count(fixture.snapshot) == 1,
+                wheelhouse_snapshot_detail_count(fixture.snapshot) == 1,
                 "repeated card lookup reuses snapshot-owned detail");
       // A workspace this test makes up, read back through the index as 123456.
       UIShell_WorkspaceId previewed = uishell_workspace_id_make();
       uishell_workspace_index_insert(previewed, 123456);
-      live.state = ANDAMENTO_LIVE; live.workspace_id = uishell_sidebar_workspace(previewed);
+      live.state = WHEELHOUSE_LIVE; live.workspace_id = uishell_sidebar_workspace(previewed);
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, 4000000);
       for(U64 engaged = 0; engaged < 2; engaged++)
       {
@@ -569,7 +569,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_end_build();
         CardCheck(card->cap_below && card->cap.rect.y0 == 299, "a card at the top takes its cap on its bottom edge");
       }
-      AndamentoNode parent = {0}; andamento_snapshot_node(fixture.snapshot, live.parent, &parent);
+      WheelhouseNode parent = {0}; wheelhouse_snapshot_node(fixture.snapshot, live.parent, &parent);
       String8 parent_label = uishell_sidebar_string(parent.label);
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, 0) && card->depth == 2,
                 "clicking a related widget navigates within the card");
@@ -587,9 +587,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // modifier-open. No placement-edge fallback may invent a relation.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       B32 hidden_in_tree = 0;
-      for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+      for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
       {
-        AndamentoNode row = {0}; andamento_snapshot_node(fixture.snapshot, i, &row);
+        WheelhouseNode row = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &row);
         hidden_in_tree |= str8_match(uishell_sidebar_string(row.entity.id), str8_lit("hidden-detail"), 0);
       }
       CardCheck(!hidden_in_tree, "hidden relation target has no tree placement");
@@ -628,10 +628,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         if(frame)
         {
-          AndamentoNode next = {0};
-          for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+          WheelhouseNode next = {0};
+          for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
           {
-            andamento_snapshot_node(fixture.snapshot, i, &next);
+            wheelhouse_snapshot_node(fixture.snapshot, i, &next);
             if(str8_match(uishell_sidebar_string(next.entity.id), str8_lit("pr-1000"), 0)) { break; }
           }
           uishell_sidebar_card_set(card, next, ui_key_zero(), str8_zero(), 0, now_time_us());
@@ -747,7 +747,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // Follow the focused card's production default-navigation path.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       uishell_sidebar_card_navigate(card, uishell_sidebar_card_entity(parent), now_time_us());
-      card->previous = (AndamentoEntity){0}; card->engaged = card->focused = 1;
+      card->previous = (WheelhouseEntity){0}; card->engaged = card->focused = 1;
       B32 saw_related = 0, saw_back = 0, saw_close = 0;
       for(U64 frame = 0; frame < 32 && card->open; frame++)
       {
@@ -796,7 +796,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1);
       uishell_sidebar_card_queue_action(&fixture, live, action_node_copy(&fixture, hidden_index));
       CardCheck(fixture.card_has_action, "late View can queue card intent after the overlay pass");
-      Andamento *dispatch_core = fixture.core; fixture.core = 0;
+      WheelhouseCore *dispatch_core = fixture.core; fixture.core = 0;
       uishell_sidebar_cards_dispatch(ws);
       fixture.core = dispatch_core;
       CardCheck(!fixture.card_has_action && !fixture.card_action_intent.size && !fixture.card_action_target.id.len,
@@ -804,33 +804,33 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       ui_end_build();
       // A reveal/observe refresh can replace the snapshot after the card emits
       // its intent but before sidebar dispatch. Never retain the old index.
-      AndamentoNode action_node = {0};
+      WheelhouseNode action_node = {0};
       U64 action_index = uishell_sidebar_card_find(&fixture, card->path[0], &action_node);
       size_t copy_action = action_node_copy(&fixture, action_index);
-      CardCheck(copy_action != ANDAMENTO_NONE, "refresh trace starts with a Copy URL action");
+      CardCheck(copy_action != WHEELHOUSE_NONE, "refresh trace starts with a Copy URL action");
       uishell_sidebar_card_queue_action(&fixture, action_node, copy_action);
-      AndamentoFact refreshed_title = {.key = uishell_sidebar_text(str8_lit("flotilla.change_request.title")),
-                                       .kind = ANDAMENTO_FACT_TEXT, .text = uishell_sidebar_text(str8_lit("Refreshed title"))};
-      CardCheck(andamento_apply_entity(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("change_request")),
+      WheelhouseFact refreshed_title = {.key = uishell_sidebar_text(str8_lit("flotilla.change_request.title")),
+                                       .kind = WHEELHOUSE_FACT_TEXT, .text = uishell_sidebar_text(str8_lit("Refreshed title"))};
+      CardCheck(wheelhouse_apply_entity(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("change_request")),
                 uishell_sidebar_text(str8_lit("pr-281")), uishell_sidebar_text(str8_lit("fixture")), &refreshed_title, 1, 0),
                 "refresh trace updates the selected entity");
       uishell_sidebar_refresh(&fixture);
       action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_target, &action_node);
       copy_action = action_node_copy(&fixture, action_index);
-      CardCheck(copy_action != ANDAMENTO_NONE && uishell_sidebar_card_take_action(&fixture) == copy_action &&
-                !fixture.card_has_action && uishell_sidebar_card_take_action(&fixture) == ANDAMENTO_NONE,
+      CardCheck(copy_action != WHEELHOUSE_NONE && uishell_sidebar_card_take_action(&fixture) == copy_action &&
+                !fixture.card_has_action && uishell_sidebar_card_take_action(&fixture) == WHEELHOUSE_NONE,
                 "Copy URL intent resolves against the refreshed snapshot exactly once");
       uishell_sidebar_card_queue_action(&fixture, action_node, action_node.activate);
-      CardCheck(action_node.activate != ANDAMENTO_NONE && uishell_sidebar_card_take_action(&fixture) == action_node.activate,
+      CardCheck(action_node.activate != WHEELHOUSE_NONE && uishell_sidebar_card_take_action(&fixture) == action_node.activate,
                 "Open intent remains distinct from Copy URL intent");
       uishell_sidebar_card_queue_action(&fixture, action_node, copy_action);
       String8 remove_url = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"pr-281\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"flotilla.forge\"]}");
-      CardCheck(andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(remove_url), 0), "refresh trace removes URL metadata");
+      CardCheck(wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(remove_url), 0), "refresh trace removes URL metadata");
       uishell_sidebar_refresh(&fixture);
       action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_target, &action_node);
-      CardCheck(action_index != ANDAMENTO_NONE && action_node_copy(&fixture, action_index) == ANDAMENTO_NONE,
+      CardCheck(action_index != WHEELHOUSE_NONE && action_node_copy(&fixture, action_index) == WHEELHOUSE_NONE,
                 "refresh keeps the entity but removes its Copy URL action");
-      CardCheck(uishell_sidebar_card_take_action(&fixture) == ANDAMENTO_NONE && !fixture.card_has_action,
+      CardCheck(uishell_sidebar_card_take_action(&fixture) == WHEELHOUSE_NONE && !fixture.card_has_action,
                 "refresh drops a removed action rather than dispatching an old snapshot index");
     }
   }
@@ -846,9 +846,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     };
     for(U64 i = 0; i < ArrayCount(cards); i++)
     {
-      AndamentoEntity entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_cstring(cards[i].kind), str8_cstring(cards[i].id));
-      AndamentoNode node = {0}; U64 index = uishell_sidebar_card_find(&fixture, entity, &node);
-      CardCheck(index != ANDAMENTO_NONE, "all six shipped detail templates have a catalog target");
+      WheelhouseEntity entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_cstring(cards[i].kind), str8_cstring(cards[i].id));
+      WheelhouseNode node = {0}; U64 index = uishell_sidebar_card_find(&fixture, entity, &node);
+      CardCheck(index != WHEELHOUSE_NONE, "all six shipped detail templates have a catalog target");
       uishell_sidebar_card_set(card, node, ui_key_zero(), str8_zero(), 0, now_time_us());
       card->enriched = 1;
       UI_EventList events = {0};
@@ -859,22 +859,22 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       { uishell_sidebar_card_content(&fixture, ws, card, 0, node, index, 400, 0); }
       ui_end_build();
       B32 title = 0, identity = 0, facts = 0, expected_facts = 0;
-      AndamentoDetail d = {0}; andamento_snapshot_detail(fixture.snapshot, index, &d);
+      WheelhouseDetail d = {0}; wheelhouse_snapshot_detail(fixture.snapshot, index, &d);
       for(U64 f = 0; f < d.field_count; f++)
       {
-        AndamentoDetailField field = {0}; andamento_snapshot_detail_field(fixture.snapshot, index, f, &field);
-        expected_facts |= field.role == ANDAMENTO_DETAIL_FACT && field.has_value;
+        WheelhouseDetailField field = {0}; wheelhouse_snapshot_detail_field(fixture.snapshot, index, f, &field);
+        expected_facts |= field.role == WHEELHOUSE_DETAIL_FACT && field.has_value;
       }
       for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
       {
         String8 text = ui_box_display_string(box);
         title |= str8_match(text, str8_cstring(cards[i].title), 0);
         identity |= str8_match(text, str8_cstring(cards[i].id), 0);
-        AndamentoDetail d = {0}; andamento_snapshot_detail(fixture.snapshot, index, &d);
+        WheelhouseDetail d = {0}; wheelhouse_snapshot_detail(fixture.snapshot, index, &d);
         for(U64 f = 0; f < d.field_count; f++)
         {
-          AndamentoDetailField field = {0}; andamento_snapshot_detail_field(fixture.snapshot, index, f, &field);
-          facts |= field.role == ANDAMENTO_DETAIL_FACT && field.has_value && str8_match(text, uishell_sidebar_string(field.label), 0);
+          WheelhouseDetailField field = {0}; wheelhouse_snapshot_detail_field(fixture.snapshot, index, f, &field);
+          facts |= field.role == WHEELHOUSE_DETAIL_FACT && field.has_value && str8_match(text, uishell_sidebar_string(field.label), 0);
         }
         CardCheck(!str8_match(str8_prefix(text, 6), str8_lit("Title:"), 0), "typed headers do not display flat prefixes");
       }
@@ -887,7 +887,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // provider) navigate within the subscription.
     {
       UIShell_SidebarState subscribed = {.initialized = 1};
-      subscribed.core = andamento_create(config.str, config.size, 0);
+      subscribed.core = wheelhouse_create(config.str, config.size, 0);
       CardCheck(subscribed.core != 0, "subscription fixture initializes");
       String8 provider = str8_lit("01a12a71-c309-714c-bc8f-619c6d7fbb28");
       String8 patches = str8_cstring((char *)uishell_sidebar_fixture_patches);
@@ -895,7 +895,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       {
         U64 end = start;
         while(end < patches.size && patches.str[end] != '\n') { end++; }
-        andamento_apply_patch_json(subscribed.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0);
+        wheelhouse_apply_patch_json(subscribed.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0);
         start = end+1;
       }
       String8 subscription_patches[] = {
@@ -908,15 +908,15 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       };
       for(U64 i = 0; subscribed.core && i < ArrayCount(subscription_patches); i++)
       {
-        CardCheck(andamento_apply_patch_json(subscribed.core, 0, uishell_sidebar_text(provider), uishell_sidebar_text(subscription_patches[i]), 0),
+        CardCheck(wheelhouse_apply_patch_json(subscribed.core, 0, uishell_sidebar_text(provider), uishell_sidebar_text(subscription_patches[i]), 0),
                   "subscription fixture patch applies");
       }
       if(subscribed.core) { uishell_sidebar_refresh(&subscribed); }
-      AndamentoEntity project = uishell_sidebar_entity(provider, str8_lit("project"), str8_lit("p"));
-      AndamentoNode row = {0}; B32 has_row = 0;
-      for(U64 i = 0; subscribed.snapshot && i < andamento_snapshot_node_count(subscribed.snapshot) && !has_row; i++)
+      WheelhouseEntity project = uishell_sidebar_entity(provider, str8_lit("project"), str8_lit("p"));
+      WheelhouseNode row = {0}; B32 has_row = 0;
+      for(U64 i = 0; subscribed.snapshot && i < wheelhouse_snapshot_node_count(subscribed.snapshot) && !has_row; i++)
       {
-        andamento_snapshot_node(subscribed.snapshot, i, &row);
+        wheelhouse_snapshot_node(subscribed.snapshot, i, &row);
         has_row = !row.is_section && uishell_sidebar_card_entity_match(row.entity, project);
       }
       CardCheck(has_row, "a subscription's project has its row, under its provider");
@@ -928,12 +928,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         uishell_sidebar_card_source_at(&subscribed, row, hover, str8_zero(), 0, 1000000+UIShell_HoverCardOpenDelayUS);
         CardCheck(sub_card->open && uishell_sidebar_card_entity_match(sub_card->path[0], project),
                   "hovering a subscription entity's row opens its card, keyed by its provider");
-        AndamentoNode node = {0};
+        WheelhouseNode node = {0};
         U64 index = uishell_sidebar_card_find(&subscribed, project, &node);
-        CardCheck(index != ANDAMENTO_NONE && str8_match(uishell_sidebar_string(node.label), str8_lit("Subscribed project"), 0),
+        CardCheck(index != WHEELHOUSE_NONE && str8_match(uishell_sidebar_string(node.label), str8_lit("Subscribed project"), 0),
                   "a subscription entity's card finds its own details, not the host's same kind and ID");
         B32 title = 0;
-        if(index != ANDAMENTO_NONE)
+        if(index != WHEELHOUSE_NONE)
         {
           UI_EventList events = {0};
           ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -972,44 +972,44 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       " field \"upstream\" role=\"fact\" section=\"facts\" label=\"Upstream\" key=\"git.upstream\"\n"
       "}\n");
     UIShell_SidebarState freshness = {0};
-    freshness.core = andamento_create(freshness_config.str, freshness_config.size, 0);
+    freshness.core = wheelhouse_create(freshness_config.str, freshness_config.size, 0);
     CardCheck(freshness.core != 0, "freshness fixture initializes");
-    AndamentoEntity entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("worktree"), str8_lit("stale-worktree"));
-    AndamentoFact facts[] = {
-      {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = ANDAMENTO_FACT_TEXT,
+    WheelhouseEntity entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("worktree"), str8_lit("stale-worktree"));
+    WheelhouseFact facts[] = {
+      {.key = uishell_sidebar_text(str8_lit("display.label")), .kind = WHEELHOUSE_FACT_TEXT,
        .text = uishell_sidebar_text(str8_lit("Worker"))},
-      {.key = uishell_sidebar_text(str8_lit("git.branch")), .kind = ANDAMENTO_FACT_TEXT,
+      {.key = uishell_sidebar_text(str8_lit("git.branch")), .kind = WHEELHOUSE_FACT_TEXT,
        .text = uishell_sidebar_text(str8_lit("retained-branch"))},
-      {.key = uishell_sidebar_text(str8_lit("git.upstream")), .kind = ANDAMENTO_FACT_TEXT,
+      {.key = uishell_sidebar_text(str8_lit("git.upstream")), .kind = WHEELHOUSE_FACT_TEXT,
        .text = uishell_sidebar_text(str8_zero())},
-      {.key = uishell_sidebar_text(str8_lit("action.primary.target")), .kind = ANDAMENTO_FACT_TEXT,
+      {.key = uishell_sidebar_text(str8_lit("action.primary.target")), .kind = WHEELHOUSE_FACT_TEXT,
        .text = uishell_sidebar_text(str8_lit("worktree:stale-worktree"))},
-      {.key = uishell_sidebar_text(str8_lit("action.primary.recipe")), .kind = ANDAMENTO_FACT_TEXT,
+      {.key = uishell_sidebar_text(str8_lit("action.primary.recipe")), .kind = WHEELHOUSE_FACT_TEXT,
        .text = uishell_sidebar_text(str8_lit("exec sh"))},
     };
-    CardCheck(andamento_apply_entity(freshness.core, 1000, uishell_sidebar_text(uishell_sidebar_host_provider), entity.kind, entity.id, uishell_sidebar_text(str8_lit("fixture")), facts, ArrayCount(facts), 0),
+    CardCheck(wheelhouse_apply_entity(freshness.core, 1000, uishell_sidebar_text(uishell_sidebar_host_provider), entity.kind, entity.id, uishell_sidebar_text(str8_lit("fixture")), facts, ArrayCount(facts), 0),
               "retained observation fixture applies");
     uishell_sidebar_refresh(&freshness);
-    AndamentoNode node = {0}; U64 index = uishell_sidebar_card_find(&freshness, entity, &node);
-    CardCheck(andamento_dispatch(freshness.core, freshness.snapshot, node.activate, 0), "freshness fixture activates its control");
-    AndamentoEffects *effects = andamento_effects_take(freshness.core, 0);
-    AndamentoEffect effect = {0};
-    CardCheck(andamento_effects_get(effects, 0, &effect) && effect.kind == ANDAMENTO_EFFECT_MATERIALIZE,
+    WheelhouseNode node = {0}; U64 index = uishell_sidebar_card_find(&freshness, entity, &node);
+    CardCheck(wheelhouse_dispatch(freshness.core, freshness.snapshot, node.activate, 0), "freshness fixture activates its control");
+    WheelhouseEffects *effects = wheelhouse_effects_take(freshness.core, 0);
+    WheelhouseEffect effect = {0};
+    CardCheck(wheelhouse_effects_get(effects, 0, &effect) && effect.kind == WHEELHOUSE_EFFECT_MATERIALIZE,
               "freshness fixture gets a materialize effect");
     // A workspace this test makes up, read back through the index as 123456.
     UIShell_WorkspaceId worker = uishell_workspace_id_make();
     uishell_workspace_index_insert(worker, 123456);
-    CardCheck(andamento_complete(freshness.core, effect.request_id, ANDAMENTO_COMPLETE_MATERIALIZE, uishell_sidebar_workspace(worker), uishell_sidebar_text(str8_zero()), 0),
+    CardCheck(wheelhouse_complete(freshness.core, effect.request_id, WHEELHOUSE_COMPLETE_MATERIALIZE, uishell_sidebar_workspace(worker), uishell_sidebar_text(str8_zero()), 0),
               "freshness fixture binds preview identity");
-    andamento_effects_release(effects);
-    AndamentoWorkspace workspace = {.id = uishell_sidebar_workspace(worker), .name = uishell_sidebar_text(str8_lit("Worker")), .selected = 1};
+    wheelhouse_effects_release(effects);
+    WheelhouseWorkspace workspace = {.id = uishell_sidebar_workspace(worker), .name = uishell_sidebar_text(str8_lit("Worker")), .selected = 1};
     // Entity facts don't expire: their provider's connection drops instead.
-    CardCheck(andamento_observe(freshness.core, &workspace, 1, 0, 0, 0) && andamento_tick(freshness.core, 61000, 0) &&
-              andamento_provider_set_stale(freshness.core, uishell_sidebar_text(uishell_sidebar_host_provider), 1, 0),
+    CardCheck(wheelhouse_observe(freshness.core, &workspace, 1, 0, 0, 0) && wheelhouse_tick(freshness.core, 61000, 0) &&
+              wheelhouse_provider_set_stale(freshness.core, uishell_sidebar_text(uishell_sidebar_host_provider), 1, 0),
               "retained observation ages and its provider goes stale");
     uishell_sidebar_refresh(&freshness);
     index = uishell_sidebar_card_find(&freshness, entity, &node);
-    CardCheck(node.state == ANDAMENTO_LIVE && uishell_sidebar_node_cfg(&node) == 123456, "retained catalog preview identity survives staleness");
+    CardCheck(node.state == WHEELHOUSE_LIVE && uishell_sidebar_node_cfg(&node) == 123456, "retained catalog preview identity survives staleness");
     UIShell_HoverCard *fresh_card = &freshness.cards[0];
     uishell_sidebar_card_set(fresh_card, node, ui_key_zero(), str8_zero(), 0, now_time_us());
     for(U64 enriched = 0; enriched < 2; enriched++)
@@ -1042,9 +1042,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   // that the move controls request. No KDL or producer data is edited.
   if(fixture.snapshot)
   {
-    AndamentoNode entity = {0};
-    for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
-    { andamento_snapshot_node(fixture.snapshot, i, &entity); if(!entity.is_section && entity.entity.id.len) { break; } }
+    WheelhouseNode entity = {0};
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+    { wheelhouse_snapshot_node(fixture.snapshot, i, &entity); if(!entity.is_section && entity.entity.id.len) { break; } }
     // Rendering sections publishes local sections, which replaces the
     // snapshot; keep the entity's text in storage the test owns.
     Arena *entity_arena = arena_alloc();
@@ -1180,7 +1180,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(center_pin->open && !center_pin->moving && str8_match(uishell_sidebar_card_pin_id(center_pin), saved_ghost, 0) &&
       saved && str8_match(saved->ghost, saved_ghost, 0),
       "dropping the pinned card into its own area preserves its controller and saved identity");
-    AndamentoNode other_entity = entity;
+    WheelhouseNode other_entity = entity;
     other_entity.entity.id = uishell_sidebar_text(str8_lit("center-drop-second"));
     uishell_sidebar_card_set(original, other_entity, ui_key_zero(), str8_zero(), 0, now_time_us());
     uishell_hover_card_test_center_drop(ws, original, center_area);
@@ -1295,11 +1295,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_card_wm_event(ws, &overlap);
     CardCheck(top->focused && !original->focused && !pinned->focused, "float owns clicks above transient and pinned cards");
     uishell_sidebar_card_close(top);
-    AndamentoSnapshot *snapshot = fixture.snapshot; fixture.snapshot = 0;
+    WheelhouseSnapshot *snapshot = fixture.snapshot; fixture.snapshot = 0;
     UI_EventList absent_events = {0}; ui_begin_build(ws->os, &absent_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     MemoryZeroArray(test->hover_card_keys); test->hover_card_extra = 0;
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) UI_PrefWidth(ui_px(280, 1)) UI_PrefHeight(ui_em(1.6f, 1))
-    { uishell_sidebar_detached_content(&fixture, ws, pinned, u64_hash_from_str8(saved_ghost), (AndamentoNode){0}, ANDAMENTO_NONE, 280, 1); }
+    { uishell_sidebar_detached_content(&fixture, ws, pinned, u64_hash_from_str8(saved_ghost), (WheelhouseNode){0}, WHEELHOUSE_NONE, 280, 1); }
     ui_end_build();
     B32 absent = 0;
     for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
@@ -1429,7 +1429,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // A ghost row's click opens its target, as its home row does.
       U64 workspaces_before = 0;
       for(CFG_Node *c = window->first; c != &cfg_nil_node; c = c->next) { workspaces_before += str8_match(c->string, str8_lit("workspace"), 0); }
-      uishell_sidebar_card_close(&fixture.cards[0]); fixture.cards[0].candidate = (AndamentoEntity){0};
+      uishell_sidebar_card_close(&fixture.cards[0]); fixture.cards[0].candidate = (WheelhouseEntity){0};
       // Two settle frames publish and place the ghost before frame 0.
       B32 row_lingers = 0;
       for(U32 step = 0; step < 16; step++)
@@ -1455,9 +1455,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_end_build();
         // The ghost's tree row is keyed by its placement.
         String8 node_key = str8_zero();
-        for(U64 i = 0; fixture.snapshot && i < andamento_snapshot_node_count(fixture.snapshot); i++)
+        for(U64 i = 0; fixture.snapshot && i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
         {
-          AndamentoNode n = {0}; andamento_snapshot_node(fixture.snapshot, i, &n);
+          WheelhouseNode n = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &n);
           if(str8_match(uishell_sidebar_string(n.entity.id), ghost_guid, 0)) { node_key = push_str8_copy(ghost_scratch.arena, uishell_sidebar_string(n.key)); }
         }
         // After × (frames 10-11), the ghost's row goes too, once republished.
@@ -1501,7 +1501,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(queued, "clicking a ghost row goes to its source");
       CardCheck(hover_offered, "hovering a ghost row offers its subject's hover card");
       CardCheck(!uishell_sidebar_pin_by_ghost(window, ghost_guid) && !ghost_card->open, "× on a ghost row removes the ghost");
-      CardCheck(uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(entity), 0) != ANDAMENTO_NONE, "removing a ghost leaves its source");
+      CardCheck(uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(entity), 0) != WHEELHOUSE_NONE, "removing a ghost leaves its source");
       fixture.card_has_action = 0;
       scratch_end(ghost_scratch);
     }
@@ -1637,7 +1637,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         {
           uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1);
-          Andamento *drag_core = fixture.core; fixture.core = 0;
+          WheelhouseCore *drag_core = fixture.core; fixture.core = 0;
           Temp panel_scratch = scratch_begin(0, 0);
           UIShell_WorkspaceMount mount = uishell_workspace_mount_from_sidebar(panel_scratch.arena, window);
           mount.arrangement = rd_arrangement_copy(panel_scratch.arena, drag_layout);
@@ -1688,7 +1688,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       {
         uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1);
-        Andamento *drag_core = fixture.core; fixture.core = 0;
+        WheelhouseCore *drag_core = fixture.core; fixture.core = 0;
         Temp panel_scratch = scratch_begin(0, 0);
         UIShell_WorkspaceMount mount = uishell_workspace_mount_from_sidebar(panel_scratch.arena, window);
         mount.arrangement = rd_arrangement_copy(panel_scratch.arena, drag_layout);
@@ -1842,7 +1842,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         test->mouse = frame == 0 ? v2f32(-100, -100) : pointer;
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         {
-          Andamento *area_core = fixture.core; fixture.core = 0;
+          WheelhouseCore *area_core = fixture.core; fixture.core = 0;
           Temp panel_scratch = scratch_begin(0, 0);
           UIShell_WorkspaceMount mount = uishell_workspace_mount_from_sidebar(panel_scratch.arena, window);
           mount.arrangement = rd_arrangement_copy(panel_scratch.arena, drag_layout);
@@ -2202,9 +2202,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_publish(&fixture, &drop_split);
       uishell_sidebar_refresh(&fixture);
       String8 loop = str8_zero();
-      for(U64 i = 0; fixture.snapshot && i < andamento_snapshot_node_count(fixture.snapshot); i++)
+      for(U64 i = 0; fixture.snapshot && i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
       {
-        AndamentoNode n = {0}; andamento_snapshot_node(fixture.snapshot, i, &n);
+        WheelhouseNode n = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &n);
         if(str8_match(uishell_sidebar_string(n.entity.id), ghosts[0], 0)) { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(fixture.snapshot, i)); }
       }
       CardCheck(loop.size != 0, "a local group's ghosts are placed as one run");

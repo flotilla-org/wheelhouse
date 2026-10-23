@@ -1,4 +1,4 @@
-//- Workspace arrangements and Slots in Andamento (ADR 0012; andamento.h,
+//- Workspace arrangements and Slots in Andamento (ADR 0012; wheelhouse.h,
 // "Slots and arrangement documents"). Andamento keeps each workspace's Slots,
 // with their View Specs, and its arrangement document; this device keeps the
 // rest. Wheelhouse's live copy is the workspace's typed arrangement
@@ -15,15 +15,15 @@
 //           merged back in (uishell_workspace_store_load).
 //   commit  Once its arrangement was set, or its Views' specs changed, and no
 //           gesture is in flight, a workspace is committed: new and changed
-//           slots (andamento_slot_set), then the document at the generation
-//           last seen (andamento_arrangement_commit), then the user's slots it
+//           slots (wheelhouse_slot_set), then the document at the generation
+//           last seen (wheelhouse_arrangement_commit), then the user's slots it
 //           no longer tabs are removed. A gesture edits a copy (a boundary
 //           drag's rd_boundary_resize, a tab drag's drop) and sets nothing
 //           until it ends, so a drag commits once, at its end.
 //   follow  When Andamento changed the document itself (it placed a slot the
 //           document had no tab for, or the provider's baseline changed), the
 //           arrangement follows it (uishell_store_follow).
-//   plan    Then every Slot is planned (andamento_slot_plan), and an update
+//   plan    Then every Slot is planned (wheelhouse_slot_plan), and an update
 //           Andamento has for it is applied to its View ("Slot plans"
 //           below): a spec another host changed, or a provider's new target,
 //           reaches a View that is already open.
@@ -81,7 +81,7 @@
 // Target Resolutions (CONTEXT.md): which are portable is Wheelhouse's call.
 // A terminal's Cleat daemon session is: its `session` and `daemon_name`,
 // with this machine's name, are saved with the Slot in Andamento
-// (andamento_slot_resolution_set, kind "cleat-session"), and a View that
+// (wheelhouse_slot_resolution_set, kind "cleat-session"), and a View that
 // starts without an instance (a restart, another device) attaches through
 // it before starting afresh ("Portable Target Resolutions" below). A session
 // saved from another machine is left alone: Cleat reaches daemons on this
@@ -91,9 +91,9 @@
 // endpoint is part of its View Spec, so Andamento has it already. So is a web
 // View's page; where it got to (`web_url`) is portable too.
 
-StaticAssert(WH_Content_Command == 1<<ANDAMENTO_SLOT_COMMAND && WH_Content_File == 1<<ANDAMENTO_SLOT_FILE &&
-             WH_Content_Url == 1<<ANDAMENTO_SLOT_URL && WH_Content_Jackstay == 1<<ANDAMENTO_SLOT_JACKSTAY &&
-             WH_Content_Facet == 1<<ANDAMENTO_SLOT_FACET && WH_Content_CleatSession == 1<<ANDAMENTO_SLOT_CLEAT_SESSION,
+StaticAssert(WH_Content_Command == 1<<WHEELHOUSE_SLOT_COMMAND && WH_Content_File == 1<<WHEELHOUSE_SLOT_FILE &&
+             WH_Content_Url == 1<<WHEELHOUSE_SLOT_URL && WH_Content_Jackstay == 1<<WHEELHOUSE_SLOT_JACKSTAY &&
+             WH_Content_Facet == 1<<WHEELHOUSE_SLOT_FACET && WH_Content_CleatSession == 1<<WHEELHOUSE_SLOT_CLEAT_SESSION,
              uishell_store_content_kinds);
 
 // Terminal View settings that name a Cleat endpoint, in the order of
@@ -121,7 +121,7 @@ typedef struct UIShell_StoreFlag UIShell_StoreFlag;
 struct UIShell_StoreFlag
 {
   String8 key;
-  // ANDAMENTO_SLOT_FLAG_*
+  // WHEELHOUSE_SLOT_FLAG_*
   U32 flags;
 };
 
@@ -180,7 +180,7 @@ StaticAssert(ArrayCount(uishell_store_resolution_keys) == 6, uishell_store_resol
 // restart plans afresh from what Andamento keeps.
 read_only global String8 uishell_store_runtime_keys[] =
 {
-  // The resolution identity the View applied, as andamento_slot_plan takes it.
+  // The resolution identity the View applied, as wheelhouse_slot_plan takes it.
   str8_lit_comp("applied"),
   // An `ask` rebind waiting for the user's answer: what it would show.
   str8_lit_comp("asks"),
@@ -349,14 +349,14 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
   String8 expr = rd_expr_from_cfg(view);
   CFG_Node *cwd = cfg_node_child_from_string(view, str8_lit("cwd"));
   spec->presentation = kind;
-  spec->content = ANDAMENTO_SLOT_URL;
+  spec->content = WHEELHOUSE_SLOT_URL;
   taken[(*taken_count)++] = str8_lit("expression");
   if(str8_match(kind, str8_lit("terminal"), 0))
   {
     taken[(*taken_count)++] = str8_lit("cwd");
     if(uishell_store_setting(view, str8_lit("cleat_session")).size)
     {
-      spec->content = ANDAMENTO_SLOT_CLEAT_SESSION;
+      spec->content = WHEELHOUSE_SLOT_CLEAT_SESSION;
       for(U64 i = 0; i < ArrayCount(uishell_store_cleat_keys); i++)
       {
         *uishell_store_cleat_fields(spec, i) = uishell_store_setting(view, uishell_store_cleat_keys[i]);
@@ -366,7 +366,7 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
     }
     if(expr.size)
     {
-      spec->content = ANDAMENTO_SLOT_COMMAND;
+      spec->content = WHEELHOUSE_SLOT_COMMAND;
       spec->command = expr;
       spec->has_cwd = cwd != &cfg_nil_node;
       spec->cwd = cwd->first->string;
@@ -392,7 +392,7 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
     {
       String8 endpoint = uishell_store_setting(view, uishell_store_jackstay_keys[i]);
       if(!endpoint.size) { continue; }
-      spec->content = ANDAMENTO_SLOT_JACKSTAY;
+      spec->content = WHEELHOUSE_SLOT_JACKSTAY;
       spec->launcher = uishell_store_jackstay_keys[i];
       spec->endpoint = endpoint;
       taken[(*taken_count)++] = uishell_store_jackstay_keys[i];
@@ -404,7 +404,7 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
   String8 path = str8_match(kind, str8_lit("text"), 0) ? uishell_store_file_from_expr(arena, expr) : str8_zero();
   if(path.size)
   {
-    spec->content = ANDAMENTO_SLOT_FILE;
+    spec->content = WHEELHOUSE_SLOT_FILE;
     spec->path = path;
     return 1;
   }
@@ -573,7 +573,7 @@ uishell_store_command_line(Arena *arena, String8 *argv, U64 argc)
 }
 
 internal UIShell_ViewSpec
-uishell_store_spec_from_andamento(Arena *arena, AndamentoViewSpec *s)
+uishell_store_spec_from_core(Arena *arena, WheelhouseViewSpec *s)
 {
   UIShell_ViewSpec spec = {0};
   spec.content = s->content;
@@ -596,7 +596,7 @@ uishell_store_spec_from_andamento(Arena *arena, AndamentoViewSpec *s)
   spec.launcher = uishell_sidebar_string(s->launcher);
   spec.endpoint = uishell_sidebar_string(s->endpoint);
   spec.presentation = s->has_presentation ? uishell_sidebar_string(s->presentation) : str8_zero();
-  AndamentoText cleat[] = {s->cleat_transport, s->cleat_host, s->cleat_runtime_root, s->cleat_daemon, s->cleat_session};
+  WheelhouseText cleat[] = {s->cleat_transport, s->cleat_host, s->cleat_runtime_root, s->cleat_daemon, s->cleat_session};
   for(U64 i = 0; i < ArrayCount(cleat); i++) { *uishell_store_cleat_fields(&spec, i) = uishell_sidebar_string(cleat[i]); }
   return spec;
 }
@@ -604,22 +604,22 @@ uishell_store_spec_from_andamento(Arena *arena, AndamentoViewSpec *s)
 // `spec` as Andamento takes it. A View holds only the command line it runs:
 // when that is still the line of `was`'s argv (the slot's spec, if any), the
 // slot keeps its argv rather than becoming this host's shell line.
-internal AndamentoViewSpec
-uishell_store_andamento_spec(Arena *arena, UIShell_ViewSpec *spec, AndamentoViewSpec *was)
+internal WheelhouseViewSpec
+uishell_store_core_spec(Arena *arena, UIShell_ViewSpec *spec, WheelhouseViewSpec *was)
 {
-  AndamentoViewSpec s = {0};
+  WheelhouseViewSpec s = {0};
   s.content = spec->content;
   s.entity = uishell_sidebar_entity(spec->provider, spec->kind, spec->id);
   s.facet = uishell_sidebar_text(spec->facet);
   s.command = uishell_sidebar_text(spec->command);
-  if(spec->content == ANDAMENTO_SLOT_COMMAND && was && was->content == ANDAMENTO_SLOT_COMMAND && was->argc)
+  if(spec->content == WHEELHOUSE_SLOT_COMMAND && was && was->content == WHEELHOUSE_SLOT_COMMAND && was->argc)
   {
-    UIShell_ViewSpec prior = uishell_store_spec_from_andamento(arena, was);
+    UIShell_ViewSpec prior = uishell_store_spec_from_core(arena, was);
     if(str8_match(prior.command, spec->command, 0))
     {
-      AndamentoText *argv = push_array(arena, AndamentoText, prior.argc);
+      WheelhouseText *argv = push_array(arena, WheelhouseText, prior.argc);
       for(U64 i = 0; i < prior.argc; i++) { argv[i] = uishell_sidebar_text(prior.argv[i]); }
-      s.command = (AndamentoText){0};
+      s.command = (WheelhouseText){0};
       s.argv = argv;
       s.argc = prior.argc;
     }
@@ -632,7 +632,7 @@ uishell_store_andamento_spec(Arena *arena, UIShell_ViewSpec *spec, AndamentoView
   s.endpoint = uishell_sidebar_text(spec->endpoint);
   s.has_presentation = spec->presentation.size != 0;
   s.presentation = uishell_sidebar_text(spec->presentation);
-  AndamentoText *cleat[] = {&s.cleat_transport, &s.cleat_host, &s.cleat_runtime_root, &s.cleat_daemon, &s.cleat_session};
+  WheelhouseText *cleat[] = {&s.cleat_transport, &s.cleat_host, &s.cleat_runtime_root, &s.cleat_daemon, &s.cleat_session};
   for(U64 i = 0; i < ArrayCount(cleat); i++) { *cleat[i] = uishell_sidebar_text(*uishell_store_cleat_fields(spec, i)); }
   return s;
 }
@@ -690,8 +690,8 @@ uishell_store_unshown(Arena *arena, String8 key, UIShell_ViewSpec *spec)
 {
   switch(spec->content)
   {
-    case ANDAMENTO_SLOT_COMMAND: case ANDAMENTO_SLOT_FILE: return str8_zero();
-    case ANDAMENTO_SLOT_CLEAT_SESSION:
+    case WHEELHOUSE_SLOT_COMMAND: case WHEELHOUSE_SLOT_FILE: return str8_zero();
+    case WHEELHOUSE_SLOT_CLEAT_SESSION:
     {
       // Cleat's ssh bridge is Unix only, and a transport Wheelhouse doesn't
       // know is never guessed at.
@@ -702,12 +702,12 @@ uishell_store_unshown(Arena *arena, String8 key, UIShell_ViewSpec *spec)
       { return push_str8f(arena, "Cleat session %S on %S", spec->cleat_session, spec->cleat_host); }
       return str8_zero();
     }
-    case ANDAMENTO_SLOT_JACKSTAY:
+    case WHEELHOUSE_SLOT_JACKSTAY:
     {
       if(uishell_store_key_in(spec->launcher, uishell_store_jackstay_keys, ArrayCount(uishell_store_jackstay_keys))) { return str8_zero(); }
       return push_str8f(arena, "Jackstay launcher \"%S\" for %S", spec->launcher, spec->endpoint);
     }
-    case ANDAMENTO_SLOT_URL:
+    case WHEELHOUSE_SLOT_URL:
     {
       String8 kind = uishell_store_page_kind(spec->url);
       if(kind.size && (wh_renderer_from_name(kind)->content & WH_Content_Page)) { return str8_zero(); }
@@ -715,7 +715,7 @@ uishell_store_unshown(Arena *arena, String8 key, UIShell_ViewSpec *spec)
       if(!kind.size && wh_handler_from_url(spec->url)->name.size) { return str8_zero(); }
       return push_str8_copy(arena, spec->url);
     }
-    case ANDAMENTO_SLOT_FACET:
+    case WHEELHOUSE_SLOT_FACET:
     {
       // A facet resolves to a recipe its plan applies (a terminal unless it
       // asks to be presented otherwise); until then, what it waits for.
@@ -742,9 +742,9 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
     kind = wh_renderer_from_content(1<<spec->content)->name;
     switch(spec->content)
     {
-      case ANDAMENTO_SLOT_COMMAND: { expr = spec->command; has_cwd = spec->has_cwd; cwd = spec->cwd; } break;
-      case ANDAMENTO_SLOT_FILE: { expr = rd_eval_string_from_file_path(scratch.arena, spec->path); } break;
-      case ANDAMENTO_SLOT_URL:
+      case WHEELHOUSE_SLOT_COMMAND: { expr = spec->command; has_cwd = spec->has_cwd; cwd = spec->cwd; } break;
+      case WHEELHOUSE_SLOT_FILE: { expr = rd_eval_string_from_file_path(scratch.arena, spec->path); } break;
+      case WHEELHOUSE_SLOT_URL:
       {
         kind = uishell_store_page_kind(spec->url);
         // Another URL: its Handler's Renderer shows it, there.
@@ -759,8 +759,8 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
   uishell_store_set_setting(view, str8_lit("slot"), key);
   if(has_cwd) { uishell_store_set_setting(view, str8_lit("cwd"), cwd); }
   if(url.size) { uishell_store_set_setting(view, str8_lit("url"), url); }
-  if(!unshown.size && spec->content == ANDAMENTO_SLOT_JACKSTAY) { uishell_store_set_setting(view, spec->launcher, spec->endpoint); }
-  if(!unshown.size && spec->content == ANDAMENTO_SLOT_CLEAT_SESSION)
+  if(!unshown.size && spec->content == WHEELHOUSE_SLOT_JACKSTAY) { uishell_store_set_setting(view, spec->launcher, spec->endpoint); }
+  if(!unshown.size && spec->content == WHEELHOUSE_SLOT_CLEAT_SESSION)
   {
     for(U64 i = 0; i < ArrayCount(uishell_store_cleat_keys); i++)
     {
@@ -768,7 +768,7 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
       if(value.size) { uishell_store_set_setting(view, uishell_store_cleat_keys[i], value); }
     }
   }
-  if(spec && spec->content == ANDAMENTO_SLOT_FACET)
+  if(spec && spec->content == WHEELHOUSE_SLOT_FACET)
   {
     uishell_store_set_setting(view, str8_lit("resource_id"), key);
     uishell_store_mark_follows(view, 1);
@@ -779,7 +779,7 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
   if(unshown.size)
   {
     uishell_store_set_setting(view, str8_lit("content"), unshown);
-    if(spec && spec->content == ANDAMENTO_SLOT_URL) { uishell_store_set_setting(view, str8_lit("url"), spec->url); }
+    if(spec && spec->content == WHEELHOUSE_SLOT_URL) { uishell_store_set_setting(view, str8_lit("url"), spec->url); }
   }
   scratch_end(scratch);
   return view;
@@ -819,7 +819,7 @@ uishell_store_key_valid(String8 key)
 }
 
 internal B32
-uishell_store_slot_find(AndamentoSlots *slots, String8 key, AndamentoSlot *out)
+uishell_store_slot_find(WheelhouseSlots *slots, String8 key, WheelhouseSlot *out)
 {
   for(U64 i = 0; slots && i < slots->slot_count; i++)
   {
@@ -845,11 +845,11 @@ struct UIShell_StoreDoc
 {
   RD_Arrangement *arrangement;
   // In preorder, each naming its parent by index.
-  AndamentoDocPanel *panels;
+  WheelhouseDocPanel *panels;
   U64 panel_count;
   // Slot keys in tree order, each panel's adjacent (its `tabs`), and their
   // Views.
-  AndamentoText *tabs;
+  WheelhouseText *tabs;
   CFG_Node **views;
   String8 *keys;
   U64 tab_count;
@@ -887,8 +887,8 @@ uishell_store_doc(Arena *arena, RD_Arrangement *a)
     doc.panel_count += 1;
     for(RD_ArrangementTab *t = p->first_tab; t; t = t->next) { doc.tab_count += !uishell_store_previous_of(rd_cfg_from_view(t->view)).size; }
   }
-  doc.panels = push_array(arena, AndamentoDocPanel, doc.panel_count);
-  doc.tabs = push_array(arena, AndamentoText, doc.tab_count);
+  doc.panels = push_array(arena, WheelhouseDocPanel, doc.panel_count);
+  doc.tabs = push_array(arena, WheelhouseText, doc.tab_count);
   doc.views = push_array(arena, CFG_Node *, doc.tab_count);
   doc.keys = push_array(arena, String8, doc.tab_count);
   RD_ArrangementPanel **order = push_array(arena, RD_ArrangementPanel *, doc.panel_count);
@@ -896,9 +896,9 @@ uishell_store_doc(Arena *arena, RD_Arrangement *a)
   for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p), index++)
   {
     order[index] = p;
-    AndamentoDocPanel *out = &doc.panels[index];
-    out->parent = ANDAMENTO_NONE;
-    for(U64 j = index; j > 0 && out->parent == ANDAMENTO_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1; } }
+    WheelhouseDocPanel *out = &doc.panels[index];
+    out->parent = WHEELHOUSE_NONE;
+    for(U64 j = index; j > 0 && out->parent == WHEELHOUSE_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1; } }
     // A provider's panel keeps the ID its document gave it.
     out->id = uishell_sidebar_text(p->doc_id.size ? p->doc_id : push_str8f(arena, "%I64u", p->id));
     // Andamento takes finite positive weights; the root's means nothing. A
@@ -906,14 +906,14 @@ uishell_store_doc(Arena *arena, RD_Arrangement *a)
     // reads back as the same F32.
     F32 weight = p == a->root ? 1.f : p->weight;
     out->weight = (weight > 0 && weight < 1e30f) ? f64_from_str8(rd_arrangement_weight_string(arena, weight)) : 0.01;
-    out->selected = ANDAMENTO_NONE;
+    out->selected = WHEELHOUSE_NONE;
     if(p->first != &rd_nil_arrangement_panel)
     {
-      out->kind = ANDAMENTO_PANEL_SPLIT;
-      out->axis = rd_arrangement_split_axis(a, p) == Axis2_X ? ANDAMENTO_AXIS_ROW : ANDAMENTO_AXIS_COLUMN;
+      out->kind = WHEELHOUSE_PANEL_SPLIT;
+      out->axis = rd_arrangement_split_axis(a, p) == Axis2_X ? WHEELHOUSE_AXIS_ROW : WHEELHOUSE_AXIS_COLUMN;
       continue;
     }
-    out->kind = ANDAMENTO_PANEL_TABS;
+    out->kind = WHEELHOUSE_PANEL_TABS;
     out->tabs = doc.tabs+tab;
     // A previous instance selected stands for its Slot's View.
     String8 selected_previous = uishell_store_previous_of(rd_cfg_from_view(p->selected));
@@ -959,7 +959,7 @@ uishell_store_specs(UIShell_StoreDoc *doc)
 // the next "u:<n>". A View's key is saved on it, and its tab follows it to
 // its address. Returns whether any changed.
 internal B32
-uishell_store_assign_keys(Arena *arena, CFG_Node *owner, UIShell_StoreDoc *doc, AndamentoSlots *slots)
+uishell_store_assign_keys(Arena *arena, CFG_Node *owner, UIShell_StoreDoc *doc, WheelhouseSlots *slots)
 {
   B32 changed = 0;
   // Past every key of the workspace's namespace (the Presentation State it
@@ -1016,7 +1016,7 @@ uishell_store_host(void)
 }
 
 internal String8
-uishell_store_resolution_field(AndamentoResolution *r, String8 name)
+uishell_store_resolution_field(WheelhouseResolution *r, String8 name)
 {
   for(U64 i = 0; i < r->field_count; i++)
   { if(str8_match(uishell_sidebar_string(r->fields[i].name), name, 0)) { return uishell_sidebar_string(r->fields[i].value); } }
@@ -1025,7 +1025,7 @@ uishell_store_resolution_field(AndamentoResolution *r, String8 name)
 
 // Whether `r` is a Cleat session this machine saved: one it can attach to.
 internal B32
-uishell_store_resolution_ours(AndamentoResolution *r)
+uishell_store_resolution_ours(WheelhouseResolution *r)
 {
   return str8_match(uishell_sidebar_string(r->kind), str8_lit("cleat-session"), 0) &&
          str8_match(uishell_store_resolution_field(r, str8_lit("host")), uishell_store_host(), 0);
@@ -1049,7 +1049,7 @@ uishell_store_view_portable_text(Arena *arena, CFG_Node *view)
 
 // Gives web `view`, which hasn't reached a page, the page `r` saved.
 internal B32
-uishell_store_restore_web_location(CFG_Node *view, AndamentoResolution *r)
+uishell_store_restore_web_location(CFG_Node *view, WheelhouseResolution *r)
 {
   String8 url = uishell_store_resolution_field(r, str8_lit("url"));
   if(!str8_match(uishell_sidebar_string(r->kind), str8_lit("web-location"), 0) || !url.size ||
@@ -1063,7 +1063,7 @@ uishell_store_restore_web_location(CFG_Node *view, AndamentoResolution *r)
 // this machine can attach to it, or web `view` the page it reached. Returns
 // whether it did.
 internal B32
-uishell_store_restore_resolution(CFG_Node *view, AndamentoResolution *r)
+uishell_store_restore_resolution(CFG_Node *view, WheelhouseResolution *r)
 {
   if(str8_match(view->string, str8_lit("web"), 0)) { return uishell_store_restore_web_location(view, r); }
   String8 session = uishell_store_resolution_field(r, str8_lit("session"));
@@ -1082,8 +1082,8 @@ uishell_store_restore_resolution(CFG_Node *view, AndamentoResolution *r)
 // Saves web `view`'s page with Slot `key`, as for a terminal's session below,
 // except that any machine's is replaced.
 internal void
-uishell_store_save_web_location(UIShell_SidebarState *state, AndamentoWorkspaceId workspace, String8 key, CFG_Node *view,
-                                String8 applied, AndamentoResolution *saved)
+uishell_store_save_web_location(UIShell_SidebarState *state, WheelhouseWorkspaceId workspace, String8 key, CFG_Node *view,
+                                String8 applied, WheelhouseResolution *saved)
 {
   String8 url = uishell_store_setting(view, str8_lit("web_url"));
   B32 same = saved && str8_match(uishell_sidebar_string(saved->kind), str8_lit("web-location"), 0) &&
@@ -1094,20 +1094,20 @@ uishell_store_save_web_location(UIShell_SidebarState *state, AndamentoWorkspaceI
   {
     if(saved)
     {
-      uint32_t result = UIShell_StoreCall(state, andamento_slot_resolution_clear(state->core, workspace, uishell_sidebar_text(key),
+      uint32_t result = UIShell_StoreCall(state, wheelhouse_slot_resolution_clear(state->core, workspace, uishell_sidebar_text(key),
                                                                                 saved->generation, 0, &error));
-      uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
+      uishell_sidebar_result(state, result != WHEELHOUSE_INVALID, error);
     }
   }
   else
   {
-    AndamentoResolutionField field = {uishell_sidebar_text(str8_lit("url")), uishell_sidebar_text(url)};
-    uint32_t result = UIShell_StoreCall(state, andamento_slot_resolution_set(state->core, workspace, uishell_sidebar_text(key),
+    WheelhouseResolutionField field = {uishell_sidebar_text(str8_lit("url")), uishell_sidebar_text(url)};
+    uint32_t result = UIShell_StoreCall(state, wheelhouse_slot_resolution_set(state->core, workspace, uishell_sidebar_text(key),
       uishell_sidebar_text(str8_lit("web-location")), &field, 1, uishell_sidebar_text(applied),
       saved ? saved->generation : 0, 0, &error));
     // Stale: another save came first; the next plan carries it.
-    same = result == ANDAMENTO_COMMITTED;
-    uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
+    same = result == WHEELHOUSE_COMMITTED;
+    uishell_sidebar_result(state, result != WHEELHOUSE_INVALID, error);
   }
   if(same) { uishell_store_set_setting(view, str8_lit("portable"), url); }
   else { uishell_store_drop_setting(view, str8_lit("portable")); }
@@ -1119,8 +1119,8 @@ uishell_store_save_web_location(UIShell_SidebarState *state, AndamentoWorkspaceI
 // clears this machine's once the View has none. Another machine's is left
 // alone.
 internal void
-uishell_store_save_resolution(UIShell_SidebarState *state, AndamentoWorkspaceId workspace, String8 key, CFG_Node *view,
-                              String8 applied, AndamentoResolution *saved)
+uishell_store_save_resolution(UIShell_SidebarState *state, WheelhouseWorkspaceId workspace, String8 key, CFG_Node *view,
+                              String8 applied, WheelhouseResolution *saved)
 {
   if(!applied.size) { return; }
   if(str8_match(view->string, str8_lit("web"), 0)) { uishell_store_save_web_location(state, workspace, key, view, applied, saved); return; }
@@ -1141,25 +1141,25 @@ uishell_store_save_resolution(UIShell_SidebarState *state, AndamentoWorkspaceId 
   {
     if(saved)
     {
-      uint32_t result = UIShell_StoreCall(state, andamento_slot_resolution_clear(state->core, workspace, uishell_sidebar_text(key),
+      uint32_t result = UIShell_StoreCall(state, wheelhouse_slot_resolution_clear(state->core, workspace, uishell_sidebar_text(key),
                                                                                 saved->generation, 0, &error));
-      uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
+      uishell_sidebar_result(state, result != WHEELHOUSE_INVALID, error);
       error = 0;
     }
   }
   else
   {
-    AndamentoResolutionField fields[3] = {0};
+    WheelhouseResolutionField fields[3] = {0};
     U64 count = 0;
-    if(daemon.size) { fields[count++] = (AndamentoResolutionField){uishell_sidebar_text(str8_lit("daemon")), uishell_sidebar_text(daemon)}; }
-    fields[count++] = (AndamentoResolutionField){uishell_sidebar_text(str8_lit("host")), uishell_sidebar_text(uishell_store_host())};
-    fields[count++] = (AndamentoResolutionField){uishell_sidebar_text(str8_lit("session")), uishell_sidebar_text(session)};
-    uint32_t result = UIShell_StoreCall(state, andamento_slot_resolution_set(state->core, workspace, uishell_sidebar_text(key),
+    if(daemon.size) { fields[count++] = (WheelhouseResolutionField){uishell_sidebar_text(str8_lit("daemon")), uishell_sidebar_text(daemon)}; }
+    fields[count++] = (WheelhouseResolutionField){uishell_sidebar_text(str8_lit("host")), uishell_sidebar_text(uishell_store_host())};
+    fields[count++] = (WheelhouseResolutionField){uishell_sidebar_text(str8_lit("session")), uishell_sidebar_text(session)};
+    uint32_t result = UIShell_StoreCall(state, wheelhouse_slot_resolution_set(state->core, workspace, uishell_sidebar_text(key),
       uishell_sidebar_text(str8_lit("cleat-session")), fields, count, uishell_sidebar_text(applied),
       saved ? saved->generation : 0, 0, &error));
     // Stale: another save came first; the next plan carries it.
-    same = result == ANDAMENTO_COMMITTED;
-    uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
+    same = result == WHEELHOUSE_COMMITTED;
+    uishell_sidebar_result(state, result != WHEELHOUSE_INVALID, error);
     error = 0;
   }
   if(same) { uishell_store_set_setting(view, str8_lit("portable"), portable); }
@@ -1169,7 +1169,7 @@ uishell_store_save_resolution(UIShell_SidebarState *state, AndamentoWorkspaceId 
 
 //- Following Andamento's document
 //
-// Both arrangements cross as the same document (AndamentoArrangementDoc):
+// Both arrangements cross as the same document (WheelhouseArrangementDoc):
 // panels in preorder, each naming its parent by index. A typed arrangement's
 // splits alternate axes, so a split along its parent's axis gives its
 // children to the parent, each scaled to the share it had. Following is one
@@ -1180,14 +1180,14 @@ struct UIShell_DocShape
 {
   // Per panel: whether it is a split lifted into its parent (it makes no
   // panel), the panel it is added to (an earlier one that makes a panel, or
-  // ANDAMENTO_NONE for a root), and its weight there.
+  // WHEELHOUSE_NONE for a root), and its weight there.
   B32 *lifted;
   U64 *parent;
   F32 *weight;
 };
 
 internal UIShell_DocShape
-uishell_store_doc_shape(Arena *arena, AndamentoArrangementDoc const *doc)
+uishell_store_doc_shape(Arena *arena, WheelhouseArrangementDoc const *doc)
 {
   U64 count = doc->panel_count;
   UIShell_DocShape shape = {push_array(arena, B32, count+1), push_array(arena, U64, count+1), push_array(arena, F32, count+1)};
@@ -1199,16 +1199,16 @@ uishell_store_doc_shape(Arena *arena, AndamentoArrangementDoc const *doc)
   }
   for(U64 i = 0; i < count; i++)
   {
-    AndamentoDocPanel const *p = &doc->panels[i];
-    U64 up = p->parent < i ? p->parent : ANDAMENTO_NONE;
+    WheelhouseDocPanel const *p = &doc->panels[i];
+    U64 up = p->parent < i ? p->parent : WHEELHOUSE_NONE;
     weight[i] = p->weight;
     // A lifted split's children are its parent's, sharing its weight.
-    if(up != ANDAMENTO_NONE && shape.lifted[up])
+    if(up != WHEELHOUSE_NONE && shape.lifted[up])
     {
       weight[i] = children[up] > 0 ? weight[up]*p->weight/children[up] : weight[up];
       up = shape.parent[up];
     }
-    shape.lifted[i] = up != ANDAMENTO_NONE && p->kind == ANDAMENTO_PANEL_SPLIT && doc->panels[up].kind == ANDAMENTO_PANEL_SPLIT &&
+    shape.lifted[i] = up != WHEELHOUSE_NONE && p->kind == WHEELHOUSE_PANEL_SPLIT && doc->panels[up].kind == WHEELHOUSE_PANEL_SPLIT &&
       p->axis == doc->panels[up].axis;
     shape.parent[i] = up;
     shape.weight[i] = (F32)weight[i];
@@ -1216,9 +1216,9 @@ uishell_store_doc_shape(Arena *arena, AndamentoArrangementDoc const *doc)
   return shape;
 }
 
-// Whether Andamento noted `key` as `kind` (ANDAMENTO_NOTE_*).
+// Whether Andamento noted `key` as `kind` (WHEELHOUSE_NOTE_*).
 internal B32
-uishell_store_noted(AndamentoWorkspaceArrangement *a, U32 kind, String8 key)
+uishell_store_noted(WheelhouseWorkspaceArrangement *a, U32 kind, String8 key)
 {
   for(U64 i = 0; a && i < a->note_count; i++)
   { if(a->notes[i].kind == kind && str8_match(uishell_sidebar_string(a->notes[i].key), key, 0)) { return 1; } }
@@ -1235,9 +1235,9 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
 {
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(id);
-  AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, workspace, 0));
-  AndamentoWorkspaceArrangement *stored = slots ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0)) : 0;
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(id);
+  WheelhouseSlots *slots = UIShell_StoreCall(state, wheelhouse_slots_get(state->core, workspace, 0));
+  WheelhouseWorkspaceArrangement *stored = slots ? UIShell_StoreCall(state, wheelhouse_arrangement_get(state->core, workspace, 0)) : 0;
   B32 built = stored != 0;
   if(built && generation_out) { *generation_out = stored->generation; }
   CFG_Node *device = cfg_node_child_from_string(owner, str8_lit("arrangement_presentation"));
@@ -1279,7 +1279,7 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
       cfg_node_ptr_list_push(arena, &previous, view);
       cfg_node_ptr_list_push(arena, &restored, view);
     }
-    AndamentoArrangementDoc *doc = &stored->doc;
+    WheelhouseArrangementDoc *doc = &stored->doc;
     UIShell_DocShape shape = uishell_store_doc_shape(arena, doc);
     U64 max_id = 0;
     for(U64 i = 0; i < doc->panel_count; i++)
@@ -1304,19 +1304,19 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
     else { rd_arrangement_clear(a); }
     // Allocations stay clear of the IDs set below until they are all set.
     a->next_id = max_id + (1ull << 40);
-    if(doc->panel_count && doc->panels[0].kind == ANDAMENTO_PANEL_SPLIT)
-    { a->root_axis = doc->panels[0].axis == ANDAMENTO_AXIS_ROW ? Axis2_X : Axis2_Y; }
+    if(doc->panel_count && doc->panels[0].kind == WHEELHOUSE_PANEL_SPLIT)
+    { a->root_axis = doc->panels[0].axis == WHEELHOUSE_AXIS_ROW ? Axis2_X : Axis2_Y; }
     U64 ids_used = 0;
     RD_PanelID *ids = push_array(arena, RD_PanelID, doc->panel_count+1);
     // Each panel's panel in the arrangement.
     RD_PanelID *made = push_array(arena, RD_PanelID, doc->panel_count+1);
     for(U64 index = 0; index < doc->panel_count; index++)
     {
-      AndamentoDocPanel *src = &doc->panels[index];
+      WheelhouseDocPanel *src = &doc->panels[index];
       U64 up = shape.parent[index];
-      if(index && up == ANDAMENTO_NONE) { continue; }
+      if(index && up == WHEELHOUSE_NONE) { continue; }
       if(shape.lifted[index]) { made[index] = made[up]; continue; }
-      RD_PanelID panel_id = up != ANDAMENTO_NONE ? rd_arrangement_add(a, made[up], shape.weight[index]) : a->root->id;
+      RD_PanelID panel_id = up != WHEELHOUSE_NONE ? rd_arrangement_add(a, made[up], shape.weight[index]) : a->root->id;
       RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(a, panel_id);
       String8 src_id = uishell_sidebar_string(src->id);
       B32 word = !(str8_is_integer(src_id, 10) && src_id.size < 18);
@@ -1334,21 +1334,21 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
       panel->doc_id = word ? push_str8_copy(arena, src_id) : str8_zero();
       made[index] = wanted;
       ids[ids_used++] = wanted;
-      if(src->kind != ANDAMENTO_PANEL_TABS) { continue; }
+      if(src->kind != WHEELHOUSE_PANEL_TABS) { continue; }
       RD_ViewAddress prev = rd_nil_view_address, selected = rd_nil_view_address;
       for(U64 t = 0; t < src->tab_count; t++)
       {
         String8 key = uishell_sidebar_string(src->tabs[t]);
-        B32 gone = uishell_store_noted(stored, ANDAMENTO_NOTE_GONE, key);
+        B32 gone = uishell_store_noted(stored, WHEELHOUSE_NOTE_GONE, key);
         CFG_Node *view = &cfg_nil_node;
         for(U64 i = 0; i < current.tab_count && view == &cfg_nil_node; i++)
         { if(str8_match(current.keys[i], key, 0)) { view = current.views[i]; } }
-        AndamentoSlot slot = {0};
+        WheelhouseSlot slot = {0};
         B32 known = !gone && uishell_store_slot_find(slots, key, &slot);
         if(view == &cfg_nil_node)
         {
           UIShell_ViewSpec spec = {0};
-          if(known) { spec = uishell_store_spec_from_andamento(arena, &slot.spec); }
+          if(known) { spec = uishell_store_spec_from_core(arena, &slot.spec); }
           view = uishell_store_view_from_spec(owner, key, known ? &spec : 0);
           // This device's part of its logical settings (a daemon session
           // Andamento hasn't saved, the daemon hosting it). Its Presentation
@@ -1370,7 +1370,7 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
         }
         // Whether it follows its provider, as committing would mark it.
         if(known && !str8_match(view->string, str8_lit("placeholder"), 0))
-        { uishell_store_mark_follows(view, (slot.in_baseline && !slot.detached) || slot.spec.content == ANDAMENTO_SLOT_FACET); }
+        { uishell_store_mark_follows(view, (slot.in_baseline && !slot.detached) || slot.spec.content == WHEELHOUSE_SLOT_FACET); }
         RD_ViewAddress address = rd_view_address_from_cfg(view);
         rd_arrangement_insert_tab(a, address, wanted, prev, 0);
         if(t == src->selected) { selected = address; }
@@ -1396,15 +1396,15 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
     if(device != &cfg_nil_node) { cfg_node_release(rd_state->cfg, device); }
     uishell_store_set_setting(owner, str8_lit("arrangement_generation"), push_str8f(arena, "%I64u", stored->generation));
   }
-  andamento_arrangement_free(stored);
-  andamento_slots_free(slots);
+  wheelhouse_arrangement_free(stored);
+  wheelhouse_slots_free(slots);
   scratch_end(scratch);
   return built;
 }
 
 //- Slot plans
 //
-// Every Slot follows Andamento's plan/token protocol (andamento.h, "each
+// Every Slot follows Andamento's plan/token protocol (wheelhouse.h, "each
 // slot follows managed primary content's protocol"). After each sync, each
 // of a workspace's Views that is a Slot is planned with the resolution
 // identity it applied (`applied`: empty for none, as after a restart, so a
@@ -1419,7 +1419,7 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
 //     keep-previous  the old View stays beside the new one as the Slot's
 //                 previous instance (`previous_of`), not a Slot itself,
 //                 until the user closes it, which releases it
-//                 (andamento_slot_release_previous)
+//                 (wheelhouse_slot_release_previous)
 //     ask         nothing until the user answers the View's prompt (`asks`);
 //                 declining fails the update until the resolution changes
 //   HELD, UNAVAILABLE, FAILED   the View keeps what it shows; focusing the
@@ -1438,11 +1438,11 @@ uishell_store_recipe_text(Arena *arena, UIShell_ViewSpec *recipe)
 {
   switch(recipe->content)
   {
-    case ANDAMENTO_SLOT_COMMAND: return recipe->command.size ? recipe->command : str8_lit("a shell");
-    case ANDAMENTO_SLOT_FILE: return recipe->path;
-    case ANDAMENTO_SLOT_URL: return recipe->url;
-    case ANDAMENTO_SLOT_JACKSTAY: return recipe->endpoint;
-    case ANDAMENTO_SLOT_CLEAT_SESSION:
+    case WHEELHOUSE_SLOT_COMMAND: return recipe->command.size ? recipe->command : str8_lit("a shell");
+    case WHEELHOUSE_SLOT_FILE: return recipe->path;
+    case WHEELHOUSE_SLOT_URL: return recipe->url;
+    case WHEELHOUSE_SLOT_JACKSTAY: return recipe->endpoint;
+    case WHEELHOUSE_SLOT_CLEAT_SESSION:
     {
       if(str8_match(recipe->cleat_transport, str8_lit("ssh"), 0))
       { return push_str8f(arena, "session %S on %S", recipe->cleat_session, recipe->cleat_host); }
@@ -1456,10 +1456,10 @@ uishell_store_recipe_text(Arena *arena, UIShell_ViewSpec *recipe)
 internal String8
 uishell_store_recipe_kind(Arena *arena, String8 key, UIShell_ViewSpec *recipe, String8 *unshown)
 {
-  *unshown = recipe->content == ANDAMENTO_SLOT_FACET ? str8_lit("content its provider hasn't resolved") :
+  *unshown = recipe->content == WHEELHOUSE_SLOT_FACET ? str8_lit("content its provider hasn't resolved") :
     uishell_store_unshown(arena, key, recipe);
   if(unshown->size) { return wh_renderer_from_content(WH_Content_Unshown)->name; }
-  if(recipe->content == ANDAMENTO_SLOT_URL) { return uishell_store_page_kind(recipe->url); }
+  if(recipe->content == WHEELHOUSE_SLOT_URL) { return uishell_store_page_kind(recipe->url); }
   return wh_renderer_from_content(1<<recipe->content)->name;
 }
 
@@ -1497,12 +1497,12 @@ uishell_store_tab_before(RD_Arrangement *a, RD_ViewAddress view)
 // update failed or its token went stale.
 internal CFG_Node *
 uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view, String8 key,
-                    AndamentoSlotContent *content, B32 keep_previous)
+                    WheelhouseSlotContent *content, B32 keep_previous)
 {
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
-  UIShell_ViewSpec recipe = uishell_store_spec_from_andamento(arena, &content->recipe);
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  UIShell_ViewSpec recipe = uishell_store_spec_from_core(arena, &content->recipe);
   String8 unshown = str8_zero();
   String8 kind = uishell_store_recipe_kind(arena, key, &recipe, &unshown);
   B32 shows = uishell_store_view_shows(arena, view, key, &recipe);
@@ -1511,12 +1511,12 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
   if(str8_match(view->string, str8_lit("placeholder"), 0)) { keep_previous = 0; }
   // A Cleat session is attached to, not started: its View is a new one.
   B32 in_place = !shows && terminal && str8_match(kind, view->string, 0) && !keep_previous &&
-                 recipe.content != ANDAMENTO_SLOT_CLEAT_SESSION;
+                 recipe.content != WHEELHOUSE_SLOT_CLEAT_SESSION;
   UIShell_ManagedPrepared prepared = {0};
   B32 ok = !in_place || uishell_managed_prepare(rd_view_state_from_view(rd_view_address_from_cfg(view), 0)->user_data, recipe.command, recipe.has_cwd, recipe.cwd, &prepared);
   char *error = 0;
-  ok = ok && UIShell_StoreCall(state, andamento_slot_valid(state->core, workspace, uishell_sidebar_text(key), content->token, &error));
-  andamento_string_free(error);
+  ok = ok && UIShell_StoreCall(state, wheelhouse_slot_valid(state->core, workspace, uishell_sidebar_text(key), content->token, &error));
+  wheelhouse_string_free(error);
   CFG_Node *result = &cfg_nil_node;
   if(!ok) { uishell_managed_discard(&prepared); }
   else if(shows) { result = view; }
@@ -1601,14 +1601,14 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
 // carried, tried first by a View starting without an instance.
 internal void
 uishell_store_complete(UIShell_SidebarState *state, CFG_Node *owner, String8 key, CFG_Node *view, CFG_Node *shown,
-                       AndamentoSlotContent *content, AndamentoResolution *saved)
+                       WheelhouseSlotContent *content, WheelhouseResolution *saved)
 {
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
   B32 ok = shown != &cfg_nil_node;
   if(ok && saved) { uishell_store_restore_resolution(shown, saved); }
   char *error = 0;
-  UIShell_StoreCall(state, andamento_slot_complete(state->core, workspace, uishell_sidebar_text(key), content->token, ok, &error));
-  andamento_string_free(error);
+  UIShell_StoreCall(state, wheelhouse_slot_complete(state->core, workspace, uishell_sidebar_text(key), content->token, ok, &error));
+  wheelhouse_string_free(error);
   String8 cleared[] = {str8_lit("asks"), str8_lit("declined"), str8_lit("update_failed")};
   if(ok)
   {
@@ -1636,7 +1636,7 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
   if(!state->core || cfg_node_child_from_string(owner, str8_lit("arrangement_presentation")) != &cfg_nil_node) { return; }
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
   UIShell_StoreDoc doc = uishell_store_doc(arena, rd_arrangement_from_panel_owner(arena, uishell_store_owner(owner)));
   String8 *previous = push_array(arena, String8, 1);
   U64 previous_count = 0, previous_cap = 1;
@@ -1663,34 +1663,34 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     if(!uishell_store_key_valid(key) || cfg_node_from_id(view->id) != view) { continue; }
     String8 applied = push_str8_copy(arena, uishell_store_setting(view, str8_lit("applied")));
     char *error = 0;
-    AndamentoSlotContent *plan = UIShell_StoreCall(state, andamento_slot_plan(state->core, workspace, uishell_sidebar_text(key),
+    WheelhouseSlotContent *plan = UIShell_StoreCall(state, wheelhouse_slot_plan(state->core, workspace, uishell_sidebar_text(key),
                                                                               uishell_sidebar_text(applied), &error));
-    andamento_string_free(error);
+    wheelhouse_string_free(error);
     if(!plan) { continue; }
-    AndamentoSlotContent content = *plan;
-    AndamentoResolution *saved = plan->has_saved ? &plan->saved : 0;
+    WheelhouseSlotContent content = *plan;
+    WheelhouseResolution *saved = plan->has_saved ? &plan->saved : 0;
     String8 asks = str8_zero();
     // What the Slot Host is told: why the content isn't resolved, if it isn't.
-    String8 content_state = content.state == ANDAMENTO_CONTENT_UNAVAILABLE ? str8_lit("unavailable") :
-                            content.state == ANDAMENTO_CONTENT_HELD ? str8_lit("held") :
-                            content.state == ANDAMENTO_CONTENT_FAILED ? str8_lit("failed") : str8_zero();
-    if(content.state == ANDAMENTO_CONTENT_UPDATING)
+    String8 content_state = content.state == WHEELHOUSE_CONTENT_UNAVAILABLE ? str8_lit("unavailable") :
+                            content.state == WHEELHOUSE_CONTENT_HELD ? str8_lit("held") :
+                            content.state == WHEELHOUSE_CONTENT_FAILED ? str8_lit("failed") : str8_zero();
+    if(content.state == WHEELHOUSE_CONTENT_UPDATING)
     {
       // A rebind's policy is about the instance it replaces: a View that
       // applied nothing yet (just made, or after a restart) has none.
-      UIShell_ViewSpec recipe = uishell_store_spec_from_andamento(arena, &content.recipe);
-      if(applied.size && content.rebind == ANDAMENTO_REBIND_ASK && !uishell_store_view_shows(arena, view, key, &recipe))
+      UIShell_ViewSpec recipe = uishell_store_spec_from_core(arena, &content.recipe);
+      if(applied.size && content.rebind == WHEELHOUSE_REBIND_ASK && !uishell_store_view_shows(arena, view, key, &recipe))
       { asks = uishell_store_recipe_text(arena, &recipe); }
       else
       {
-        CFG_Node *shown = uishell_store_apply(state, owner, view, key, &content, applied.size && content.rebind == ANDAMENTO_REBIND_KEEP_PREVIOUS);
+        CFG_Node *shown = uishell_store_apply(state, owner, view, key, &content, applied.size && content.rebind == WHEELHOUSE_REBIND_KEEP_PREVIOUS);
         // Only a View starting without an instance tries a saved resolution.
         uishell_store_complete(state, owner, key, view, shown, &content, applied.size ? 0 : saved);
         if(shown != &cfg_nil_node) { view = shown; }
         else { content_state = str8_lit("failed"); }
       }
     }
-    else if(content.state == ANDAMENTO_CONTENT_CURRENT)
+    else if(content.state == WHEELHOUSE_CONTENT_CURRENT)
     {
       uishell_store_save_resolution(state, workspace, key, view, applied, saved);
     }
@@ -1708,10 +1708,10 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     if(content.has_previous && !uishell_store_key_in(key, previous, previous_count))
     {
       error = 0;
-      UIShell_StoreCall(state, andamento_slot_release_previous(state->core, workspace, uishell_sidebar_text(key), &error));
-      andamento_string_free(error);
+      UIShell_StoreCall(state, wheelhouse_slot_release_previous(state->core, workspace, uishell_sidebar_text(key), &error));
+      wheelhouse_string_free(error);
     }
-    andamento_slot_plan_free(plan);
+    wheelhouse_slot_plan_free(plan);
   }
   // A slot its provider removed: its instance closes (replace) or stays
   // until the user closes it (keep-previous, ask); either way, once it is
@@ -1722,7 +1722,7 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     String8 key = entry->departed[i].key;
     CFG_Node *view = &cfg_nil_node;
     for(U64 t = 0; t < doc.tab_count && view == &cfg_nil_node; t++) { if(str8_match(doc.keys[t], key, 0)) { view = doc.views[t]; } }
-    if(view != &cfg_nil_node && entry->departed[i].flags != ANDAMENTO_REBIND_REPLACE) { i++; continue; }
+    if(view != &cfg_nil_node && entry->departed[i].flags != WHEELHOUSE_REBIND_REPLACE) { i++; continue; }
     if(view != &cfg_nil_node && cfg_node_from_id(view->id) == view)
     {
       RD_Arrangement *a = rd_arrangement_from_panel_owner(arena, uishell_store_owner(owner));
@@ -1732,7 +1732,7 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     // A failed release is reported; the next overlay read finds the slot
     // still departed, and this tries again.
     char *error = 0;
-    uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_release_previous(state->core, workspace, uishell_sidebar_text(key), &error)), error);
+    uishell_sidebar_result(state, UIShell_StoreCall(state, wheelhouse_slot_release_previous(state->core, workspace, uishell_sidebar_text(key), &error)), error);
     // Released: no longer departed.
     entry->departed[i] = entry->departed[--entry->departed_count];
   }
@@ -1773,11 +1773,11 @@ uishell_store_answer(CFG_Node *view, B32 accept)
   if(!state || !key.size) { return; }
   Temp scratch = scratch_begin(0, 0);
   key = push_str8_copy(scratch.arena, key);
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
-  AndamentoSlotContent *plan = UIShell_StoreCall(state, andamento_slot_plan(state->core, workspace, uishell_sidebar_text(key),
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  WheelhouseSlotContent *plan = UIShell_StoreCall(state, wheelhouse_slot_plan(state->core, workspace, uishell_sidebar_text(key),
     uishell_sidebar_text(push_str8_copy(scratch.arena, uishell_store_setting(view, str8_lit("applied")))), 0));
-  AndamentoSlotContent content = plan ? *plan : (AndamentoSlotContent){0};
-  if(plan && content.state == ANDAMENTO_CONTENT_UPDATING)
+  WheelhouseSlotContent content = plan ? *plan : (WheelhouseSlotContent){0};
+  if(plan && content.state == WHEELHOUSE_CONTENT_UPDATING)
   {
     if(accept)
     {
@@ -1786,12 +1786,12 @@ uishell_store_answer(CFG_Node *view, B32 accept)
     }
     else
     {
-      UIShell_StoreCall(state, andamento_slot_complete(state->core, workspace, uishell_sidebar_text(key), content.token, 0, 0));
+      UIShell_StoreCall(state, wheelhouse_slot_complete(state->core, workspace, uishell_sidebar_text(key), content.token, 0, 0));
       uishell_store_set_setting(view, str8_lit("declined"), str8_lit("1"));
       uishell_store_drop_setting(view, str8_lit("asks"));
     }
   }
-  andamento_slot_plan_free(plan);
+  wheelhouse_slot_plan_free(plan);
   rd_request_frame();
   scratch_end(scratch);
 }
@@ -1820,7 +1820,7 @@ uishell_store_release_previous(CFG_Node *view)
     }
   }
   rd_arrangement_set(a);
-  UIShell_StoreCall(state, andamento_slot_release_previous(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)),
+  UIShell_StoreCall(state, wheelhouse_slot_release_previous(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)),
                                                            uishell_sidebar_text(key), 0));
   rd_request_frame();
   scratch_end(scratch);
@@ -1832,13 +1832,13 @@ internal void
 uishell_store_retry(UIShell_SidebarState *state, CFG_Node *owner)
 {
   Temp scratch = scratch_begin(0, 0);
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
   UIShell_StoreDoc doc = uishell_store_doc(scratch.arena, rd_arrangement_live(uishell_store_owner(owner)));
   for(U64 i = 0; i < doc.tab_count; i++)
   {
     CFG_Node *failed = cfg_node_child_from_string(doc.views[i], str8_lit("update_failed"));
     if(failed == &cfg_nil_node) { continue; }
-    UIShell_StoreCall(state, andamento_slot_retry(state->core, workspace, uishell_sidebar_text(doc.keys[i]), 0));
+    UIShell_StoreCall(state, wheelhouse_slot_retry(state->core, workspace, uishell_sidebar_text(doc.keys[i]), 0));
     cfg_node_release(rd_state->cfg, failed);
   }
   scratch_end(scratch);
@@ -1866,10 +1866,10 @@ internal void
 uishell_store_sync_name(UIShell_SidebarState *state, CFG_Node *owner)
 {
   if(str8_match(owner->string, str8_lit("window"), 0)) { return; }
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
-  if(!andamento_workspace_registered(state->core, workspace, 0)) { return; }
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  if(!wheelhouse_workspace_registered(state->core, workspace, 0)) { return; }
   Temp scratch = scratch_begin(0, 0);
-  AndamentoOverlay *overlay = UIShell_StoreCall(state, andamento_overlay_get(state->core, workspace, 0));
+  WheelhouseOverlay *overlay = UIShell_StoreCall(state, wheelhouse_overlay_get(state->core, workspace, 0));
   if(overlay)
   {
     String8 settings[2] = {str8_lit("label"), str8_lit("theme")};
@@ -1900,8 +1900,8 @@ uishell_store_sync_name(UIShell_SidebarState *state, CFG_Node *owner)
       else if(edited || (moved && local.size))
       {
         char *error = 0;
-        B32 ok = i == 0 ? andamento_workspace_set_name(state->core, workspace, local.size != 0, uishell_sidebar_text(local), &error) :
-                          andamento_workspace_set_mood(state->core, workspace, local.size != 0, uishell_sidebar_text(local), &error);
+        B32 ok = i == 0 ? wheelhouse_workspace_set_name(state->core, workspace, local.size != 0, uishell_sidebar_text(local), &error) :
+                          wheelhouse_workspace_set_mood(state->core, workspace, local.size != 0, uishell_sidebar_text(local), &error);
         state->store_calls += 1;
         if(uishell_sidebar_result(state, ok, error))
         {
@@ -1911,7 +1911,7 @@ uishell_store_sync_name(UIShell_SidebarState *state, CFG_Node *owner)
       }
     }
   }
-  andamento_overlay_free(overlay);
+  wheelhouse_overlay_free(overlay);
   scratch_end(scratch);
 }
 
@@ -1939,21 +1939,21 @@ uishell_store_read_overlay(UIShell_SidebarState *state, CFG_Node *window)
   {
     UIShell_StoreEntry *entry = uishell_store_entry(state, uishell_workspace_id_from_cfg(n->v));
     entry->flags = 0; entry->flag_count = 0; entry->tombstones = 0; entry->tombstone_count = 0; entry->arrangement_flags = 0;
-    AndamentoWorkspaceId workspace = uishell_sidebar_workspace(entry->id);
-    AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, workspace, 0));
+    WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(entry->id);
+    WheelhouseSlots *slots = UIShell_StoreCall(state, wheelhouse_slots_get(state->core, workspace, 0));
     U64 count = slots ? slots->slot_count : 0;
     entry->flags = push_array(arena, UIShell_StoreFlag, count);
     for(U64 i = 0; i < count; i++)
     {
-      AndamentoSlot *slot = &slots->slots[i];
+      WheelhouseSlot *slot = &slots->slots[i];
       if(!slot->flags) { continue; }
       entry->flags[entry->flag_count++] = (UIShell_StoreFlag){push_str8_copy(arena, uishell_sidebar_string(slot->key)), slot->flags};
     }
-    AndamentoWorkspaceArrangement *arrangement = slots ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0)) : 0;
+    WheelhouseWorkspaceArrangement *arrangement = slots ? UIShell_StoreCall(state, wheelhouse_arrangement_get(state->core, workspace, 0)) : 0;
     entry->arrangement_flags = arrangement ? arrangement->flags : 0;
-    andamento_arrangement_free(arrangement);
-    AndamentoOverlay *overlay = slots ? UIShell_StoreCall(state, andamento_overlay_get(state->core, workspace, 0)) : 0;
-    andamento_slots_free(slots);
+    wheelhouse_arrangement_free(arrangement);
+    WheelhouseOverlay *overlay = slots ? UIShell_StoreCall(state, wheelhouse_overlay_get(state->core, workspace, 0)) : 0;
+    wheelhouse_slots_free(slots);
     entry->departed = 0;
     entry->departed_count = 0;
     if(overlay)
@@ -1962,13 +1962,13 @@ uishell_store_read_overlay(UIShell_SidebarState *state, CFG_Node *window)
       entry->departed = push_array(arena, UIShell_StoreFlag, overlay->note_count);
       for(U64 i = 0; i < overlay->note_count; i++)
       {
-        AndamentoOverlayNote *note = &overlay->notes[i];
+        WheelhouseOverlayNote *note = &overlay->notes[i];
         String8 key = push_str8_copy(arena, uishell_sidebar_string(note->key));
-        if(note->kind == ANDAMENTO_OVERLAY_TOMBSTONED) { entry->tombstones[entry->tombstone_count++] = key; }
-        if(note->kind == ANDAMENTO_OVERLAY_DEPARTED) { entry->departed[entry->departed_count++] = (UIShell_StoreFlag){key, note->rebind}; }
+        if(note->kind == WHEELHOUSE_OVERLAY_TOMBSTONED) { entry->tombstones[entry->tombstone_count++] = key; }
+        if(note->kind == WHEELHOUSE_OVERLAY_DEPARTED) { entry->departed[entry->departed_count++] = (UIShell_StoreFlag){key, note->rebind}; }
       }
     }
-    andamento_overlay_free(overlay);
+    wheelhouse_overlay_free(overlay);
   }
   scratch_end(scratch);
 }
@@ -2009,15 +2009,15 @@ uishell_store_resolve_arrangement(CFG_Node *view, U32 choice)
   UIShell_SidebarState *state = uishell_store_state_from_view(view, &owner);
   if(!state) { return; }
   UIShell_WorkspaceId id = uishell_workspace_id_from_cfg(owner);
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(id);
-  AndamentoWorkspaceArrangement *stored = UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0));
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(id);
+  WheelhouseWorkspaceArrangement *stored = UIShell_StoreCall(state, wheelhouse_arrangement_get(state->core, workspace, 0));
   if(stored)
   {
     char *error = 0;
-    uint32_t result = UIShell_StoreCall(state, andamento_arrangement_resolve(state->core, workspace, choice, stored->generation, 0, &error));
-    uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
+    uint32_t result = UIShell_StoreCall(state, wheelhouse_arrangement_resolve(state->core, workspace, choice, stored->generation, 0, &error));
+    uishell_sidebar_result(state, result != WHEELHOUSE_INVALID, error);
   }
-  andamento_arrangement_free(stored);
+  wheelhouse_arrangement_free(stored);
 }
 
 //- Workspace Layouts
@@ -2044,8 +2044,8 @@ uishell_store_layouts(Arena *arena, CFG_Node *owner)
   UIShell_WorkspaceLayouts result = {0};
   UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
   if(!state) { return result; }
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
-  AndamentoLayoutList *list = UIShell_StoreCall(state, andamento_layouts_get(state->core, workspace, 0));
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  WheelhouseLayoutList *list = UIShell_StoreCall(state, wheelhouse_layouts_get(state->core, workspace, 0));
   if(list && list->count)
   {
     result.names = push_array(arena, String8, list->count);
@@ -2056,14 +2056,14 @@ uishell_store_layouts(Arena *arena, CFG_Node *owner)
     {
       result.names[i] = push_str8_copy(arena, uishell_sidebar_string(list->layouts[i].name));
       result.glyphs[i] = push_str8_copy(arena, uishell_sidebar_string(list->layouts[i].glyph));
-      if(list->layouts[i].flags & ANDAMENTO_LAYOUT_CURRENT) { result.current = i; }
-      if(list->layouts[i].flags & ANDAMENTO_LAYOUT_DEFAULT) { result.fallback = i; }
+      if(list->layouts[i].flags & WHEELHOUSE_LAYOUT_CURRENT) { result.current = i; }
+      if(list->layouts[i].flags & WHEELHOUSE_LAYOUT_DEFAULT) { result.fallback = i; }
     }
   }
-  andamento_layouts_free(list);
-  AndamentoWorkspaceArrangement *stored = result.count ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0)) : 0;
+  wheelhouse_layouts_free(list);
+  WheelhouseWorkspaceArrangement *stored = result.count ? UIShell_StoreCall(state, wheelhouse_arrangement_get(state->core, workspace, 0)) : 0;
   result.owned = stored && stored->owned;
-  andamento_arrangement_free(stored);
+  wheelhouse_arrangement_free(stored);
   return result;
 }
 
@@ -2076,7 +2076,7 @@ uishell_store_choose_layout(CFG_Node *owner, String8 name)
   if(!state) { return; }
   uishell_store_sync_owner(state, owner, 0);
   char *error = 0;
-  B32 ok = UIShell_StoreCall(state, andamento_layout_choose(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)),
+  B32 ok = UIShell_StoreCall(state, wheelhouse_layout_choose(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)),
                                                              name.size != 0, uishell_sidebar_text(name), &error));
   uishell_sidebar_result(state, ok, error);
   rd_request_frame();
@@ -2088,15 +2088,15 @@ uishell_store_reset_layout(CFG_Node *owner)
 {
   UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
   if(!state) { return; }
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
-  AndamentoWorkspaceArrangement *stored = UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0));
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+  WheelhouseWorkspaceArrangement *stored = UIShell_StoreCall(state, wheelhouse_arrangement_get(state->core, workspace, 0));
   if(stored)
   {
     char *error = 0;
-    uint32_t result = UIShell_StoreCall(state, andamento_arrangement_resolve(state->core, workspace, ANDAMENTO_ARRANGEMENT_FOLLOW, stored->generation, 0, &error));
-    uishell_sidebar_result(state, result != ANDAMENTO_INVALID, error);
+    uint32_t result = UIShell_StoreCall(state, wheelhouse_arrangement_resolve(state->core, workspace, WHEELHOUSE_ARRANGEMENT_FOLLOW, stored->generation, 0, &error));
+    uishell_sidebar_result(state, result != WHEELHOUSE_INVALID, error);
   }
-  andamento_arrangement_free(stored);
+  wheelhouse_arrangement_free(stored);
   rd_request_frame();
 }
 
@@ -2106,13 +2106,13 @@ uishell_store_unplaced(Arena *arena, CFG_Node *owner)
 {
   String8List keys = {0};
   UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
-  AndamentoWorkspaceArrangement *stored = state ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0)) : 0;
+  WheelhouseWorkspaceArrangement *stored = state ? UIShell_StoreCall(state, wheelhouse_arrangement_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0)) : 0;
   for(U64 i = 0; stored && stored->has_layout && i < stored->note_count; i++)
   {
-    if(stored->notes[i].kind == ANDAMENTO_NOTE_UNPLACED)
+    if(stored->notes[i].kind == WHEELHOUSE_NOTE_UNPLACED)
     { str8_list_push(arena, &keys, push_str8_copy(arena, uishell_sidebar_string(stored->notes[i].key))); }
   }
-  andamento_arrangement_free(stored);
+  wheelhouse_arrangement_free(stored);
   return str8_array_from_list(arena, &keys);
 }
 
@@ -2137,15 +2137,15 @@ uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
   key = push_str8_copy(arena, key);
   uishell_store_sync_owner(state, owner, 0);
   UIShell_WorkspaceId id = uishell_workspace_id_from_cfg(owner);
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(id);
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(id);
   RD_Arrangement *a = rd_arrangement_live(uishell_store_owner(owner));
   UIShell_StoreDoc doc = uishell_store_doc(arena, a);
-  AndamentoWorkspaceArrangement *stored = UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0));
+  WheelhouseWorkspaceArrangement *stored = UIShell_StoreCall(state, wheelhouse_arrangement_get(state->core, workspace, 0));
   String8 home = str8_zero();
   for(U64 i = 0; stored && !panel && i < stored->note_count; i++)
   {
-    AndamentoNote *note = &stored->notes[i];
-    if(note->kind == ANDAMENTO_NOTE_UNPLACED && str8_match(uishell_sidebar_string(note->key), key, 0))
+    WheelhouseNote *note = &stored->notes[i];
+    if(note->kind == WHEELHOUSE_NOTE_UNPLACED && str8_match(uishell_sidebar_string(note->key), key, 0))
     { home = uishell_sidebar_string(note->panel); }
   }
   // The target: `panel`, or the home panel, if it holds tabs, else the
@@ -2153,15 +2153,15 @@ uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
   U64 target = doc.panel_count, index = 0;
   for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p), index++)
   {
-    if(doc.panels[index].kind != ANDAMENTO_PANEL_TABS) { continue; }
+    if(doc.panels[index].kind != WHEELHOUSE_PANEL_TABS) { continue; }
     B32 wanted = panel ? p->id == panel : home.size && str8_match(uishell_sidebar_string(doc.panels[index].id), home, 0);
     if(target == doc.panel_count || wanted) { target = index; }
     if(wanted) { break; }
   }
   if(stored && target < doc.panel_count && !uishell_store_key_in(key, doc.keys, doc.tab_count))
   {
-    AndamentoDocPanel *out = &doc.panels[target];
-    AndamentoText *tabs = push_array(arena, AndamentoText, out->tab_count+1);
+    WheelhouseDocPanel *out = &doc.panels[target];
+    WheelhouseText *tabs = push_array(arena, WheelhouseText, out->tab_count+1);
     MemoryCopy(tabs, out->tabs, sizeof(*tabs)*out->tab_count);
     tabs[out->tab_count] = uishell_sidebar_text(key);
     out->tabs = tabs;
@@ -2170,20 +2170,20 @@ uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
     UIShell_StoreEntry *entry = uishell_store_entry(state, id);
     B32 marked = cfg_node_child_from_string(owner, str8_lit("arrangement_generation")) != &cfg_nil_node;
     U64 expected = marked && entry->generation ? entry->generation : stored->generation;
-    AndamentoArrangementDoc commit = {doc.panels, doc.panel_count};
+    WheelhouseArrangementDoc commit = {doc.panels, doc.panel_count};
     char *error = 0;
-    AndamentoWorkspaceArrangement *after = 0;
+    WheelhouseWorkspaceArrangement *after = 0;
     // Stale, as in uishell_store_sync_owner: committing at the new
     // generation reconciles Andamento's change again, keeping both.
     for(U32 attempt = 0; attempt < 2; attempt++)
     {
-      andamento_arrangement_free(after);
-      after = UIShell_StoreCall(state, andamento_arrangement_commit(state->core, workspace, &commit, expected, &error));
+      wheelhouse_arrangement_free(after);
+      after = UIShell_StoreCall(state, wheelhouse_arrangement_commit(state->core, workspace, &commit, expected, &error));
       state->store_commits += 1;
-      if(!after || after->status != ANDAMENTO_STALE) { break; }
+      if(!after || after->status != WHEELHOUSE_STALE) { break; }
       expected = after->generation;
     }
-    if(after && after->status == ANDAMENTO_COMMITTED)
+    if(after && after->status == WHEELHOUSE_COMMITTED)
     {
       entry->generation = after->generation;
       uishell_store_set_setting(owner, str8_lit("arrangement_generation"), push_str8f(arena, "%I64u", after->generation));
@@ -2192,10 +2192,10 @@ uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
     }
     else
     { uishell_sidebar_set_error(state, error ? str8_cstring(error) : str8_lit("The workspace's arrangement changed; try again")); }
-    andamento_string_free(error);
-    andamento_arrangement_free(after);
+    wheelhouse_string_free(error);
+    wheelhouse_arrangement_free(after);
   }
-  andamento_arrangement_free(stored);
+  wheelhouse_arrangement_free(stored);
   scratch_end(scratch);
   rd_request_frame();
 }
@@ -2212,7 +2212,7 @@ uishell_store_strip_views(Arena *arena, CFG_Node *owner)
   UIShell_StripViews result = {0};
   UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
   if(!state) { return result; }
-  AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0));
+  WheelhouseSlots *slots = UIShell_StoreCall(state, wheelhouse_slots_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0));
   if(slots && slots->slot_count)
   {
     Temp scratch = scratch_begin(&arena, 1);
@@ -2220,8 +2220,8 @@ uishell_store_strip_views(Arena *arena, CFG_Node *owner)
     result.v = push_array(arena, UIShell_StripView, slots->slot_count);
     for(U64 i = 0; i < slots->slot_count; i++)
     {
-      AndamentoSlot *slot = &slots->slots[i];
-      if(slot->flags & ANDAMENTO_SLOT_FLAG_REMOVED) { continue; }
+      WheelhouseSlot *slot = &slots->slots[i];
+      if(slot->flags & WHEELHOUSE_SLOT_FLAG_REMOVED) { continue; }
       UIShell_StripView *out = &result.v[result.count++];
       out->key = push_str8_copy(arena, uishell_sidebar_string(slot->key));
       out->role = slot->spec.has_role ? push_str8_copy(arena, uishell_sidebar_string(slot->spec.role)) : str8_zero();
@@ -2232,14 +2232,14 @@ uishell_store_strip_views(Arena *arena, CFG_Node *owner)
     }
     scratch_end(scratch);
   }
-  andamento_slots_free(slots);
+  wheelhouse_slots_free(slots);
   return result;
 }
 
-internal AndamentoEntity
+internal WheelhouseEntity
 uishell_store_subject(Arena *arena, CFG_Node *owner)
 {
-  if(owner == &cfg_nil_node || !uishell_workspace_cfg_has_subject(owner)) { return (AndamentoEntity){0}; }
+  if(owner == &cfg_nil_node || !uishell_workspace_cfg_has_subject(owner)) { return (WheelhouseEntity){0}; }
   String8 kind = cfg_node_child_from_string(owner, str8_lit("sidebar_entity_kind"))->first->string;
   String8 id = cfg_node_child_from_string(owner, str8_lit("sidebar_entity_id"))->first->string;
   return uishell_sidebar_entity(push_str8_copy(arena, uishell_workspace_cfg_subject_provider(owner)), push_str8_copy(arena, kind), push_str8_copy(arena, id));
@@ -2250,9 +2250,9 @@ uishell_store_strip_entries(Arena *arena, CFG_Node *owner)
 {
   UIShell_StripEntries result = {0};
   UIShell_SidebarState *state = uishell_store_state_from_owner(owner);
-  AndamentoEntity subject = state ? uishell_store_subject(arena, owner) : (AndamentoEntity){0};
+  WheelhouseEntity subject = state ? uishell_store_subject(arena, owner) : (WheelhouseEntity){0};
   if(!subject.kind.len) { return result; }
-  AndamentoStrip *strip = UIShell_StoreCall(state, andamento_strip_get(state->core, subject, 0));
+  WheelhouseStrip *strip = UIShell_StoreCall(state, wheelhouse_strip_get(state->core, subject, 0));
   if(strip && strip->count)
   {
     result.v = push_array(arena, UIShell_StripEntry, strip->count);
@@ -2263,7 +2263,7 @@ uishell_store_strip_entries(Arena *arena, CFG_Node *owner)
       result.v[i].entity = uishell_sidebar_card_entity_copy(arena, strip->entries[i].entity);
     }
   }
-  andamento_strip_free(strip);
+  wheelhouse_strip_free(strip);
   return result;
 }
 
@@ -2277,7 +2277,7 @@ uishell_store_reattach(CFG_Node *view)
   String8 key = uishell_store_setting(view, str8_lit("slot"));
   if(!state || !key.size) { return; }
   char *error = 0;
-  B32 ok = UIShell_StoreCall(state, andamento_slot_reattach(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)),
+  B32 ok = UIShell_StoreCall(state, wheelhouse_slot_reattach(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)),
                                                              uishell_sidebar_text(key), &error));
   // It follows its provider again; its next plan shows the provider's
   // content. A slot a tombstone hid comes back at the next commit, which
@@ -2304,15 +2304,15 @@ uishell_store_keep(CFG_Node *view)
   Temp scratch = scratch_begin(0, 0);
   if(state && key.size && uishell_store_spec_from_view(scratch.arena, view, &spec, taken, &taken_count))
   {
-    AndamentoWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
-    AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, workspace, 0));
-    AndamentoSlot slot = {0};
+    WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner));
+    WheelhouseSlots *slots = UIShell_StoreCall(state, wheelhouse_slots_get(state->core, workspace, 0));
+    WheelhouseSlot slot = {0};
     B32 exists = uishell_store_slot_find(slots, key, &slot);
-    U32 rebind = exists ? slot.rebind : ANDAMENTO_REBIND_REPLACE;
-    AndamentoViewSpec out = uishell_store_andamento_spec(scratch.arena, &spec, exists ? &slot.spec : 0);
+    U32 rebind = exists ? slot.rebind : WHEELHOUSE_REBIND_REPLACE;
+    WheelhouseViewSpec out = uishell_store_core_spec(scratch.arena, &spec, exists ? &slot.spec : 0);
     char *error = 0;
-    uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_set(state->core, workspace, uishell_sidebar_text(key), &out, rebind, &error)), error);
-    andamento_slots_free(slots);
+    uishell_sidebar_result(state, UIShell_StoreCall(state, wheelhouse_slot_set(state->core, workspace, uishell_sidebar_text(key), &out, rebind, &error)), error);
+    wheelhouse_slots_free(slots);
   }
   scratch_end(scratch);
 }
@@ -2393,27 +2393,27 @@ uishell_store_notices(Arena *arena, CFG_Node *view, UIShell_SlotNotice *out, U64
   CFG_Node *state_owner = &cfg_nil_node;
   UIShell_SidebarState *state = uishell_store_state_from_view(view, &state_owner);
   U32 flags = key.size ? uishell_store_slot_flags(state, owner, key) : 0;
-  if(flags & ANDAMENTO_SLOT_FLAG_REMOVED)
+  if(flags & WHEELHOUSE_SLOT_FLAG_REMOVED)
   {
     UIShell_SlotNoticePush(.badge = str8_lit("removed"), .text = str8_lit("Its provider removed it; it is kept as yours."),
                            .actions = {UIShell_SlotAction_Remove});
   }
-  else if((flags & ANDAMENTO_SLOT_FLAG_CHANGED) && (flags & ANDAMENTO_SLOT_FLAG_DETACHED))
+  else if((flags & WHEELHOUSE_SLOT_FLAG_CHANGED) && (flags & WHEELHOUSE_SLOT_FLAG_DETACHED))
   {
     UIShell_SlotNoticePush(.badge = str8_lit("changed"), .text = str8_lit("Its provider changed it since you edited it."),
                            .actions = {UIShell_SlotAction_Reattach, UIShell_SlotAction_KeepMine});
   }
-  else if(flags & ANDAMENTO_SLOT_FLAG_CHANGED)
+  else if(flags & WHEELHOUSE_SLOT_FLAG_CHANGED)
   {
     UIShell_SlotNoticePush(.badge = str8_lit("changed"), .text = str8_lit("You closed it; its provider has put new content here since."),
                            .actions = {UIShell_SlotAction_Reattach, UIShell_SlotAction_Remove});
   }
-  else if(flags & ANDAMENTO_SLOT_FLAG_DETACHED)
+  else if(flags & WHEELHOUSE_SLOT_FLAG_DETACHED)
   {
     UIShell_SlotNoticePush(.badge = str8_lit("edited"), .text = str8_lit("You changed its content, so it no longer follows its provider."),
                            .actions = {UIShell_SlotAction_Reattach});
   }
-  if(flags & ANDAMENTO_SLOT_FLAG_REBIND) { UIShell_SlotNoticePush(.badge = str8_lit("rebind")); }
+  if(flags & WHEELHOUSE_SLOT_FLAG_REBIND) { UIShell_SlotNoticePush(.badge = str8_lit("rebind")); }
   if(key.size && uishell_store_departed(state, owner, key))
   {
     UIShell_SlotNoticePush(.badge = str8_lit("removed"), .text = str8_lit("Its provider removed this View; it stays until you close it."),
@@ -2429,9 +2429,9 @@ uishell_store_notices(Arena *arena, CFG_Node *view, UIShell_SlotNotice *out, U64
     UIShell_SlotNoticePush(.badge = str8_lit("unverified"));
   }
   U32 arrangement = uishell_store_arrangement_flags(state, owner);
-  if((arrangement & (ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED|ANDAMENTO_ARRANGEMENT_FLAG_UNRESOLVED)) && uishell_store_view_leads(owner, view))
+  if((arrangement & (WHEELHOUSE_ARRANGEMENT_FLAG_PROVIDER_CHANGED|WHEELHOUSE_ARRANGEMENT_FLAG_UNRESOLVED)) && uishell_store_view_leads(owner, view))
   {
-    if(arrangement & ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED)
+    if(arrangement & WHEELHOUSE_ARRANGEMENT_FLAG_PROVIDER_CHANGED)
     {
       UIShell_SlotNoticePush(.text = str8_lit("Its provider changed this workspace's layout since you arranged it."),
                              .actions = {UIShell_SlotAction_KeepLayout, UIShell_SlotAction_FollowLayout});
@@ -2458,8 +2458,8 @@ uishell_store_act(CFG_Node *view, UIShell_SlotAction action)
     case UIShell_SlotAction_Reattach: { uishell_store_reattach(view); } break;
     case UIShell_SlotAction_KeepMine: { uishell_store_keep(view); } break;
     case UIShell_SlotAction_Remove: { uishell_store_remove(view); } break;
-    case UIShell_SlotAction_KeepLayout: { uishell_store_resolve_arrangement(view, ANDAMENTO_ARRANGEMENT_KEEP); } break;
-    case UIShell_SlotAction_FollowLayout: { uishell_store_resolve_arrangement(view, ANDAMENTO_ARRANGEMENT_FOLLOW); } break;
+    case UIShell_SlotAction_KeepLayout: { uishell_store_resolve_arrangement(view, WHEELHOUSE_ARRANGEMENT_KEEP); } break;
+    case UIShell_SlotAction_FollowLayout: { uishell_store_resolve_arrangement(view, WHEELHOUSE_ARRANGEMENT_FOLLOW); } break;
     case UIShell_SlotAction_Retry:
     {
       CFG_Node *owner = &cfg_nil_node;
@@ -2610,7 +2610,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
   UIShell_WorkspaceId id = uishell_workspace_id_from_cfg(owner);
-  AndamentoWorkspaceId workspace = uishell_sidebar_workspace(id);
+  WheelhouseWorkspaceId workspace = uishell_sidebar_workspace(id);
   RD_Arrangement *a = rd_arrangement_from_panel_owner(arena, uishell_store_owner(owner));
   UIShell_StoreDoc doc = uishell_store_doc(arena, a);
   B32 keyed = 1;
@@ -2622,13 +2622,13 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   // An empty workspace never committed has nothing to keep.
   if(changed && !marked && doc.panel_count == 0) { changed = 0; uishell_store_saw(state, entry, owner, &doc); }
   if(!changed && !revision_moved) { scratch_end(scratch); return; }
-  AndamentoSlots *slots = UIShell_StoreCall(state, andamento_slots_get(state->core, workspace, 0));
-  AndamentoWorkspaceArrangement *stored = slots ? UIShell_StoreCall(state, andamento_arrangement_get(state->core, workspace, 0)) : 0;
+  WheelhouseSlots *slots = UIShell_StoreCall(state, wheelhouse_slots_get(state->core, workspace, 0));
+  WheelhouseWorkspaceArrangement *stored = slots ? UIShell_StoreCall(state, wheelhouse_arrangement_get(state->core, workspace, 0)) : 0;
   // A workspace Andamento doesn't know yet (a subject's registers once it
   // has opened) is committed when it does.
   if(!stored)
   {
-    andamento_slots_free(slots);
+    wheelhouse_slots_free(slots);
     scratch_end(scratch);
     return;
   }
@@ -2642,14 +2642,14 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   if(fresh != &cfg_nil_node)
   {
     cfg_node_release(rd_state->cfg, fresh);
-    AndamentoOverlay *overlay = UIShell_StoreCall(state, andamento_overlay_get(state->core, workspace, 0));
+    WheelhouseOverlay *overlay = UIShell_StoreCall(state, wheelhouse_overlay_get(state->core, workspace, 0));
     B32 suggests = (overlay && overlay->has_baseline && !overlay->primary_only) || (stored->has_layout && doc.tab_count <= 1);
-    andamento_overlay_free(overlay);
+    wheelhouse_overlay_free(overlay);
     if(stored->doc.panel_count && suggests)
     {
       if(uishell_store_assign_keys(arena, owner, &doc, slots)) { rd_arrangement_set(a); }
-      andamento_arrangement_free(stored);
-      andamento_slots_free(slots);
+      wheelhouse_arrangement_free(stored);
+      wheelhouse_slots_free(slots);
       uishell_store_follow(state, owner, id, &entry->generation);
       uishell_store_saw_live(state, entry, owner);
       scratch_end(scratch);
@@ -2664,8 +2664,8 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
       uishell_store_follow(state, owner, id, &entry->generation);
       uishell_store_saw_live(state, entry, owner);
     }
-    andamento_arrangement_free(stored);
-    andamento_slots_free(slots);
+    wheelhouse_arrangement_free(stored);
+    wheelhouse_slots_free(slots);
     scratch_end(scratch);
     return;
   }
@@ -2680,11 +2680,11 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     String8 taken[UISHELL_STORE_TAKEN_MAX];
     U64 taken_count = 0;
     if(!uishell_store_spec_from_view(arena, doc.views[i], &spec, taken, &taken_count)) { continue; }
-    AndamentoSlot slot = {0};
+    WheelhouseSlot slot = {0};
     B32 exists = uishell_store_slot_find(slots, doc.keys[i], &slot);
     // The provider's own, or a facet's, whose View shows what its plan
     // resolved: the slot's spec is not the View's to set.
-    B32 follows = exists && ((slot.in_baseline && !slot.detached) || slot.spec.content == ANDAMENTO_SLOT_FACET);
+    B32 follows = exists && ((slot.in_baseline && !slot.detached) || slot.spec.content == WHEELHOUSE_SLOT_FACET);
     // Unless the user changed what it showed since it applied the provider's:
     // that is an override, which detaches it.
     String8 applied_spec = uishell_store_setting(doc.views[i], str8_lit("applied_spec"));
@@ -2692,14 +2692,14 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
        !str8_match(applied_spec, push_str8f(arena, "%I64x", uishell_store_view_spec_hash(doc.views[i])), 0)) { follows = 0; }
     uishell_store_mark_follows(doc.views[i], follows);
     if(follows) { continue; }
-    UIShell_ViewSpec current = exists ? uishell_store_spec_from_andamento(arena, &slot.spec) : (UIShell_ViewSpec){0};
+    UIShell_ViewSpec current = exists ? uishell_store_spec_from_core(arena, &slot.spec) : (UIShell_ViewSpec){0};
     if(exists && uishell_store_spec_match(&spec, &current)) { continue; }
     // An override keeps the provider's rebind policy: changing the content
     // isn't changing the policy.
-    AndamentoViewSpec out = uishell_store_andamento_spec(arena, &spec, exists ? &slot.spec : 0);
+    WheelhouseViewSpec out = uishell_store_core_spec(arena, &spec, exists ? &slot.spec : 0);
     char *error = 0;
-    ok = uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_set(state->core, workspace, uishell_sidebar_text(doc.keys[i]),
-                                                                                    &out, exists ? slot.rebind : ANDAMENTO_REBIND_REPLACE, &error)), error);
+    ok = uishell_sidebar_result(state, UIShell_StoreCall(state, wheelhouse_slot_set(state->core, workspace, uishell_sidebar_text(doc.keys[i]),
+                                                                                    &out, exists ? slot.rebind : WHEELHOUSE_REBIND_REPLACE, &error)), error);
   }
 
   // Slots whose tabs the user closed go first, so the document no longer
@@ -2712,7 +2712,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   String8List stored_keys = {0};
   for(U64 i = 0; i < stored->doc.panel_count && !stored->has_layout; i++)
   {
-    AndamentoDocPanel *p = &stored->doc.panels[i];
+    WheelhouseDocPanel *p = &stored->doc.panels[i];
     for(U64 t = 0; t < p->tab_count; t++) { str8_list_push(arena, &stored_keys, push_str8_copy(arena, uishell_sidebar_string(p->tabs[t]))); }
   }
   for(String8Node *n = stored_keys.first; ok && n; n = n->next)
@@ -2721,31 +2721,31 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     if(!uishell_store_has_seen(entry, key)) { continue; }
     if(uishell_store_key_in(key, doc.keys, doc.tab_count) || !uishell_store_slot_find(slots, key, 0)) { continue; }
     char *remove_error = 0;
-    uishell_sidebar_result(state, UIShell_StoreCall(state, andamento_slot_remove(state->core, workspace, uishell_sidebar_text(key), &remove_error)), remove_error);
+    uishell_sidebar_result(state, UIShell_StoreCall(state, wheelhouse_slot_remove(state->core, workspace, uishell_sidebar_text(key), &remove_error)), remove_error);
   }
 
   // The document, at the generation this device last saw.
   U64 expected = marked && entry->generation ? entry->generation : stored->generation;
-  andamento_arrangement_free(stored);
-  AndamentoArrangementDoc out = {doc.panels, doc.panel_count};
-  AndamentoWorkspaceArrangement *after = 0;
+  wheelhouse_arrangement_free(stored);
+  WheelhouseArrangementDoc out = {doc.panels, doc.panel_count};
+  WheelhouseWorkspaceArrangement *after = 0;
   char *error = 0;
   for(U32 attempt = 0; ok && attempt < 2; attempt++)
   {
     error = 0;
-    andamento_arrangement_free(after);
-    after = UIShell_StoreCall(state, andamento_arrangement_commit(state->core, workspace, &out, expected, &error));
+    wheelhouse_arrangement_free(after);
+    after = UIShell_StoreCall(state, wheelhouse_arrangement_commit(state->core, workspace, &out, expected, &error));
     state->store_commits += 1;
-    if(!after || after->status != ANDAMENTO_STALE) { break; }
+    if(!after || after->status != WHEELHOUSE_STALE) { break; }
     // Stale: Andamento reconciled a provider's change since. Committing at
     // the new generation reconciles it again, keeping both.
     expected = after->generation;
   }
-  B32 committed = ok && after && after->status == ANDAMENTO_COMMITTED;
+  B32 committed = ok && after && after->status == WHEELHOUSE_COMMITTED;
   if(ok && !committed)
   { uishell_sidebar_set_error(state, error ? str8_cstring(error) : str8_lit("The workspace's arrangement was not committed")); }
-  andamento_string_free(error);
-  andamento_slots_free(slots);
+  wheelhouse_string_free(error);
+  wheelhouse_slots_free(slots);
   // Tried: not tried again until it changes.
   entry->version = rd_arrangement_version(uishell_store_owner(owner));
   entry->specs = uishell_store_specs(&doc);
@@ -2757,14 +2757,14 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     // Anything Andamento placed (slots the document had no tab for) joins
     // the arrangement.
     B32 placed = 0;
-    for(U64 i = 0; i < after->note_count; i++) { placed |= after->notes[i].kind == ANDAMENTO_NOTE_PLACED; }
+    for(U64 i = 0; i < after->note_count; i++) { placed |= after->notes[i].kind == WHEELHOUSE_NOTE_PLACED; }
     if(placed)
     {
       uishell_store_follow(state, owner, id, &entry->generation);
       uishell_store_saw_live(state, entry, owner);
     }
   }
-  andamento_arrangement_free(after);
+  wheelhouse_arrangement_free(after);
   scratch_end(scratch);
 }
 
@@ -2779,8 +2779,8 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
   if(!state->store_arena) { state->store_arena = arena_alloc(); }
   Temp scratch = scratch_begin(0, 0);
   char *error = 0;
-  U64 revision = UIShell_StoreCall(state, andamento_workspace_content_revision(state->core, &error));
-  andamento_string_free(error);
+  U64 revision = UIShell_StoreCall(state, wheelhouse_workspace_content_revision(state->core, &error));
+  wheelhouse_string_free(error);
   B32 revision_moved = state->store_synced && revision != state->store_content_revision;
   // A new snapshot can mean a workspace Andamento didn't know has registered
   // (a subject's, once it opened), which then commits. An arrangement set,
@@ -2811,7 +2811,7 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
   state->store_cfg_gen = cfg_change_gen();
   state->store_arrangement_version = rd_state->arrangement_version;
   state->store_snapshot_count = state->snapshot_count;
-  state->store_content_revision = UIShell_StoreCall(state, andamento_workspace_content_revision(state->core, 0));
+  state->store_content_revision = UIShell_StoreCall(state, wheelhouse_workspace_content_revision(state->core, 0));
   scratch_end(scratch);
 }
 

@@ -23,7 +23,7 @@ Any other transport is never guessed at. Its slot is unshown, and a View that ha
 
 `cleat_command` is a View setting only. It isn't part of the View Spec or the facts, so a published endpoint can't choose the command a remote host runs. It is for a user's own host whose non-interactive PATH lacks a new enough Cleat. A View opened from the sidebar runs `cleat` from that PATH.
 
-**Opening from the sidebar.** When a workspace subject publishes a complete direct endpoint, Andamento ([andamento#186](https://github.com/flotilla-org/andamento/pull/186)) resolves its primary to the `cleat-session` recipe (`ANDAMENTO_SLOT_CLEAT_SESSION`) instead of the command recipe. Opening the subject creates the workspace with its primary waiting, and the first slot plan fills it with a terminal of that session. A Cleat session is attached to, never started, so an update always makes a new View; it never replaces a terminal in place. When the endpoint goes away, the primary falls back to the command recipe, which still opens `flotilla attach` in a local terminal.
+**Opening from the sidebar.** When a workspace subject publishes a complete direct endpoint, Andamento ([andamento#186](https://github.com/flotilla-org/andamento/pull/186)) resolves its primary to the `cleat-session` recipe (`WHEELHOUSE_SLOT_CLEAT_SESSION`) instead of the command recipe. Opening the subject creates the workspace with its primary waiting, and the first slot plan fills it with a terminal of that session. A Cleat session is attached to, never started, so an update always makes a new View; it never replaces a terminal in place. When the endpoint goes away, the primary falls back to the command recipe, which still opens `flotilla attach` in a local terminal.
 
 ## The transport seam
 

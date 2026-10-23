@@ -101,14 +101,14 @@ uishell_tool_strip_tooltip(UI_Signal sig, String8 text)
 // An entity's item: its hover card opens beside the strip, and a click runs
 // its primary action (opening its URL, or opening or showing its workspace).
 internal void
-uishell_tool_strip_entity(UIShell_SidebarState *state, Rng2F32 rect, AndamentoEntity entity, UI_Key key)
+uishell_tool_strip_entity(UIShell_SidebarState *state, Rng2F32 rect, WheelhouseEntity entity, UI_Key key)
 {
-  AndamentoNode node = {0};
+  WheelhouseNode node = {0};
   U64 index = uishell_sidebar_card_find(state, entity, &node);
-  B32 found = index != ANDAMENTO_NONE;
+  B32 found = index != WHEELHOUSE_NONE;
   RD_IconKind icon = uishell_sidebar_card_icon(entity.kind);
   // A workspace not open yet is weak, as its row is.
-  B32 unopened = node.state == ANDAMENTO_LATENT || node.state == ANDAMENTO_OPENING;
+  B32 unopened = node.state == WHEELHOUSE_LATENT || node.state == WHEELHOUSE_OPENING;
   UI_Signal sig = uishell_tool_strip_item(rect, rd_icon_kind_text_table[icon], 1, 0, !found || unopened, key);
   if(!found)
   {
@@ -116,8 +116,8 @@ uishell_tool_strip_entity(UIShell_SidebarState *state, Rng2F32 rect, AndamentoEn
     return;
   }
   uishell_sidebar_card_source(state, node, sig, str8_zero(), 0);
-  AndamentoDetailAction primary = {0};
-  if(ui_clicked(sig) && andamento_snapshot_detail_action(state->snapshot, index, 0, &primary))
+  WheelhouseDetailAction primary = {0};
+  if(ui_clicked(sig) && wheelhouse_snapshot_detail_action(state->snapshot, index, 0, &primary))
   { uishell_sidebar_card_queue_action(state, node, primary.action); }
 }
 
@@ -198,20 +198,20 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
   CFG_Node *owner = workspace ? cfg_node_from_id(workspace->id) : &cfg_nil_node;
 
   // What each section lists.
-  AndamentoEntity subject = owner != &cfg_nil_node ? uishell_store_subject(scratch.arena, owner) : (AndamentoEntity){0};
+  WheelhouseEntity subject = owner != &cfg_nil_node ? uishell_store_subject(scratch.arena, owner) : (WheelhouseEntity){0};
   UIShell_WorkspaceLayouts layouts = owner != &cfg_nil_node ? uishell_store_layouts(scratch.arena, owner) : (UIShell_WorkspaceLayouts){0};
   UIShell_StripViews views = owner != &cfg_nil_node ? uishell_store_strip_views(scratch.arena, owner) : (UIShell_StripViews){0};
   UIShell_StripEntries entries = owner != &cfg_nil_node ? uishell_store_strip_entries(scratch.arena, owner) : (UIShell_StripEntries){0};
   U64 counts[UIShell_StripSection_COUNT] = {subject.kind.len != 0, layouts.count, views.count};
   for(U64 i = 0; i < entries.count; i++)
-  { counts[entries.v[i].section == ANDAMENTO_STRIP_RELATED ? UIShell_StripSection_Related : UIShell_StripSection_Linked] += 1; }
+  { counts[entries.v[i].section == WHEELHOUSE_STRIP_RELATED ? UIShell_StripSection_Related : UIShell_StripSection_Linked] += 1; }
   UIShell_StripEntry *related = push_array(scratch.arena, UIShell_StripEntry, entries.count+1);
   UIShell_StripEntry *linked = push_array(scratch.arena, UIShell_StripEntry, entries.count+1);
   {
     U64 r = 0, l = 0;
     for(U64 i = 0; i < entries.count; i++)
     {
-      if(entries.v[i].section == ANDAMENTO_STRIP_RELATED) { related[r++] = entries.v[i]; }
+      if(entries.v[i].section == WHEELHOUSE_STRIP_RELATED) { related[r++] = entries.v[i]; }
       else { linked[l++] = entries.v[i]; }
     }
   }
@@ -276,10 +276,10 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
         {
           case UIShell_StripSection_Subject:
           {
-            AndamentoNode node = {0};
+            WheelhouseNode node = {0};
             U64 index = uishell_sidebar_card_find(state, subject, &node);
             UI_Signal sig = uishell_tool_strip_item(r, rd_icon_kind_text_table[uishell_sidebar_card_icon(subject.kind)], 1, 0, 0, key);
-            if(index != ANDAMENTO_NONE) { uishell_sidebar_card_source(state, node, sig, str8_zero(), 1); }
+            if(index != WHEELHOUSE_NONE) { uishell_sidebar_card_source(state, node, sig, str8_zero(), 1); }
             // Its row in the sidebar, which opens to show it.
             if(ui_clicked(sig))
             {

@@ -1,6 +1,6 @@
 //- Managing local sections and groups (drag-model.md, "Closing and deleting"
 // and "Titles"). These read Andamento's Dashboard (uishell_sidebar_locals)
-// and change its local entities at once (andamento_local_set/remove).
+// and change its local entities at once (wheelhouse_local_set/remove).
 
 typedef enum UIShell_MakeKind
 {

@@ -14,7 +14,7 @@ The Rust interface is `Sidebar::overlay`, `set_slot`, `remove_slot`,
 `reattach_slot`, `set_workspace_name`, `set_workspace_mood`,
 `set_arrangement`, `resolve_arrangement` and `release_slot_previous`. The C
 calls are listed in [The host interface](host-interface.md#workspaces); the
-flags are `AndamentoSlot.flags` and `AndamentoWorkspaceArrangement.flags`.
+flags are `WheelhouseSlot.flags` and `WheelhouseWorkspaceArrangement.flags`.
 
 ## The edit set
 
@@ -45,7 +45,7 @@ baseline.
 
 ## Slots and flags
 
-A slot's flags (`SlotInfo::flags`, `AndamentoSlot.flags`) say how it
+A slot's flags (`SlotInfo::flags`, `WheelhouseSlot.flags`) say how it
 relates to the baseline:
 
 - `DETACHED`: its content is overridden. Reattaching drops the override. This
@@ -62,7 +62,7 @@ relates to the baseline:
 
 `remove_slot` on a provider slot tombstones it: the slot is hidden and its
 live instance forgotten, and the overlay lists it as `tombstoned`
-(`ANDAMENTO_OVERLAY_TOMBSTONED`). `reattach_slot` drops a tombstone as it
+(`WHEELHOUSE_OVERLAY_TOMBSTONED`). `reattach_slot` drops a tombstone as it
 drops an override.
 
 ## When the baseline changes
@@ -72,7 +72,7 @@ Nothing is dropped silently:
 | Change | Result |
 |---|---|
 | New baseline slot | It appears, placed by the default rule: by the hint while the user doesn't own the arrangement, else at the end of the first tab panel, marked `placed`. |
-| Untouched slot removed | It goes. A `departed` entry (`ANDAMENTO_OVERLAY_DEPARTED`) gives its rebind policy, which its live instance follows: close it (`replace`), keep it reachable (`keep-previous`) or ask (`ask`). The host releases it with `release_slot_previous` (`andamento_slot_release_previous`). |
+| Untouched slot removed | It goes. A `departed` entry (`WHEELHOUSE_OVERLAY_DEPARTED`) gives its rebind policy, which its live instance follows: close it (`replace`), keep it reachable (`keep-previous`) or ask (`ask`). The host releases it with `release_slot_previous` (`wheelhouse_slot_release_previous`). |
 | Overridden slot removed | It is flagged `REMOVED` and kept as the user's own slot. |
 | Untouched slot's content changes | It follows the change: its next plan is Updating. |
 | Overridden slot's content changes | The override wins; the slot is flagged `CHANGED`. |
@@ -103,13 +103,13 @@ visible slot set changes: the provider's hint, less tombstoned slots, every
 slot placed, then soft overrides reapplied where their panel (and selected
 tab) still exists. So a divider resize or a tab switch leaves the
 provider's structure flowing. A soft override whose panel has gone is kept
-and reported `unresolved` (`ANDAMENTO_ARRANGEMENT_FLAG_UNRESOLVED`, and an
+and reported `unresolved` (`WHEELHOUSE_ARRANGEMENT_FLAG_UNRESOLVED`, and an
 UNRESOLVED note naming the panel).
 
 An owned arrangement only has new slots placed. A provider change to its
 hint is neither applied nor ignored: the arrangement is flagged
-`provider_changed` (`ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED`) until the host calls `resolve_arrangement`
-(`andamento_arrangement_resolve`) with `Keep`, keeping the user's
+`provider_changed` (`WHEELHOUSE_ARRANGEMENT_FLAG_PROVIDER_CHANGED`) until the host calls `resolve_arrangement`
+(`wheelhouse_arrangement_resolve`) with `Keep`, keeping the user's
 arrangement, or `Follow`, dropping ownership and soft overrides so the
 provider's arrangement applies again. Both take an expected generation and
 return STALE like a commit.

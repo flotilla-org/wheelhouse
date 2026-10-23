@@ -27,7 +27,7 @@ terminal rendering uses ordinary end-clipping, while the compatibility path
 retains its older middle elision. Native pixel measurement remains in Wheelhouse.
 
 PR 91 exposes a typed loop invocation key in shared presentation and an opaque
-snapshot-owned key through `andamento_snapshot_node_loop_key`. The additive C
+snapshot-owned key through `wheelhouse_snapshot_node_loop_key`. The additive C
 accessor leaves ABI 2's node struct unchanged. Keys distinguish the region,
 parent appearance and loop binding; duplicate sibling bindings are rejected.
 Main content retains declared empty fields so sibling columns can align. The

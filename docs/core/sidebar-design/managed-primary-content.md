@@ -65,8 +65,8 @@ instead of replacing content that was just created. Without it, a host would
 restart a fresh attachment once.
 
 The C interface is the slot calls with the key `primary`:
-`andamento_slot_plan`/`_plan_free`/`_valid`/`_complete`/`_retry`, and
-`AndamentoEffect.primary_target` (with `has_primary_target`) for materialize
+`wheelhouse_slot_plan`/`_plan_free`/`_valid`/`_complete`/`_retry`, and
+`WheelhouseEffect.primary_target` (with `has_primary_target`) for materialize
 effects. A plan owns its strings and can outlive later mutations, but its
 token must still validate before committing. Topology observation forgets
 closed workspace bindings.

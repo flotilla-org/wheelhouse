@@ -123,32 +123,32 @@ def native_api(path):
 
 def snapshot_nodes(abi, lib, core):
     error = C.c_char_p()
-    snapshot = lib.andamento_snapshot_acquire(core, C.byref(error))
+    snapshot = lib.wheelhouse_snapshot_acquire(core, C.byref(error))
     if not snapshot:
         raise ValueError(error.value)
     try:
         nodes = []
-        for i in range(lib.andamento_snapshot_node_count(snapshot)):
+        for i in range(lib.wheelhouse_snapshot_node_count(snapshot)):
             node = abi.Node()
-            if not lib.andamento_snapshot_node(snapshot, i, C.byref(node)):
+            if not lib.wheelhouse_snapshot_node(snapshot, i, C.byref(node)):
                 raise ValueError('node unavailable')
             fields = []
             for j in range(node.first_field, node.first_field + node.field_count):
                 field = abi.Field()
-                lib.andamento_snapshot_field(snapshot, j, C.byref(field))
+                lib.wheelhouse_snapshot_field(snapshot, j, C.byref(field))
                 fields.append(field.text.string())
             if not node.is_section:
                 nodes.append(dict(kind=node.entity_kind.string(), id=node.entity_id.string(),
                                   label=node.label.string(), state=node.state, fields=fields))
         return nodes
     finally:
-        lib.andamento_snapshot_release(snapshot)
+        lib.wheelhouse_snapshot_release(snapshot)
 
 def replay(records, library, template=ROOT / 'data/sidebar/daily-driver.kdl'):
     abi, lib = native_api(library)
     config = Path(template).read_bytes()
     error = C.c_char_p()
-    core = lib.andamento_create(config, len(config), C.byref(error))
+    core = lib.wheelhouse_create(config, len(config), C.byref(error))
     if not core:
         raise ValueError(error.value)
     session = None
@@ -157,8 +157,8 @@ def replay(records, library, template=ROOT / 'data/sidebar/daily-driver.kdl'):
             current = entry.get('recording_id')
             if current is not None and current != session:
                 if session is not None:
-                    lib.andamento_destroy(core)
-                    core = lib.andamento_create(config, len(config), C.byref(error))
+                    lib.wheelhouse_destroy(core)
+                    core = lib.wheelhouse_create(config, len(config), C.byref(error))
                     if not core:
                         raise ValueError(error.value)
                 session = current
@@ -168,16 +168,16 @@ def replay(records, library, template=ROOT / 'data/sidebar/daily-driver.kdl'):
             patch = dict(entry, type='metadata-patch') if fixture else entry['body']
             body = json.dumps(patch) if fixture else entry.get('body_utf8') or json.dumps(patch)
             now = 0 if fixture else entry['received_ms']
-            if not lib.andamento_apply_patch_json(core, now, abi.Text.of(body), C.byref(error)):
+            if not lib.wheelhouse_apply_patch_json(core, now, abi.Text.of(body), C.byref(error)):
                 raise ValueError(f'patch {index}: {error.value}')
-            if not lib.andamento_tick(core, now, C.byref(error)):
+            if not lib.wheelhouse_tick(core, now, C.byref(error)):
                 raise ValueError(f'tick {index}: {error.value}')
             nodes = snapshot_nodes(abi, lib, core)
             yield dict(patch=index, recording_id=session, status=entry.get('status', 204),
                        source_id=patch.get('source_id'), received_ms=now, nodes=nodes)
     finally:
         if core:
-            lib.andamento_destroy(core)
+            lib.wheelhouse_destroy(core)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

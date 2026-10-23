@@ -16,10 +16,10 @@ by the next build without a persistent invalidation mechanism.
 
 ## Measurement
 
-The `andamento-core` example `snapshot-bench` accepts a host KDL configuration:
+The `wheelhouse-core` example `snapshot-bench` accepts a host KDL configuration:
 
 ```sh
-cargo run -p andamento-core --example snapshot-bench -- /path/to/sidebar.kdl
+cargo run -p wheelhouse-core --example snapshot-bench -- /path/to/sidebar.kdl
 ```
 
 The probe applies synthetic vessel facts, warms the snapshot path, then measures
@@ -61,7 +61,7 @@ removals unregister it. Expiration and removal of an entity's last contribution
 invalidate the snapshot. Recipe-only changes invalidate actions even when the
 visible row content is unchanged.
 
-The additive C query `andamento_snapshot_is_current` lets hosts drain updates
+The additive C query `wheelhouse_snapshot_is_current` lets hosts drain updates
 and acquire at most one replacement snapshot. Existing acquisition still returns
 an independently owned snapshot, and old snapshot text remains valid. The Rust
 `snapshot_shared` method borrows the retained snapshot without cloning it.

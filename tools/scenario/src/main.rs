@@ -24,7 +24,7 @@ struct Step {
     project_repositories: Vec<ProjectRepositoriesRow>,
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = std::env::args().nth(1).ok_or("usage: andamento-scenario SCENARIO.json")?;
+    let path = std::env::args().nth(1).ok_or("usage: wheelhouse-scenario SCENARIO.json")?;
     let steps: Vec<Step> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
     let mut previous = Catalog::default();
     let mut previous_ms = 0;

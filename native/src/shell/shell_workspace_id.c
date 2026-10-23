@@ -173,9 +173,9 @@ uishell_window_id_from_cfg(CFG_Node *window)
   if(!uishell_workspace_id_from_string(saved->first->string, &id) || uishell_workspace_id_is_zero(id))
   {
     // A window saved before Window IDs had an ID for its records directory
-    // alone (`andamento_records`), which becomes its Window ID so that the
+    // alone (`wheelhouse_records`), which becomes its Window ID so that the
     // directory stays its own.
-    CFG_Node *records = cfg_node_child_from_string(window, str8_lit("andamento_records"));
+    CFG_Node *records = cfg_node_child_from_string(window, str8_lit("wheelhouse_records"));
     if(!uishell_workspace_id_from_string(records->first->string, &id) || uishell_workspace_id_is_zero(id))
     { id = uishell_workspace_id_make(); }
     if(records != &cfg_nil_node) { cfg_node_release(rd_state->cfg, records); }

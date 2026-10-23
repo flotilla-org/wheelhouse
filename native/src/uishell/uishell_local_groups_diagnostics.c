@@ -9,9 +9,9 @@
 internal String8
 uishell_local_groups_label(Arena *arena, UIShell_SidebarState *state, String8 kind, String8 id)
 {
-  for(U64 i = 0; state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; state->snapshot && i < wheelhouse_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
+    WheelhouseNode n = {0}; wheelhouse_snapshot_node(state->snapshot, i, &n);
     if(str8_match(uishell_sidebar_string(n.entity.kind), kind, 0) && str8_match(uishell_sidebar_string(n.entity.id), id, 0))
     { return push_str8_copy(arena, uishell_sidebar_string(n.label)); }
   }
@@ -425,9 +425,9 @@ uishell_local_groups_diagnostics(CFG_Node *window)
               "deleting a group moves its workspaces to the default group");
   uishell_local_groups_publish(state, window, arena);
   B32 retracted = 1;
-  for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode n = {0}; andamento_snapshot_node(state->snapshot, i, &n);
+    WheelhouseNode n = {0}; wheelhouse_snapshot_node(state->snapshot, i, &n);
     retracted &= !str8_match(uishell_sidebar_string(n.entity.id), tests_id, 0);
   }
   GroupsCheck(retracted, "a deleted group's entity leaves Andamento's snapshot");
@@ -503,7 +503,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                 !ui_any_ctx_menu_is_open(), "New group adds a group and starts renaming it");
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    AndamentoNode added_node = uishell_sidebar_reorder_node(state, added_id);
+    WheelhouseNode added_node = uishell_sidebar_reorder_node(state, added_id);
     String8 added_entry = push_str8f(arena, "###entry_%S", uishell_sidebar_string(added_node.key));
     UI_Box *added_header = uishell_sidebar_reorder_box(ui_state->root, added_entry);
     GroupsCheck(!ui_box_is_nil(added_header) && !ui_box_is_nil(uishell_sidebar_reorder_box(added_header->first, str8_lit("New group"))),
@@ -518,7 +518,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     // Two groups now: each has a header, whose menu deletes it.
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    AndamentoNode group_node = uishell_sidebar_reorder_node(state, added_id);
+    WheelhouseNode group_node = uishell_sidebar_reorder_node(state, added_id);
     String8 group_row = push_str8f(arena, "###entry_%S", uishell_sidebar_string(group_node.key));
     found = uishell_local_groups_click(ws, window, arena, group_row, WM_Key_RightMouseButton);
     GroupsCheck(found && ui_any_ctx_menu_is_open(), "right-clicking a group's header opens its menu");
@@ -686,7 +686,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     }
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    AndamentoNode alpha_node = uishell_sidebar_reorder_node(state, alpha_id);
+    WheelhouseNode alpha_node = uishell_sidebar_reorder_node(state, alpha_id);
     header_box = uishell_local_groups_box(alpha_header);
     GroupsCheck(alpha_node.collapsed && !ui_box_is_nil(uishell_sidebar_reorder_box(header_box->first, str8_lit("1"))),
                 "a click on the header's empty part collapses the group, which shows its count");

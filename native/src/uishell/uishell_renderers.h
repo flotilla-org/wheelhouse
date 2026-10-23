@@ -8,7 +8,7 @@
 #define UISHELL_RENDERERS_H
 
 // The View Spec content a Renderer can show. The first six follow
-// ANDAMENTO_SLOT_*'s order (checked in uishell_workspace_store.c).
+// WHEELHOUSE_SLOT_*'s order (checked in uishell_workspace_store.c).
 typedef U32 WH_ContentKinds;
 enum
 {

@@ -32,7 +32,7 @@ after it: `hide { slots role="agent" { match "k" exists=true; }; }`.
 ## Where layouts live
 
 Layouts are children of the `workspace kind="…"` declaration in the sidebar
-configuration (`crates/andamento-core/src/template_config.rs`):
+configuration (`crates/wheelhouse-core/src/template_config.rs`):
 
 ```kdl
 workspace kind="vessel" {
@@ -249,7 +249,7 @@ arrangement is today. Its panels keep their IDs and **their matchers**:
   there.
 - A Slot the baseline drops is reported gone, as today.
 - A configuration change to the template is flagged, not applied, like a
-  changed hint (`AndamentoWorkspaceArrangement.flags`). Resetting the layout
+  changed hint (`WheelhouseWorkspaceArrangement.flags`). Resetting the layout
   drops its arrangement edits.
 
 ## Host interface

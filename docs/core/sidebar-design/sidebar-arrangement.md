@@ -12,7 +12,7 @@ arrangements](slots-and-arrangements.md)).
 The Rust interface is `Sidebar::sidebar_arrangement`,
 `set_sidebar_arrangement`, `restore_sidebar_section`,
 `reset_sidebar_arrangement` and `sidebar_arrangement_generation`, over the
-functions in `andamento_core::sidebar_arrangement`. The C calls are listed
+functions in `wheelhouse_core::sidebar_arrangement`. The C calls are listed
 in [The host interface](host-interface.md#arrangements).
 
 ## What is stored, and what isn't
@@ -34,12 +34,12 @@ A tab holds a **section key**:
 ## Why calls of its own
 
 The sidebar arrangement crosses the C ABI as the same flat panel array as a
-workspace's arrangement (`AndamentoDocPanel`), but has calls of its own
+workspace's arrangement (`WheelhouseDocPanel`), but has calls of its own
 rather than a target parameter on a workspace's:
 
 - A workspace call names a workspace ID; the Dashboard has none.
 - The sidebar document has a closed set, which a workspace's doesn't
-  (`AndamentoSidebarDoc {dock}`).
+  (`WheelhouseSidebarDoc {dock}`).
 - The rules differ. A workspace places a new slot in the first tab panel; the
   sidebar places a section by its region's hints. A workspace commit with a
   slot tabbed twice is invalid; a sidebar commit repairs it, because the
@@ -54,7 +54,7 @@ sizes need pixels. At the end of a gesture it commits the whole document with
 `set_sidebar_arrangement(doc, expected_generation)`:
 
 1. **Generation.** A commit at any generation but the stored one is **stale**
-   and changes nothing (`ANDAMENTO_STALE`, no error).
+   and changes nothing (`WHEELHOUSE_STALE`, no error).
 2. **Validation.** The shape rules of an arrangement document (panel IDs
    nonempty and unique, weights finite and positive, splits nonempty, a selected tab one of its
    panel's), except that a key may have two tabs. Each tab names a declared
@@ -108,7 +108,7 @@ the sections, in **default order**:
 - Pinned regions sort before unpinned ones. This rule is new: Wheelhouse
   ignored `pinned`, which the terminal renderer reads as "always on top".
 - Every section docks. A region's `default-host` is the host's to read
-  (`AndamentoSectionNode.default_host`); Andamento doesn't place by it.
+  (`WheelhouseSectionNode.default_host`); Andamento doesn't place by it.
 
 ### Placing
 
@@ -156,11 +156,11 @@ owned.
 
 ## Reading it
 
-`sidebar_arrangement()` (`andamento_sidebar_arrangement_get`) returns the
+`sidebar_arrangement()` (`wheelhouse_sidebar_arrangement_get`) returns the
 document, its generation, whether the host owns it, the closed set, the
 placed and unresolved keys, and the last reconciliation's report. Commit,
-restore and reset return the same `AndamentoSidebarArrangement`, with their
-status. In C the dock is a flat panel array (`AndamentoArrangementDoc`),
+restore and reset return the same `WheelhouseSidebarArrangement`, with their
+status. In C the dock is a flat panel array (`WheelhouseArrangementDoc`),
 each panel naming its parent by index. A tab is
 `placed` if Andamento placed it since the host's last commit, and `gone` if
 its key no longer resolves. The notes list every CLOSED section and
@@ -169,7 +169,7 @@ commit still names what was placed meanwhile, and the host's retry keeps it),
 and what the last reconciliation or call did: RESTORED and DUPLICATE. The
 Sections menu lists the CLOSED notes.
 
-Poll `andamento_sidebar_arrangement_generation` to learn when to read it
+Poll `wheelhouse_sidebar_arrangement_generation` to learn when to read it
 again; it is cheap and builds no snapshot.
 
 The UNRESOLVED notes also report the Dashboard's other saved keys the
@@ -193,7 +193,7 @@ commit the host prepared before the import is stale.
 
 ## Measured
 
-`crates/andamento-ffi/examples/snapshot-profile.rs` (release build,
+`crates/wheelhouse-ffi/examples/snapshot-profile.rs` (release build,
 Wheelhouse's `daily-driver.kdl` and sidebar fixture, a shared Linux host): 20
 commits of the seven-panel arrangement Andamento placed, dragging one weight,
 each checking the rendered snapshot.

@@ -116,7 +116,7 @@ jobs:
       - name: Build on Linux
         if: runner.os == 'Linux'
         # With CI set, native/build.sh also runs the headless harnesses against the
-        # real core (crates/andamento-ffi) and Cleat libraries: docking validity and integration,
+        # real core (crates/wheelhouse-ffi) and Cleat libraries: docking validity and integration,
         # and restart behaviour against golden logical-state snapshots
         # (tools/test-state-behaviour.py; goldens in native/src/uishell/tests/).
         run: bash native/build.sh wheelhouse
@@ -234,11 +234,11 @@ jobs:
         run: |
           host=$(rustc -vV | sed -n 's/^host: //p')
           if [ "$RUNNER_OS" = Windows ]; then
-            python tools/test-andamento-ingress.py "target/$host/debug"
+            python tools/test-ingress.py "target/$host/debug"
           elif [ "$RUNNER_OS" = Linux ]; then
-            python3 tools/test-native-sidebar.py "target/$host/debug/libandamento_ffi.so"
-            xvfb-run -a python3 tools/test-andamento-ingress.py "target/$host/debug"
+            python3 tools/test-native-sidebar.py "target/$host/debug/libwheelhouse_ffi.so"
+            xvfb-run -a python3 tools/test-ingress.py "target/$host/debug"
           else
-            python3 tools/test-native-sidebar.py "target/$host/debug/libandamento_ffi.dylib"
-            python3 tools/test-andamento-ingress.py "target/$host/debug"
+            python3 tools/test-native-sidebar.py "target/$host/debug/libwheelhouse_ffi.dylib"
+            python3 tools/test-ingress.py "target/$host/debug"
           fi

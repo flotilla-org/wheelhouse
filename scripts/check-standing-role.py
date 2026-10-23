@@ -11,12 +11,12 @@ import subprocess
 
 
 # Keep the placement invariant in sync with assert_standing_role_placement in
-# crates/andamento-core/tests/replay.rs. Rust additionally checks replay exhaustion.
+# crates/wheelhouse-core/tests/replay.rs. Rust additionally checks replay exhaustion.
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("capture", type=Path, help="replay JSONL fixture")
-    parser.add_argument("--binary", type=Path, required=True, help="native andamento-replay executable")
+    parser.add_argument("--binary", type=Path, required=True, help="native wheelhouse-replay executable")
     args = parser.parse_args()
     offsets = sorted({json.loads(line)["offset_ms"]
                       for line in args.capture.read_text().splitlines() if line.strip()})

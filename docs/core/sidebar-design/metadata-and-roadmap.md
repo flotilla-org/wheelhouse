@@ -824,7 +824,7 @@ This unlocks shell integrations, build/test progress, PR state, ports, and workf
 
 Status: started. Producers can send `ExternalMessage::MetadataPatch` through `tabs-apply-metadata-patch`; the controller applies set/unset updates with source ids, precedence, ordinal, and ttl through the shared metadata store, and resolved entries are exposed through the view model. Controller bootstrap snapshots now carry live metadata patches so newly attached clients can recover current external metadata.
 
-The host-independent Rust producer in `crates/andamento-git-watcher` discovers
+The host-independent Rust producer in `crates/wheelhouse-git-watcher` discovers
 configured directory roots and their linked worktrees without a host session.
 Its transport trait also supports Zellij observed identities and Wheelhouse's
 `GET /v1/observed/workdirs` inventory (live cwd preferred over saved cwd).
@@ -832,7 +832,7 @@ All shared facts target repo/worktree entities, joined by `git.repo`; worktrees
 carry `git.root`, branch/upstream, dirty/ahead/behind, `git.open` and a shell
 `action.primary.recipe`. Wheelhouse uses the managed-primary-content path for
 latent materialisation and open-terminal deduplication. The additive
-`andamento_observe_workdirs` C ABI replaces directory observations after topology;
+`wheelhouse_observe_workdirs` C ABI replaces directory observations after topology;
 exact `git.root` matches derive focus associations for any entity kind. Explicit
 bindings win. Closing/changing directories removes associations without
 persisting identity or enrolling user terminals in managed replacement. Placement templates,
@@ -840,7 +840,7 @@ including the abbreviation ladder, render the Git section without kind-specific
 renderer logic.
 
 The default stdout transport emits the existing metadata-patch JSONL protocol,
-compatible with `andamento-replay record` and the standalone TUI. A five-second
+compatible with `wheelhouse-replay record` and the standalone TUI. A five-second
 refresh renews ten-second TTLs; inexpensive Git control-file observation also
 triggers refresh. Missing upstream facts are unset; disappeared entities expire.
 Host discovery failures are retried without falsely reporting every tree closed.

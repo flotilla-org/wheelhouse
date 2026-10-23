@@ -14,7 +14,7 @@ Wheelhouse's live copy is the window's dock arrangement
 (`native/src/shell/shell_core.c`, "Live arrangements";
 `native/src/uishell/uishell_sidebar_store.c`). Docking edits it as before, through
 the shared docking checker; at the end of a gesture the whole document is
-committed (`andamento_sidebar_arrangement_commit`). Closing a section is
+committed (`wheelhouse_sidebar_arrangement_commit`). Closing a section is
 committing without it. When Andamento changes the document itself (a newly
 declared section placed by its hints, a duplicate removed, another frontend's
 commit), the live copy follows it. The Sections menu's Restore and

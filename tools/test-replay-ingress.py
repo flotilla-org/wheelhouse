@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generated redaction invariants; native replay is tested by test-andamento-ingress.py."""
+"""Generated redaction invariants; native replay is tested by test-ingress.py."""
 import importlib.util
 import itertools
 import json

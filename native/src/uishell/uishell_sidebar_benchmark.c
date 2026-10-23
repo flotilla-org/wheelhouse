@@ -8,9 +8,9 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
   Temp scratch = scratch_begin(0, 0);
   B32 saved_uncached = uishell_sidebar_benchmark_uncached, ok = 1;
   uishell_sidebar_benchmark_uncached = 0;
-  U64 count = andamento_snapshot_node_count(state->snapshot);
-  AndamentoNode *nodes = push_array(scratch.arena, AndamentoNode, count);
-  for(U64 i = 0; i < count; i++) { andamento_snapshot_node(state->snapshot, i, &nodes[i]); }
+  U64 count = wheelhouse_snapshot_node_count(state->snapshot);
+  WheelhouseNode *nodes = push_array(scratch.arena, WheelhouseNode, count);
+  for(U64 i = 0; i < count; i++) { wheelhouse_snapshot_node(state->snapshot, i, &nodes[i]); }
   String8 identity = str8_lit("bench-project-0");
   String8 label = uishell_sidebar_context_label(state, nodes, count, identity);
   ok &= str8_match(label, str8_lit("Benchmark project 0"), 0);
@@ -18,9 +18,9 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
   uishell_sidebar_refresh(state);
   ok &= state->labels == labels; // Current revision retains the map.
   char *error = 0;
-  B32 dispatched = uishell_sidebar_dispatch(state, ANDAMENTO_NONE, &error);
+  B32 dispatched = uishell_sidebar_dispatch(state, WHEELHOUSE_NONE, &error);
   ok &= !dispatched && !state->labels && !state->labels_snapshot;
-  andamento_string_free(error);
+  wheelhouse_string_free(error);
   uishell_sidebar_context_label(state, nodes, count, identity);
   char *values[] = {"Replacement project", "Benchmark project 0"};
   for(U64 i = 0; i < ArrayCount(values); i++)
@@ -29,13 +29,13 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
       "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"project\",\"id\":\"bench-project-0\"}},"
       "\"source_id\":\"benchmark\",\"set\":{\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}", values[i]);
     error = 0;
-    B32 applied = andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error);
+    B32 applied = wheelhouse_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error);
     ok &= uishell_sidebar_result(state, applied, error);
     uishell_sidebar_refresh(state);
     ok &= !state->labels && !state->labels_snapshot;
-    count = andamento_snapshot_node_count(state->snapshot);
-    nodes = push_array(scratch.arena, AndamentoNode, count);
-    for(U64 n = 0; n < count; n++) { andamento_snapshot_node(state->snapshot, n, &nodes[n]); }
+    count = wheelhouse_snapshot_node_count(state->snapshot);
+    nodes = push_array(scratch.arena, WheelhouseNode, count);
+    for(U64 n = 0; n < count; n++) { wheelhouse_snapshot_node(state->snapshot, n, &nodes[n]); }
     ok &= str8_match(uishell_sidebar_context_label(state, nodes, count, identity), str8_cstring(values[i]), 0);
   }
   uishell_sidebar_labels_invalidate(state);
@@ -61,7 +61,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     UIShell_SidebarState state = {.initialized = 1};
     char *error = 0;
     String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
-    state.core = andamento_create(config.str, config.size, &error);
+    state.core = wheelhouse_create(config.str, config.size, &error);
     ok &= uishell_sidebar_result(&state, state.core != 0, error);
     if(!state.core) { scratch_end(scratch); return 0; }
     String8 patches = str8_cstring((char *)uishell_sidebar_fixture_patches);
@@ -70,7 +70,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
       U64 end = start;
       while(end < patches.size && patches.str[end] != '\n') { end++; }
       error = 0;
-      B32 applied = andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider),
+      B32 applied = wheelhouse_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider),
         uishell_sidebar_text(str8_substr(patches, r1u64(start, end))), &error);
       ok &= uishell_sidebar_result(&state, applied, error);
       start = end+1;
@@ -90,7 +90,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
         project ? "project" : "issue", number, project ? number : number%10,
         project ? "false" : "true");
       error = 0;
-      B32 applied = andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error);
+      B32 applied = wheelhouse_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error);
       ok &= uishell_sidebar_result(&state, applied, error);
     }
     uishell_sidebar_refresh(&state);
@@ -158,7 +158,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
           UI_EventList events = {0}; UI_EventNode event = {0};
           if(scrolling && frame >= warmup)
           {
-            UI_Key root = ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", str8_lit("tree"));
+            UI_Key root = ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", str8_lit("tree"));
             UI_Box *body = ui_box_from_key(ui_key_from_stringf(root, "section_body_%S", str8_lit("tree")));
             event.v = (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(body->rect),
                                 .delta_2f32 = v2f32(0, .25f), .scroll_is_precise = 1};
@@ -199,8 +199,8 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
           }
           uishell_sidebar_benchmark_active = 0;
         }
-        UI_Key tree_key = ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", str8_lit("tree"));
-        UI_Key attention_key = ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", str8_lit("attention"));
+        UI_Key tree_key = ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", str8_lit("tree"));
+        UI_Key attention_key = ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", str8_lit("attention"));
         UI_Box *tree_body = ui_box_from_key(ui_key_from_stringf(tree_key, "section_body_%S", str8_lit("tree")));
         UI_Box *attention_body = ui_box_from_key(ui_key_from_stringf(attention_key, "section_body_%S", str8_lit("attention")));
         // Precise events must move Projects while Attention keeps its own offset,
@@ -215,7 +215,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
           merged ? "merged" : "four", scrolling ? "precise" : "idle", tree_body->view_off_target.y,
           attention_body->view_off_target.y, dim_2f32(tree_body->rect).y, dim_2f32(attention_body->rect).y);
         fprintf(stderr, "SIDEBAR_BENCH issues=%llu nodes=%llu panels=%s input=%s frames=%u frame_us=%.2f analysis_us=%.2f context_us=%.2f\n",
-          (unsigned long long)sizes[size_index], (unsigned long long)andamento_snapshot_node_count(state.snapshot), merged ? "merged" : "four",
+          (unsigned long long)sizes[size_index], (unsigned long long)wheelhouse_snapshot_node_count(state.snapshot), merged ? "merged" : "four",
           scrolling ? "precise" : "idle", frames-warmup, elapsed/(F64)(frames-warmup), analysis/(F64)(frames-warmup), context/(F64)(frames-warmup));
         ui_select_state(saved_ui); ui_state_release(test_ui);
       }

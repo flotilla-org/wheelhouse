@@ -151,7 +151,7 @@ state_producer(UIShell_SidebarState *state)
                                       "\"source_id\":\"fixture\",\"set\":{%S},\"unset\":[%S]}", str8_list_join(arena, &list, &join),
                                str8_list_join(arena, &unset, &join));
     char *error = 0;
-    StateCheck(uishell_sidebar_result(state, andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error), error));
+    StateCheck(uishell_sidebar_result(state, wheelhouse_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error), error));
     scratch_end(scratch);
   }
   if(state_bare)
@@ -169,21 +169,21 @@ state_producer(UIShell_SidebarState *state)
     String8 patch = push_str8f(scratch.arena, "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"bare\"}},"
                                               "\"source_id\":\"fixture\",\"set\":{%S},\"unset\":[%S]}", state_bare == StateBare_Retracted ? str8_zero() : set, unset);
     char *error = 0;
-    StateCheck(uishell_sidebar_result(state, andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error), error));
+    StateCheck(uishell_sidebar_result(state, wheelhouse_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error), error));
     if(state_bare == StateBare_Retracted) { state_bare = StateBare_None; }
     scratch_end(scratch);
   }
   if(state_multi_ended)
   {
-    AndamentoFact facts[2] = {0};
+    WheelhouseFact facts[2] = {0};
     facts[0].key = uishell_sidebar_text(str8_lit("flotilla.convoy.phase"));
-    facts[0].kind = ANDAMENTO_FACT_TEXT;
+    facts[0].kind = WHEELHOUSE_FACT_TEXT;
     facts[0].text = uishell_sidebar_text(str8_lit("landed"));
     facts[1].key = uishell_sidebar_text(str8_lit("status.state"));
-    facts[1].kind = ANDAMENTO_FACT_TEXT;
+    facts[1].kind = WHEELHOUSE_FACT_TEXT;
     facts[1].text = uishell_sidebar_text(str8_lit("ended"));
     char *error = 0;
-    StateCheck(uishell_sidebar_result(state, andamento_apply_entity(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("vessel")),
+    StateCheck(uishell_sidebar_result(state, wheelhouse_apply_entity(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("vessel")),
       uishell_sidebar_text(str8_lit("multi")), uishell_sidebar_text(str8_lit("fixture")), facts, ArrayCount(facts), &error), error));
   }
   if(state_chip_gone)
@@ -191,7 +191,7 @@ state_producer(UIShell_SidebarState *state)
     String8 retract = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"chip-v\"}},\"source_id\":\"fixture\",\"set\":{},"
       "\"unset\":[\"flotilla.project\",\"flotilla.convoy\",\"display.label\",\"status.state\",\"presentation.icon\",\"action.primary.recipe\"]}");
     char *error = 0;
-    StateCheck(uishell_sidebar_result(state, andamento_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(retract), &error), error));
+    StateCheck(uishell_sidebar_result(state, wheelhouse_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(retract), &error), error));
   }
 }
 
@@ -339,12 +339,12 @@ state_restart(RD_WindowState *ws, UI_Theme *theme, String8 dashboard)
 }
 
 internal B32
-state_find(UIShell_SidebarState *state, String8 kind, String8 id, AndamentoNode *out)
+state_find(UIShell_SidebarState *state, String8 kind, String8 id, WheelhouseNode *out)
 {
-  for(U64 i = 0; state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; state->snapshot && i < wheelhouse_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode node = {0};
-    andamento_snapshot_node(state->snapshot, i, &node);
+    WheelhouseNode node = {0};
+    wheelhouse_snapshot_node(state->snapshot, i, &node);
     if(!node.is_section && str8_match(uishell_sidebar_string(node.entity.kind), kind, 0) &&
        (!id.size || str8_match(uishell_sidebar_string(node.entity.id), id, 0)))
     { *out = node; return 1; }
@@ -356,23 +356,23 @@ state_find(UIShell_SidebarState *state, String8 kind, String8 id, AndamentoNode 
 internal U64
 state_find_local(UIShell_SidebarState *state, String8 label)
 {
-  for(U64 i = 0; state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; state->snapshot && i < wheelhouse_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode node = {0};
-    andamento_snapshot_node(state->snapshot, i, &node);
+    WheelhouseNode node = {0};
+    wheelhouse_snapshot_node(state->snapshot, i, &node);
     if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".workspace"), 0) &&
        str8_match(uishell_sidebar_string(node.label), label, 0)) { return i; }
   }
-  return ANDAMENTO_NONE;
+  return WHEELHOUSE_NONE;
 }
 
 // The key of the section titled `title`.
 internal String8
 state_section_key(Arena *arena, UIShell_SidebarState *state, String8 title)
 {
-  for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode node = {0};
+    WheelhouseNode node = {0};
     uishell_sidebar_node_at(state, i, &node);
     if(node.is_section && str8_match(uishell_logical_section_title(state, node), title, 0))
     { return push_str8_copy(arena, uishell_sidebar_string(node.key)); }
@@ -384,7 +384,7 @@ state_section_key(Arena *arena, UIShell_SidebarState *state, String8 title)
 internal void
 state_click(RD_WindowState *ws, size_t action)
 {
-  StateCheck(action != ANDAMENTO_NONE);
+  StateCheck(action != WHEELHOUSE_NONE);
   Temp scratch = scratch_begin(0, 0);
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, cfg_node_from_id(ws->cfg_id));
   uishell_sidebar_perform(ws->sidebar, &split, action);
@@ -396,8 +396,8 @@ state_click(RD_WindowState *ws, size_t action)
 internal CFG_Node *
 state_open_subject(RD_WindowState *ws, String8 kind, String8 id)
 {
-  AndamentoNode node = {0};
-  StateCheck(state_find(ws->sidebar, kind, id, &node) && node.state == ANDAMENTO_LATENT && node.openable);
+  WheelhouseNode node = {0};
+  StateCheck(state_find(ws->sidebar, kind, id, &node) && node.state == WHEELHOUSE_LATENT && node.openable);
   state_click(ws, node.activate);
   CFG_Node *workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
   StateCheck(str8_match(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string, id, 0));
@@ -410,10 +410,10 @@ internal U64
 state_count_from(UIShell_SidebarState *state, String8 kind, String8 id, String8 provider, B32 *stale)
 {
   U64 count = 0;
-  for(U64 i = 0; state->snapshot && i < andamento_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; state->snapshot && i < wheelhouse_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode node = {0};
-    andamento_snapshot_node(state->snapshot, i, &node);
+    WheelhouseNode node = {0};
+    wheelhouse_snapshot_node(state->snapshot, i, &node);
     if(node.is_section || !str8_match(uishell_sidebar_string(node.entity.kind), kind, 0) ||
        !str8_match(uishell_sidebar_string(node.entity.id), id, 0) ||
        !str8_match(uishell_sidebar_string(node.entity.provider), provider, 0)) { continue; }
@@ -547,15 +547,15 @@ state_workspace_labelled(CFG_Node *window, String8 label)
 // same parents, tabs and Selected Views; weights within rounding, roots' not
 // at all.
 internal B32
-state_same_doc(AndamentoArrangementDoc const *a, AndamentoArrangementDoc const *b)
+state_same_doc(WheelhouseArrangementDoc const *a, WheelhouseArrangementDoc const *b)
 {
   B32 same = a->panel_count == b->panel_count;
   for(U64 i = 0; same && i < a->panel_count; i++)
   {
-    AndamentoDocPanel const *p = &a->panels[i], *q = &b->panels[i];
-    B32 root = p->parent == ANDAMENTO_NONE;
+    WheelhouseDocPanel const *p = &a->panels[i], *q = &b->panels[i];
+    B32 root = p->parent == WHEELHOUSE_NONE;
     same = (str8_match(uishell_sidebar_string(p->id), uishell_sidebar_string(q->id), 0) && p->parent == q->parent && p->kind == q->kind &&
-            (p->kind != ANDAMENTO_PANEL_SPLIT || p->axis == q->axis) && (root || abs_f32((F32)(p->weight-q->weight)) < 1e-6f) &&
+            (p->kind != WHEELHOUSE_PANEL_SPLIT || p->axis == q->axis) && (root || abs_f32((F32)(p->weight-q->weight)) < 1e-6f) &&
             p->tab_count == q->tab_count && p->selected == q->selected);
     for(U64 t = 0; same && t < p->tab_count; t++) { same = str8_match(uishell_sidebar_string(p->tabs[t]), uishell_sidebar_string(q->tabs[t]), 0); }
   }
@@ -573,13 +573,13 @@ state_check_committed(RD_WindowState *ws)
   {
     CFG_Node *owner = n->v;
     UIShell_StoreDoc doc = uishell_store_doc(scratch.arena, rd_arrangement_live(uishell_store_owner(owner)));
-    AndamentoWorkspaceArrangement *stored = andamento_arrangement_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0);
-    AndamentoArrangementDoc ours = {doc.panels, doc.panel_count};
+    WheelhouseWorkspaceArrangement *stored = wheelhouse_arrangement_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0);
+    WheelhouseArrangementDoc ours = {doc.panels, doc.panel_count};
     B32 same = stored && state_same_doc(&stored->doc, &ours) &&
       str8_match(uishell_store_setting(owner, str8_lit("arrangement_generation")), push_str8f(scratch.arena, "%I64u", stored->generation), 0);
-    for(U64 i = 0; same && stored && i < stored->note_count; i++) { same = stored->notes[i].kind != ANDAMENTO_NOTE_GONE; }
+    for(U64 i = 0; same && stored && i < stored->note_count; i++) { same = stored->notes[i].kind != WHEELHOUSE_NOTE_GONE; }
     if(!same) { fprintf(stderr, "Workspace %.*s is not the arrangement Andamento keeps\n", str8_varg(rd_label_from_cfg(owner))); state_failures++; }
-    andamento_arrangement_free(stored);
+    wheelhouse_arrangement_free(stored);
   }
   scratch_end(scratch);
 }
@@ -594,12 +594,12 @@ state_check_sidebar_committed(RD_WindowState *ws)
   UIShell_SidebarState *state = ws->sidebar;
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   UIShell_SidebarDoc doc = uishell_sidebar_store_doc(scratch.arena, state, window);
-  AndamentoSidebarArrangement *stored = andamento_sidebar_arrangement_get(state->core, 0);
-  AndamentoSidebarDoc ours = uishell_sidebar_store_andamento_doc(&doc);
+  WheelhouseSidebarArrangement *stored = wheelhouse_sidebar_arrangement_get(state->core, 0);
+  WheelhouseSidebarDoc ours = uishell_sidebar_store_core_doc(&doc);
   B32 same = stored && stored->owned && state_same_doc(&stored->doc.dock, &ours.dock) &&
     str8_match(uishell_store_setting(window, str8_lit("sidebar_generation")), push_str8f(scratch.arena, "%I64u", stored->generation), 0);
   if(!same) { fprintf(stderr, "The sidebar is not the arrangement Andamento keeps\n"); state_failures++; }
-  andamento_sidebar_arrangement_free(stored);
+  wheelhouse_sidebar_arrangement_free(stored);
   scratch_end(scratch);
 }
 
@@ -633,11 +633,11 @@ state_previous_view(CFG_Node *workspace, String8 key)
 internal uint32_t
 state_slot_plan(UIShell_SidebarState *state, CFG_Node *workspace, String8 key, CFG_Node *view, B32 *has_previous)
 {
-  AndamentoSlotContent *plan = andamento_slot_plan(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)),
+  WheelhouseSlotContent *plan = wheelhouse_slot_plan(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)),
     uishell_sidebar_text(key), uishell_sidebar_text(uishell_store_setting(view, str8_lit("applied"))), 0);
-  uint32_t result = plan ? plan->state : ANDAMENTO_CONTENT_UNAVAILABLE;
+  uint32_t result = plan ? plan->state : WHEELHOUSE_CONTENT_UNAVAILABLE;
   if(has_previous) { *has_previous = plan && plan->has_previous; }
-  andamento_slot_plan_free(plan);
+  wheelhouse_slot_plan_free(plan);
   return result;
 }
 
@@ -736,7 +736,7 @@ state_has_view_state(RD_ViewAddress view)
 internal CFG_Node *
 state_open_v(RD_WindowState *ws)
 {
-  AndamentoNode node = {0};
+  WheelhouseNode node = {0};
   StateCheck(state_find(ws->sidebar, str8_lit("vessel"), str8_lit("v"), &node) && node.openable);
   state_click(ws, node.activate);
   CFG_Node *workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
@@ -999,26 +999,26 @@ entry_point(CmdLine *cmdline)
   // shell left out until + shows it; closing the shell's tab leaves it out
   // again, its slot kept. A convoy has two layouts to choose between.
   {
-    AndamentoWorkspaceId chip_id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(chip));
-    AndamentoWorkspaceArrangement *arranged = andamento_arrangement_get(state->core, chip_id, 0);
+    WheelhouseWorkspaceId chip_id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(chip));
+    WheelhouseWorkspaceArrangement *arranged = wheelhouse_arrangement_get(state->core, chip_id, 0);
     StateCheck(arranged && arranged->has_layout && str8_match(uishell_sidebar_string(arranged->layout), str8_lit("agent-and-files"), 0));
-    andamento_arrangement_free(arranged);
+    wheelhouse_arrangement_free(arranged);
     StateCheck(uishell_store_layouts(scratch.arena, chip).count == 1);
     String8Array unplaced = uishell_store_unplaced(scratch.arena, chip);
     StateCheck(unplaced.count == 1 && str8_match(unplaced.v[0], str8_lit("t:shell"), 0));
     StateCheck(str8_match(uishell_store_slot_title(unplaced.v[0]), str8_lit("shell"), 0));
     // Its home, where showing it with no panel puts it (the tool strip's
     // click), is the files panel: its matchers' but for `hide`.
-    arranged = andamento_arrangement_get(state->core, chip_id, 0);
+    arranged = wheelhouse_arrangement_get(state->core, chip_id, 0);
     B32 home_files = 0;
     for(U64 i = 0; arranged && i < arranged->note_count; i++)
     {
-      AndamentoNote *note = &arranged->notes[i];
-      home_files |= note->kind == ANDAMENTO_NOTE_UNPLACED && str8_match(uishell_sidebar_string(note->key), str8_lit("t:shell"), 0) &&
+      WheelhouseNote *note = &arranged->notes[i];
+      home_files |= note->kind == WHEELHOUSE_NOTE_UNPLACED && str8_match(uishell_sidebar_string(note->key), str8_lit("t:shell"), 0) &&
         str8_match(uishell_sidebar_string(note->panel), str8_lit("files"), 0);
     }
     StateCheck(home_files);
-    andamento_arrangement_free(arranged);
+    wheelhouse_arrangement_free(arranged);
     // Shown beside the agent, so closing it leaves no panel empty: closing
     // the last tab of a layout's panel closes the panel (#445).
     RD_PanelID agents = rd_panel_from_cfg(state_slot_view(chip, str8_lit("primary"))).id;
@@ -1035,9 +1035,9 @@ entry_point(CmdLine *cmdline)
     StateCheck(state_slot_view(chip, str8_lit("t:shell")) == &cfg_nil_node);
     StateCheck(uishell_store_unplaced(scratch.arena, chip).count == 1);
     state_check_committed(ws);
-    AndamentoSlots *chip_slots = andamento_slots_get(state->core, chip_id, 0);
+    WheelhouseSlots *chip_slots = wheelhouse_slots_get(state->core, chip_id, 0);
     StateCheck(uishell_store_slot_find(chip_slots, str8_lit("t:shell"), 0));
-    andamento_slots_free(chip_slots);
+    wheelhouse_slots_free(chip_slots);
     state_check_committed(ws);
 
     CFG_Node *convoy = state_open_subject(ws, str8_lit("convoy"), str8_lit("build"));
@@ -1067,22 +1067,22 @@ entry_point(CmdLine *cmdline)
   // Workspaces group's rows reordered.
   {
     UIShell_DisplayControlIterator it = {state->snapshot};
-    AndamentoControl control = {0}; AndamentoText name = {0};
-    size_t toggle = ANDAMENTO_NONE;
+    WheelhouseControl control = {0}; WheelhouseText name = {0};
+    size_t toggle = WHEELHOUSE_NONE;
     while(uishell_sidebar_next_persistent_control(&it, &control, &name))
     { if(str8_match(uishell_sidebar_string(name), str8_lit("show-issues"), 0)) { toggle = control.action; break; } }
     state_click(ws, toggle);
-    AndamentoNode project = {0};
+    WheelhouseNode project = {0};
     StateCheck(state_find(state, str8_lit("project"), str8_lit("p"), &project) && !project.collapsed);
     state_click(ws, project.toggle);
     // A row drop commits the run's whole order once the render ends.
     U64 row = state_find_local(state, str8_lit("Notes"));
-    StateCheck(row != ANDAMENTO_NONE);
+    StateCheck(row != WHEELHOUSE_NONE);
     String8 loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(state->snapshot, row));
-    AndamentoEntity *siblings = 0;
+    WheelhouseEntity *siblings = 0;
     U64 count = uishell_sidebar_siblings(scratch.arena, state->snapshot, loop, &siblings);
     StateCheck(count >= 2);
-    AndamentoEntity *order = push_array(scratch.arena, AndamentoEntity, count);
+    WheelhouseEntity *order = push_array(scratch.arena, WheelhouseEntity, count);
     for(U64 i = 0; i < count; i++) { order[i] = siblings[count-1-i]; }
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_publish(state, &split);
@@ -1105,7 +1105,7 @@ entry_point(CmdLine *cmdline)
     uishell_sidebar_make(window, (UIShell_MakeAction){UIShell_Make_Workspace, str8_lit("New workspace"), group_id}, str8_lit("Build logs"));
     state_frame(ws);
     // Pin on the project's hover card.
-    AndamentoEntity path[] = {uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("project"), str8_lit("p"))};
+    WheelhouseEntity path[] = {uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("project"), str8_lit("p"))};
     UIShell_HoverCard card = {.path = path, .depth = 1, .retained_label = str8_lit("Example project")};
     UIShell_LocalPin *pin = uishell_sidebar_card_pin(ws, &card, 0);
     StateCheck(pin && str8_match(pin->group->id, group_id, 0));
@@ -1255,29 +1255,29 @@ entry_point(CmdLine *cmdline)
       if(moved)
       {
         // Andamento's document moves: the same sections, two swapped.
-        AndamentoSidebarArrangement *stored = andamento_sidebar_arrangement_get(state->core, 0);
+        WheelhouseSidebarArrangement *stored = wheelhouse_sidebar_arrangement_get(state->core, 0);
         StateCheck(stored != 0);
         if(!stored) { break; }
-        AndamentoSidebarDoc doc = stored->doc;
-        AndamentoDocPanel *panels = push_array(scratch.arena, AndamentoDocPanel, doc.dock.panel_count);
-        MemoryCopy(panels, doc.dock.panels, sizeof(AndamentoDocPanel)*doc.dock.panel_count);
+        WheelhouseSidebarDoc doc = stored->doc;
+        WheelhouseDocPanel *panels = push_array(scratch.arena, WheelhouseDocPanel, doc.dock.panel_count);
+        MemoryCopy(panels, doc.dock.panels, sizeof(WheelhouseDocPanel)*doc.dock.panel_count);
         B32 swapped = 0;
         for(U64 i = 0; i < doc.dock.panel_count && !swapped; i++)
         for(U64 j = i+1; j < doc.dock.panel_count && !swapped; j++)
         {
-          if(panels[i].kind != ANDAMENTO_PANEL_TABS || panels[j].kind != ANDAMENTO_PANEL_TABS || panels[i].parent != panels[j].parent ||
-             panels[i].parent == ANDAMENTO_NONE) { continue; }
-          AndamentoDocPanel t = panels[i]; panels[i] = panels[j]; panels[j] = t;
+          if(panels[i].kind != WHEELHOUSE_PANEL_TABS || panels[j].kind != WHEELHOUSE_PANEL_TABS || panels[i].parent != panels[j].parent ||
+             panels[i].parent == WHEELHOUSE_NONE) { continue; }
+          WheelhouseDocPanel t = panels[i]; panels[i] = panels[j]; panels[j] = t;
           swapped = 1;
         }
         StateCheck(swapped);
         doc.dock.panels = panels;
         char *error = 0;
-        AndamentoSidebarArrangement *after = andamento_sidebar_arrangement_commit(state->core, &doc, stored->generation, &error);
-        StateCheck(after && after->status == ANDAMENTO_COMMITTED);
-        andamento_string_free(error);
-        andamento_sidebar_arrangement_free(after);
-        andamento_sidebar_arrangement_free(stored);
+        WheelhouseSidebarArrangement *after = wheelhouse_sidebar_arrangement_commit(state->core, &doc, stored->generation, &error);
+        StateCheck(after && after->status == WHEELHOUSE_COMMITTED);
+        wheelhouse_string_free(error);
+        wheelhouse_sidebar_arrangement_free(after);
+        wheelhouse_sidebar_arrangement_free(stored);
       }
       state_frame(ws);
       StateCheck(state->sidebar_commits == commits);
@@ -1365,13 +1365,13 @@ entry_point(CmdLine *cmdline)
     String8 drifted = push_str8f(scratch.arena, "%S%S", str8_prefix(daily, at), str8_skip(daily, end+1));
     CFG_Node *sessions = uishell_sidebar_region_view(window, str8_lit("sessions"));
     StateCheck(sessions != &cfg_nil_node);
-    StateCheck(andamento_configure(state->core, uishell_sidebar_text(drifted), 0));
+    StateCheck(wheelhouse_configure(state->core, uishell_sidebar_text(drifted), 0));
     uishell_sidebar_refresh(state);
     state_frame(ws);
     StateCheck(uishell_sidebar_region_view(window, str8_lit("sessions")) == sessions && uishell_sidebar_section_gone(state, str8_lit("sessions")));
     String8 text = state_sidebar_text(scratch.arena);
     StateCheck(str8_find_needle(text, 0, str8_lit("section \"Sessions\" view=dashboard:\"sessions\" selected flagged"), 0) < text.size);
-    StateCheck(andamento_configure(state->core, uishell_sidebar_text(daily), 0));
+    StateCheck(wheelhouse_configure(state->core, uishell_sidebar_text(daily), 0));
     uishell_sidebar_refresh(state);
     state_frame(ws);
     StateCheck(uishell_sidebar_region_view(window, str8_lit("sessions")) == sessions && !uishell_sidebar_section_gone(state, str8_lit("sessions")));
@@ -1386,17 +1386,17 @@ entry_point(CmdLine *cmdline)
     state = ws->sidebar;
     window = cfg_node_from_id(ws->cfg_id);
     CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace));
-    AndamentoViewSpec web = {0};
-    web.content = ANDAMENTO_SLOT_URL;
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace));
+    WheelhouseViewSpec web = {0};
+    web.content = WHEELHOUSE_SLOT_URL;
     web.url = uishell_sidebar_text(str8_lit("https://example.com/board"));
     web.has_presentation = 1;
     web.presentation = uishell_sidebar_text(str8_lit("web"));
-    StateCheck(andamento_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:web")), &web, ANDAMENTO_REBIND_REPLACE, 0));
-    AndamentoViewSpec mail = {0};
-    mail.content = ANDAMENTO_SLOT_URL;
+    StateCheck(wheelhouse_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:web")), &web, WHEELHOUSE_REBIND_REPLACE, 0));
+    WheelhouseViewSpec mail = {0};
+    mail.content = WHEELHOUSE_SLOT_URL;
     mail.url = uishell_sidebar_text(str8_lit("mailto:team@example.com"));
-    StateCheck(andamento_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:mail")), &mail, ANDAMENTO_REBIND_REPLACE, 0));
+    StateCheck(wheelhouse_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:mail")), &mail, WHEELHOUSE_REBIND_REPLACE, 0));
     // Any edit commits: the terminal tab selected.
     RD_PanelTree panels = state_panels(scratch.arena, workspace);
     CFG_Node *make = &cfg_nil_node;
@@ -1410,13 +1410,13 @@ entry_point(CmdLine *cmdline)
     StateCheck(str8_find_needle(text, 0, str8_lit("tab web view=workspace:\"u:web\" url=\"https://example.com/board\""), 0) < text.size);
     StateCheck(str8_find_needle(text, 0, str8_lit("tab placeholder view=workspace:\"u:mail\" content=\"mailto:team@example.com\""), 0) < text.size);
     state_check_committed(ws);
-    AndamentoSlots *slots = andamento_slots_get(state->core, id, 0);
-    AndamentoSlot slot = {0};
-    StateCheck(uishell_store_slot_find(slots, str8_lit("u:web"), &slot) && slot.spec.content == ANDAMENTO_SLOT_URL &&
+    WheelhouseSlots *slots = wheelhouse_slots_get(state->core, id, 0);
+    WheelhouseSlot slot = {0};
+    StateCheck(uishell_store_slot_find(slots, str8_lit("u:web"), &slot) && slot.spec.content == WHEELHOUSE_SLOT_URL &&
                str8_match(uishell_sidebar_string(slot.spec.url), str8_lit("https://example.com/board"), 0));
-    StateCheck(uishell_store_slot_find(slots, str8_lit("u:mail"), &slot) && slot.spec.content == ANDAMENTO_SLOT_URL &&
+    StateCheck(uishell_store_slot_find(slots, str8_lit("u:mail"), &slot) && slot.spec.content == WHEELHOUSE_SLOT_URL &&
                str8_match(uishell_sidebar_string(slot.spec.url), str8_lit("mailto:team@example.com"), 0));
-    andamento_slots_free(slots);
+    wheelhouse_slots_free(slots);
   }
 
   //- A commit made against a generation that has moved since (here another
@@ -1426,21 +1426,21 @@ entry_point(CmdLine *cmdline)
     state = ws->sidebar;
     window = cfg_node_from_id(ws->cfg_id);
     CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace));
-    AndamentoWorkspaceArrangement *stored = andamento_arrangement_get(state->core, id, 0);
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace));
+    WheelhouseWorkspaceArrangement *stored = wheelhouse_arrangement_get(state->core, id, 0);
     U64 count = stored ? stored->doc.panel_count : 0, children = 0;
-    AndamentoDocPanel *panels = push_array(scratch.arena, AndamentoDocPanel, count+1);
+    WheelhouseDocPanel *panels = push_array(scratch.arena, WheelhouseDocPanel, count+1);
     for(U64 i = 0; i < count; i++)
     {
       panels[i] = stored->doc.panels[i];
       if(panels[i].parent == 0) { panels[i].weight = 0.5; children++; }
     }
     StateCheck(children == 2);
-    AndamentoWorkspaceArrangement *committed = andamento_arrangement_commit(state->core, id, &(AndamentoArrangementDoc){panels, count},
+    WheelhouseWorkspaceArrangement *committed = wheelhouse_arrangement_commit(state->core, id, &(WheelhouseArrangementDoc){panels, count},
                                                                             stored ? stored->generation : 0, 0);
-    StateCheck(committed && committed->status == ANDAMENTO_COMMITTED);
-    andamento_arrangement_free(committed);
-    andamento_arrangement_free(stored);
+    StateCheck(committed && committed->status == WHEELHOUSE_COMMITTED);
+    wheelhouse_arrangement_free(committed);
+    wheelhouse_arrangement_free(stored);
     RD_PanelTree tree = state_panels(scratch.arena, workspace);
     RD_PanelAddress first_panel = tree.root->first->address;
     F32 weight = state_weight(first_panel);
@@ -1464,11 +1464,11 @@ entry_point(CmdLine *cmdline)
     CFG_Node *primary = rd_cfg_from_view(state_panels(scratch.arena, governor).root->tabs.first->v);
     StateCheck(str8_match(uishell_store_setting(primary, str8_lit("slot")), str8_lit("primary"), 0));
     StateCheck(cfg_node_child_from_string(primary, str8_lit("follows_provider")) != &cfg_nil_node);
-    AndamentoSlots *slots = andamento_slots_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(governor)), 0);
-    AndamentoSlot slot = {0};
+    WheelhouseSlots *slots = wheelhouse_slots_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(governor)), 0);
+    WheelhouseSlot slot = {0};
     StateCheck(uishell_store_slot_find(slots, str8_lit("primary"), &slot) && slot.in_baseline && !slot.detached &&
-               slot.spec.content == ANDAMENTO_SLOT_FACET);
-    andamento_slots_free(slots);
+               slot.spec.content == WHEELHOUSE_SLOT_FACET);
+    wheelhouse_slots_free(slots);
     state_check_committed(ws);
     // Back to the workspace that was visible.
     window = cfg_node_from_id(ws->cfg_id);
@@ -1501,8 +1501,8 @@ entry_point(CmdLine *cmdline)
     if(str8_find_needle(text, 0, expected, 0) == text.size) { fprintf(stderr, "workspaces:\n%.*s\n", str8_varg(text)); }
     CFG_Node *partner = state_slot_view(reviewer, str8_lit("partner"));
     StateCheck(cfg_node_child_from_string(partner, str8_lit("follows_provider")) != &cfg_nil_node);
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == ANDAMENTO_CONTENT_CURRENT);
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("log"), state_slot_view(reviewer, str8_lit("log")), 0) == ANDAMENTO_CONTENT_CURRENT);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == WHEELHOUSE_CONTENT_CURRENT);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("log"), state_slot_view(reviewer, str8_lit("log")), 0) == WHEELHOUSE_CONTENT_CURRENT);
     state_check_committed(ws);
   }
 
@@ -1520,7 +1520,7 @@ entry_point(CmdLine *cmdline)
     StateCheck(previous != &cfg_nil_node && rd_panel_address_match(rd_panel_from_cfg(previous), rd_panel_from_cfg(partner)) &&
                str8_match(rd_expr_from_cfg(previous), str8_lit("attach partner 1"), 0));
     B32 has_previous = 0;
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, &has_previous) == ANDAMENTO_CONTENT_CURRENT && has_previous);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, &has_previous) == WHEELHOUSE_CONTENT_CURRENT && has_previous);
     StateCheck(state_offers(previous, UIShell_SlotAction_ReleasePrevious) && state_offers(partner, UIShell_SlotAction_ReleasePrevious));
     // The document has the Slot once: the previous instance isn't one.
     state_check_committed(ws);
@@ -1545,7 +1545,7 @@ entry_point(CmdLine *cmdline)
     uishell_store_act(previous, UIShell_SlotAction_ReleasePrevious);
     state_frame(ws);
     StateCheck(state_previous_view(reviewer, str8_lit("partner")) == &cfg_nil_node);
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, &has_previous) == ANDAMENTO_CONTENT_CURRENT && !has_previous);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, &has_previous) == WHEELHOUSE_CONTENT_CURRENT && !has_previous);
   }
 
   //- The Slot Host (docs/design/subject-workspaces.md): a live instance
@@ -1563,7 +1563,7 @@ entry_point(CmdLine *cmdline)
     partner = state_slot_view(reviewer, str8_lit("partner"));
     WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, rd_view_address_from_cfg(partner), wh_renderer_from_name(partner->string), 0, r2f32p(0, 0, 640, 384));
     StateCheck(str8_match(rd_expr_from_cfg(partner), attached, 0) && state_previous_view(reviewer, str8_lit("partner")) == &cfg_nil_node);
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == ANDAMENTO_CONTENT_UNAVAILABLE);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == WHEELHOUSE_CONTENT_UNAVAILABLE);
     StateCheck((ctx.status & WH_SlotStatus_Unverified) && !(ctx.status & WH_SlotStatus_Waiting) && ctx.wait == WH_SlotWait_Unavailable);
     StateCheck(str8_match(uishell_slot_badge(scratch.arena, partner), str8_lit("unverified"), 0));
     state_reviewer_partner_state = "ready";
@@ -1573,7 +1573,7 @@ entry_point(CmdLine *cmdline)
     partner = state_slot_view(reviewer, str8_lit("partner"));
     ctx = wh_view_context_from_view(scratch.arena, rd_view_address_from_cfg(partner), wh_renderer_from_name(partner->string), 0, r2f32p(0, 0, 640, 384));
     StateCheck(str8_match(rd_expr_from_cfg(partner), attached, 0) && !(ctx.status & (WH_SlotStatus_Unverified|WH_SlotStatus_Waiting)));
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == ANDAMENTO_CONTENT_CURRENT);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == WHEELHOUSE_CONTENT_CURRENT);
     StateCheck(!str8_match(uishell_slot_badge(scratch.arena, partner), str8_lit("unverified"), 0));
 
     // A Slot whose View has nothing to show yet, a facet its provider hasn't
@@ -1587,7 +1587,7 @@ entry_point(CmdLine *cmdline)
     RD_ViewAddress pair_address = rd_view_address_from_cfg(pair);
     WH_Renderer *pair_renderer = wh_renderer_from_name(pair->string);
     StateCheck(pair != &cfg_nil_node && str8_match(pair->string, str8_lit("terminal"), 0) && rd_expr_from_cfg(pair).size == 0);
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("pair"), pair, 0) == ANDAMENTO_CONTENT_UNAVAILABLE);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("pair"), pair, 0) == WHEELHOUSE_CONTENT_UNAVAILABLE);
     ctx = wh_view_context_from_view(scratch.arena, pair_address, pair_renderer, 0, r2f32p(0, 0, 640, 384));
     StateCheck((ctx.status & WH_SlotStatus_Waiting) && ctx.wait == WH_SlotWait_Unavailable);
     WH_SlotPlaceholder words = wh_slot_placeholder_from_ctx(scratch.arena, pair_renderer, &ctx);
@@ -1620,7 +1620,7 @@ entry_point(CmdLine *cmdline)
     ctx = wh_view_context_from_view(scratch.arena, pair_address, pair_renderer, 0, r2f32p(0, 0, 640, 384));
     StateCheck(rd_cfg_from_view(pair_address) == pair && str8_match(rd_expr_from_cfg(pair), str8_lit("attach pair 1"), 0));
     StateCheck(!(ctx.status & (WH_SlotStatus_Waiting|WH_SlotStatus_Unverified)));
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("pair"), pair, 0) == ANDAMENTO_CONTENT_CURRENT);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("pair"), pair, 0) == WHEELHOUSE_CONTENT_CURRENT);
     U64 queued = rd_state->cmds[0].count;
     wh_slot_host_replay_cmds(vs);
     StateCheck(vs->held_cmds == 0 && rd_state->cmds[0].count == queued+1 &&
@@ -1648,8 +1648,8 @@ entry_point(CmdLine *cmdline)
     Rng2F32 rect = r2f32p(0, 0, 640, 384);
     CFG_Node *previous = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     // It waits from the frame it opens in, before the store keys its View.
-    AndamentoNode row = {0};
-    StateCheck(state_find(state, str8_lit("vessel"), str8_lit("bare"), &row) && row.state == ANDAMENTO_LATENT && row.openable);
+    WheelhouseNode row = {0};
+    StateCheck(state_find(state, str8_lit("vessel"), str8_lit("bare"), &row) && row.state == WHEELHOUSE_LATENT && row.openable);
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_perform(state, &split, row.activate);
     CFG_Node *bare = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
@@ -1664,7 +1664,7 @@ entry_point(CmdLine *cmdline)
     primary = state_slot_view(bare, str8_lit("primary"));
     address = rd_view_address_from_cfg(primary);
     StateCheck(primary != &cfg_nil_node && rd_expr_from_cfg(primary).size == 0 && uishell_store_view_unfilled(primary));
-    StateCheck(state_slot_plan(state, bare, str8_lit("primary"), primary, 0) == ANDAMENTO_CONTENT_UNAVAILABLE);
+    StateCheck(state_slot_plan(state, bare, str8_lit("primary"), primary, 0) == WHEELHOUSE_CONTENT_UNAVAILABLE);
     ctx = wh_view_context_from_view(scratch.arena, address, renderer, 0, rect);
     StateCheck((ctx.status & WH_SlotStatus_Waiting) && ctx.wait == WH_SlotWait_Unavailable);
     StateCheck(str8_match(wh_slot_placeholder_from_ctx(scratch.arena, renderer, &ctx).title, str8_lit("This terminal can't attach yet"), 0));
@@ -1676,7 +1676,7 @@ entry_point(CmdLine *cmdline)
     ctx = wh_view_context_from_view(scratch.arena, address, renderer, 0, rect);
     StateCheck(rd_cfg_from_view(address) == primary && str8_match(rd_expr_from_cfg(primary), str8_lit("attach bare"), 0));
     StateCheck(!(ctx.status & (WH_SlotStatus_Waiting|WH_SlotStatus_Unverified)));
-    StateCheck(state_slot_plan(state, bare, str8_lit("primary"), primary, 0) == ANDAMENTO_CONTENT_CURRENT);
+    StateCheck(state_slot_plan(state, bare, str8_lit("primary"), primary, 0) == WHEELHOUSE_CONTENT_CURRENT);
     state_bare = StateBare_NoRecipe;
     state_producer(state);
     state_frame(ws);
@@ -1704,19 +1704,19 @@ entry_point(CmdLine *cmdline)
     StateCheck(str8_match(rd_expr_from_cfg(watch), str8_lit("attach watch 1"), 0));
     StateCheck(str8_match(uishell_store_setting(watch, str8_lit("asks")), str8_lit("attach watch 2"), 0));
     StateCheck(state_offers(watch, UIShell_SlotAction_Update) && state_offers(watch, UIShell_SlotAction_Decline));
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("watch"), watch, 0) == ANDAMENTO_CONTENT_UPDATING);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("watch"), watch, 0) == WHEELHOUSE_CONTENT_UPDATING);
     uishell_store_act(watch, UIShell_SlotAction_Update);
     state_frame(ws);
     watch = state_slot_view(reviewer, str8_lit("watch"));
     StateCheck(str8_match(rd_expr_from_cfg(watch), str8_lit("attach watch 2"), 0) && !state_offers(watch, UIShell_SlotAction_Update));
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("watch"), watch, 0) == ANDAMENTO_CONTENT_CURRENT);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("watch"), watch, 0) == WHEELHOUSE_CONTENT_CURRENT);
     state_reviewer_watch = 3;
     state_producer(state);
     state_frame(ws);
     uishell_store_act(watch, UIShell_SlotAction_Decline);
     state_frame(ws);
     StateCheck(str8_match(rd_expr_from_cfg(watch), str8_lit("attach watch 2"), 0) && !state_offers(watch, UIShell_SlotAction_Update));
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("watch"), watch, 0) == ANDAMENTO_CONTENT_FAILED);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("watch"), watch, 0) == WHEELHOUSE_CONTENT_FAILED);
   }
 
   //- A View Spec another host changes reaches the View already open,
@@ -1726,15 +1726,15 @@ entry_point(CmdLine *cmdline)
     CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
     CFG_Node *make = state_slot_view(workspace, str8_lit("u:3"));
     StateCheck(str8_match(rd_expr_from_cfg(make), str8_lit("make test"), 0));
-    AndamentoViewSpec check = {0};
-    check.content = ANDAMENTO_SLOT_COMMAND;
+    WheelhouseViewSpec check = {0};
+    check.content = WHEELHOUSE_SLOT_COMMAND;
     check.command = uishell_sidebar_text(str8_lit("make check"));
     check.has_cwd = 1;
     check.cwd = uishell_sidebar_text(str8_lit("/src/wheelhouse"));
     check.has_presentation = 1;
     check.presentation = uishell_sidebar_text(str8_lit("terminal"));
-    StateCheck(andamento_slot_set(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)),
-                                  uishell_sidebar_text(str8_lit("u:3")), &check, ANDAMENTO_REBIND_REPLACE, 0));
+    StateCheck(wheelhouse_slot_set(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace)),
+                                  uishell_sidebar_text(str8_lit("u:3")), &check, WHEELHOUSE_REBIND_REPLACE, 0));
     state_frame(ws);
     StateCheck(state_slot_view(workspace, str8_lit("u:3")) == make && str8_match(rd_expr_from_cfg(make), str8_lit("make check"), 0));
     state_check_committed(ws);
@@ -1747,7 +1747,7 @@ entry_point(CmdLine *cmdline)
   {
     window = cfg_node_from_id(ws->cfg_id);
     CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace));
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(workspace));
     // The program: its arguments after the first, each ended by a NUL, into
     // the file its first names.
     String8 program = push_str8f(scratch.arena, "%S/print-argv", dir);
@@ -1756,17 +1756,17 @@ entry_point(CmdLine *cmdline)
     chmod((char *)push_str8_copy(scratch.arena, program).str, 0755);
     String8 args[] = {program, out, str8_lit("a b"), str8_lit("$HOME"), str8_lit("'q'"), str8_lit(";"), str8_lit("*"),
                       str8_lit("\"x\" \\ y"), str8_lit("`id` $(id) & | < > ( ) # ~ !"), str8_lit("")};
-    AndamentoText argv[ArrayCount(args)];
+    WheelhouseText argv[ArrayCount(args)];
     for(U64 i = 0; i < ArrayCount(args); i++) { argv[i] = uishell_sidebar_text(args[i]); }
-    AndamentoViewSpec spec = {0};
-    spec.content = ANDAMENTO_SLOT_COMMAND;
+    WheelhouseViewSpec spec = {0};
+    spec.content = WHEELHOUSE_SLOT_COMMAND;
     spec.argv = argv;
     spec.argc = ArrayCount(argv);
     spec.has_cwd = 1;
     spec.cwd = uishell_sidebar_text(dir);
     spec.has_presentation = 1;
     spec.presentation = uishell_sidebar_text(str8_lit("terminal"));
-    StateCheck(andamento_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:3")), &spec, ANDAMENTO_REBIND_REPLACE, 0));
+    StateCheck(wheelhouse_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:3")), &spec, WHEELHOUSE_REBIND_REPLACE, 0));
     state_frame(ws);
     CFG_Node *view = state_slot_view(workspace, str8_lit("u:3"));
     String8 command = rd_expr_from_cfg(view), cwd = uishell_store_setting(view, str8_lit("cwd"));
@@ -1791,25 +1791,25 @@ entry_point(CmdLine *cmdline)
                                     for(U64 i = 0; i < got.size; i++) { fputc(got.str[i] ? got.str[i] : '|', stderr); } fputc('\n', stderr); }
     if(session) { cleat_session_destroy(session); }
     if(provider) { cleat_provider_close(provider); }
-    AndamentoSlots *slots = andamento_slots_get(state->core, id, 0);
-    AndamentoSlot slot = {0};
+    WheelhouseSlots *slots = wheelhouse_slots_get(state->core, id, 0);
+    WheelhouseSlot slot = {0};
     StateCheck(uishell_store_slot_find(slots, str8_lit("u:3"), &slot) && slot.spec.argc == ArrayCount(args) && !slot.spec.command.len);
-    andamento_slots_free(slots);
+    wheelhouse_slots_free(slots);
     // Kept by the user, it is still argv.
     uishell_store_keep(view);
-    slots = andamento_slots_get(state->core, id, 0);
+    slots = wheelhouse_slots_get(state->core, id, 0);
     StateCheck(uishell_store_slot_find(slots, str8_lit("u:3"), &slot) && slot.spec.argc == ArrayCount(args));
-    andamento_slots_free(slots);
+    wheelhouse_slots_free(slots);
     state_check_committed(ws);
     // Back to the command it ran.
-    AndamentoViewSpec check = {0};
-    check.content = ANDAMENTO_SLOT_COMMAND;
+    WheelhouseViewSpec check = {0};
+    check.content = WHEELHOUSE_SLOT_COMMAND;
     check.command = uishell_sidebar_text(str8_lit("make check"));
     check.has_cwd = 1;
     check.cwd = uishell_sidebar_text(str8_lit("/src/wheelhouse"));
     check.has_presentation = 1;
     check.presentation = uishell_sidebar_text(str8_lit("terminal"));
-    StateCheck(andamento_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:3")), &check, ANDAMENTO_REBIND_REPLACE, 0));
+    StateCheck(wheelhouse_slot_set(state->core, id, uishell_sidebar_text(str8_lit("u:3")), &check, WHEELHOUSE_REBIND_REPLACE, 0));
     state_frame(ws);
     StateCheck(str8_match(rd_expr_from_cfg(state_slot_view(workspace, str8_lit("u:3"))), str8_lit("make check"), 0));
   }
@@ -1845,20 +1845,20 @@ entry_point(CmdLine *cmdline)
   // restart, and cleared when the provider names a new target.
   {
     CFG_Node *partner = state_slot_view(reviewer, str8_lit("partner"));
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
     // The terminal saves these when it starts its session in a daemon.
     uishell_store_set_setting(partner, str8_lit("session"), str8_lit("S1"));
     uishell_store_set_setting(partner, str8_lit("daemon_name"), str8_lit("D1"));
     state_frame(ws);
-    AndamentoSlots *slots = andamento_slots_get(state->core, id, 0);
-    AndamentoSlot slot = {0};
+    WheelhouseSlots *slots = wheelhouse_slots_get(state->core, id, 0);
+    WheelhouseSlot slot = {0};
     B32 saved = uishell_store_slot_find(slots, str8_lit("partner"), &slot) && slot.has_saved;
-    AndamentoResolution r = slot.saved;
+    WheelhouseResolution r = slot.saved;
     StateCheck(saved && str8_match(uishell_sidebar_string(r.kind), str8_lit("cleat-session"), 0) &&
                str8_match(uishell_store_resolution_field(&r, str8_lit("session")), str8_lit("S1"), 0) &&
                str8_match(uishell_store_resolution_field(&r, str8_lit("daemon")), str8_lit("D1"), 0) &&
                str8_match(uishell_store_resolution_field(&r, str8_lit("host")), uishell_store_host(), 0));
-    andamento_slots_free(slots);
+    wheelhouse_slots_free(slots);
     rd_autosave();
     state_pump();
     String8 presentation = data_from_file_path(scratch.arena, uishell_dashboard.presentation_path);
@@ -1870,16 +1870,16 @@ entry_point(CmdLine *cmdline)
     partner = state_slot_view(reviewer, str8_lit("partner"));
     StateCheck(str8_match(uishell_store_setting(partner, str8_lit("session")), str8_lit("S1"), 0) &&
                str8_match(uishell_store_setting(partner, str8_lit("daemon_name")), str8_lit("D1"), 0));
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == ANDAMENTO_CONTENT_CURRENT);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == WHEELHOUSE_CONTENT_CURRENT);
     // The provider names a new target: the saved session is for the old
     // one. The daemon's session stays beside the new View until released.
     state_reviewer_partner = 3;
     state_producer(state);
     state_frame(ws);
     state_frame(ws);
-    slots = andamento_slots_get(state->core, id, 0);
+    slots = wheelhouse_slots_get(state->core, id, 0);
     StateCheck(uishell_store_slot_find(slots, str8_lit("partner"), &slot) && !slot.has_saved);
-    andamento_slots_free(slots);
+    wheelhouse_slots_free(slots);
     partner = state_slot_view(reviewer, str8_lit("partner"));
     CFG_Node *previous = state_previous_view(reviewer, str8_lit("partner"));
     StateCheck(str8_match(rd_expr_from_cfg(partner), str8_lit("attach partner 3"), 0) && !uishell_store_setting(partner, str8_lit("session")).size);
@@ -1898,7 +1898,7 @@ entry_point(CmdLine *cmdline)
                str8_match(uishell_store_setting(previous, str8_lit("session")), str8_lit("S1"), 0));
     // Andamento's binding keeps its previous instance in memory only: after
     // the restart it is this device's alone.
-    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == ANDAMENTO_CONTENT_CURRENT);
+    StateCheck(state_slot_plan(state, reviewer, str8_lit("partner"), partner, 0) == WHEELHOUSE_CONTENT_CURRENT);
     StateCheck(state_offers(previous, UIShell_SlotAction_ReleasePrevious));
     uishell_store_act(previous, UIShell_SlotAction_ReleasePrevious);
     state_frame(ws);
@@ -1915,7 +1915,7 @@ entry_point(CmdLine *cmdline)
     state = ws->sidebar;
     window = cfg_node_from_id(ws->cfg_id);
     reviewer = state_workspace_labelled(window, str8_lit("reviewer"));
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
     UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, reviewer);
     RD_PanelNode *first = mount.panel_tree.root->first;
     rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_soft_drag")), &mount, first);
@@ -1925,9 +1925,9 @@ entry_point(CmdLine *cmdline)
     rd_state->frame_index += 1;
     rd_boundary_resize_commit();
     state_frame(ws);
-    AndamentoWorkspaceArrangement *stored = andamento_arrangement_get(state->core, id, 0);
-    StateCheck(stored && !stored->owned && stored->flags == ANDAMENTO_ARRANGEMENT_FLAG_SOFT);
-    andamento_arrangement_free(stored);
+    WheelhouseWorkspaceArrangement *stored = wheelhouse_arrangement_get(state->core, id, 0);
+    StateCheck(stored && !stored->owned && stored->flags == WHEELHOUSE_ARRANGEMENT_FLAG_SOFT);
+    wheelhouse_arrangement_free(stored);
     RD_PanelAddress first_panel = state_panels(scratch.arena, reviewer).root->first->address;
     F32 weight = state_weight(first_panel);
     StateCheck(weight != 1.f);
@@ -1953,16 +1953,16 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     state_frame(ws);
     StateCheck(state_slot_view(reviewer, str8_lit("log")) == &cfg_nil_node);
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
-    AndamentoOverlay *overlay = andamento_overlay_get(state->core, id, 0);
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    WheelhouseOverlay *overlay = wheelhouse_overlay_get(state->core, id, 0);
     B32 tombstoned = 0;
     for(U64 i = 0; overlay && i < overlay->note_count; i++)
     {
-      AndamentoOverlayNote *note = &overlay->notes[i];
-      tombstoned = tombstoned || (note->kind == ANDAMENTO_OVERLAY_TOMBSTONED && str8_match(uishell_sidebar_string(note->key), str8_lit("log"), 0));
+      WheelhouseOverlayNote *note = &overlay->notes[i];
+      tombstoned = tombstoned || (note->kind == WHEELHOUSE_OVERLAY_TOMBSTONED && str8_match(uishell_sidebar_string(note->key), str8_lit("log"), 0));
     }
     StateCheck(overlay && tombstoned && !overlay->owned);
-    andamento_overlay_free(overlay);
+    wheelhouse_overlay_free(overlay);
     String8 text = state_workspaces_text(scratch.arena);
     StateCheck(str8_find_needle(text, 0, str8_lit("      hidden slot=\"log\"\n"), 0) < text.size);
     state_check_committed(ws);
@@ -1973,10 +1973,10 @@ entry_point(CmdLine *cmdline)
   // another frontend would), the provider's hint places it, which Andamento
   // doesn't note as placed.
   {
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
     CFG_Node *watch = state_slot_view(reviewer, str8_lit("watch"));
     StateCheck(watch != &cfg_nil_node && state_slot_view(reviewer, str8_lit("log")) == &cfg_nil_node);
-    StateCheck(andamento_slot_reattach(state->core, id, uishell_sidebar_text(str8_lit("log")), 0));
+    StateCheck(wheelhouse_slot_reattach(state->core, id, uishell_sidebar_text(str8_lit("log")), 0));
     if(watch != &cfg_nil_node) { uishell_cmd("close_tab", .window = window->id, .panel = rd_panel_from_cfg(watch), .tab = rd_view_address_from_cfg(watch)); }
     state_frame(ws);
     state_frame(ws);
@@ -1988,7 +1988,7 @@ entry_point(CmdLine *cmdline)
     StateCheck(state_slot_view(reviewer, str8_lit("watch")) == &cfg_nil_node &&
                str8_find_needle(text, 0, str8_lit("      hidden slot=\"watch\"\n"), 0) < text.size);
     // Back as it was: watch shown, log hidden.
-    StateCheck(andamento_slot_reattach(state->core, id, uishell_sidebar_text(str8_lit("watch")), 0));
+    StateCheck(wheelhouse_slot_reattach(state->core, id, uishell_sidebar_text(str8_lit("watch")), 0));
     state_frame(ws);
     state_frame(ws);
     CFG_Node *log = state_slot_view(reviewer, str8_lit("log"));
@@ -2009,18 +2009,18 @@ entry_point(CmdLine *cmdline)
                 .dst_panel = rd_panel_from_cfg(notes), .dir2 = Dir2_Down);
     state_frame(ws);
     state_frame(ws);
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
-    AndamentoWorkspaceArrangement *stored = andamento_arrangement_get(state->core, id, 0);
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    WheelhouseWorkspaceArrangement *stored = wheelhouse_arrangement_get(state->core, id, 0);
     StateCheck(stored && stored->owned && stored->flags == 0);
-    andamento_arrangement_free(stored);
+    wheelhouse_arrangement_free(stored);
     String8 before = push_str8_copy(scratch.arena, state_workspaces_text(scratch.arena));
     state_reviewer_version = 3;
     state_producer(state);
     state_frame(ws);
     state_frame(ws);
-    stored = andamento_arrangement_get(state->core, id, 0);
-    StateCheck(stored && stored->owned && (stored->flags & ANDAMENTO_ARRANGEMENT_FLAG_PROVIDER_CHANGED));
-    andamento_arrangement_free(stored);
+    stored = wheelhouse_arrangement_get(state->core, id, 0);
+    StateCheck(stored && stored->owned && (stored->flags & WHEELHOUSE_ARRANGEMENT_FLAG_PROVIDER_CHANGED));
+    wheelhouse_arrangement_free(stored);
     CFG_Node *log = state_slot_view(reviewer, str8_lit("log"));
     StateCheck(str8_match(rd_expr_from_cfg(log), str8_lit("tail -f test.log"), 0));
     StateCheck(state_offers(log, UIShell_SlotAction_Reattach) && state_offers(log, UIShell_SlotAction_Remove));
@@ -2033,9 +2033,9 @@ entry_point(CmdLine *cmdline)
     StateCheck(state_offers(primary, UIShell_SlotAction_KeepLayout) && state_offers(primary, UIShell_SlotAction_FollowLayout));
     uishell_store_act(primary, UIShell_SlotAction_KeepLayout);
     state_frame(ws);
-    stored = andamento_arrangement_get(state->core, id, 0);
+    stored = wheelhouse_arrangement_get(state->core, id, 0);
     StateCheck(stored && stored->owned && stored->flags == 0);
-    andamento_arrangement_free(stored);
+    wheelhouse_arrangement_free(stored);
     StateCheck(!state_offers(primary, UIShell_SlotAction_KeepLayout));
     // Taking the reused slot as the provider's settles it.
     uishell_store_act(log, UIShell_SlotAction_Reattach);
@@ -2088,10 +2088,10 @@ entry_point(CmdLine *cmdline)
   //- A subject workspace's name is its subject's until the user renames it:
   // opening it sets no name of the user's, and it follows the provider's.
   {
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
-    AndamentoOverlay *overlay = andamento_overlay_get(state->core, id, 0);
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    WheelhouseOverlay *overlay = wheelhouse_overlay_get(state->core, id, 0);
     StateCheck(overlay && !overlay->has_name);
-    andamento_overlay_free(overlay);
+    wheelhouse_overlay_free(overlay);
     state_reviewer_label = "reviewer (renamed)";
     state_producer(state);
     state_frame(ws);
@@ -2110,11 +2110,11 @@ entry_point(CmdLine *cmdline)
     cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string(reviewer, str8_lit("label")), str8_lit("Review"));
     cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, reviewer, str8_lit("theme")), str8_lit("Calm"));
     state_frame(ws);
-    AndamentoWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
-    AndamentoOverlay *overlay = andamento_overlay_get(state->core, id, 0);
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
+    WheelhouseOverlay *overlay = wheelhouse_overlay_get(state->core, id, 0);
     StateCheck(overlay && overlay->has_name && str8_match(uishell_sidebar_string(overlay->name), str8_lit("Review"), 0) &&
                overlay->has_mood && str8_match(uishell_sidebar_string(overlay->mood), str8_lit("Calm"), 0));
-    andamento_overlay_free(overlay);
+    wheelhouse_overlay_free(overlay);
     rd_autosave();
     state_pump();
     String8 presentation = data_from_file_path(scratch.arena, uishell_dashboard.presentation_path);
@@ -2132,13 +2132,13 @@ entry_point(CmdLine *cmdline)
     // Another frontend drops the user's name: the subject's comes back, and
     // this one doesn't send its label again.
     id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
-    StateCheck(andamento_workspace_set_name(state->core, id, 0, uishell_sidebar_text(str8_zero()), 0));
+    StateCheck(wheelhouse_workspace_set_name(state->core, id, 0, uishell_sidebar_text(str8_zero()), 0));
     state_frame(ws);
     state_frame(ws);
     StateCheck(str8_match(uishell_store_setting(reviewer, str8_lit("label")), str8_lit("reviewer"), 0));
-    overlay = andamento_overlay_get(state->core, id, 0);
+    overlay = wheelhouse_overlay_get(state->core, id, 0);
     StateCheck(overlay && !overlay->has_name);
-    andamento_overlay_free(overlay);
+    wheelhouse_overlay_free(overlay);
     uishell_cmd("select_workspace", .window = window->id, .cfg = state_workspace_labelled(window, str8_lit("Workspace 1"))->id);
     state_frame(ws);
   }
@@ -2179,8 +2179,8 @@ entry_point(CmdLine *cmdline)
     state = ws->sidebar;
     String8 path = push_str8f(scratch.arena, "%S/dashboard.record", state->records_dir);
     UIShell_DisplayControlIterator it = {state->snapshot};
-    AndamentoControl control = {0}; AndamentoText name = {0};
-    size_t toggle = ANDAMENTO_NONE;
+    WheelhouseControl control = {0}; WheelhouseText name = {0};
+    size_t toggle = WHEELHOUSE_NONE;
     while(uishell_sidebar_next_persistent_control(&it, &control, &name))
     { if(str8_match(uishell_sidebar_string(name), str8_lit("show-role-attempts"), 0)) { toggle = control.action; break; } }
     String8 before = data_from_file_path(scratch.arena, path);
@@ -2226,7 +2226,7 @@ entry_point(CmdLine *cmdline)
     String8 dashboard_b = push_str8f(scratch.arena, "%S/dashboard-b", dir);
     ws = state_restart(ws, &theme, dashboard_b);
     StateCheck(str8_match(dashboard->dir, dashboard_b, 0));
-    StateCheck(state_find_local(ws->sidebar, str8_lit("Notes")) == ANDAMENTO_NONE);
+    StateCheck(state_find_local(ws->sidebar, str8_lit("Notes")) == WHEELHOUSE_NONE);
     window = cfg_node_from_id(ws->cfg_id);
     uishell_cmd("new_workspace", .window = window->id);
     state_frame(ws);
@@ -2246,13 +2246,13 @@ entry_point(CmdLine *cmdline)
       StringJoin join = {.sep = str8_lit("\n")};
       String8List ids = state_workspace_ids(scratch.arena);
       StateCheck(str8_match(str8_list_join(scratch.arena, &ids_a, &join), str8_list_join(scratch.arena, &ids, &join), 0));
-      StateCheck(state_find_local(ws->sidebar, str8_lit("Notes")) != ANDAMENTO_NONE);
-      StateCheck(state_find_local(ws->sidebar, str8_lit("Only in B")) == ANDAMENTO_NONE);
+      StateCheck(state_find_local(ws->sidebar, str8_lit("Notes")) != WHEELHOUSE_NONE);
+      StateCheck(state_find_local(ws->sidebar, str8_lit("Only in B")) == WHEELHOUSE_NONE);
       ws = state_restart(ws, &theme, dashboard_b);
       ids = state_workspace_ids(scratch.arena);
       StateCheck(str8_match(str8_list_join(scratch.arena, &ids_b, &join), str8_list_join(scratch.arena, &ids, &join), 0));
-      StateCheck(state_find_local(ws->sidebar, str8_lit("Only in B")) != ANDAMENTO_NONE);
-      StateCheck(state_find_local(ws->sidebar, str8_lit("Notes")) == ANDAMENTO_NONE);
+      StateCheck(state_find_local(ws->sidebar, str8_lit("Only in B")) != WHEELHOUSE_NONE);
+      StateCheck(state_find_local(ws->sidebar, str8_lit("Notes")) == WHEELHOUSE_NONE);
     }
     StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/workspace-%S.record", dashboard_b, only_b_id)));
     StateCheck(!file_path_exists(push_str8f(scratch.arena, "%S/workspace-%S.record", dashboard_a, only_b_id)));
@@ -2274,8 +2274,8 @@ entry_point(CmdLine *cmdline)
     UISHELL_APP_INITIAL_LOAD(user_path, rd_state->project_path);
     state_pump();
     ws = state_open_window(&theme);
-    StateCheck(state_find_local(ws->sidebar, str8_lit("Before Dashboards")) == ANDAMENTO_NONE);
-    StateCheck(state_find_local(ws->sidebar, str8_lit("Only in B")) != ANDAMENTO_NONE);
+    StateCheck(state_find_local(ws->sidebar, str8_lit("Before Dashboards")) == WHEELHOUSE_NONE);
+    StateCheck(state_find_local(ws->sidebar, str8_lit("Only in B")) != WHEELHOUSE_NONE);
     uishell_cmd("write_user_data");
     state_pump();
     String8 user = data_from_file_path(scratch.arena, user_path);
@@ -2299,9 +2299,9 @@ entry_point(CmdLine *cmdline)
     state_draw_sidebar = 0;
     window = cfg_node_from_id(ws->cfg_id);
     String8 container = {0};
-    for(U64 i = 0; i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(ws->sidebar->snapshot); i++)
     {
-      AndamentoNode node = {0};
+      WheelhouseNode node = {0};
       if(uishell_sidebar_node_at(ws->sidebar, i, &node) == UIShell_SidebarRole_Container)
       { container = push_str8_copy(scratch.arena, uishell_sidebar_string(node.key)); }
     }
@@ -2340,17 +2340,17 @@ entry_point(CmdLine *cmdline)
     U64 unselected = 0;
     for(U64 i = 0; i < doc.panel_count; i++)
     {
-      AndamentoDocPanel *p = &doc.panels[i];
-      if(p->kind != ANDAMENTO_PANEL_TABS || p->tab_count == 0 || !str8_match(uishell_sidebar_string(p->tabs[0]), key, 0)) { continue; }
-      p->selected = ANDAMENTO_NONE;
+      WheelhouseDocPanel *p = &doc.panels[i];
+      if(p->kind != WHEELHOUSE_PANEL_TABS || p->tab_count == 0 || !str8_match(uishell_sidebar_string(p->tabs[0]), key, 0)) { continue; }
+      p->selected = WHEELHOUSE_NONE;
       unselected += 1;
     }
     StateCheck(unselected == 1);
     String8List placed = {0};
-    AndamentoSidebarArrangement *after = uishell_sidebar_store_commit(scratch.arena, ws->sidebar, &doc, ws->sidebar->sidebar_generation, &placed);
-    StateCheck(after && after->status == ANDAMENTO_COMMITTED);
+    WheelhouseSidebarArrangement *after = uishell_sidebar_store_commit(scratch.arena, ws->sidebar, &doc, ws->sidebar->sidebar_generation, &placed);
+    StateCheck(after && after->status == WHEELHOUSE_COMMITTED);
     U64 committed = after ? after->generation : 0;
-    andamento_sidebar_arrangement_free(after);
+    wheelhouse_sidebar_arrangement_free(after);
     ws->sidebar->sidebar_generation = committed;
     uishell_store_set_setting(window, str8_lit("sidebar_generation"), push_str8f(scratch.arena, "%I64u", committed));
     ws = state_restart(ws, &theme, str8_zero());
@@ -2362,7 +2362,7 @@ entry_point(CmdLine *cmdline)
     if(!str8_match(sidebar_after, sidebar_before, 0)) { fprintf(stderr, "before:\n%.*s\nafter:\n%.*s\n", str8_varg(sidebar_before), str8_varg(sidebar_after)); }
     state_check_sidebar_committed(ws);
     state_sidebar_draw(ws);
-    UI_Key root = ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", key);
+    UI_Key root = ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", key);
     StateCheck(!ui_box_is_nil(ui_box_from_key(ui_key_from_stringf(root, "section_body_%S", key))));
     state_frame(ws);
     state_check_sidebar_committed(ws);
@@ -2392,9 +2392,9 @@ entry_point(CmdLine *cmdline)
     StateCheck(uishell_window_from_id(uishell_window_id_from_cfg(window)) == window);
     String8 records = str8_lit("01890a5d-ac96-774b-bcce-b302099a8057");
     CFG_Node *legacy = cfg_node_new(rd_state->cfg, &cfg_nil_node, str8_lit("window"));
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, legacy, str8_lit("andamento_records")), records);
+    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, legacy, str8_lit("wheelhouse_records")), records);
     StateCheck(str8_match(uishell_window_id_text_from_cfg(legacy), records, 0));
-    StateCheck(cfg_node_child_from_string(legacy, str8_lit("andamento_records")) == &cfg_nil_node);
+    StateCheck(cfg_node_child_from_string(legacy, str8_lit("wheelhouse_records")) == &cfg_nil_node);
     cfg_node_release(rd_state->cfg, legacy);
   }
 
@@ -2428,11 +2428,11 @@ entry_point(CmdLine *cmdline)
                      state_count_from(ws->sidebar, vessel, fleet_v, alpha_id, 0) >= 1 && state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
     StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/flotilla-%S.log", dir, alpha_id)));
     // Opening alpha's vessel opens a workspace on it, not on beta's.
-    size_t activate = ANDAMENTO_NONE;
-    for(U64 i = 0; i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
+    size_t activate = WHEELHOUSE_NONE;
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(ws->sidebar->snapshot); i++)
     {
-      AndamentoNode node = {0};
-      andamento_snapshot_node(ws->sidebar->snapshot, i, &node);
+      WheelhouseNode node = {0};
+      wheelhouse_snapshot_node(ws->sidebar->snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), fleet_v, 0) && str8_match(uishell_sidebar_string(node.entity.provider), alpha_id, 0) &&
          node.openable) { activate = node.activate; break; }
     }
@@ -2463,14 +2463,14 @@ entry_point(CmdLine *cmdline)
     // row's card opens on the entity under the subscription's provider (the
     // same kind and ID from the host's provider is another entity) with its
     // details. Pinned, the pin keeps the provider.
-    AndamentoEntity fleet_beta = uishell_sidebar_entity(push_str8_copy(scratch.arena, beta_id), project, fleet);
+    WheelhouseEntity fleet_beta = uishell_sidebar_entity(push_str8_copy(scratch.arena, beta_id), project, fleet);
     String8 fleet_pin = str8_zero();
     {
-      AndamentoNode row = {0};
-      for(U64 i = 0; i < andamento_snapshot_node_count(ws->sidebar->snapshot); i++)
+      WheelhouseNode row = {0};
+      for(U64 i = 0; i < wheelhouse_snapshot_node_count(ws->sidebar->snapshot); i++)
       {
-        AndamentoNode node = {0};
-        andamento_snapshot_node(ws->sidebar->snapshot, i, &node);
+        WheelhouseNode node = {0};
+        wheelhouse_snapshot_node(ws->sidebar->snapshot, i, &node);
         if(!node.is_section && uishell_sidebar_card_entity_match(node.entity, fleet_beta)) { row = node; break; }
       }
       StateCheck(uishell_sidebar_card_entity_match(row.entity, fleet_beta));
@@ -2481,13 +2481,13 @@ entry_point(CmdLine *cmdline)
       uishell_sidebar_card_source_at(ws->sidebar, row, hover, str8_zero(), 0, 1000000);
       uishell_sidebar_card_source_at(ws->sidebar, row, hover, str8_zero(), 0, 1000000+UIShell_HoverCardOpenDelayUS);
       StateCheck(card->open && card->depth == 1 && uishell_sidebar_card_entity_match(card->path[0], fleet_beta));
-      AndamentoNode found = {0};
-      U64 index = card->open ? uishell_sidebar_card_find(ws->sidebar, card->path[0], &found) : ANDAMENTO_NONE;
-      AndamentoDetail detail = {0};
-      StateCheck(index != ANDAMENTO_NONE && andamento_snapshot_detail(ws->sidebar->snapshot, index, &detail));
+      WheelhouseNode found = {0};
+      U64 index = card->open ? uishell_sidebar_card_find(ws->sidebar, card->path[0], &found) : WHEELHOUSE_NONE;
+      WheelhouseDetail detail = {0};
+      StateCheck(index != WHEELHOUSE_NONE && wheelhouse_snapshot_detail(ws->sidebar->snapshot, index, &detail));
       StateCheck(uishell_sidebar_card_entity_match(detail.entity, fleet_beta) && detail.field_count > 0 &&
                  str8_match(uishell_sidebar_string(detail.label), str8_lit("Fleet via beta"), 0));
-      StateCheck(uishell_sidebar_card_find(ws->sidebar, uishell_sidebar_entity(uishell_sidebar_host_provider, project, fleet), 0) == ANDAMENTO_NONE);
+      StateCheck(uishell_sidebar_card_find(ws->sidebar, uishell_sidebar_entity(uishell_sidebar_host_provider, project, fleet), 0) == WHEELHOUSE_NONE);
       // Pin on its hover card.
       UIShell_LocalPin *pinned = uishell_sidebar_card_pin(ws, card, 0);
       StateCheck(pinned && uishell_sidebar_card_entity_match(uishell_sidebar_pin_entity(pinned), fleet_beta));
@@ -2495,7 +2495,7 @@ entry_point(CmdLine *cmdline)
       uishell_sidebar_card_close(card);
       state_frame(ws);
       // Its ghost row offers the subscription entity's card.
-      AndamentoNode ghost = {0};
+      WheelhouseNode ghost = {0};
       StateCheck(state_find(ws->sidebar, str8_lit(".ref"), fleet_pin, &ghost));
     }
 
@@ -2523,9 +2523,9 @@ entry_point(CmdLine *cmdline)
       UIShell_LocalPin *pin = uishell_sidebar_pin_find(cfg_node_from_id(ws->cfg_id), fleet_beta);
       StateCheck(pin != 0);
       UIShell_HoverCard *pinned = pin ? uishell_sidebar_saved_card(ws, pin) : 0;
-      AndamentoNode found = {0};
+      WheelhouseNode found = {0};
       StateCheck(pinned && uishell_sidebar_card_entity_match(pinned->path[0], fleet_beta) &&
-                 uishell_sidebar_card_find(ws->sidebar, pinned->path[0], &found) != ANDAMENTO_NONE &&
+                 uishell_sidebar_card_find(ws->sidebar, pinned->path[0], &found) != WHEELHOUSE_NONE &&
                  str8_match(uishell_sidebar_string(found.label), str8_lit("Fleet via beta"), 0));
       if(pinned) { uishell_sidebar_card_close(pinned); }
       state_frame(ws);
@@ -2539,13 +2539,13 @@ entry_point(CmdLine *cmdline)
       U64 before = 0, after = 0;
       wheelhouse_connector_running(beta->connector, &before);
       char *error = 0;
-      Andamento *core = andamento_create(uishell_sidebar_live_config.str, uishell_sidebar_live_config.size, &error);
-      andamento_string_free(error);
+      WheelhouseCore *core = wheelhouse_create(uishell_sidebar_live_config.str, uishell_sidebar_live_config.size, &error);
+      wheelhouse_string_free(error);
       StateCheck(core != 0);
       if(core) { uishell_subscriptions_prepare_core(core); }
       for(U32 i = 0; i < 400 && after <= before; i++) { usleep(10000); wheelhouse_connector_running(beta->connector, &after); }
       StateCheck(after == before+1);
-      if(core) { andamento_destroy(core); }
+      if(core) { wheelhouse_destroy(core); }
       StateWaitFor(ws, state_count_from(ws->sidebar, project, fleet, beta_id, 0) == 1);
     }
     uishell_subscriptions_close();

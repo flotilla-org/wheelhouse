@@ -7,7 +7,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
   fixture.initialized = 1;
   String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
-  fixture.core = andamento_create(config.str, config.size, 0);
+  fixture.core = wheelhouse_create(config.str, config.size, 0);
   if(!fixture.core)
   {
     ui_state_release(test); scratch_end(scratch);
@@ -20,7 +20,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   {
     U64 end = start;
     while(end < patches.size && patches.str[end] != '\n') { end++; }
-    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0) && ok;
+    ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0) && ok;
     start = end+1;
   }
   uishell_sidebar_refresh(&fixture);
@@ -33,7 +33,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   // Producer suggestion, local template override, then kind fallback. Labels
   // must never participate in icon resolution.
   B32 icon_font = 0;
-  AndamentoNode default_role = {.entity.kind = uishell_sidebar_text(str8_lit("role")),
+  WheelhouseNode default_role = {.entity.kind = uishell_sidebar_text(str8_lit("role")),
     .label = uishell_sidebar_text(str8_lit("terminal overview governor"))};
   ok = str8_match(uishell_sidebar_chip_icon(&fixture, default_role, &icon_font),
     rd_icon_kind_text_table[RD_IconKind_Threads], 0) && icon_font && ok;
@@ -41,34 +41,34 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   U64 at = str8_find_needle(config, 0, override_field, 0);
   String8 override_config = push_str8f(scratch.arena, "%Svalue=\"review\" prefix=\"chip-icon-override:\"%S",
     str8_prefix(config, at), str8_skip(config, at+override_field.size));
-  ok = andamento_configure(fixture.core, uishell_sidebar_text(override_config), 0) && ok;
+  ok = wheelhouse_configure(fixture.core, uishell_sidebar_text(override_config), 0) && ok;
   uishell_sidebar_refresh(&fixture);
   for(U64 phase = 0; phase < 2; phase++)
   {
-    for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0) &&
          str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0))
       { ok = str8_match(uishell_sidebar_chip_icon(&fixture, node, &icon_font),
           rd_icon_kind_text_table[phase ? RD_IconKind_Glasses : RD_IconKind_Gear], 0) && icon_font && ok; }
     }
     String8 patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"role\",\"id\":\"p/governor\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"presentation.icon\"]}");
-    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0) && ok;
+    ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0) && ok;
     uishell_sidebar_refresh(&fixture);
   }
-  ok = andamento_configure(fixture.core, uishell_sidebar_text(config), 0) && ok;
+  ok = wheelhouse_configure(fixture.core, uishell_sidebar_text(config), 0) && ok;
   uishell_sidebar_refresh(&fixture);
   // Producer labels that resemble directives remain ordinary labels. The
   // first width also exercises a wide-glyph compact subject reference.
   String8 unicode_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"convoy\",\"id\":\"build\"}},\"source_id\":\"fixture\",\"set\":{\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"chip-icon:列車の作業\"}},\"display.label.medium\":{\"value\":{\"type\":\"text\",\"value\":\"chip-status:列車\"}},\"display.label.short\":{\"value\":{\"type\":\"text\",\"value\":\"列車\"}}},\"unset\":[]}");
-  ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(unicode_patch), 0) && ok;
+  ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(unicode_patch), 0) && ok;
   unicode_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"pr-281\"}},\"source_id\":\"fixture\",\"set\":{\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"漢!281\"}}},\"unset\":[]}");
-  ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(unicode_patch), 0) && ok;
+  ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(unicode_patch), 0) && ok;
   uishell_sidebar_refresh(&fixture);
-  for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+  for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+    WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
     if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("build"), 0))
     {
       ok = !uishell_sidebar_chip_fact(&fixture, node, str8_lit("chip-icon:")).size &&
@@ -83,17 +83,17 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   // renderer in both directions.
   for(U32 phase = 0; phase < 3; phase++)
   {
-    AndamentoNode convoy = {0};
+    WheelhouseNode convoy = {0};
     String8 vessel_key = str8_zero(), owner_key = str8_zero();
-    for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("build"), 0)) { convoy = node; }
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0) &&
          str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0))
       {
         vessel_key = push_str8_copy(scratch.arena, uishell_sidebar_string(node.key));
-        AndamentoNode owner = {0}; andamento_snapshot_node(fixture.snapshot, node.parent, &owner);
+        WheelhouseNode owner = {0}; wheelhouse_snapshot_node(fixture.snapshot, node.parent, &owner);
         owner_key = push_str8_copy(scratch.arena, uishell_sidebar_string(owner.key));
       }
     }
@@ -105,7 +105,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     }
     if(phase)
     {
-      ok = andamento_dispatch(fixture.core, fixture.snapshot, convoy.toggle, 0) && ok;
+      ok = wheelhouse_dispatch(fixture.core, fixture.snapshot, convoy.toggle, 0) && ok;
       uishell_sidebar_refresh(&fixture);
     }
     for(U32 frame = 0; frame < 2; frame++)
@@ -154,11 +154,11 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
       // the trailing slot at precisely the same location for this width.
       if(phase == 1)
       {
-        for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+        for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
         {
-          AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+          WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
           if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0))
-          { ok = andamento_dispatch(fixture.core, fixture.snapshot, node.activate, 0) && ok; break; }
+          { ok = wheelhouse_dispatch(fixture.core, fixture.snapshot, node.activate, 0) && ok; break; }
         }
         uishell_sidebar_refresh(&fixture);
       }
@@ -170,14 +170,14 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
           String8 patch = push_str8f(scratch.arena,
             "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"%s\",\"id\":\"%s\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"flotilla.subject_of\"]}",
             i == 3 ? "issue" : "change_request", ids[i]);
-          ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0) && ok;
+          ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0) && ok;
         }
         uishell_sidebar_refresh(&fixture);
       }
-      AndamentoNode convoy = {0};
-      for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+      WheelhouseNode convoy = {0};
+      for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
       {
-        AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+        WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
         if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("build"), 0)) { convoy = node; break; }
       }
       String8 convoy_key = push_str8_copy(scratch.arena, uishell_sidebar_string(convoy.key));
@@ -321,12 +321,12 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     // Restore subjects and cancel the synthetic pending request for next width.
     uishell_sidebar_release(&fixture);
     fixture.core = 0; fixture.snapshot = 0;
-    fixture.core = andamento_create(config.str, config.size, 0);
+    fixture.core = wheelhouse_create(config.str, config.size, 0);
     if(!fixture.core) { ok = 0; break; }
     for(U64 start = 0; start < patches.size;)
     {
       U64 end = start; while(end < patches.size && patches.str[end] != '\n') { end++; }
-      ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0) && ok;
+      ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8(patches.str+start, end-start)), 0) && ok;
       start = end+1;
     }
     uishell_sidebar_refresh(&fixture);
@@ -339,47 +339,47 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     U64 activity_at = str8_find_needle(config, 0, activity_field, 0);
     String8 stale_config = push_str8f(scratch.arena, "%Sfield \"activity\" source=\"literal\" value=\"active\" prefix=\"chip-status:\"%S",
       str8_prefix(config, activity_at), str8_skip(config, activity_at+activity_field.size));
-    ok = activity_at < config.size && andamento_configure(fixture.core, uishell_sidebar_text(stale_config), 0) && ok;
+    ok = activity_at < config.size && wheelhouse_configure(fixture.core, uishell_sidebar_text(stale_config), 0) && ok;
     uishell_sidebar_refresh(&fixture);
-    for(U64 i = 0; fixture.snapshot && i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    for(U64 i = 0; fixture.snapshot && i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0))
-      { ok = andamento_dispatch(fixture.core, fixture.snapshot, node.activate, 0) && ok; break; }
+      { ok = wheelhouse_dispatch(fixture.core, fixture.snapshot, node.activate, 0) && ok; break; }
     }
-    AndamentoEffects *effects = andamento_effects_take(fixture.core, 0);
-    AndamentoEffect effect = {0};
-    B32 materialized = effects && andamento_effects_get(effects, 0, &effect) && effect.kind == ANDAMENTO_EFFECT_MATERIALIZE;
+    WheelhouseEffects *effects = wheelhouse_effects_take(fixture.core, 0);
+    WheelhouseEffect effect = {0};
+    B32 materialized = effects && wheelhouse_effects_get(effects, 0, &effect) && effect.kind == WHEELHOUSE_EFFECT_MATERIALIZE;
     ok = materialized && ok;
     // A workspace this test makes up, read back through the index as 4242.
     UIShell_WorkspaceId retained_id = uishell_workspace_id_make();
     uishell_workspace_index_insert(retained_id, 4242);
-    if(materialized) { ok = andamento_complete(fixture.core, effect.request_id, 1, uishell_sidebar_workspace(retained_id), uishell_sidebar_text(str8_zero()), 0) && ok; }
-    if(effects) { andamento_effects_release(effects); }
-    AndamentoWorkspace retained = {uishell_sidebar_workspace(retained_id), 0, uishell_sidebar_text(str8_lit("chip-v")), 1};
-    ok = andamento_observe(fixture.core, &retained, 1, 0, 0, 0) && ok;
+    if(materialized) { ok = wheelhouse_complete(fixture.core, effect.request_id, 1, uishell_sidebar_workspace(retained_id), uishell_sidebar_text(str8_zero()), 0) && ok; }
+    if(effects) { wheelhouse_effects_release(effects); }
+    WheelhouseWorkspace retained = {uishell_sidebar_workspace(retained_id), 0, uishell_sidebar_text(str8_lit("chip-v")), 1};
+    ok = wheelhouse_observe(fixture.core, &retained, 1, 0, 0, 0) && ok;
     String8 terminal_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"chip-v\"}},\"source_id\":\"fixture\",\"set\":{\"flotilla.convoy.phase\":{\"value\":{\"type\":\"text\",\"value\":\"landed\"}}},\"unset\":[]}");
-    ok = andamento_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(terminal_patch), 0) && ok;
+    ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(terminal_patch), 0) && ok;
     uishell_sidebar_refresh(&fixture);
     B32 toggled = 0;
-    for(U64 i = 0; !toggled && i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    for(U64 i = 0; !toggled && i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
       for(U64 c = 0; c < node.control_count; c++)
       {
-        AndamentoControl control = {0}; andamento_snapshot_control(fixture.snapshot, node.first_control+c, &control);
+        WheelhouseControl control = {0}; wheelhouse_snapshot_control(fixture.snapshot, node.first_control+c, &control);
         if(str8_match(uishell_sidebar_string(control.label), str8_lit("Show finished"), 0))
-        { toggled = andamento_dispatch(fixture.core, fixture.snapshot, control.action, 0); break; }
+        { toggled = wheelhouse_dispatch(fixture.core, fixture.snapshot, control.action, 0); break; }
       }
     }
     uishell_sidebar_refresh(&fixture);
     B32 ended_chip = 0;
-    for(U64 i = 0; i < andamento_snapshot_node_count(fixture.snapshot); i++)
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(fixture.snapshot, i, &node);
+      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
       if(uishell_sidebar_node_cfg(&node) == 4242 && str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0))
       {
-        node.state = ANDAMENTO_OPENING;
+        node.state = WHEELHOUSE_OPENING;
         ended_chip = str8_match(uishell_sidebar_chip_fact(&fixture, node, str8_lit("chip-status:")), str8_lit("active"), 0) &&
           str8_match(uishell_sidebar_chip_status(&fixture, node), str8_lit("ended"), 0) &&
           str8_match(uishell_sidebar_status_mark(node, uishell_sidebar_chip_status(&fixture, node)), str8_lit("×"), 0) &&

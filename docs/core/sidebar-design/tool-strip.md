@@ -75,21 +75,21 @@ same after a restart.
 
 ## Host interface
 
-- `andamento_strip_get(h, subject)` returns an `AndamentoStrip`: an array of
-  `AndamentoStripEntry`, each with its section (`ANDAMENTO_STRIP_RELATED` or
-  `_LINKED`) and entity. Free it with `andamento_strip_free`. A subject not in
+- `wheelhouse_strip_get(h, subject)` returns an `WheelhouseStrip`: an array of
+  `WheelhouseStripEntry`, each with its section (`WHEELHOUSE_STRIP_RELATED` or
+  `_LINKED`) and entity. Free it with `wheelhouse_strip_free`. A subject not in
   the catalog, or a kind without a strip, gives an empty list.
 - For an entry's label, state and hover card, request its detail
-  (`andamento_snapshot_detail_request`). Its primary action is the detail's:
+  (`wheelhouse_snapshot_detail_request`). Its primary action is the detail's:
   open its URL, focus its workspace or open one.
 
 The other sections of the strip come from the workspace:
 
-- **Layouts** are `andamento_layouts_get`. A layout may declare a `glyph`,
+- **Layouts** are `wheelhouse_layouts_get`. A layout may declare a `glyph`,
   1 to 8 characters, for where there is only room for a symbol.
-- **Views** are the workspace's slots (`andamento_slots_get`), placed or not.
+- **Views** are the workspace's slots (`wheelhouse_slots_get`), placed or not.
   Each unplaced slot's UNPLACED note names the tab panel showing it puts it
-  in (`AndamentoNote.panel`): the first whose template matcher takes it,
+  in (`WheelhouseNote.panel`): the first whose template matcher takes it,
   ignoring `hide`, else the first tab panel.
 
 ## Later

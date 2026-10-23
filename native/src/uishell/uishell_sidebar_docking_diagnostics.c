@@ -247,7 +247,7 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   UIShell_SidebarState fixture = {.initialized = 1};
   String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
   char *error = 0;
-  fixture.core = andamento_create(daily.str, daily.size, &error);
+  fixture.core = wheelhouse_create(daily.str, daily.size, &error);
   B32 ok = uishell_sidebar_result(&fixture, fixture.core != 0, error);
   uishell_sidebar_refresh(&fixture);
   ws->sidebar = &fixture;
@@ -292,7 +292,7 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   }
   for(U32 i = 0; i < ArrayCount(keys); i++)
   {
-    UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", keys[i]);
+    UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", keys[i]);
     UI_Box *header = ui_box_from_key(ui_key_from_stringf(root_key, "###section_header_%S", keys[i]));
     Rng2F32 visible = header->rect;
     for(UI_Box *parent = header->parent; !ui_box_is_nil(parent); parent = parent->parent)
@@ -317,15 +317,15 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
 // A boolean display variable's value as its first control shows it: 1 or 0,
 // or -1 when no control shows it.
 internal S32
-uishell_sidebar_docking_variable(AndamentoSnapshot *snapshot, String8 variable)
+uishell_sidebar_docking_variable(WheelhouseSnapshot *snapshot, String8 variable)
 {
-  for(U64 i = 0; snapshot && i < andamento_snapshot_node_count(snapshot); i++)
+  for(U64 i = 0; snapshot && i < wheelhouse_snapshot_node_count(snapshot); i++)
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(snapshot, i, &node);
+    WheelhouseNode node = {0}; wheelhouse_snapshot_node(snapshot, i, &node);
     for(U64 c = 0; c < node.control_count; c++)
     {
-      AndamentoControl control = {0}; andamento_snapshot_control(snapshot, node.first_control+c, &control);
-      if(control.value_kind == ANDAMENTO_VALUE_BOOL && str8_match(uishell_sidebar_string(control.variable), variable, 0)) { return !!control.checked; }
+      WheelhouseControl control = {0}; wheelhouse_snapshot_control(snapshot, node.first_control+c, &control);
+      if(control.value_kind == WHEELHOUSE_VALUE_BOOL && str8_match(uishell_sidebar_string(control.variable), variable, 0)) { return !!control.checked; }
     }
   }
   return -1;
@@ -352,7 +352,7 @@ uishell_sidebar_close_middle_diagnostics(RD_WindowState *ws, UIShell_ControlledS
   UIShell_SidebarState fixture = {.initialized = 1};
   String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
   char *error = 0;
-  fixture.core = andamento_create(daily.str, daily.size, &error);
+  fixture.core = wheelhouse_create(daily.str, daily.size, &error);
   CloseFailure(!uishell_sidebar_result(&fixture, fixture.core != 0, error));
   uishell_sidebar_refresh(&fixture);
   ws->sidebar = &fixture;
@@ -495,8 +495,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   CFG_ID view_id = view->id;
   String8 key = push_str8_copy(scratch.arena, cfg_node_child_from_string(view, str8_lit("section"))->first->string);
   String8 second_key = push_str8_copy(scratch.arena, cfg_node_child_from_string(second_view, str8_lit("section"))->first->string);
-  UI_Key roots[2] = {ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", key),
-                     ui_key_from_stringf(ui_key_zero(), "andamento_section_%S", second_key)};
+  UI_Key roots[2] = {ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", key),
+                     ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", second_key)};
   UI_Key bodies[2] = {ui_key_from_stringf(roots[0], "section_body_%S", key),
                       ui_key_from_stringf(roots[1], "section_body_%S", second_key)};
   UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc();
@@ -753,27 +753,27 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   UIShell_SidebarState display = {0};
   String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
   char *error = 0;
-  display.core = andamento_create(daily.str, daily.size, &error);
+  display.core = wheelhouse_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
   uishell_sidebar_refresh(&display);
-  AndamentoNode section = {0}; andamento_snapshot_node(display.snapshot, 0, &section);
-  AndamentoControl control = {0};
-  andamento_snapshot_control(display.snapshot, section.first_control, &control);
+  WheelhouseNode section = {0}; wheelhouse_snapshot_node(display.snapshot, 0, &section);
+  WheelhouseControl control = {0};
+  wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
   B32 default_value = control.checked;
   error = 0;
-  DockFailure(!andamento_dispatch(display.core, display.snapshot, control.action, &error));
-  if(error) { andamento_string_free(error); }
+  DockFailure(!wheelhouse_dispatch(display.core, display.snapshot, control.action, &error));
+  if(error) { wheelhouse_string_free(error); }
   uishell_sidebar_refresh(&display);
   String8 record = uishell_sidebar_record_get(scratch.arena, display.core, str8_lit("dashboard"));
   uishell_sidebar_release(&display); MemoryZeroStruct(&display);
-  error = 0; display.core = andamento_create(daily.str, daily.size, &error);
+  error = 0; display.core = wheelhouse_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
   error = 0;
-  DockFailure(!uishell_sidebar_result(&display, andamento_record_put(display.core, uishell_sidebar_text(str8_lit("dashboard")),
+  DockFailure(!uishell_sidebar_result(&display, wheelhouse_record_put(display.core, uishell_sidebar_text(str8_lit("dashboard")),
     uishell_sidebar_text(record), &error), error));
   uishell_sidebar_refresh(&display);
-  andamento_snapshot_node(display.snapshot, 0, &section);
-  andamento_snapshot_control(display.snapshot, section.first_control, &control);
+  wheelhouse_snapshot_node(display.snapshot, 0, &section);
+  wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
   DockFailure(!!control.checked == default_value);
   // Exercise real header buttons at both acceptance widths, including their
   // pressed appearance and dispatch through the native UI event path.
@@ -784,7 +784,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   F32 widths[] = {260, 600};
   for(U64 w = 0; w < ArrayCount(widths); w++)
   {
-    andamento_snapshot_control(display.snapshot, section.first_control, &control);
+    wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
     B32 before_click = !!control.checked;
     for(U32 frame = 0; frame < 5; frame++)
     {
@@ -819,8 +819,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       B32 any_on = 0;
       for(U64 c = 0; c < section.control_count; c++)
       {
-        AndamentoControl each = {0};
-        andamento_snapshot_control(display.snapshot, section.first_control+c, &each);
+        WheelhouseControl each = {0};
+        wheelhouse_snapshot_control(display.snapshot, section.first_control+c, &each);
         any_on |= each.value_kind == 1 && each.checked;
       }
       UI_Box *first_toggle = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_0", key));
@@ -837,8 +837,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
         DockFailure(ui_box_display_string(first_toggle).size == 0);
         DockFailure(ui_box_is_nil(grip) || ui_box_display_string(grip).size == 0);
         // Find the tooltip holding this toggle's label, then its drawn frame.
-        AndamentoControl first_control = {0};
-        andamento_snapshot_control(display.snapshot, section.first_control, &first_control);
+        WheelhouseControl first_control = {0};
+        wheelhouse_snapshot_control(display.snapshot, section.first_control, &first_control);
         UI_Box *tip = &ui_nil_box;
         for(UI_Box *b = ui_state->tooltip_root; !ui_box_is_nil(b) && ui_box_is_nil(tip); b = ui_box_rec_df_pre(b, ui_state->tooltip_root).next)
         { if(str8_match(ui_box_display_string(b), uishell_sidebar_string(first_control.label), 0)) { tip = b; } }
@@ -859,7 +859,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
         previous_right = button->rect.x1;
       }
     }
-    andamento_snapshot_control(display.snapshot, section.first_control, &control);
+    wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
     DockFailure(!!control.checked == before_click);
     UI_Box *button = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_0", key));
     DockFailure(!!(button->flags & UI_BoxFlag_DrawBackground) != !!control.checked);
@@ -911,20 +911,20 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   String8 ephemeral = push_str8f(scratch.arena, "%Sdisplay-variable \"show-role-attempts\" type=\"bool\" default=false label=\"Role history\" icon=\"R\" persist=false%S",
                                  str8_prefix(daily, declaration_at), str8_skip(daily, declaration_at+persisted.size));
   error = 0;
-  DockFailure(!andamento_configure(display.core, uishell_sidebar_text(ephemeral), &error));
-  if(error) { andamento_string_free(error); }
+  DockFailure(!wheelhouse_configure(display.core, uishell_sidebar_text(ephemeral), &error));
+  if(error) { wheelhouse_string_free(error); }
   error = 0;
-  DockFailure(!uishell_sidebar_result(&display, andamento_set_display_variable(display.core, uishell_sidebar_text(str8_lit("show-role-attempts")),
+  DockFailure(!uishell_sidebar_result(&display, wheelhouse_set_display_variable(display.core, uishell_sidebar_text(str8_lit("show-role-attempts")),
                                                                                 uishell_sidebar_text(str8_lit("true")), &error), error));
   uishell_sidebar_refresh(&display);
   S32 issues = uishell_sidebar_docking_variable(display.snapshot, str8_lit("show-issues"));
   DockFailure(issues < 0 || uishell_sidebar_docking_variable(display.snapshot, str8_lit("show-role-attempts")) != 1);
   record = uishell_sidebar_record_get(scratch.arena, display.core, str8_lit("dashboard"));
   UIShell_SidebarState reread = {.initialized = 1};
-  error = 0; reread.core = andamento_create(daily.str, daily.size, &error);
+  error = 0; reread.core = wheelhouse_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&reread, reread.core != 0, error));
   error = 0;
-  DockFailure(!uishell_sidebar_result(&reread, andamento_record_put(reread.core, uishell_sidebar_text(str8_lit("dashboard")),
+  DockFailure(!uishell_sidebar_result(&reread, wheelhouse_record_put(reread.core, uishell_sidebar_text(str8_lit("dashboard")),
     uishell_sidebar_text(record), &error), error));
   uishell_sidebar_refresh(&reread);
   DockFailure(uishell_sidebar_docking_variable(reread.snapshot, str8_lit("show-issues")) != issues);
@@ -996,13 +996,13 @@ struct UIShell_SectionPlacement
 
 // Makes `window` the sidebar's, with `core` (taking it; the old one goes).
 internal void
-uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, Andamento *core)
+uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, WheelhouseCore *core)
 {
   UIShell_SidebarState *s = &p->sidebar;
   if(core != s->core)
   {
     uishell_sidebar_replace_snapshot(s, 0);
-    andamento_destroy(s->core);
+    wheelhouse_destroy(s->core);
     s->core = core;
     s->sidebar_synced = 0; s->sidebar_version = s->sidebar_generation = 0;
   }
@@ -1011,7 +1011,7 @@ uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, And
   p->ws.cfg_id = window->id;
   rd_state->window_state_last_accessed_id = window->id;
   p->split.owner_cfg = window;
-  uishell_sidebar_replace_snapshot(s, core ? andamento_snapshot_acquire(core, 0) : 0);
+  uishell_sidebar_replace_snapshot(s, core ? wheelhouse_snapshot_acquire(core, 0) : 0);
 }
 
 // A frame: the sidebar commits what changed, or follows Andamento, then lays
@@ -1026,8 +1026,8 @@ uishell_section_placement_frame(UIShell_SectionPlacement *p)
 internal B32
 uishell_section_placement_configure(UIShell_SectionPlacement *p, String8 config)
 {
-  B32 ok = andamento_configure(p->sidebar.core, uishell_sidebar_text(config), 0);
-  uishell_sidebar_replace_snapshot(&p->sidebar, andamento_snapshot_acquire(p->sidebar.core, 0));
+  B32 ok = wheelhouse_configure(p->sidebar.core, uishell_sidebar_text(config), 0);
+  uishell_sidebar_replace_snapshot(&p->sidebar, wheelhouse_snapshot_acquire(p->sidebar.core, 0));
   uishell_section_placement_frame(p);
   return ok;
 }
@@ -1052,8 +1052,8 @@ uishell_section_placement_restart(Arena *arena, UIShell_SectionPlacement *p, Str
   CFG_NodePtrList loaded = cfg_node_ptr_list_from_string(arena, rd_state->cfg, p->schemas, str8_zero(), text);
   CFG_Node *window = loaded.first ? loaded.first->v : &cfg_nil_node;
   cfg_node_insert_child(rd_state->cfg, p->user, p->user->last, window);
-  Andamento *core = andamento_create(config.str, config.size, 0);
-  if(core && record.size) { andamento_record_put(core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0); }
+  WheelhouseCore *core = wheelhouse_create(config.str, config.size, 0);
+  if(core && record.size) { wheelhouse_record_put(core, uishell_sidebar_text(str8_lit("dashboard")), uishell_sidebar_text(record), 0); }
   uishell_section_placement_use(p, window, core);
   uishell_sidebar_store_load(&p->sidebar, window);
   uishell_section_placement_frame(p);
@@ -1096,7 +1096,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   {
     String8 source = data_from_file_path(scratch.arena, source_path);
     PlacementCheck(source.size != 0);
-    Andamento *source_core = andamento_create(source.str, source.size, 0);
+    WheelhouseCore *source_core = wheelhouse_create(source.str, source.size, 0);
     PlacementCheck(source_core != 0);
     if(source_core)
     {
@@ -1127,7 +1127,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   String8 config = str8_lit(
     "region \"b\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\" order=20\n"
     "region \"a\" root-template=\"flotilla/region/tree\" default-host=\"sidebar\" order=10\n");
-  Andamento *core = andamento_create(config.str, config.size, 0);
+  WheelhouseCore *core = wheelhouse_create(config.str, config.size, 0);
   PlacementCheck(core != 0);
   uishell_section_placement_use(&p, window, core);
   uishell_section_placement_frame(&p);
@@ -1436,7 +1436,7 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("y"))->id == kept_y_id && uishell_sidebar_section_gone(&p.sidebar, str8_lit("y")));
   // A provider outage changes nothing.
   CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
-  AndamentoSnapshot *saved_snapshot = p.sidebar.snapshot; p.sidebar.snapshot = 0;
+  WheelhouseSnapshot *saved_snapshot = p.sidebar.snapshot; p.sidebar.snapshot = 0;
   generation = uishell_sidebar_docking_gen(); uishell_sidebar_dock_layout(&p.split);
   PlacementCheck(uishell_sidebar_docking_gen() == generation && uishell_sidebar_region_view(restored, str8_lit("x")) == x);
   p.sidebar.snapshot = saved_snapshot;
@@ -1504,7 +1504,7 @@ uishell_section_placement_diagnostics(String8 source_path)
     PlacementCheck(abs_f32(rd_arrangement_panel_from_id(dock, uishell_section_placement_panel(restored, x))->weight-.5f) < .00001f);
   }
   uishell_sidebar_replace_snapshot(&p.sidebar, 0);
-  andamento_destroy(p.sidebar.core);
+  wheelhouse_destroy(p.sidebar.core);
   if(p.sidebar.titles_arena) { arena_release(p.sidebar.titles_arena); }
   if(p.sidebar.roles_arena) { arena_release(p.sidebar.roles_arena); }
   if(p.sidebar.sidebar_notes_arena) { arena_release(p.sidebar.sidebar_notes_arena); }

@@ -30,7 +30,7 @@ on the critical path. Product decisions below were discussed with Robert on
 - Either Wheelhouse or an HTML proof is acceptable as the second frontend.
   Working choice: use Wheelhouse directly, with HTML as a fallback if its
   build blocks progress. A separate HTML implementation is not required.
-- Start with `andamento-core` in this repository. A separate Manifest
+- Start with `wheelhouse-core` in this repository. A separate Manifest
   repository is not part of this delivery.
 
 ## Evidence and existing plans
@@ -59,7 +59,7 @@ implementation / C ABI / producer protocol split. Its GroupPath identity,
 group-targeted latent model, and proposed global wire renames should not be
 adopted as the current contract. The later placement design and existing
 connector payloads are the starting point. Start with the agreed in-repo
-`andamento-core` crate; revisit independent packaging only if useful later.
+`wheelhouse-core` crate; revisit independent packaging only if useful later.
 
 ## What is coupled today
 
@@ -130,7 +130,7 @@ or terminal image handles belong in the core snapshot.
 ## Delivery sequence
 
 1. **Extract the core around existing behavior.** Introduce the in-repo Rust
-   crate `andamento-core`; move patch application, resolution, templates and
+   crate `wheelhouse-core`; move patch application, resolution, templates and
    placement logic behind owned input/output types. Move Zellij VFS and event conversion out.
    Run the existing plugins and replay harness through it. Prove that the
    core builds and tests without the sibling Zellij checkout or Flotilla.
@@ -218,7 +218,7 @@ Preview declaration syntax and capability transport are follow-up design.
 Updated and read back seven issue bodies: Andamento #51, #71, #92, #93;
 Wheelhouse #17, #20, #22. Cross-project local docs remain unchanged; the
 linked live tickets carry the updated execution scope. The core extraction and renderer-separation implementation now lives in
-`andamento-core`, `andamento-terminal`, `andamento-html` and `andamento-ffi`.
+`wheelhouse-core`, `wheelhouse-terminal`, `wheelhouse-html` and `wheelhouse-ffi`.
 See [the embedding interface](core-interface.md) for the implemented surface
 and its remaining placement-cutover constraint. Wheelhouse integration is
 still the next consumer task.

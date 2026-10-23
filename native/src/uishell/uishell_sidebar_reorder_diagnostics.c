@@ -20,9 +20,9 @@ internal String8
 uishell_sidebar_reorder_ids(Arena *arena, UIShell_SidebarState *state, String8 kind)
 {
   String8List ids = {0};
-  for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot); i++)
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(state->snapshot, i, &node);
+    WheelhouseNode node = {0}; wheelhouse_snapshot_node(state->snapshot, i, &node);
     if(!node.is_section && str8_match(uishell_sidebar_string(node.entity.kind), kind, 0))
     { str8_list_push(arena, &ids, uishell_sidebar_string(node.entity.id)); }
   }
@@ -30,16 +30,16 @@ uishell_sidebar_reorder_ids(Arena *arena, UIShell_SidebarState *state, String8 k
   return str8_list_join(arena, &ids, &join);
 }
 
-internal AndamentoNode
+internal WheelhouseNode
 uishell_sidebar_reorder_node(UIShell_SidebarState *state, String8 id)
 {
-  AndamentoNode node = {0};
-  for(U64 i = 0; i < andamento_snapshot_node_count(state->snapshot); i++)
+  WheelhouseNode node = {0};
+  for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot); i++)
   {
-    andamento_snapshot_node(state->snapshot, i, &node);
+    wheelhouse_snapshot_node(state->snapshot, i, &node);
     if(!node.is_section && str8_match(uishell_sidebar_string(node.entity.id), id, 0)) { return node; }
   }
-  return (AndamentoNode){0};
+  return (WheelhouseNode){0};
 }
 
 internal U64
@@ -206,7 +206,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     "placement \"local\" { for \"section\" kind=\".section\" layout=\"section\" { order \".position\" natural=true; apply-template \"section/local\"; }; }\n"
     "template \"section/local\" { field \"label\" key=\"display.label\"; for \"group\" kind=\".group\" { match \".section\" of=\"section\"; apply-template \"group/local\"; }; }\n"
     "template \"group/local\" { field \"label\" key=\"display.label\"; for \"item\" { match \".group\" of=\"group\"; order \".position\" natural=true; apply-template \"convoy\"; }; }\n");
-  state.core = andamento_create(config.str, config.size, &error);
+  state.core = wheelhouse_create(config.str, config.size, &error);
   ok &= uishell_sidebar_result(&state, state.core != 0, error);
   if(!state.core) { uishell_sidebar_release(&state); scratch_end(scratch); return 0; }
   char *entities[][3] = {{"project", "p", "p"}, {"project", "q", "q"},
@@ -218,7 +218,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
       "\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}},"
       "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}",
       entities[i][0], entities[i][1], entities[i][1], entities[i][2]);
-    ok &= andamento_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0);
+    ok &= wheelhouse_apply_patch_json(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0);
   }
   uishell_sidebar_refresh(&state);
   UIShell_ControlledSplit split = *host_split;
@@ -252,18 +252,18 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   ReorderCheck(down.line, "insertion line while over a moving gap");
   ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &state, convoy), str8_lit("c2 c3 c1"), 0), "drop below c3 reorders");
   String8 loop = uishell_sidebar_loop_key(state.snapshot, 0);
-  for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
+  for(U64 i = 0; i < wheelhouse_snapshot_node_count(state.snapshot); i++)
   {
-    AndamentoNode node = {0}; andamento_snapshot_node(state.snapshot, i, &node);
+    WheelhouseNode node = {0}; wheelhouse_snapshot_node(state.snapshot, i, &node);
     if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("c1"), 0))
     { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(state.snapshot, i)); }
   }
   // Andamento keeps the run's full order in its dashboard record.
   String8List leaves = {0};
-  AndamentoDashboard *dashboard = uishell_sidebar_dashboard(&state);
+  WheelhouseDashboard *dashboard = uishell_sidebar_dashboard(&state);
   for(U64 o = 0; dashboard && o < dashboard->order_count; o++)
   {
-    AndamentoSiblingOrder *order = (AndamentoSiblingOrder *)&dashboard->orders[o];
+    WheelhouseSiblingOrder *order = (WheelhouseSiblingOrder *)&dashboard->orders[o];
     for(U64 e = 0; e < order->entity_count; e++)
     {
       str8_list_pushf(scratch.arena, &leaves, "%S %S", uishell_sidebar_string(order->entities[e].kind), uishell_sidebar_string(order->entities[e].id));
@@ -292,12 +292,12 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
   // merge by data order.
   String8 record = uishell_sidebar_record_get(scratch.arena, state.core, str8_lit("dashboard"));
   UIShell_SidebarState restored = {.initialized = 1};
-  error = 0; restored.core = andamento_create(config.str, config.size, &error);
+  error = 0; restored.core = wheelhouse_create(config.str, config.size, &error);
   ok &= uishell_sidebar_result(&restored, restored.core != 0, error);
   if(restored.core)
   {
     error = 0;
-    ReorderCheck(uishell_sidebar_result(&restored, andamento_record_put(restored.core, uishell_sidebar_text(str8_lit("dashboard")),
+    ReorderCheck(uishell_sidebar_result(&restored, wheelhouse_record_put(restored.core, uishell_sidebar_text(str8_lit("dashboard")),
       uishell_sidebar_text(record), &error), error), "the dashboard record imports");
     for(U64 i = 0; i < ArrayCount(entities)+1; i++)
     {
@@ -305,7 +305,7 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
       String8 patch = push_str8f(scratch.arena,
         "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"%s\",\"id\":\"%s\"}},\"source_id\":\"reorder-test\",\"set\":{"
         "\"flotilla.project\":{\"value\":{\"type\":\"text\",\"value\":\"%s\"}}},\"unset\":[]}", e[0], e[1], e[2]);
-      ok &= andamento_apply_patch_json(restored.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0);
+      ok &= wheelhouse_apply_patch_json(restored.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0);
     }
     uishell_sidebar_refresh(&restored);
     ReorderCheck(str8_match(uishell_sidebar_reorder_ids(scratch.arena, &restored, convoy), str8_lit("c2 c3 c4 c1"), 0), "restored order merges c4 after c3");
@@ -341,9 +341,9 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     String8 shown[3] = {0};
     U64 shown_count = 0;
     uishell_sidebar_refresh(&state);
-    for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(state.snapshot); i++)
     {
-      AndamentoNode n = {0}; andamento_snapshot_node(state.snapshot, i, &n);
+      WheelhouseNode n = {0}; wheelhouse_snapshot_node(state.snapshot, i, &n);
       if(str8_match(uishell_sidebar_string(n.entity.kind), str8_lit(".ref"), 0) && shown_count < 3)
       { shown[shown_count++] = push_str8_copy(scratch.arena, uishell_sidebar_string(n.entity.id)); }
     }
@@ -413,9 +413,9 @@ uishell_sidebar_reorder_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit 
     uishell_sidebar_refresh(&state);
     U64 published = 0;
     String8 label = str8_zero();
-    for(U64 i = 0; i < andamento_snapshot_node_count(state.snapshot); i++)
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(state.snapshot); i++)
     {
-      AndamentoNode n = {0}; andamento_snapshot_node(state.snapshot, i, &n);
+      WheelhouseNode n = {0}; wheelhouse_snapshot_node(state.snapshot, i, &n);
       if(!str8_match(uishell_sidebar_string(n.entity.kind), str8_lit(".section"), 0) || !str8_match(uishell_sidebar_string(n.entity.id), id, 0)) { continue; }
       published++;
       label = push_str8_copy(scratch.arena, uishell_sidebar_string(n.label));

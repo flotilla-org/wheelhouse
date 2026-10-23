@@ -9,7 +9,7 @@
 internal String8 uishell_workspace_store_window_text(Arena *arena, String8 root_path, CFG_Node *window);
 
 // A Slot's View Spec (CONTEXT.md, "View Spec"), as Wheelhouse holds it.
-// `content` is an ANDAMENTO_SLOT_* value.
+// `content` is an WHEELHOUSE_SLOT_* value.
 struct UIShell_ViewSpec
 {
   U32 content;
@@ -22,7 +22,7 @@ struct UIShell_ViewSpec
   U64 argc;
   B32 has_cwd;
   String8 cwd, path, url, launcher, endpoint, presentation;
-  // A Cleat endpoint's session (ANDAMENTO_SLOT_CLEAT_SESSION): how it is
+  // A Cleat endpoint's session (WHEELHOUSE_SLOT_CLEAT_SESSION): how it is
   // reached (local or ssh), the ssh destination, and the daemon's runtime
   // root and name there (docs/design/remote-terminals.md).
   String8 cleat_transport, cleat_host, cleat_runtime_root, cleat_daemon, cleat_session;
@@ -126,8 +126,8 @@ internal UIShell_StripViews uishell_store_strip_views(Arena *arena, CFG_Node *ow
 typedef struct UIShell_StripEntry UIShell_StripEntry;
 struct UIShell_StripEntry
 {
-  AndamentoEntity entity;
-  // ANDAMENTO_STRIP_*.
+  WheelhouseEntity entity;
+  // WHEELHOUSE_STRIP_*.
   U32 section;
 };
 
@@ -140,6 +140,6 @@ struct UIShell_StripEntries
 
 internal UIShell_StripEntries uishell_store_strip_entries(Arena *arena, CFG_Node *owner);
 // The subject of workspace `owner`, copied into `arena`; zero for none.
-internal AndamentoEntity uishell_store_subject(Arena *arena, CFG_Node *owner);
+internal WheelhouseEntity uishell_store_subject(Arena *arena, CFG_Node *owner);
 
 #endif // UISHELL_WORKSPACE_STORE_H

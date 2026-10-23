@@ -212,7 +212,7 @@ bound: its `BTreeMap` lookup is O(log n), and a cached miss does not repeat
 catalog evaluation. More
 than 64 identities can evict entries. Measure before adding frontend negative
 caching. ABI errors are copied into a fixed host status buffer and freed with
-`andamento_string_free`; repeated failures overwrite that buffer without emitting
+`wheelhouse_string_free`; repeated failures overwrite that buffer without emitting
 logs or appending status entries.
 
 Shared-core release C-ABI measurements are in Andamento's

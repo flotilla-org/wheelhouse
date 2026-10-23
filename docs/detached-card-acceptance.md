@@ -30,8 +30,8 @@ Pins are ghosts in local groups (docs/design/drag-model.md, "Sections and
 groups as data"). Andamento owns the sections someone made, each holding
 groups, and each group's ghosts with exact kind/id, a ghost id, a fallback
 label and their form, as local `.section`, `.group` and `.ref` entities in its
-dashboard record; Wheelhouse changes them with `andamento_local_set` and
-`andamento_local_remove` and reads them from `andamento_dashboard_get`
+dashboard record; Wheelhouse changes them with `wheelhouse_local_set` and
+`wheelhouse_local_remove` and reads them from `wheelhouse_dashboard_get`
 (`uishell_sidebar_locals`). A pinned card knows its pin by the `.ref`'s ID,
 its ghost id.
 Local workspaces name their group (`lives_in`). The shipped KDL places them,

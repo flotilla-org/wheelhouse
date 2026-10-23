@@ -2,8 +2,8 @@
 
 This is the Andamento contract for Wheelhouse #177, part of ABI 4 ([The host
 interface](sidebar-design/host-interface.md)). The authoritative C layouts and
-pointer lifetimes are in `crates/andamento-ffi/include/andamento.h`. Every
-identity here is an `AndamentoEntity`, `{provider, kind, id}`; kind and ID
+pointer lifetimes are in `crates/wheelhouse-ffi/include/wheelhouse.h`. Every
+identity here is an `WheelhouseEntity`, `{provider, kind, id}`; kind and ID
 alone name nothing.
 
 ## Template declarations
@@ -48,13 +48,13 @@ such as `flotilla.project`, are not inferred as links.
 
 ## Snapshot lookup and ownership
 
-Opt in by acquiring with `andamento_snapshot_acquire_details`; ordinary
-`andamento_snapshot_acquire` retains the flat-client cost and produces no cards:
-`detail_count` returns 0 and `detail_find` returns `ANDAMENTO_NONE`, even for an
+Opt in by acquiring with `wheelhouse_snapshot_acquire_details`; ordinary
+`wheelhouse_snapshot_acquire` retains the flat-client cost and produces no cards:
+`detail_count` returns 0 and `detail_find` returns `WHEELHOUSE_NONE`, even for an
 entity present in the flat tree. Zero-length output text has a non-null pointer.
 Detail identity lookup and relation target lookup use a snapshot-owned index.
 
-All output buffers are borrowed from an acquired `AndamentoSnapshot`;
+All output buffers are borrowed from an acquired `WheelhouseSnapshot`;
 release it only after finishing all reads. Indices are snapshot-local. Reacquire
 and find by exact entity after draining facts, time, configuration, topology or
 completion changes. Old snapshots remain readable. Action dispatch uses the
@@ -62,19 +62,19 @@ existing snapshot generation/client validation, including for these new actions.
 
 | Export | Result |
 | --- | --- |
-| `andamento_snapshot_detail_request` | Append one exact entity's card to a current snapshot; returns its index or `ANDAMENTO_NONE` |
-| `andamento_snapshot_acquire_details` | Opt-in enriched snapshot acquisition |
-| `andamento_snapshot_detail_count` | Number of catalog cards |
-| `andamento_snapshot_detail_find` | Exact entity lookup; `ANDAMENTO_NONE` when unavailable |
-| `andamento_snapshot_detail` | Card entity, label, field count, action IDs, clock, error, optional Workspace ID |
-| `andamento_snapshot_detail_field` | Name, section, role, label, unadorned text, presence, source and observation metadata, relation count |
-| `andamento_snapshot_detail_relation` | Exact target identity, display label and detail index, filtered by navigation path |
-| `andamento_snapshot_detail_action` | Semantic intent, label, stable target identity and dispatch action ID |
+| `wheelhouse_snapshot_detail_request` | Append one exact entity's card to a current snapshot; returns its index or `WHEELHOUSE_NONE` |
+| `wheelhouse_snapshot_acquire_details` | Opt-in enriched snapshot acquisition |
+| `wheelhouse_snapshot_detail_count` | Number of catalog cards |
+| `wheelhouse_snapshot_detail_find` | Exact entity lookup; `WHEELHOUSE_NONE` when unavailable |
+| `wheelhouse_snapshot_detail` | Card entity, label, field count, action IDs, clock, error, optional Workspace ID |
+| `wheelhouse_snapshot_detail_field` | Name, section, role, label, unadorned text, presence, source and observation metadata, relation count |
+| `wheelhouse_snapshot_detail_relation` | Exact target identity, display label and detail index, filtered by navigation path |
+| `wheelhouse_snapshot_detail_action` | Semantic intent, label, stable target identity and dispatch action ID |
 
 For interactive hosts, acquire a plain snapshot and call
-`andamento_snapshot_detail_request(core, snapshot, entity, &error)` only for
+`wheelhouse_snapshot_detail_request(core, snapshot, entity, &error)` only for
 identities needed by cards. This includes hidden relation targets and retained
-ended subjects. A miss returns `ANDAMENTO_NONE` without an error. A request for
+ended subjects. A miss returns `WHEELHOUSE_NONE` without an error. A request for
 new details on a stale or foreign snapshot fails; already materialized details
 remain readable on old snapshots. Previously returned text and action indices
 remain valid when more details are appended, until snapshot release. A given
@@ -87,7 +87,7 @@ report its acquisition clock, even if the core later advances time without
 changing the revision. Eager snapshots retain the same clock semantics.
 
 Relation lookup returns the target identity even before its detail is requested;
-the label falls back to its ID and the detail index is `ANDAMENTO_NONE`. Request
+the label falls back to its ID and the detail index is `WHEELHOUSE_NONE`. Request
 the target, then read the relation again to obtain its label/index. Navigation
 paths still filter cycles before demand, and absent entities remain unavailable.
 
@@ -119,13 +119,13 @@ Iterate `relation_count`, passing the exact entity navigation path to each
 relation lookup; return 0 means skip that index. Path filtering does not renumber
 indices. The display text is the target's current label (its ID if unavailable).
 A target with no placement still has a detail index; a target absent from the
-catalog has `detail=ANDAMENTO_NONE`. Never parse relation field text for targets.
+catalog has `detail=WHEELHOUSE_NONE`. Never parse relation field text for targets.
 
 Action index 0 is the primary control; index 1 is copy URL when available.
 Primary intent is `open-url`, `focus-workspace`, `materialize-workspace`, or
 `inspect`; the copy intent is `copy-url`. The primary label uses the same
 `action.primary.label` fact as workspace controls, with a semantic default.
-`action` is dispatched through `andamento_dispatch`, targeting the stable entity
+`action` is dispatched through `wheelhouse_dispatch`, targeting the stable entity
 and producing the existing effects/completions. Primary activation retains the
 existing precedence: a subject URL opens in the browser before workspace focus.
 

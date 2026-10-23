@@ -1,11 +1,11 @@
 [workspace]
 members = [
-    "crates/andamento-core",
-    "crates/andamento-ffi",
-    "crates/andamento-git-watcher",
-    "crates/andamento-html",
-    "crates/andamento-terminal",
-    "crates/andamento-tui",
+    "crates/wheelhouse-core",
+    "crates/wheelhouse-ffi",
+    "crates/wheelhouse-git-watcher",
+    "crates/wheelhouse-html",
+    "crates/wheelhouse-terminal",
+    "crates/wheelhouse-tui",
     "crates/wheelhouse-ingress",
 ]
 # tools/scenario is a workspace of its own: it pins Flotilla's crates by git
@@ -27,6 +27,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 unicode-width = "0.1.14"
 
-andamento-core = { path = "crates/andamento-core" }
-andamento-terminal = { path = "crates/andamento-terminal" }
-andamento-tui = { path = "crates/andamento-tui" }
+wheelhouse-core = { path = "crates/wheelhouse-core" }
+wheelhouse-terminal = { path = "crates/wheelhouse-terminal" }
+wheelhouse-tui = { path = "crates/wheelhouse-tui" }

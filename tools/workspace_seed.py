@@ -6,7 +6,7 @@ in the presentation file, which keeps only this device's part of them
 Views open writes both: the window, naming the workspace, in the
 presentation file, and the workspace's record in the Dashboard's
 directory, whose core imports it on its first load. Records are
-Andamento's own JSON (andamento-core, `WorkspaceRecord`).
+Andamento's own JSON (wheelhouse-core, `WorkspaceRecord`).
 """
 import json
 from pathlib import Path

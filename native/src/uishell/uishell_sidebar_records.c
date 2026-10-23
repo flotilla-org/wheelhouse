@@ -1,4 +1,4 @@
-//- Andamento's records (ADR 0012; andamento.h, "named records"). Andamento
+//- Andamento's records (ADR 0012; wheelhouse.h, "named records"). Andamento
 // owns the sidebar's logical state: display values, row collapse, sibling
 // orders, and local sections, groups and pins (the `dashboard` record); and
 // each workspace it knows, with its subject and the rows on its path as last
@@ -17,7 +17,7 @@
 // change, through a temporary file renamed over the old one, and at once
 // when the sidebar is released (its window closing, or quitting). Nothing
 // here reads one: what Wheelhouse needs of the Dashboard's comes from
-// andamento_dashboard_get, and of a workspace's from its own getters.
+// wheelhouse_dashboard_get, and of a workspace's from its own getters.
 
 enum { UIShell_RecordsDelayMs = 1000 };
 
@@ -25,35 +25,35 @@ enum { UIShell_RecordsDelayMs = 1000 };
 
 // Bytes Andamento returned, copied into `arena` and freed.
 internal String8
-uishell_sidebar_bytes_copy(Arena *arena, AndamentoBytes bytes)
+uishell_sidebar_bytes_copy(Arena *arena, WheelhouseBytes bytes)
 {
   String8 result = push_str8_copy(arena, str8(bytes.data, bytes.len));
-  andamento_bytes_free(bytes);
+  wheelhouse_bytes_free(bytes);
   return result;
 }
 
 internal String8
-uishell_sidebar_record_get(Arena *arena, Andamento *core, String8 name)
+uishell_sidebar_record_get(Arena *arena, WheelhouseCore *core, String8 name)
 {
-  AndamentoBytes bytes = {0};
-  if(!core || !andamento_record_get(core, uishell_sidebar_text(name), &bytes, 0)) { return str8_zero(); }
+  WheelhouseBytes bytes = {0};
+  if(!core || !wheelhouse_record_get(core, uishell_sidebar_text(name), &bytes, 0)) { return str8_zero(); }
   return uishell_sidebar_bytes_copy(arena, bytes);
 }
 
 // The core's record names.
 internal String8List
-uishell_sidebar_record_names(Arena *arena, Andamento *core)
+uishell_sidebar_record_names(Arena *arena, WheelhouseCore *core)
 {
-  AndamentoBytes bytes = {0};
-  String8 names = core && andamento_record_names(core, &bytes, 0) ? uishell_sidebar_bytes_copy(arena, bytes) : str8_zero();
+  WheelhouseBytes bytes = {0};
+  String8 names = core && wheelhouse_record_names(core, &bytes, 0) ? uishell_sidebar_bytes_copy(arena, bytes) : str8_zero();
   U8 newline = '\n';
   return str8_split(arena, names, &newline, 1, 0);
 }
 
 internal U64
-uishell_sidebar_record_generation(Andamento *core, String8 name)
+uishell_sidebar_record_generation(WheelhouseCore *core, String8 name)
 {
-  return andamento_record_generation(core, uishell_sidebar_text(name), 0);
+  return wheelhouse_record_generation(core, uishell_sidebar_text(name), 0);
 }
 
 // The file a record is stored in: `dashboard.record`, `workspace-<id>.record`.
@@ -188,19 +188,19 @@ uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
   scratch_end(scratch);
 }
 
-//- The Dashboard's local entities and saved orders (andamento_dashboard_get)
+//- The Dashboard's local entities and saved orders (wheelhouse_dashboard_get)
 
 // Andamento's Dashboard, read again when the dashboard record's generation
 // moves. Its local sections, groups and pins are read through
 // uishell_sidebar_locals.
-internal AndamentoDashboard *
+internal WheelhouseDashboard *
 uishell_sidebar_dashboard(UIShell_SidebarState *state)
 {
   if(!state->core) { return 0; }
   U64 generation = uishell_sidebar_record_generation(state->core, str8_lit("dashboard"));
   if(state->dashboard && state->dashboard->generation == generation) { return state->dashboard; }
-  andamento_dashboard_free(state->dashboard);
-  state->dashboard = andamento_dashboard_get(state->core, 0);
+  wheelhouse_dashboard_free(state->dashboard);
+  state->dashboard = wheelhouse_dashboard_get(state->core, 0);
   return state->dashboard;
 }
 
@@ -209,7 +209,7 @@ uishell_sidebar_dashboard(UIShell_SidebarState *state)
 internal B32
 uishell_sidebar_order_saved(UIShell_SidebarState *state, String8 loop)
 {
-  AndamentoDashboard *dashboard = loop.size ? uishell_sidebar_dashboard(state) : 0;
+  WheelhouseDashboard *dashboard = loop.size ? uishell_sidebar_dashboard(state) : 0;
   for(U64 i = 0; dashboard && i < dashboard->order_count; i++)
   { if(str8_match(uishell_sidebar_string(dashboard->orders[i].loop_key), loop, 0)) { return 1; } }
   return 0;
@@ -246,7 +246,7 @@ uishell_sidebar_records_load(UIShell_SidebarState *state, CFG_Node *window)
   {
     String8 text = data_from_file_path(scratch.arena, push_str8f(scratch.arena, "%S/%S", dir, file->string));
     char *error = 0;
-    if(andamento_record_put(state->core, uishell_sidebar_text(name->string), uishell_sidebar_text(text), &error))
+    if(wheelhouse_record_put(state->core, uishell_sidebar_text(name->string), uishell_sidebar_text(text), &error))
     { uishell_sidebar_record_note(state, name->string, uishell_sidebar_record_generation(state->core, name->string)); }
     else
     {
@@ -254,7 +254,7 @@ uishell_sidebar_records_load(UIShell_SidebarState *state, CFG_Node *window)
       uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Sidebar record %S/%S not restored: %s", dir, file->string,
                                                   error ? error : "unknown error"));
     }
-    andamento_string_free(error);
+    wheelhouse_string_free(error);
   }
   state->records_dir = failed ? str8_zero() : push_str8_copy(state->records_arena, dir);
   // A workspace the window no longer has (deleted while an older build ran)
@@ -274,7 +274,7 @@ uishell_sidebar_records_load(UIShell_SidebarState *state, CFG_Node *window)
       kept = (str8_match(c->string, str8_lit("workspace"), 0) || str8_match(c->string, str8_lit("detached_workspace"), 0)) &&
         uishell_workspace_id_match(uishell_workspace_id_from_cfg(c), id);
     }
-    if(!kept) { andamento_workspace_forget(state->core, uishell_sidebar_workspace(id), 0); }
+    if(!kept) { wheelhouse_workspace_forget(state->core, uishell_sidebar_workspace(id), 0); }
   }
   scratch_end(scratch);
 }

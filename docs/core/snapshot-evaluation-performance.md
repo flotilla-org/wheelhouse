@@ -2,7 +2,7 @@
 
 Measured on Linux in this crew container, using release C-ABI calls and a scripted catalog. These are acquisition/update timings on a shared host, not GUI frame times or daily-driver CPU measurements. The operator’s macOS 270-patch capture is not in the repository, so the fixture plus generated streams are used instead.
 
-Baseline is `93c9440`, with the same opt-in counters added in a scratch workspace. Both builds use the checked-in external dependency versions. Counters are disabled unless `andamento_core::profile::start()` is called. The stream loads the Wheelhouse sidebar fixture, adds 100, then 300, then 1,000 synthetic issues, warms up, and alternates five plain and five detailed acquisitions, each forced fresh with an ignored fact. Nodes: 121/321/1,021. Two-card demand runs use one generated issue and the fixture’s hidden issue. Same-snapshot repeat requests and rendered-snapshot toggle validation must perform no new catalog evaluation.
+Baseline is `93c9440`, with the same opt-in counters added in a scratch workspace. Both builds use the checked-in external dependency versions. Counters are disabled unless `wheelhouse_core::profile::start()` is called. The stream loads the Wheelhouse sidebar fixture, adds 100, then 300, then 1,000 synthetic issues, warms up, and alternates five plain and five detailed acquisitions, each forced fresh with an ignored fact. Nodes: 121/321/1,021. Two-card demand runs use one generated issue and the fixture’s hidden issue. Same-snapshot repeat requests and rendered-snapshot toggle validation must perform no new catalog evaluation.
 
 Each executable is capped with `prlimit --as=8589934592`; Linux `VmHWM` is read at each size. Measurements below are one sequential baseline/after pair. Scheduling noise is substantial: an earlier run had plain medians 7.05/18.17/70.15 ms before and 5.86/15.52/57.71 ms after. Treat evaluation counts as the reliable evidence of removed work; these runs do not forecast end-to-end savings.
 
@@ -84,7 +84,7 @@ Load phases (fixture plus generated facts), with patch and maintenance separated
 ## Reproduction
 
 ```sh
-cargo build -p andamento-ffi --example snapshot-profile --release --target x86_64-unknown-linux-gnu
+cargo build -p wheelhouse-ffi --example snapshot-profile --release --target x86_64-unknown-linux-gnu
 prlimit --as=8589934592 target/x86_64-unknown-linux-gnu/release/examples/snapshot-profile templates/flotilla-default.kdl ../wheelhouse/data/sidebar/fixture.jsonl
 ```
 

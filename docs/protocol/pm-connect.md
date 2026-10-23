@@ -154,10 +154,10 @@ Replay accepted patches through the real Andamento C ABI and shipped template:
 
 ```sh
 python3 tools/replay-ingress.py /path/to/logs/ingress.jsonl* \
-  --library /path/to/libandamento_ffi.so > sidebar-states.jsonl
+  --library /path/to/libwheelhouse_ffi.so > sidebar-states.jsonl
 ```
 
-Use `.dylib` on macOS or `andamento_ffi.dll` on Windows. `--template <file>`
+Use `.dylib` on macOS or `wheelhouse_ffi.dll` on Windows. `--template <file>`
 selects another template. Output includes every visible node's kind, id, label,
 state and rendered fields after each accepted patch, including role and convoy
 statuses. `data/sidebar/fixture.jsonl` is also accepted directly. Rejected

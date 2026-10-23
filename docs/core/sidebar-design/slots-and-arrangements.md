@@ -64,7 +64,7 @@ token until the resolution or binding changes.
 A resolution is a recipe (command, file, URL, Jackstay launcher or Cleat
 session) and,
 optionally, the target naming the backing instance. Its **identity**
-(`Resolved::id`, `AndamentoSlotContent.resolution`) is opaque text: the host
+(`Resolved::id`, `WheelhouseSlotContent.resolution`) is opaque text: the host
 records it once applied and passes it back to plan, which reports Current when
 it matches.
 
@@ -119,9 +119,9 @@ resolves (what the host applied, as it passes it to plan), and a
   from the sidebar's one clock, so a host holding an old one can't
   overwrite a newer save, even after a clear or an import.
 - `clear_slot_resolution(workspace, key, expected)` drops it the same way.
-- `slot_resolution(workspace, key)` reads it (`AndamentoSlot.saved`).
+- `slot_resolution(workspace, key)` reads it (`WheelhouseSlot.saved`).
 - Every **slot plan** carries the slot's saved resolution (`SlotPlan::saved`,
-  `AndamentoSlotContent.saved`), in any state. A host that starts with no
+  `WheelhouseSlotContent.saved`), in any state. A host that starts with no
   instance, on a restart or another device, plans with an empty applied
   identity. The plan is Updating to the resolution the saved one is
   `against`, so the host tries connecting through the saved resolution
@@ -165,7 +165,7 @@ sizes need pixels. When a gesture ends it commits the whole document with
 1. **Generation.** If `expected_generation` isn't the stored generation (0
    before anything is stored), the commit is **stale** and changes nothing;
    the host reads the arrangement again. The C call returns
-   `ANDAMENTO_STALE` with no error.
+   `WHEELHOUSE_STALE` with no error.
 2. **Validation.** Panel IDs are nonempty and unique, weights finite and
    positive, splits nonempty, each slot has at most one tab, and a selected
    tab is one of its panel's. Each tab names a current slot, or a slot the
@@ -210,15 +210,15 @@ and evaluation costs 8 to 90 ms depending on entity count, so arrangements
 must not share it.
 
 Slots, their resolutions and arrangements now have their own revision,
-`content_revision` (`andamento_workspace_content_revision`). Slot edits,
+`content_revision` (`wheelhouse_workspace_content_revision`). Slot edits,
 arrangement commits and baseline changes bump it and never call
 `invalidate()`, so a rendered snapshot stays current
-(`andamento_snapshot_is_current`) and its actions stay dispatchable. Fact
+(`wheelhouse_snapshot_is_current`) and its actions stay dispatchable. Fact
 changes still invalidate the sidebar as before, and bump the content revision
 too when they change a slot resolution. Records change with both: store a
 record when its generation changes.
 
-Measured with `crates/andamento-ffi/examples/snapshot-profile.rs` (release
+Measured with `crates/wheelhouse-ffi/examples/snapshot-profile.rs` (release
 build, Wheelhouse's `daily-driver.kdl` and sidebar fixture, a shared Linux
 host): 20 arrangement commits of a two-panel, eight-slot document per size,
 each checking the rendered snapshot.
@@ -242,7 +242,7 @@ saved portable resolutions. Like every record it is opaque to the host
 ([Records](core-interface.md#records)); generations are not part of it. The
 migration of the resolutions Wheelhouse keeps on each device today is
 Wheelhouse's: it saves the portable ones through
-`andamento_slot_resolution_set`.
+`wheelhouse_slot_resolution_set`.
 
 ## Limits and next steps
 

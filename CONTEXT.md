@@ -185,7 +185,7 @@ _Avoid_: Workspace address, layout position, display name
 
 **Window ID**:
 A window's stable identity in its **Dashboard**'s **Presentation State**.
-_Avoid_: Window config, andamento_records
+_Avoid_: Window config, wheelhouse_records
 
 **Kept Workspace**:
 A **Workspace** the user closed but chose to keep. It keeps its **Workspace ID** and **Workspace Overlay**, and activating its subject again reopens it rather than creating a new Workspace.

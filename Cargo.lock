@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "andamento-core"
+name = "wheelhouse-core"
 version = "0.1.0"
 dependencies = [
  "foldhash 0.2.0",
@@ -15,36 +15,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "andamento-ffi"
+name = "wheelhouse-ffi"
 version = "0.1.0"
 dependencies = [
- "andamento-core",
+ "wheelhouse-core",
  "serde_json",
 ]
 
 [[package]]
-name = "andamento-git-watcher"
+name = "wheelhouse-git-watcher"
 version = "0.1.0"
 dependencies = [
- "andamento-core",
- "andamento-terminal",
+ "wheelhouse-core",
+ "wheelhouse-terminal",
  "serde_json",
 ]
 
 [[package]]
-name = "andamento-html"
+name = "wheelhouse-html"
 version = "0.1.0"
 dependencies = [
- "andamento-core",
- "andamento-terminal",
+ "wheelhouse-core",
+ "wheelhouse-terminal",
  "serde_json",
 ]
 
 [[package]]
-name = "andamento-terminal"
+name = "wheelhouse-terminal"
 version = "0.1.0"
 dependencies = [
- "andamento-core",
+ "wheelhouse-core",
  "ansi_term",
  "insta",
  "serde_json",
@@ -52,11 +52,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "andamento-tui"
+name = "wheelhouse-tui"
 version = "0.1.0"
 dependencies = [
- "andamento-core",
- "andamento-terminal",
+ "wheelhouse-core",
+ "wheelhouse-terminal",
  "crossterm",
  "serde_json",
 ]

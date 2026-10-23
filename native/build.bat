@@ -96,18 +96,18 @@ if "%cleat%"=="1" (
   set auto_compile_flags=!auto_compile_flags! -I"!cleat_include_dir!"
 )
 
-set andamento_link=
+set core_link=
 if "%wheelhouse%"=="1" (
   rem The core and the ingress are members of this repo's Cargo workspace (#440).
   if not "%WHEELHOUSE_ANDAMENTO_DIR%"=="" echo build.bat: ignoring WHEELHOUSE_ANDAMENTO_DIR: the core is in this repo now ^(#440^) 1>&2
-  for /f "tokens=2" %%t in ('rustc -vV ^| findstr /b "host:"') do set andamento_target=%%t
+  for /f "tokens=2" %%t in ('rustc -vV ^| findstr /b "host:"') do set core_target=%%t
   rem WHEELHOUSE_ANDAMENTO_TARGET_DIR stays a while as an alias for CARGO_TARGET_DIR.
-  if not "%WHEELHOUSE_ANDAMENTO_TARGET_DIR%"=="" (set andamento_target_dir=%WHEELHOUSE_ANDAMENTO_TARGET_DIR%) else if not "%CARGO_TARGET_DIR%"=="" (set andamento_target_dir=%CARGO_TARGET_DIR%) else (set andamento_target_dir=%root%target)
-  set andamento_lib_dir=!andamento_target_dir!\!andamento_target!\!cargo_profile!
+  if not "%WHEELHOUSE_ANDAMENTO_TARGET_DIR%"=="" (set core_target_dir=%WHEELHOUSE_ANDAMENTO_TARGET_DIR%) else if not "%CARGO_TARGET_DIR%"=="" (set core_target_dir=%CARGO_TARGET_DIR%) else (set core_target_dir=%root%target)
+  set core_lib_dir=!core_target_dir!\!core_target!\!cargo_profile!
   rem DAILY_DRIVER_WATCHER: daily-driver.py relies on this build including the native git watcher.
-  cargo build --manifest-path "%root%Cargo.toml" -p andamento-ffi -p wheelhouse-ingress -p andamento-git-watcher --locked --target !andamento_target! --target-dir "!andamento_target_dir!" !cargo_profile_flags! || exit /b 1
-  set auto_compile_flags=!auto_compile_flags! -I"%root%crates\andamento-ffi\include" -I"%root%crates\wheelhouse-ingress\include"
-  set andamento_link="!andamento_lib_dir!\andamento_ffi.dll.lib" "!andamento_lib_dir!\wheelhouse_ingress.dll.lib"
+  cargo build --manifest-path "%root%Cargo.toml" -p wheelhouse-ffi -p wheelhouse-ingress -p wheelhouse-git-watcher --locked --target !core_target! --target-dir "!core_target_dir!" !cargo_profile_flags! || exit /b 1
+  set auto_compile_flags=!auto_compile_flags! -I"%root%crates\wheelhouse-ffi\include" -I"%root%crates\wheelhouse-ingress\include"
+  set core_link="!core_lib_dir!\wheelhouse_ffi.dll.lib" "!core_lib_dir!\wheelhouse_ingress.dll.lib"
   python tools\embed-sidebar-fixture.py || exit /b 1
 )
 
@@ -221,7 +221,7 @@ if "%wheelhouse%"=="1" if "%embed_stale%"=="1" (
   copy /y ..\native\src\shell\shell_embed.c shell_embed.c.last >nul || exit /b 1
   copy /y ..\native\src\shell\generated\shell.embed.meta.c shell.embed.meta.c.last >nul || exit /b 1
 )
-if "%wheelhouse%"=="1"                    set didbuild=1 && %compile% ..\native\src\uishell\uishell_main.c shell_embed.obj            %compile_link% %link_icon% %cleat_link% %andamento_link% %jackstay_link% %out%wheelhouse.exe || exit /b 1
+if "%wheelhouse%"=="1"                    set didbuild=1 && %compile% ..\native\src\uishell\uishell_main.c shell_embed.obj            %compile_link% %link_icon% %cleat_link% %core_link% %jackstay_link% %out%wheelhouse.exe || exit /b 1
 if "%wheelhouse%"=="1" if "%cleat%"=="1"  copy /y "!cleat_lib_dir!\cleat.dll" . >nul || exit /b 1
 rem cleat.dll imports ghostty-vt.dll when built with the ghostty-vt feature; without it
 rem next to the exe the loader fails and the app hangs at start with no window
@@ -236,8 +236,8 @@ if "%wheelhouse%"=="1" if "%cleat%"=="1" for %%f in (conpty.dll OpenConsole.exe 
   if not exist "!cleat_lib_dir!\%%f" (echo [ERROR] missing !cleat_lib_dir!\%%f ^(cleat did not stage the bundled ConPTY^) && exit /b 1)
   fc /b "!cleat_lib_dir!\%%f" "%%f" >nul 2>&1 || copy /y "!cleat_lib_dir!\%%f" . >nul || (echo [ERROR] copying %%f failed && exit /b 1)
 )
-if "%wheelhouse%"=="1" copy /y "!andamento_lib_dir!\andamento_ffi.dll" . >nul
-if "%wheelhouse%"=="1" copy /y "!andamento_lib_dir!\wheelhouse_ingress.dll" . >nul
+if "%wheelhouse%"=="1" copy /y "!core_lib_dir!\wheelhouse_ffi.dll" . >nul
+if "%wheelhouse%"=="1" copy /y "!core_lib_dir!\wheelhouse_ingress.dll" . >nul
 if "%wheelhouse%"=="1" copy /y "!jackstay_lib_dir!\jackstay.dll" . >nul || (echo [ERROR] copying jackstay.dll failed && exit /b 1)
 popd
 

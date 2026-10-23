@@ -42,7 +42,7 @@ uishell_subscription_set_stale(UIShell_Subscription *s, B32 stale)
     UIShell_SidebarState *state = uishell_sidebar_init(ws);
     if(state->core == 0) { continue; }
     char *error = 0;
-    uishell_sidebar_result(state, andamento_provider_set_stale(state->core, uishell_sidebar_text(s->id), stale, &error), error);
+    uishell_sidebar_result(state, wheelhouse_provider_set_stale(state->core, uishell_sidebar_text(s->id), stale, &error), error);
     uishell_sidebar_refresh(state);
   }
   rd_request_frame();
@@ -54,14 +54,14 @@ uishell_subscription_set_stale(UIShell_Subscription *s, B32 stale)
 // connectors: their snapshots replace each provider's facts in every window.
 // (Until one core serves every window.)
 internal void
-uishell_subscriptions_prepare_core(Andamento *core)
+uishell_subscriptions_prepare_core(WheelhouseCore *core)
 {
   B32 others = 0;
   for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
   { if(ws->sidebar && ws->sidebar->core && ws->sidebar->core != core) { others = 1; } }
   for(UIShell_Subscription *s = uishell_subscriptions.first; s; s = s->next)
   {
-    if(s->stale) { andamento_provider_set_stale(core, uishell_sidebar_text(s->id), 1, 0); }
+    if(s->stale) { wheelhouse_provider_set_stale(core, uishell_sidebar_text(s->id), 1, 0); }
     if(others) { wheelhouse_connector_restart(s->connector); }
   }
 }
@@ -265,7 +265,7 @@ uishell_subscription_remove(UIShell_Subscription *s)
     UIShell_SidebarState *state = uishell_sidebar_init(ws);
     if(state->core == 0) { continue; }
     char *error = 0;
-    uishell_sidebar_result(state, andamento_provider_retract(state->core, uishell_sidebar_text(s->id), &error), error);
+    uishell_sidebar_result(state, wheelhouse_provider_retract(state->core, uishell_sidebar_text(s->id), &error), error);
     uishell_sidebar_refresh(state);
   }
   UIShell_Subscription *prev = 0;

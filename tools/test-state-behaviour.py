@@ -39,10 +39,10 @@ BUILD = ROOT / 'build'
 GOLDENS = ROOT / 'native/src/uishell/tests/state_behaviour'
 BUILD.mkdir(exist_ok=True)
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument('andamento_lib', type=Path)
+parser.add_argument('core_lib', type=Path)
 parser.add_argument('cleat_lib', type=Path)
-parser.add_argument('--andamento-include', type=Path,
-                    default=ROOT/'crates/andamento-ffi/include')
+parser.add_argument('--core-include', type=Path,
+                    default=ROOT/'crates/wheelhouse-ffi/include')
 parser.add_argument('--cleat-include', type=Path,
                     default=Path(os.environ.get('WHEELHOUSE_CLEAT_DIR', ROOT.parent/'cleat'))/'crates/cleat/include')
 parser.add_argument('--update-goldens', action='store_true', help='rewrite the goldens from this run')
@@ -60,16 +60,16 @@ prefix = re.sub(r'^#include "uishell/[^"]*diagnostics.c"\n', '', prefix, flags=r
 source = BUILD / 'state_behaviour.c'
 source.write_text(prefix + '\n#include "uishell/tests/state_behaviour.c"\n')
 binary = BUILD / 'state_behaviour'
-andamento, cleat = args.andamento_lib.resolve(), args.cleat_lib.resolve()
+andamento, cleat = args.core_lib.resolve(), args.cleat_lib.resolve()
 compiler = shlex.split(os.environ.get('CC', 'clang'))
 command = compiler + [
     '-g', '-O0', '-D_GNU_SOURCE', '-DBUILD_DEBUG=1', '-DNO_ASYNC=1',
     '-DWM_STUB=1', '-DR_BACKEND=0', '-DFP_BACKEND=0', '-ffunction-sections', '-fdata-sections',
     '-Wno-initializer-overrides', '-Wno-unused-value',
     '-Wno-incompatible-pointer-types-discards-qualifiers',
-    '-I'+str(ROOT/'native/src'), '-I'+str(args.andamento_include.resolve()),
+    '-I'+str(ROOT/'native/src'), '-I'+str(args.core_include.resolve()),
     '-I'+str(args.cleat_include.resolve()), str(source), str(shell_embed_object(compiler)),
-    '-L'+str(andamento), '-landamento_ffi', '-lwheelhouse_ingress', '-Wl,-rpath,'+str(andamento),
+    '-L'+str(andamento), '-lwheelhouse_ffi', '-lwheelhouse_ingress', '-Wl,-rpath,'+str(andamento),
     '-L'+str(cleat), '-lcleat', '-Wl,-rpath,'+str(cleat), '-lpthread', '-lm', '-ldl',
     '-Wl,--gc-sections', '-o', str(binary)]
 subprocess.run(command, check=True)

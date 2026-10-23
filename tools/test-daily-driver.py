@@ -80,7 +80,7 @@ class WatcherBuildTests(unittest.TestCase):
                 (root / 'data/sidebar/daily-driver.kdl').write_text('')
                 host = 'test-native-host'
                 target = root / 'native outputs'
-                default_watcher = target / host / 'debug/andamento-git-watcher'
+                default_watcher = target / host / 'debug/wheelhouse-git-watcher'
                 binary = root / 'build/wheelhouse'
                 watcher = root / 'supplied watcher' if supplied_watcher else default_watcher
                 if supplied_host:
@@ -97,7 +97,7 @@ class WatcherBuildTests(unittest.TestCase):
                 if supplied_host:
                     environment['WHEELHOUSE_BIN'] = str(binary)
                 if supplied_watcher:
-                    environment['ANDAMENTO_GIT_WATCHER_BIN'] = str(watcher)
+                    environment['WHEELHOUSE_GIT_WATCHER_BIN'] = str(watcher)
                 options = ['daily-driver.py', '--no-git'] if no_git else ['daily-driver.py', '--repo', str(ROOT)]
                 if no_build:
                     options.append('--no-build')
@@ -118,7 +118,7 @@ class WatcherBuildTests(unittest.TestCase):
                 if supplied_host and not (supplied_watcher or no_build or no_git):
                     expected.extend([
                         ['cargo', 'build', '--manifest-path', str(root / 'Cargo.toml'),
-                         '-p', 'andamento-git-watcher', '--bin', 'andamento-git-watcher', '--locked',
+                         '-p', 'wheelhouse-git-watcher', '--bin', 'wheelhouse-git-watcher', '--locked',
                          '--target', host, '--target-dir', str(target)],
                     ])
                 # Only build commands are this contract; unrelated main() subprocesses may change.
@@ -148,9 +148,9 @@ class DailyDriverTests(unittest.TestCase):
         for path, content in [(self.app, FAKE_APP), (self.flotilla, FAKE_FLOTILLA), (self.watcher, FAKE_WATCHER)]:
             path.write_text(content)
             path.chmod(0o755)
-        self.env = {**os.environ, 'WHEELHOUSE_BIN': str(self.app), 'ANDAMENTO_GIT_WATCHER_BIN': str(self.watcher), 'FLOTILLA_BIN': str(self.flotilla),
+        self.env = {**os.environ, 'WHEELHOUSE_BIN': str(self.app), 'WHEELHOUSE_GIT_WATCHER_BIN': str(self.watcher), 'FLOTILLA_BIN': str(self.flotilla),
                     'HOME': str(self.directory), 'FLOTILLA_ROOT': str(self.directory / 'dev'),
-                    'WHEELHOUSE_DAILY_DIR': str(self.state), 'WHEELHOUSE_ANDAMENTO_CONFIG': str(ROOT / 'data/sidebar/fixture.kdl')}
+                    'WHEELHOUSE_DAILY_DIR': str(self.state), 'WHEELHOUSE_SIDEBAR_CONFIG': str(ROOT / 'data/sidebar/fixture.kdl')}
         self.command = [str(ROOT / 'scripts/run-daily-driver.sh'), '--repo', str(ROOT)]
         self.processes = []
 
@@ -242,9 +242,9 @@ class DailyDriverTests(unittest.TestCase):
         self.assertEqual((self.state / 'user').read_text(), 'saved layout')
 
     def test_missing_watcher_fails_before_starting_app(self):
-        process = self.start(ANDAMENTO_GIT_WATCHER_BIN=str(self.directory / 'missing'))
+        process = self.start(WHEELHOUSE_GIT_WATCHER_BIN=str(self.directory / 'missing'))
         self.assertNotEqual(process.wait(timeout=10), 0)
-        self.assertIn('Andamento git watcher not found', process.stdout.read())
+        self.assertIn('git watcher not found', process.stdout.read())
         self.assertFalse((self.state / 'logs/wheelhouse.log').exists())
 
     def test_explicit_remote_endpoint_is_subscribed_and_inherited_by_ui(self):
@@ -262,7 +262,7 @@ class DailyDriverTests(unittest.TestCase):
 
     def test_no_git_does_not_require_watcher(self):
         self.command = self.command[:1]
-        process = self.start(['--no-git'], ANDAMENTO_GIT_WATCHER_BIN=str(self.directory / 'missing'))
+        process = self.start(['--no-git'], WHEELHOUSE_GIT_WATCHER_BIN=str(self.directory / 'missing'))
         self.ready(process, patch=False)
         self.assertIn("'--flotilla_subscription'", self.log('wheelhouse'))
         self.assertFalse((self.state / 'logs/git.log').exists())

@@ -21,18 +21,18 @@ forbidden = [package["name"] for package in metadata["packages"]
              if "zellij" in package["name"] or package["name"].startswith("flotilla")]
 assert not forbidden, forbidden
 
-subprocess.run(["cargo", "check", "-p", "andamento-ffi", "--no-default-features",
+subprocess.run(["cargo", "check", "-p", "wheelhouse-ffi", "--no-default-features",
                 "--locked", "--target", host], cwd=root, check=True)
-subprocess.run(["cargo", "build", "-p", "andamento-ffi", "--locked", "--target", host],
+subprocess.run(["cargo", "build", "-p", "wheelhouse-ffi", "--locked", "--target", host],
                cwd=root, check=True)
 library = target / host / "debug"
 smoke = target / "ffi-smoke"
-subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(root / "crates/andamento-ffi/tests/smoke.c"),
-                "-I", str(root / "crates/andamento-ffi/include"),
-                "-L", str(library), "-landamento_ffi", "-o", str(smoke)], check=True)
+subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(root / "crates/wheelhouse-ffi/tests/smoke.c"),
+                "-I", str(root / "crates/wheelhouse-ffi/include"),
+                "-L", str(library), "-lwheelhouse_ffi", "-o", str(smoke)], check=True)
 subprocess.run([str(smoke),
-                str(root / "crates/andamento-core/tests/fixtures/sidebar.kdl"),
-                str(root / "crates/andamento-core/tests/fixtures/sidebar.jsonl"),
+                str(root / "crates/wheelhouse-core/tests/fixtures/sidebar.kdl"),
+                str(root / "crates/wheelhouse-core/tests/fixtures/sidebar.jsonl"),
                 ], env=dict(os.environ, LD_LIBRARY_PATH=str(library),
                             DYLD_LIBRARY_PATH=str(library)), check=True)
 print("Workspace and C ABI verified without a Zellij or Flotilla dependency.")

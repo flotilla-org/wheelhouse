@@ -13,7 +13,7 @@ and [the Workspace Overlay](https://github.com/flotilla-org/wheelhouse/issues/29
 (Wheelhouse ADR 0013). Flotilla publishes these facts in
 [flotilla#3012](https://github.com/flotilla-org/flotilla/issues/3012).
 
-`andamento_core::suggested_layout::parse` reads an entity's resolved facts into
+`wheelhouse_core::suggested_layout::parse` reads an entity's resolved facts into
 a `SuggestedLayout`. A workspace's slots follow its subject's layout, and each
 slot's resolution is planned like managed primary content: see
 [Slots and arrangements](slots-and-arrangements.md). Placement and snapshots
@@ -260,7 +260,7 @@ version stays `1`. At 2000 ms version `2` adds a `checks` slot (the same change
 request, facet `checks`, a URL) as a second tab in `pr-view`, and the reviewer
 resolves to `#gen-2`. The facts expire together at 32 000 ms.
 
-`crates/andamento-core/tests/suggested_layout.rs` replays it through `Sidebar`
+`crates/wheelhouse-core/tests/suggested_layout.rs` replays it through `Sidebar`
 and parses each step. It also replays `scripted-roll.jsonl` to show a standing
 role's primary facts parse as a one-slot layout through ready, held and a new
 generation.

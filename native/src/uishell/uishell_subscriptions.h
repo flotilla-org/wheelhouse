@@ -1,7 +1,7 @@
 #ifndef UISHELL_SUBSCRIPTIONS_H
 #define UISHELL_SUBSCRIPTIONS_H
 
-#include "andamento.h"
+#include "wheelhouse.h"
 #include "ingress.h"
 
 //- The Dashboard's provider subscriptions (uishell_subscriptions.c).
@@ -62,7 +62,7 @@ internal UIShell_Subscription *uishell_subscription_from_text(String8 text);
 internal void uishell_subscription_remove(UIShell_Subscription *subscription);
 internal void uishell_subscriptions_poll(void);
 internal void uishell_subscription_set_stale(UIShell_Subscription *subscription, B32 stale);
-internal void uishell_subscriptions_prepare_core(Andamento *core);
+internal void uishell_subscriptions_prepare_core(WheelhouseCore *core);
 internal String8 uishell_subscription_label(Arena *arena, String8 provider);
 
 #endif // UISHELL_SUBSCRIPTIONS_H

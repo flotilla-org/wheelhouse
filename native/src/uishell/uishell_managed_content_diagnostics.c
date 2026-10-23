@@ -51,13 +51,13 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     "template \"roles\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Roles\"; }\n"
     "placement \"tree\" { for \"role\" kind=\"role\" { apply-template \"role/entry\"; }; }\n"
     "template \"role/entry\" { field \"label\" key=\"entity.id\"; }\n");
-  AndamentoFact facts[3] = {0};
+  WheelhouseFact facts[3] = {0};
   char *keys[] = {"workspace.primary.state", "workspace.primary.target", "action.primary.recipe"};
   char *values[] = {"ready", "one", "printf A; read answer"};
   for(U32 i = 0; i < 3; i++)
   {
     facts[i].key = uishell_sidebar_text(str8_cstring(keys[i]));
-    facts[i].kind = ANDAMENTO_FACT_TEXT;
+    facts[i].kind = WHEELHOUSE_FACT_TEXT;
     facts[i].text = uishell_sidebar_text(str8_cstring(values[i]));
   }
 
@@ -65,22 +65,22 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   // `primary` Slot, keyed as the workspace store keys it.
   UIShell_SidebarState state = {0};
   char *error = 0;
-  state.core = andamento_create(roles.str, roles.size, &error);
+  state.core = wheelhouse_create(roles.str, roles.size, &error);
   ManagedCheck(state.core != 0, "shared core initializes");
-  andamento_string_free(error);
+  wheelhouse_string_free(error);
   error = 0;
-  andamento_apply_entity(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")), uishell_sidebar_text(str8_lit("p/governor")),
+  wheelhouse_apply_entity(state.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")), uishell_sidebar_text(str8_lit("p/governor")),
     uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
-  andamento_string_free(error);
+  wheelhouse_string_free(error);
   uishell_sidebar_refresh(&state);
-  size_t activate = ANDAMENTO_NONE;
-  for(U64 i = 0; state.snapshot && i < andamento_snapshot_node_count(state.snapshot); i++)
+  size_t activate = WHEELHOUSE_NONE;
+  for(U64 i = 0; state.snapshot && i < wheelhouse_snapshot_node_count(state.snapshot); i++)
   {
-    AndamentoNode node = {0};
-    if(andamento_snapshot_node(state.snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
+    WheelhouseNode node = {0};
+    if(wheelhouse_snapshot_node(state.snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
     { activate = node.activate; }
   }
-  ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(state.core, state.snapshot, activate, 0), "role entry dispatches its opening");
+  ManagedCheck(activate != WHEELHOUSE_NONE && wheelhouse_dispatch(state.core, state.snapshot, activate, 0), "role entry dispatches its opening");
   // As a frame does, the window's workspaces are observed before anything
   // plans them: a Slot is of a workspace Andamento knows.
   {
@@ -118,10 +118,10 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   facts[1].text = uishell_sidebar_text(str8_lit("two"));
   facts[2].text = uishell_sidebar_text(str8_lit("printf B; read answer"));
   error = 0;
-  B32 applied = andamento_apply_entity(state.core, 1, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
+  B32 applied = wheelhouse_apply_entity(state.core, 1, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
     uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
   ManagedCheck(applied, "desired replacement facts accepted");
-  andamento_string_free(error);
+  wheelhouse_string_free(error);
   uishell_sidebar_reconcile_workspace(&state, workspace);
   uishell_managed_diagnostic_frame(ws, view);
   ManagedCheck(uishell_managed_diagnostic_marker(tv->session, 'B'), "same terminal view now receives B via its slot plan");
@@ -138,16 +138,16 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   ManagedCheck(tv->session == unchanged, "repeated observation does not restart terminal");
   facts[0].text = uishell_sidebar_text(str8_lit("held"));
   error = 0;
-  andamento_apply_entity(state.core, 2, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
+  wheelhouse_apply_entity(state.core, 2, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
     uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 1, &error);
-  andamento_string_free(error);
+  wheelhouse_string_free(error);
   uishell_sidebar_reconcile_workspace(&state, workspace);
   ManagedCheck(tv->session == unchanged, "explicit held state retains existing content");
   facts[0].text = uishell_sidebar_text(str8_lit("ready"));
   error = 0;
-  andamento_apply_entity(state.core, 3, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
+  wheelhouse_apply_entity(state.core, 3, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
     uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
-  andamento_string_free(error);
+  wheelhouse_string_free(error);
   uishell_sidebar_reconcile_workspace(&state, workspace);
   ManagedCheck(tv->session == unchanged, "unchanged resolution after held interval does not restart");
   // A daemon-backed terminal is never replaced in place: it stays beside the
@@ -158,9 +158,9 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     facts[1].text = uishell_sidebar_text(str8_lit("three"));
     facts[2].text = uishell_sidebar_text(str8_lit("printf D; read answer"));
     error = 0;
-    andamento_apply_entity(state.core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
+    wheelhouse_apply_entity(state.core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
       uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
-    andamento_string_free(error);
+    wheelhouse_string_free(error);
     uishell_sidebar_reconcile_workspace(&state, workspace);
     ManagedCheck(tv->session == unchanged && str8_match(rd_expr_from_cfg(view), str8_lit("printf B; read answer"), 0) &&
                  str8_match(rd_cfg_setting_child(view, str8_lit("managed_target"))->first->string, str8_lit("two"), 0) &&
@@ -168,7 +168,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
                  "daemon-backed primary view is kept as the previous instance, not replaced");
     cfg_node_release(rd_state->cfg, daemon);
   }
-  andamento_destroy(state.core);
+  wheelhouse_destroy(state.core);
   state.core = 0;
   // Gone before the role opens again: a workspace of the same subject would
   // be found and focused rather than opened.
@@ -181,29 +181,29 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     String8 config = roles;
     UIShell_SidebarState opened = {0};
     error = 0;
-    opened.core = andamento_create(config.str, config.size, &error);
-    andamento_string_free(error);
+    opened.core = wheelhouse_create(config.str, config.size, &error);
+    wheelhouse_string_free(error);
     ManagedCheck(opened.core != 0, "role sidebar core initializes");
     values[1] = "two";
     values[2] = "printf C; read answer";
     facts[0].text = uishell_sidebar_text(str8_lit("ready"));
     for(U32 i = 1; i < 3; i++) { facts[i].text = uishell_sidebar_text(str8_cstring(values[i])); }
     error = 0;
-    andamento_apply_entity(opened.core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
+    wheelhouse_apply_entity(opened.core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
       uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
-    andamento_string_free(error);
+    wheelhouse_string_free(error);
     error = 0;
-    AndamentoSnapshot *snapshot = andamento_snapshot_acquire(opened.core, &error);
-    andamento_string_free(error);
-    size_t activate = ANDAMENTO_NONE;
-    for(U64 i = 0; snapshot && i < andamento_snapshot_node_count(snapshot); i++)
+    WheelhouseSnapshot *snapshot = wheelhouse_snapshot_acquire(opened.core, &error);
+    wheelhouse_string_free(error);
+    size_t activate = WHEELHOUSE_NONE;
+    for(U64 i = 0; snapshot && i < wheelhouse_snapshot_node_count(snapshot); i++)
     {
-      AndamentoNode node = {0};
-      if(andamento_snapshot_node(snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
+      WheelhouseNode node = {0};
+      if(wheelhouse_snapshot_node(snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
       { activate = node.activate; }
     }
-    ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(opened.core, snapshot, activate, 0), "role entry dispatches its opening");
-    andamento_snapshot_release(snapshot);
+    ManagedCheck(activate != WHEELHOUSE_NONE && wheelhouse_dispatch(opened.core, snapshot, activate, 0), "role entry dispatches its opening");
+    wheelhouse_snapshot_release(snapshot);
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(&opened, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
@@ -218,13 +218,13 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     // As the workspace store keys it, its first plan finds it current.
     rd_view_rekey(role_view, str8_lit("primary"));
     uishell_sidebar_reconcile_workspace(&opened, role_workspace);
-    AndamentoSlotContent *plan = andamento_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(role_workspace)),
+    WheelhouseSlotContent *plan = wheelhouse_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(role_workspace)),
       uishell_sidebar_text(str8_lit("primary")), uishell_sidebar_text(cfg_node_child_from_string(role_view, str8_lit("applied"))->first->string), 0);
-    ManagedCheck(plan && plan->state == ANDAMENTO_CONTENT_CURRENT &&
+    ManagedCheck(plan && plan->state == WHEELHOUSE_CONTENT_CURRENT &&
                  str8_match(rd_expr_from_cfg(role_view), str8_lit("printf C; read answer"), 0),
                  "first plan for freshly opened content is current, without restarting it");
-    andamento_slot_plan_free(plan);
-    andamento_destroy(opened.core);
+    wheelhouse_slot_plan_free(plan);
+    wheelhouse_destroy(opened.core);
     cfg_node_release(rd_state->cfg, role_workspace);
   }
   // Producer worktrees use the ordinary recipe/cwd path without opting into
@@ -235,27 +235,27 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
       "template \"worktree/title\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Git\"; }\n"
       "placement \"git\" { for \"worktree\" kind=\"worktree\" { field \"label\" key=\"entity.id\"; }; }\n");
     UIShell_SidebarState opened = {0};
-    opened.core = andamento_create(config.str, config.size, 0);
-    AndamentoFact producer[2] = {0};
+    opened.core = wheelhouse_create(config.str, config.size, 0);
+    WheelhouseFact producer[2] = {0};
     producer[0].key = uishell_sidebar_text(str8_lit("git.root"));
-    producer[0].kind = ANDAMENTO_FACT_TEXT;
+    producer[0].kind = WHEELHOUSE_FACT_TEXT;
     producer[0].text = uishell_sidebar_text(str8_lit("/tmp"));
     producer[1].key = uishell_sidebar_text(str8_lit("action.primary.recipe"));
-    producer[1].kind = ANDAMENTO_FACT_TEXT;
+    producer[1].kind = WHEELHOUSE_FACT_TEXT;
     // /tmp may be a symlink (macOS); compare directory identity, not spelling.
     producer[1].text = uishell_sidebar_text(str8_lit("test \"$PWD\" -ef /tmp && printf W; read answer"));
-    ManagedCheck(andamento_apply_entity(opened.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("worktree")),
+    ManagedCheck(wheelhouse_apply_entity(opened.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("worktree")),
       uishell_sidebar_text(str8_lit("producer-worktree")), uishell_sidebar_text(str8_lit("fixture")), producer, 2, 0),
       "producer recipe and root accepted without managed state");
     uishell_sidebar_refresh(&opened);
-    size_t activate = ANDAMENTO_NONE;
-    for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
+    size_t activate = WHEELHOUSE_NONE;
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(opened.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      WheelhouseNode node = {0}; wheelhouse_snapshot_node(opened.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("producer-worktree"), 0))
-      { ManagedCheck(node.state == ANDAMENTO_LATENT, "producer worktree starts latent"); activate = node.activate; }
+      { ManagedCheck(node.state == WHEELHOUSE_LATENT, "producer worktree starts latent"); activate = node.activate; }
     }
-    ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(opened.core, opened.snapshot, activate, 0),
+    ManagedCheck(activate != WHEELHOUSE_NONE && wheelhouse_dispatch(opened.core, opened.snapshot, activate, 0),
                  "producer worktree activation dispatches");
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(&opened, &split);
@@ -282,14 +282,14 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     U64 workspace_count = split.inventory.count;
     uishell_sidebar_observe(&opened, &split);
     B32 matched = 0;
-    for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(opened.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      WheelhouseNode node = {0}; wheelhouse_snapshot_node(opened.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("producer-worktree"), 0))
-      { matched = node.state == ANDAMENTO_LIVE && uishell_sidebar_node_cfg(&node) == existing->id; activate = node.activate; }
+      { matched = node.state == WHEELHOUSE_LIVE && uishell_sidebar_node_cfg(&node) == existing->id; activate = node.activate; }
     }
     ManagedCheck(matched, "existing terminal directory marks producer worktree open");
-    ManagedCheck(andamento_dispatch(opened.core, opened.snapshot, activate, 0), "matched worktree dispatches focus");
+    ManagedCheck(wheelhouse_dispatch(opened.core, opened.snapshot, activate, 0), "matched worktree dispatches focus");
     uishell_sidebar_effects(&opened, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     ManagedCheck(split.inventory.count == workspace_count && ws->root_controlled_split_selected_workspace_id == existing->id,
@@ -301,11 +301,11 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     uishell_managed_set(existing_view, str8_lit("cwd"), str8_lit("/"));
     uishell_sidebar_observe(&opened, &split);
     B32 latent = 0;
-    for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(opened.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      WheelhouseNode node = {0}; wheelhouse_snapshot_node(opened.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("producer-worktree"), 0))
-      { latent = node.state == ANDAMENTO_LATENT; if(!latent) { fprintf(stderr, "Unexpected worktree state=%u workspace=%lu after cwd change (existing=%lu)\n", node.state, uishell_sidebar_node_cfg(&node), existing->id); } }
+      { latent = node.state == WHEELHOUSE_LATENT; if(!latent) { fprintf(stderr, "Unexpected worktree state=%u workspace=%lu after cwd change (existing=%lu)\n", node.state, uishell_sidebar_node_cfg(&node), existing->id); } }
     }
     ManagedCheck(latent, "directory change removes derived open association");
     cfg_node_release(rd_state->cfg, existing);
@@ -319,7 +319,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
       "template \"worktree/title\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Git\"; }\n"
       "placement \"git\" { for \"worktree\" kind=\"worktree\" { field \"label\" key=\"entity.id\"; }; }\n");
     UIShell_SidebarState opened = {0};
-    opened.core = andamento_create(config.str, config.size, 0);
+    opened.core = wheelhouse_create(config.str, config.size, 0);
     char *direct[][2] =
     {
       // Managed primary content, as a workspace subject's provider publishes it.
@@ -329,24 +329,24 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
       {"action.primary.direct.runtime_root", "/var/lib/cleat"}, {"action.primary.direct.daemon", "work"},
       {"action.primary.direct.session", "crew-7"},
     };
-    AndamentoFact producer[ArrayCount(direct)] = {0};
+    WheelhouseFact producer[ArrayCount(direct)] = {0};
     for(U64 i = 0; i < ArrayCount(direct); i++)
     {
       producer[i].key = uishell_sidebar_text(str8_cstring(direct[i][0]));
-      producer[i].kind = ANDAMENTO_FACT_TEXT;
+      producer[i].kind = WHEELHOUSE_FACT_TEXT;
       producer[i].text = uishell_sidebar_text(str8_cstring(direct[i][1]));
     }
-    ManagedCheck(andamento_apply_entity(opened.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("worktree")),
+    ManagedCheck(wheelhouse_apply_entity(opened.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("worktree")),
       uishell_sidebar_text(str8_lit("direct-worktree")), uishell_sidebar_text(str8_lit("fixture")), producer, ArrayCount(producer), 0),
       "direct endpoint facts accepted");
     uishell_sidebar_refresh(&opened);
-    size_t activate = ANDAMENTO_NONE;
-    for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
+    size_t activate = WHEELHOUSE_NONE;
+    for(U64 i = 0; i < wheelhouse_snapshot_node_count(opened.snapshot); i++)
     {
-      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      WheelhouseNode node = {0}; wheelhouse_snapshot_node(opened.snapshot, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("direct-worktree"), 0)) { activate = node.activate; }
     }
-    ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(opened.core, opened.snapshot, activate, 0), "direct worktree activation dispatches");
+    ManagedCheck(activate != WHEELHOUSE_NONE && wheelhouse_dispatch(opened.core, opened.snapshot, activate, 0), "direct worktree activation dispatches");
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(&opened, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
@@ -373,17 +373,17 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     String8 taken[UISHELL_STORE_TAKEN_MAX];
     U64 taken_count = 0;
     ManagedCheck(uishell_store_spec_from_view(scratch.arena, direct_view, &spec, taken, &taken_count) &&
-                 spec.content == ANDAMENTO_SLOT_CLEAT_SESSION && str8_match(spec.cleat_session, str8_lit("crew-7"), 0),
+                 spec.content == WHEELHOUSE_SLOT_CLEAT_SESSION && str8_match(spec.cleat_session, str8_lit("crew-7"), 0),
                  "the endpoint view's spec reads back as a Cleat session");
     UIShell_ViewSpec typo = spec;
     typo.cleat_transport = str8_lit("ssh ");
     ManagedCheck(uishell_store_unshown(scratch.arena, str8_lit("primary"), &spec).size == 0 &&
                  uishell_store_unshown(scratch.arena, str8_lit("primary"), &typo).size != 0,
                  "an unknown endpoint transport is unshown, never guessed at");
-    AndamentoSlotContent *plan = andamento_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(direct_workspace)),
+    WheelhouseSlotContent *plan = wheelhouse_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(direct_workspace)),
       uishell_sidebar_text(str8_lit("primary")), uishell_sidebar_text(rd_cfg_setting_child(direct_view, str8_lit("applied"))->first->string), 0);
-    ManagedCheck(plan && plan->state == ANDAMENTO_CONTENT_CURRENT, "the next plan finds the endpoint view current");
-    andamento_slot_plan_free(plan);
+    ManagedCheck(plan && plan->state == WHEELHOUSE_CONTENT_CURRENT, "the next plan finds the endpoint view current");
+    wheelhouse_slot_plan_free(plan);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_observe(&opened, &split);
     cfg_node_release(rd_state->cfg, direct_workspace);
