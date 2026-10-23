@@ -169,6 +169,55 @@ item.
 The first cut has the subject, related workspaces, views and linked items. The
 layouts area fills in once a subject has more than one layout.
 
+### The first cut
+
+Settled for #122 on 2026-10-23 (`src/uishell/uishell_tool_strip.c`):
+
+- **Where:** a column of icons, about 3.5 ems wide, between the sidebar and the
+  Workspace Region. It shows on every workspace, with or without a subject,
+  and stays while the sidebar is collapsed. *Toggle Tool Strip* (Window menu
+  and palette) hides it in every window: it is the user setting
+  `show_tool_strip`.
+- **Section sizes** are counted in items and global, in the user settings
+  `tool_strip_subject_size`, `_layouts_size`, `_views_size` and
+  `_related_size` (defaults 1, 2, 6 and 4). The linked items take the rest.
+  Dragging a divider resizes the section above it; double-clicking it restores
+  the default. A section with more items than fit scrolls by whole items.
+- **Icons only:** each item has a tooltip, or its hover card, which opens beside
+  the strip, level with the item.
+- **Subject:** a click reveals its row in the sidebar, opening the sidebar if
+  it's collapsed.
+- **Layouts:** a layout's `glyph`, else its name's first letter, with the
+  current one marked. A click shows that layout. The right-click menu has
+  *Show this layout*, *Show the default layout* and, for a rearranged current
+  layout, *Reset layout*. Later a layout's icon could default to a small
+  picture of its shape (its slots and their proportions).
+- **Views:** every slot of the workspace, in slot order, with an icon by role.
+  A placed View is drawn normally, and marked when its tab is selected; a click
+  selects its tab. An unplaced one is drawn weak, and a click shows it in the
+  panel its layout's matchers would give it (`AndamentoNote.panel`). Closing
+  it from a panel it was alone in closes that panel too, collapsing the
+  layout (#445). Dragging
+  a View into place waits for creation drags into the Workspace Region, which
+  the docking checker refuses today. Repeatable views will be **view
+  factories**: a factory opens another View each time.
+- **Related workspaces and linked items** are what the subject kind's `strip`
+  lists (Andamento's `docs/sidebar-design/tool-strip.md`):
+  - vessel: its project, then its convoy;
+  - convoy: its project, then its vessels in plan order;
+  - project: its governors, then its convoys that haven't landed;
+  - no siblings.
+
+  The linked items are a convoy's PRs, then its issues. A vessel links none
+  until its convoy's PRs and issues reach it: they aren't its own facts, and a
+  strip loop can't follow the convoy to them. A project links none yet. A
+  workspace not open yet is drawn weak. A click runs the item's primary
+  action, which opens a workspace or switches to it, or opens a URL. Its hover
+  card has the other actions. Whether ancestors and children need telling
+  apart (a vessel's project and convoy are above it, a convoy's vessels below)
+  is for trying out.
+- The tab strip's `+` keeps *Show …* until the strip has proved itself.
+
 The strip is designed to be orientation independent, so it can later go on any
 edge of its section of the Controlled Split. Once it works well, the tab strip's
 `+` retires; the tab strip itself is due some work anyway (easy to hide,

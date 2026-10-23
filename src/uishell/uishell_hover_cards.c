@@ -1100,10 +1100,12 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     // Near starts just left of where the pointer was when the card opened, so
     // the card sits under it whichever box (label, icon, chip, ghost row) was
     // hovered; Outside starts beyond the sidebar's edge.
+    // A tool strip item's card opens beside the strip, level with the item.
+    B32 beside = slot || contains_2f32(state->strip_rect, center_2f32(card->source_rect));
     F32 x = outside ? state->rect.x1+8 : card->anchor_x-UIShell_HoverCardNearGapPT;
-    if(slot) { x = card->source_rect.x1+8; }
+    if(beside) { x = card->source_rect.x1+8; }
     Vec2F32 target = v2f32(Clamp(window.x0+10, x, window.x1-width-10),
-                          uishell_sidebar_card_target_y(card, height, window, !outside && slot == 0));
+                          uishell_sidebar_card_target_y(card, height, window, !outside && !beside));
     F32 t = Clamp(0.f, (F32)(now-card->changed_at)/UIShell_HoverCardTransitionUS, 1.f), glide = 1-(1-t)*(1-t)*(1-t);
     if(!card->previous.id.len) { card->glide_from = target; }
     Vec2F32 pos = floating || card->moving ? card->rect.p0 : mix_2f32(card->glide_from, target, glide);

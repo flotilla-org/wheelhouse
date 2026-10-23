@@ -77,6 +77,8 @@ typedef struct UIShell_WorkspaceLayouts UIShell_WorkspaceLayouts;
 struct UIShell_WorkspaceLayouts
 {
   String8 *names;
+  // Each one's `glyph`, empty for none.
+  String8 *glyphs;
   U64 count;
   U64 current;
   U64 fallback;
@@ -91,6 +93,49 @@ internal void uishell_store_reset_layout(CFG_Node *owner);
 // The slots the layout leaves out, and showing one in `panel`.
 internal String8Array uishell_store_unplaced(Arena *arena, CFG_Node *owner);
 internal String8 uishell_store_slot_title(String8 key);
+// `panel` 0 shows it where its layout's matchers would (its home panel).
 internal void uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key);
+
+// The tool strip's Views section (uishell_workspace_store.c, "Tool strip"):
+// the workspace's slots in slot order, each with its View while placed.
+typedef struct UIShell_StripView UIShell_StripView;
+struct UIShell_StripView
+{
+  String8 key;
+  String8 role;
+  String8 presentation;
+  CFG_Node *view;
+};
+
+typedef struct UIShell_StripViews UIShell_StripViews;
+struct UIShell_StripViews
+{
+  UIShell_StripView *v;
+  U64 count;
+};
+
+internal UIShell_StripViews uishell_store_strip_views(Arena *arena, CFG_Node *owner);
+
+// The tool strip's related workspaces and linked items: what the subject
+// kind's `strip` lists, in order (docs/sidebar-design/tool-strip.md in
+// Andamento). Entities are copied into `arena`.
+typedef struct UIShell_StripEntry UIShell_StripEntry;
+struct UIShell_StripEntry
+{
+  AndamentoEntity entity;
+  // ANDAMENTO_STRIP_*.
+  U32 section;
+};
+
+typedef struct UIShell_StripEntries UIShell_StripEntries;
+struct UIShell_StripEntries
+{
+  UIShell_StripEntry *v;
+  U64 count;
+};
+
+internal UIShell_StripEntries uishell_store_strip_entries(Arena *arena, CFG_Node *owner);
+// The subject of workspace `owner`, copied into `arena`; zero for none.
+internal AndamentoEntity uishell_store_subject(Arena *arena, CFG_Node *owner);
 
 #endif // UISHELL_WORKSPACE_STORE_H

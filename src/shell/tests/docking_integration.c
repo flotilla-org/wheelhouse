@@ -89,6 +89,16 @@ integration_width(RD_PanelAddress destination, Dir2 dir)
   scratch_end(scratch);
   return width;
 }
+// The Workspace Region as rd_window_frame lays it out: the window's area less
+// its edge inset and the tool strip (this fixture has no sidebar).
+internal Rng2F32
+integration_area(RD_WindowState *ws, F32 font_size)
+{
+  Rng2F32 area = pad_2f32(integration_rect, -rd_window_edge_inset_px(ws));
+  area.x0 = Min(area.x1, area.x0 + uishell_tool_strip_width_px(font_size));
+  return area;
+}
+
 internal B32
 integration_drag_site(RD_WindowState *ws, CFG_Node *source, RD_PanelAddress destination_panel, Dir2 dir, F32 *rendered_width)
 {
@@ -123,7 +133,7 @@ integration_drag_site(RD_WindowState *ws, CFG_Node *source, RD_PanelAddress dest
     ui_state->mouse = v2f32(250, 250);
     UI_FontSize(layout_font_size) UI_Font(rd_font_from_slot(RD_FontSlot_Main))
     {
-      Rng2F32 area = pad_2f32(integration_rect, -rd_window_edge_inset_px(ws));
+      Rng2F32 area = integration_area(ws, layout_font_size);
       ui_state->mouse = center_2f32(rd_target_rect_from_panel_node(area, mount.panel_tree.root, target));
       rd_panel_area_ui(scratch, area, integration_rect, ws, &mount, 1, 0, 0, 0, 0);
     }
@@ -168,7 +178,7 @@ integration_panel_frame(RD_WindowState *ws, CFG_Node *window, RD_PanelAddress le
   ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
   ui_state->mouse = mouse;
   UI_FontSize(layout_font_size) UI_Font(rd_font_from_slot(RD_FontSlot_Main))
-  { rd_panel_area_ui(scratch, pad_2f32(integration_rect, -rd_window_edge_inset_px(ws)), integration_rect, ws, &mount, 1, 0, 0, 0, 0); }
+  { rd_panel_area_ui(scratch, integration_area(ws, layout_font_size), integration_rect, ws, &mount, 1, 0, 0, 0, 0); }
   ui_end_build();
   UI_Box *body = ui_box_from_key(ui_key_from_stringf(rd_panel_ui_key(leaf), "panel_box"));
   scratch_end(scratch);
@@ -392,16 +402,16 @@ entry_point(CmdLine *cmdline)
     // leaving 5/12. Cross-axis bisection fills the root's width (Y), or half (X).
     F32 fraction = dir == Dir2_Invalid ? 1.f :
       axis2_from_dir2(dir) == Axis2_X ? (axis == Axis2_X ? 0.416666f : 0.5f) : 1.f;
-    F32 inset = 0;
+    F32 inset = 0, strip = 0;
     UIShell_RegsScope(.window = window->id, .panel = rd_nil_panel_address, .view = rd_nil_view_address, .tab = rd_nil_view_address)
-    { inset = rd_panel_inset_px(rd_font_size()); }
+    { inset = rd_panel_inset_px(rd_font_size()); strip = uishell_tool_strip_width_px(rd_font_size()); }
     for(U32 pixels = 100; pixels < 1600; pixels++)
     {
       integration_rect.x1 = pixels;
       F32 edge = rd_window_edge_inset_px(ws);
-      F32 start = edge;
-      if(dir == Dir2_Right) { start += (pixels-2*edge)*(1-fraction); }
-      F32 end = start+(pixels-2*edge)*fraction;
+      F32 start = edge+strip, span = pixels-2*edge-strip;
+      if(dir == Dir2_Right) { start += span*(1-fraction); }
+      F32 end = start+span*fraction;
       if(Max(0.f, round_f32(round_f32(end)-inset)-round_f32(round_f32(start)+inset)) == boundary) { break; }
     }
     B32 last_site = integration_drag_site(ws, source, destination, dir, 0);
@@ -634,7 +644,10 @@ entry_point(CmdLine *cmdline)
     RD_PanelAddress right = integration_panel(panels, 0.7f);
     integration_view(left, "terminal");
     integration_view(right, "terminal");
-    Rng2F32 area = pad_2f32(integration_rect, -rd_window_edge_inset_px(ws));
+    F32 layout_font_size = 0;
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = rd_nil_panel_address, .view = rd_nil_view_address, .tab = rd_nil_view_address)
+    { layout_font_size = rd_font_size(); }
+    Rng2F32 area = integration_area(ws, layout_font_size);
     F32 total = dim_2f32(area).x;
     Vec2F32 grab = v2f32(area.x0+0.3f*total, center_2f32(area).y);
     for(S32 cancel = 1; cancel >= 0; cancel--)

@@ -61,6 +61,7 @@ uishell_shell_window_menu_specs(void)
     UIShell_MenuCmd("open_window", 'w'),
     UIShell_MenuCmd("close_window", 'c'),
     UIShell_MenuCmd("toggle_fullscreen", 'f'),
+    UIShell_MenuCmd("toggle_tool_strip", 't'),
     UIShell_MenuSep(),
     UIShell_MenuCmd("workspace_settings", 'p'),
     UIShell_MenuCmd("window_settings", 's'),
@@ -1644,6 +1645,15 @@ uishell_dispatch_window_command(String8 name)
       cfg_node_release(rd_state->cfg, wcfg);
     }
     scratch_end(scratch);
+  }
+  else if(str8_match(name, str8_lit("toggle_tool_strip"), 0))
+  {
+    // A user setting: every window shows the strip, or none does.
+    CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    CFG_Node *show = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("show_tool_strip"));
+    cfg_node_new_replace(rd_state->cfg, show, rd_setting_b32_from_name(str8_lit("show_tool_strip")) ? str8_lit("0") : str8_lit("1"));
+    for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
+    { ws->window_layout_reset = 1; }
   }
   else if(str8_match(name, str8_lit("toggle_fullscreen"), 0))
   {

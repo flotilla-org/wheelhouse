@@ -5022,15 +5022,28 @@ uishell_controlled_split_control_rect(UIShell_ControlledSplit *split, Rng2F32 re
   return result;
 }
 
+// The tool strip at the workspace's left edge (uishell_tool_strip.c). A user
+// setting: every window shows it, or none does.
+internal F32
+uishell_tool_strip_width_px(F32 font_size)
+{
+  return rd_setting_b32_from_name(str8_lit("show_tool_strip")) ? ceil_f32(font_size*3.5f) : 0.f;
+}
+
+// The strip, between the sidebar and the workspace; empty when it's hidden.
+internal Rng2F32
+uishell_tool_strip_rect(UIShell_ControlledSplit *split, Rng2F32 rect)
+{
+  F32 control_width = uishell_controlled_split_control_width_px(split, rect);
+  F32 x0 = rect.x0 + (control_width != 0 ? control_width + 1.f : 0.f);
+  return r2f32p(x0, rect.y0, Min(rect.x1, x0 + uishell_tool_strip_width_px(ui_top_font_size())), rect.y1);
+}
+
 internal Rng2F32
 uishell_controlled_split_workspace_rect(UIShell_ControlledSplit *split, Rng2F32 rect)
 {
-  F32 control_width = uishell_controlled_split_control_width_px(split, rect);
   Rng2F32 result = rect;
-  if(control_width != 0)
-  {
-    result.x0 += control_width + 1.f;
-  }
+  result.x0 = uishell_tool_strip_rect(split, rect).x1;
   return result;
 }
 
@@ -5711,7 +5724,10 @@ rd_dock_geometry_from_mount(UIShell_WorkspaceMount *mount)
     RD_DockHostKind kind = rd_dock_host_kind_from_panel_owner(mount->owner);
     if(kind == RD_DockHostKind_Sidebar) { result.area.x1 = result.area.x0+control_width; }
     else if(kind == RD_DockHostKind_WorkspaceRegion)
-    { if(control_width != 0) { result.area.x0 += control_width+1.f; } }
+    {
+      if(control_width != 0) { result.area.x0 += control_width+1.f; }
+      result.area.x0 = Min(result.area.x1, result.area.x0 + uishell_tool_strip_width_px(font_size));
+    }
     // Any other host has no rendered body to measure. Zero-minimum Views
     // remain accepted; constrained Views require a rendered allocation.
     else { result.area.x1 = result.area.x0; }
@@ -7651,8 +7667,10 @@ rd_window_frame(void)
     content_rect.y0 = top_bar_rect.y1;
     Rng2F32 control_surface_rect = uishell_controlled_split_control_rect(&root_controlled_split, content_rect);
     F32 control_surface_border = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
-    uishell_sidebar_cards_ui(ws, dim_2f32(control_surface_rect).x > control_surface_border &&
-                                 dim_2f32(control_surface_rect).y > control_surface_border);
+    // The tool strip is a source too: its cards stay while the sidebar is collapsed.
+    uishell_sidebar_cards_ui(ws, (dim_2f32(control_surface_rect).x > control_surface_border &&
+                                  dim_2f32(control_surface_rect).y > control_surface_border) ||
+                                 uishell_tool_strip_width_px(ui_top_font_size()) > 0);
 
     
     ////////////////////////////
@@ -9377,6 +9395,7 @@ rd_window_frame(void)
     access_close(workspace_theme_access);
 
     uishell_control_surface_ui(control_surface_rect, &root_controlled_split);
+    uishell_tool_strip_ui(ws, uishell_tool_strip_rect(&root_controlled_split, content_rect), &root_controlled_split);
     B32 control_split_is_changing = uishell_controlled_split_boundary_ui(&root_controlled_split, content_rect);
     if(control_split_is_changing)
     {
@@ -10671,7 +10690,7 @@ rd_window_frame(void)
   ws->frames_alive += 1;
   ws->last_window_rect = wm_client_rect_from_window(ws->os);
   uishell_sidebar_store_frame_end(ws);
-  
+
   ProfEnd();
   scratch_end(scratch);
 }
