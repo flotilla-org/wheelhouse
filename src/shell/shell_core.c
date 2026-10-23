@@ -10159,8 +10159,19 @@ rd_window_frame(void)
           if(is_hot)
           {
             // The same visible step on light and dark backgrounds; upstream's
-            // fixed 1.5% is invisible on light ones.
-            Vec4F32 under = mix_4f32(base_background_color, box_background_color, box_background_color.w);
+            // fixed 1.5% is invisible on light ones. Under a see-through box
+            // is the nearest background drawn behind it (the title bar's, a
+            // menu's), not the window's.
+            Vec4F32 behind = base_background_color;
+            for(UI_Box *p = box->parent; !ui_box_is_nil(p); p = p->parent)
+            {
+              if(p->flags & UI_BoxFlag_DrawBackground && p->background_color.w > 0)
+              {
+                behind = mix_4f32(base_background_color, p->background_color, p->background_color.w);
+                break;
+              }
+            }
+            Vec4F32 under = mix_4f32(behind, box_background_color, box_background_color.w);
             Vec4F32 color = hover_color;
             color.w *= rd_hover_alpha(hover_color, under, RD_HoverBrightnessStep);
             R_Rect2DInst *inst = dr_rect(pad_2f32(box_bg_rect, 1.f), v4f32(0, 0, 0, 0), 0, 0, border_softness*1.f);

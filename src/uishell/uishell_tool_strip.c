@@ -61,21 +61,30 @@ uishell_tool_strip_view_icon(UIShell_StripView *view)
   return rd_icon_kind_text_table[RD_IconKind_FileOutline];
 }
 
-// One item: a square-ish button at `rect` (relative to its section), with
-// `text` in the icon font or, for a layout's glyph, the main font.
+// One item: a flat button at `rect` (relative to its section, whose left
+// edge is the strip's), with `text` in the icon font or, for a layout's
+// glyph, the main font. It hovers as the title bar's buttons do. A `marked`
+// item (the chosen layout, the focused View) has an accent bar at the
+// strip's edge; a `weak` one (not shown, not open, not found) is dimmed.
 internal UI_Signal
-uishell_tool_strip_item(Rng2F32 rect, String8 text, B32 icon_font, B32 selected, B32 weak, UI_Key key)
+uishell_tool_strip_item(Rng2F32 rect, String8 text, B32 icon_font, B32 marked, B32 weak, UI_Key key)
 {
   UI_Signal sig = {0};
-  if(selected) { ui_set_next_background_color(uishell_sidebar_selection_fill(1)); }
   UI_Rect(rect) UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(ui_top_font_size()*0.25f)
-    RD_Font(icon_font ? RD_FontSlot_Icons : RD_FontSlot_Main) UI_TagF(weak ? "weak" : "")
+    RD_Font(icon_font ? RD_FontSlot_Icons : RD_FontSlot_Main) UI_TagF("implicit") UI_TagF(weak ? "weak" : "")
   {
-    UI_Box *box = ui_build_box_from_key(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|UI_BoxFlag_DrawHotEffects|
-                                        UI_BoxFlag_DrawActiveEffects|UI_BoxFlag_DisableTextTrunc|
-                                        (selected ? UI_BoxFlag_DrawBackground : 0), key);
+    UI_Box *box = ui_build_box_from_key(UI_BoxFlag_Clickable|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawText|
+                                        UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|
+                                        UI_BoxFlag_DisableTextTrunc, key);
     ui_box_equip_display_string(box, text);
     sig = ui_signal_from_box(box);
+  }
+  if(marked)
+  {
+    F32 inset = floor_f32(dim_2f32(rect).y*0.2f);
+    UI_Rect(r2f32p(0, rect.y0+inset, Max(2.f, floor_f32(ui_top_font_size()*0.25f)), rect.y1-inset))
+      UI_BackgroundColor(rd_accent_color()) UI_CornerRadius(1.f)
+    { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
   }
   return sig;
 }
@@ -280,8 +289,10 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
             UIShell_StripView *view = &views.v[i];
             B32 placed = view->view != &cfg_nil_node;
             RD_ViewAddress address = placed ? rd_view_address_from_cfg(view->view) : rd_nil_view_address;
-            B32 selected = placed && rd_view_is_selected(address);
-            UI_Signal sig = uishell_tool_strip_item(r, uishell_tool_strip_view_icon(view), 1, selected, !placed, key);
+            // Weak when not shown, plain when shown, marked when its tab has the focus.
+            B32 focused = placed && rd_view_is_selected(address) &&
+              rd_panel_address_match(rd_panel_from_view(address), ws->active_panel);
+            UI_Signal sig = uishell_tool_strip_item(r, uishell_tool_strip_view_icon(view), 1, focused, !placed, key);
             String8 title = uishell_store_slot_title(view->key);
             uishell_tool_strip_tooltip(sig, placed ? title : push_str8f(scratch.arena, "%S (not shown: click to show)", title));
             if(ui_clicked(sig))
