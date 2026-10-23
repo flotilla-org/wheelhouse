@@ -1,0 +1,101 @@
+name: Core
+
+# The Rust workspace: the sidebar core, its C ABI, frontends and the ingress
+# (Andamento's checks, brought over in #440). The native app's builds and
+# harnesses are in build.yml.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+      # tools/scenario is a workspace of its own.
+      - run: cargo fmt --check --manifest-path tools/scenario/Cargo.toml
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-clippy-
+      - run: cargo clippy --workspace --all-targets --locked
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+      - run: cargo test --workspace --locked
+
+  wasm:
+    name: Core on wasm
+    runs-on: ubuntu-latest
+    needs: fmt
+    # The Zellij plugin used to keep the core building for wasm; the web
+    # sidebar (#428) needs it to stay that way.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo check -p andamento-core --target wasm32-unknown-unknown --locked
+
+  header:
+    name: C header is generated
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cbindgen@0.29.4
+      - run: scripts/generate-header.sh --check
+
+  independent:
+    name: No Zellij or Flotilla crates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python3 scripts/check-independent-core.py

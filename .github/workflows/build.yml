@@ -22,9 +22,6 @@ env:
   # Jackstay main: ABI 0.17, the v3 track handshake (jackstay#119) with
   # affordances as a track.
   JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
-  # The tool strip (andamento#187, for #122), on #186's Cleat sessions: its
-  # merge commit. ABI 10.
-  ANDAMENTO_REV: 78bf15fdc4b36ea6fde896bd8fc6db9bd2e62032
 
 jobs:
   daily-driver:
@@ -82,12 +79,6 @@ jobs:
           repository: flotilla-org/jackstay
           ref: ${{ env.JACKSTAY_REV }}
           path: jackstay
-      - uses: actions/checkout@v4
-        with:
-          repository: flotilla-org/andamento
-          ref: ${{ env.ANDAMENTO_REV }}
-          path: andamento
-          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
@@ -125,7 +116,7 @@ jobs:
       - name: Build on Linux
         if: runner.os == 'Linux'
         # With CI set, native/build.sh also runs the headless harnesses against the
-        # real Andamento and Cleat libraries: docking validity and integration,
+        # real core (crates/andamento-ffi) and Cleat libraries: docking validity and integration,
         # and restart behaviour against golden logical-state snapshots
         # (tools/test-state-behaviour.py; goldens in native/src/uishell/tests/).
         run: bash native/build.sh wheelhouse
@@ -243,11 +234,11 @@ jobs:
         run: |
           host=$(rustc -vV | sed -n 's/^host: //p')
           if [ "$RUNNER_OS" = Windows ]; then
-            python tools/test-andamento-ingress.py "../andamento/target/$host/debug"
+            python tools/test-andamento-ingress.py "target/$host/debug"
           elif [ "$RUNNER_OS" = Linux ]; then
-            python3 tools/test-native-sidebar.py "../andamento/target/$host/debug/libandamento_ffi.so"
-            xvfb-run -a python3 tools/test-andamento-ingress.py "../andamento/target/$host/debug"
+            python3 tools/test-native-sidebar.py "target/$host/debug/libandamento_ffi.so"
+            xvfb-run -a python3 tools/test-andamento-ingress.py "target/$host/debug"
           else
-            python3 tools/test-native-sidebar.py "../andamento/target/$host/debug/libandamento_ffi.dylib"
-            python3 tools/test-andamento-ingress.py "../andamento/target/$host/debug"
+            python3 tools/test-native-sidebar.py "target/$host/debug/libandamento_ffi.dylib"
+            python3 tools/test-andamento-ingress.py "target/$host/debug"
           fi
