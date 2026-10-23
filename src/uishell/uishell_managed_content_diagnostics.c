@@ -311,6 +311,84 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     cfg_node_release(rd_state->cfg, existing);
     uishell_sidebar_release(&opened);
   }
+  // A subject publishing a direct Cleat endpoint (#104) opens its primary
+  // as a terminal of that session, not by running its command recipe.
+  {
+    String8 config = str8_lit(
+      "region \"git\" root-template=\"worktree/title\" form=\"compact\" placement=\"git\"\n"
+      "template \"worktree/title\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Git\"; }\n"
+      "placement \"git\" { for \"worktree\" kind=\"worktree\" { field \"label\" key=\"entity.id\"; }; }\n");
+    UIShell_SidebarState opened = {0};
+    opened.core = andamento_create(config.str, config.size, 0);
+    char *direct[][2] =
+    {
+      // Managed primary content, as a workspace subject's provider publishes it.
+      {"workspace.primary.state", "ready"}, {"workspace.primary.target", "crew-7@1"},
+      {"action.primary.recipe", "printf R; read answer"},
+      {"action.primary.direct.transport", "ssh"}, {"action.primary.direct.host", "crew@fleet-3"},
+      {"action.primary.direct.runtime_root", "/var/lib/cleat"}, {"action.primary.direct.daemon", "work"},
+      {"action.primary.direct.session", "crew-7"},
+    };
+    AndamentoFact producer[ArrayCount(direct)] = {0};
+    for(U64 i = 0; i < ArrayCount(direct); i++)
+    {
+      producer[i].key = uishell_sidebar_text(str8_cstring(direct[i][0]));
+      producer[i].kind = ANDAMENTO_FACT_TEXT;
+      producer[i].text = uishell_sidebar_text(str8_cstring(direct[i][1]));
+    }
+    ManagedCheck(andamento_apply_entity(opened.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("worktree")),
+      uishell_sidebar_text(str8_lit("direct-worktree")), uishell_sidebar_text(str8_lit("fixture")), producer, ArrayCount(producer), 0),
+      "direct endpoint facts accepted");
+    uishell_sidebar_refresh(&opened);
+    size_t activate = ANDAMENTO_NONE;
+    for(U64 i = 0; i < andamento_snapshot_node_count(opened.snapshot); i++)
+    {
+      AndamentoNode node = {0}; andamento_snapshot_node(opened.snapshot, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("direct-worktree"), 0)) { activate = node.activate; }
+    }
+    ManagedCheck(activate != ANDAMENTO_NONE && andamento_dispatch(opened.core, opened.snapshot, activate, 0), "direct worktree activation dispatches");
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_effects(&opened, &split);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(&opened, &split);
+    CFG_Node *direct_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
+    RD_PanelTree tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, direct_workspace).panel_tree;
+    CFG_Node *direct_view = tree.root->tabs.first ? rd_cfg_from_view(tree.root->tabs.first->v) : &cfg_nil_node;
+    ManagedCheck(rd_expr_from_cfg(direct_view).size == 0 && str8_match(rd_cfg_setting_child(direct_view, str8_lit("content_state"))->first->string, str8_lit("unavailable"), 0),
+                 "a direct primary opens waiting, not running the command recipe");
+    rd_view_rekey(direct_view, str8_lit("primary"));
+    uishell_sidebar_reconcile_workspace(&opened, direct_workspace);
+    tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, direct_workspace).panel_tree;
+    direct_view = tree.root->tabs.first ? rd_cfg_from_view(tree.root->tabs.first->v) : &cfg_nil_node;
+    char *expected[][2] =
+    {
+      {"cleat_transport", "ssh"}, {"cleat_host", "crew@fleet-3"}, {"cleat_runtime_root", "/var/lib/cleat"},
+      {"cleat_daemon", "work"}, {"cleat_session", "crew-7"},
+    };
+    B32 endpoint = str8_match(direct_view->string, str8_lit("terminal"), 0) && rd_expr_from_cfg(direct_view).size == 0;
+    for(U64 i = 0; i < ArrayCount(expected); i++)
+    { endpoint = endpoint && str8_match(rd_cfg_setting_child(direct_view, str8_cstring(expected[i][0]))->first->string, str8_cstring(expected[i][1]), 0); }
+    ManagedCheck(endpoint, "its first plan makes the primary a terminal of the endpoint's session");
+    UIShell_ViewSpec spec = {0};
+    String8 taken[UISHELL_STORE_TAKEN_MAX];
+    U64 taken_count = 0;
+    ManagedCheck(uishell_store_spec_from_view(scratch.arena, direct_view, &spec, taken, &taken_count) &&
+                 spec.content == ANDAMENTO_SLOT_CLEAT_SESSION && str8_match(spec.cleat_session, str8_lit("crew-7"), 0),
+                 "the endpoint view's spec reads back as a Cleat session");
+    UIShell_ViewSpec typo = spec;
+    typo.cleat_transport = str8_lit("ssh ");
+    ManagedCheck(uishell_store_unshown(scratch.arena, str8_lit("primary"), &spec).size == 0 &&
+                 uishell_store_unshown(scratch.arena, str8_lit("primary"), &typo).size != 0,
+                 "an unknown endpoint transport is unshown, never guessed at");
+    AndamentoSlotContent *plan = andamento_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(direct_workspace)),
+      uishell_sidebar_text(str8_lit("primary")), uishell_sidebar_text(rd_cfg_setting_child(direct_view, str8_lit("applied"))->first->string), 0);
+    ManagedCheck(plan && plan->state == ANDAMENTO_CONTENT_CURRENT, "the next plan finds the endpoint view current");
+    andamento_slot_plan_free(plan);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(&opened, &split);
+    cfg_node_release(rd_state->cfg, direct_workspace);
+    uishell_sidebar_release(&opened);
+  }
   ui_select_state(saved);
   ui_state_release(test);
   scratch_end(scratch);

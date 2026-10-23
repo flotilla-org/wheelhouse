@@ -22,6 +22,10 @@ struct UIShell_ViewSpec
   U64 argc;
   B32 has_cwd;
   String8 cwd, path, url, launcher, endpoint, presentation;
+  // A Cleat endpoint's session (ANDAMENTO_SLOT_CLEAT_SESSION): how it is
+  // reached (local or ssh), the ssh destination, and the daemon's runtime
+  // root and name there (docs/design/remote-terminals.md).
+  String8 cleat_transport, cleat_host, cleat_runtime_root, cleat_daemon, cleat_session;
 };
 
 // What a Renderer is told about `view`'s Slot: its address, its View Spec
