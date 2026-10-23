@@ -79,7 +79,7 @@ control requires exactly one removal so fixture or filter drift fails loudly.
 Update that expectation alongside the corrected connector pin and regenerated
 fixtures. This is a test control, not runtime code.
 
-With a native `andamento-replay` binary, the standalone exact-symptom check is:
+With a native `wheelhouse-replay` binary, the standalone exact-symptom check is:
 
 ```sh
 host=$(rustc -vV | sed -n 's/^host: //p')
