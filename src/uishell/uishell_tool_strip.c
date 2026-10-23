@@ -61,15 +61,21 @@ uishell_tool_strip_view_icon(UIShell_StripView *view)
   return rd_icon_kind_text_table[RD_IconKind_FileOutline];
 }
 
-// One item: a flat button at `rect` (relative to its section, whose left
-// edge is the strip's), with `text` in the icon font or, for a layout's
+// One item: a flat button at `rect` (relative to its section), with `text`
+// in the icon font or, for a layout's
 // glyph, the main font. It hovers as the title bar's buttons do. A `marked`
-// item (the chosen layout, the focused View) has an accent bar at the
-// strip's edge; a `weak` one (not shown, not open, not found) is dimmed.
+// item (the chosen layout, the focused View) has a faint wash, one hover
+// step over the strip; a `weak` one (not shown, not open, not found) is dimmed.
 internal UI_Signal
 uishell_tool_strip_item(Rng2F32 rect, String8 text, B32 icon_font, B32 marked, B32 weak, UI_Key key)
 {
   UI_Signal sig = {0};
+  if(marked)
+  {
+    Vec4F32 wash = ui_color_from_name(str8_lit("hover"));
+    wash.w *= rd_hover_alpha(wash, ui_color_from_name(str8_lit("background")), RD_HoverBrightnessStep);
+    ui_set_next_background_color(wash);
+  }
   UI_Rect(rect) UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(ui_top_font_size()*0.25f)
     RD_Font(icon_font ? RD_FontSlot_Icons : RD_FontSlot_Main) UI_TagF("implicit") UI_TagF(weak ? "weak" : "")
   {
@@ -78,13 +84,6 @@ uishell_tool_strip_item(Rng2F32 rect, String8 text, B32 icon_font, B32 marked, B
                                         UI_BoxFlag_DisableTextTrunc, key);
     ui_box_equip_display_string(box, text);
     sig = ui_signal_from_box(box);
-  }
-  if(marked)
-  {
-    F32 inset = floor_f32(dim_2f32(rect).y*0.2f);
-    UI_Rect(r2f32p(0, rect.y0+inset, Max(2.f, floor_f32(ui_top_font_size()*0.25f)), rect.y1-inset))
-      UI_BackgroundColor(rd_accent_color()) UI_CornerRadius(1.f)
-    { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
   }
   return sig;
 }
