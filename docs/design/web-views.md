@@ -51,7 +51,7 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
 ## How it is built
 
 - **Handlers** are an X-macro beside the Renderer registry
-  (`WH_HANDLERS`, `src/uishell/uishell_renderers.h`): name, content, URL
+  (`WH_HANDLERS`, `native/src/uishell/uishell_renderers.h`): name, content, URL
   schemes, Renderer, program and argument template. Luchs takes `http`,
   `https` and `file` URLs for the `web` Renderer. `WHEELHOUSE_LUCHS` names
   another program, as a test renderer does.

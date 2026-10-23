@@ -8,45 +8,49 @@ holds the broader destination.
 
 ## Build
 
+The C application lives in `native/` (`native/src` and its build scripts); the Rust
+crates (the sidebar core, its C ABI and the ingress) are the root Cargo workspace in
+`crates/`. Builds write to `build/` at the repo root, whichever directory you run them from.
+
 On macOS/Linux:
 
 ```sh
-bash build.sh wheelhouse
+bash native/build.sh wheelhouse
 ```
 
 The default is an unoptimized debug build. For normal use and performance
 measurements, build with optimizations enabled in both C and the Rust dependencies:
 
 ```sh
-bash build.sh wheelhouse release
+bash native/build.sh wheelhouse release
 ```
 
 On macOS, build an app bundle with:
 
 ```sh
-bash build.sh bundle release
+bash native/build.sh bundle release
 ```
 
 On Windows:
 
 ```bat
-build wheelhouse
-run_tests
+native\build wheelhouse
+native\run_tests
 ```
 
-`build.bat` builds this repo's Cargo workspace and the sibling `..\cleat` and
+`native/build.bat` builds this repo's Cargo workspace and the sibling `..\cleat` and
 `..\jackstay` checkouts (override with `WHEELHOUSE_CLEAT_DIR` /
 `WHEELHOUSE_JACKSTAY_DIR`) and copies their DLLs, including
 `ghostty-vt.dll`, next to the executable. Cleat's default `ghostty-vt` feature needs
-`tools\prepare-ghostty-vt.ps1` run in the Cleat checkout first. `run_tests` runs the
+`tools\prepare-ghostty-vt.ps1` run in the Cleat checkout first. `native\run_tests` runs the
 sidebar, scroll-region, preview, tooltip, panel and terminal-glyph diagnostics, each with
 throwaway `--user`/`--project` files. Colour emoji come from Segoe UI Emoji; the
 terminal-glyph diagnostic fails, naming the missing family, on a host without it.
-After `build wheelhouse meta`, `python tools/check-generated.py` fails if committed
+After `native\build wheelhouse meta`, `python tools/check-generated.py` fails if committed
 metagen output is stale.
 
 Terminal panes on Windows need Cleat's bundled ConPTY: the inbox ConPTY drops Kitty
-graphics. `build.bat` runs the Cleat checkout's `tools\prepare-conpty.ps1`, which fetches
+graphics. `native/build.bat` runs the Cleat checkout's `tools\prepare-conpty.ps1`, which fetches
 and verifies the package pinned in Cleat's `tools\conpty.toml` on first use. It then copies
 `conpty.dll`, `OpenConsole.exe` and `conpty-LICENSE.txt` next to `wheelhouse.exe`. Cleat
 uses them only from the executable's directory, and only when both binaries are there.
@@ -73,7 +77,7 @@ policy, Cleat requirements, and interactive validation steps.
 **Open Jackstay Source** opens a video panel with optional keyboard and pointer
 input, on Windows, macOS and Linux. Sources are named by Local Endpoint (ADR 0011):
 a named pipe on Windows, a Unix socket elsewhere. Builds require `../jackstay`, or
-`WHEELHOUSE_JACKSTAY_DIR`, and compile its C library with Cargo; `build.bat` copies
+`WHEELHOUSE_JACKSTAY_DIR`, and compile its C library with Cargo; `native/build.bat` copies
 `jackstay.dll` next to the executable. See [Jackstay views](docs/design/jackstay-view.md)
 for endpoint configuration, focus behaviour and acceptance checks.
 
@@ -172,7 +176,7 @@ device's own, kept under `presentation/` in
 `%LOCALAPPDATA%\Wheelhouse`. The user file keeps this device's
 fonts, keybindings and theme. An explicit `--user` keeps all of these beside it.
 Windows saved in a user file before Dashboards are not imported; they stay in it,
-unread, for an older build. See `src/uishell/uishell_dashboard.c` for the layout.
+unread, for an older build. See `native/src/uishell/uishell_dashboard.c` for the layout.
 
 ### Daily driver (macOS/Linux)
 
@@ -282,7 +286,7 @@ scripts/run-daily-driver.ps1 --no-build --daemon ssh://udder/home/robert/candida
 `--daemon` overrides `FLOTILLA_DAEMON`; the selected endpoint is the daemon the
 Dashboard subscribes to, and is inherited by the UI and its terminals. Without either, the Windows launcher fails
 before starting Wheelhouse. The default binaries have an `.exe` suffix. Without
-`WHEELHOUSE_BIN` or `--no-build`, the launcher runs `build.bat wheelhouse`.
+`WHEELHOUSE_BIN` or `--no-build`, the launcher runs `native/build.bat wheelhouse`.
 The PowerShell entrypoint uses `py -3` to select an interpreter, then runs that
 Python executable directly. It falls back to `python` when `py` is absent; set
 `WHEELHOUSE_PYTHON_BIN` to select a particular Python executable. Running

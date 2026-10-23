@@ -259,7 +259,7 @@ int main(void) {
             source_file = Path(directory) / 'chips.c'
             source_file.write_text(source)
             executable = Path(directory) / 'chips'
-            subprocess.run(['cc', '-std=c99', '-Wall', '-Werror', '-I', str(ROOT / 'src'),
+            subprocess.run(['cc', '-std=c99', '-Wall', '-Werror', '-I', str(ROOT / 'native/src'),
                             str(source_file), '-o', str(executable)], check=True)
             subprocess.run([str(executable)], check=True)
 

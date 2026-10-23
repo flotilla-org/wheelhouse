@@ -111,9 +111,9 @@ class WatcherBuildTests(unittest.TestCase):
                     self.assertEqual(launcher.main(), 0)
                 expected = []
                 if not no_build and not supplied_host:
-                    expected.append(['bash', 'build.sh', 'wheelhouse'])
+                    expected.append(['bash', 'native/build.sh', 'wheelhouse'])
                     host_build = next(call for call in commands.call_args_list
-                                      if call.args[0][:2] == ['bash', 'build.sh'])
+                                      if call.args[0][:2] == ['bash', 'native/build.sh'])
                     self.assertNotIn('release', host_build.kwargs['env'])
                 if supplied_host and not (supplied_watcher or no_build or no_git):
                     expected.extend([
@@ -124,7 +124,7 @@ class WatcherBuildTests(unittest.TestCase):
                 # Only build commands are this contract; unrelated main() subprocesses may change.
                 build_commands = [call.args[0] for call in commands.call_args_list
                                   if call.args[0][0] == 'cargo'
-                                  or call.args[0][:2] == ['bash', 'build.sh']]
+                                  or call.args[0][:2] == ['bash', 'native/build.sh']]
                 self.assertEqual(build_commands, expected)
                 self.assertEqual(rustc.call_count, int(not (supplied_watcher or no_git)))
                 launch.assert_called_once()

@@ -10,13 +10,13 @@ with tempfile.TemporaryDirectory(prefix='wh-terminal-env-') as directory:
     output = Path(directory) / ('test.exe' if os.name == 'nt' else 'test')
     if os.name == 'nt':
         # Run from a Visual Studio developer shell (CI uses msvc-dev-cmd).
-        command = ['cl', '/nologo', '/W4', '/I' + str(ROOT / 'src'),
+        command = ['cl', '/nologo', '/W4', '/I' + str(ROOT / 'native/src'),
                    '/Fe:' + str(output), '/Fo:' + str(Path(directory) / 'test.obj'),
                    str(ROOT / 'tools/test-terminal-environment.c')]
     else:
         command = [os.environ.get('CC', 'clang'), '-std=c11',
                    '-D_POSIX_C_SOURCE=200809L', '-Wall', '-Wextra', '-Werror',
-                   '-I' + str(ROOT / 'src'), str(ROOT / 'tools/test-terminal-environment.c'),
+                   '-I' + str(ROOT / 'native/src'), str(ROOT / 'tools/test-terminal-environment.c'),
                    '-o', str(output)]
     subprocess.run(command, cwd=directory, check=True)
     subprocess.run([str(output)], check=True)

@@ -11,8 +11,8 @@ key, a local section's is `.section:<id>`, and `.unplaced` is the workspace
 fallback.
 
 Wheelhouse's live copy is the window's dock arrangement
-(`src/shell/shell_core.c`, "Live arrangements";
-`src/uishell/uishell_sidebar_store.c`). Docking edits it as before, through
+(`native/src/shell/shell_core.c`, "Live arrangements";
+`native/src/uishell/uishell_sidebar_store.c`). Docking edits it as before, through
 the shared docking checker; at the end of a gesture the whole document is
 committed (`andamento_sidebar_arrangement_commit`). Closing a section is
 committing without it. When Andamento changes the document itself (a newly

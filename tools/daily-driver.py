@@ -233,7 +233,7 @@ def main():
             parser.error(f'a daily driver is already using {state}')
         watcher_built = False
         if not args.no_build and 'WHEELHOUSE_BIN' not in os.environ:
-            build = [str(ROOT / 'build.bat'), 'wheelhouse'] if WINDOWS else ['bash', 'build.sh', 'wheelhouse']
+            build = [str(ROOT / 'native/build.bat'), 'wheelhouse'] if WINDOWS else ['bash', 'native/build.sh', 'wheelhouse']
             # Build scripts treat an inherited release selector as a profile request.
             # The launcher selects debug artifacts; Windows env keys are case-insensitive.
             build_env = {key: value for key, value in os.environ.items() if key.lower() != 'release'}
@@ -257,7 +257,7 @@ def main():
             if not os.access(args.watcher, os.X_OK):
                 parser.error(f'Andamento git watcher not found: {args.watcher}; build andamento#107 or set ANDAMENTO_GIT_WATCHER_BIN')
         if not os.access(binary, os.X_OK):
-            build_hint = 'build.bat wheelhouse' if WINDOWS else 'bash build.sh wheelhouse'
+            build_hint = 'native/build.bat wheelhouse' if WINDOWS else 'bash native/build.sh wheelhouse'
             parser.error(f'Wheelhouse binary not found: {binary}; run {build_hint}')
         return run(args, binary, template, state, flotilla)
 

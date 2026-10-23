@@ -137,7 +137,7 @@ combined form.
 
 ## Lifetime and rendering
 
-`src/jackstay/wheelhouse_jackstay.*` is independent of shell configuration and
+`native/src/jackstay/wheelhouse_jackstay.*` is independent of shell configuration and
 GPU objects. It is built on RAD's base layer: its separate media and input
 workers are `base_threads` threads synchronised with a base mutex, on every
 platform. CPU setup can be cancelled; the handshake and input admission retain
@@ -244,27 +244,27 @@ timeline outlives its incarnation while the GUI still holds one of its frames.
 `r_native_device`, `r_tex2d_open_shared`, `r_timeline_*`, `r_queue_wait`,
 `r_queue_signal`) that D3D11 implements and the other backends stub, so
 `uishell_jackstay.c` has no platform branches. The Jackstay D3D11 calls and the
-read-back device live in `src/jackstay/wheelhouse_jackstay_d3d11.c`, which the
+read-back device live in `native/src/jackstay/wheelhouse_jackstay_d3d11.c`, which the
 session module includes on Windows only. Jackstay's D3D11 frame calls need a
-library built with `backend-windows`; `build.bat` builds it so.
+library built with `backend-windows`; `native/build.bat` builds it so.
 
 ## Build and checks
 
 Builds on every platform require a sibling Jackstay checkout, or
 `WHEELHOUSE_JACKSTAY_DIR`. `WHEELHOUSE_JACKSTAY_TARGET_DIR` optionally selects its
-Cargo output directory. `build.sh` and `build.bat` call locked Cargo for the C
-library (`build.bat` with `backend-windows`); `build.bat` links
+Cargo output directory. `native/build.sh` and `native/build.bat` call locked Cargo for the C
+library (`native/build.bat` with `backend-windows`); `native/build.bat` links
 `jackstay.dll.lib` and copies `jackstay.dll` beside `wheelhouse.exe`.
 Runtime admission requires an exact ABI match. CI pins Jackstay
 in `.github/workflows/build.yml`.
 
 ```sh
-WHEELHOUSE_JACKSTAY_DIR=/path/to/jackstay bash build.sh wheelhouse
+WHEELHOUSE_JACKSTAY_DIR=/path/to/jackstay bash native/build.sh wheelhouse
 WHEELHOUSE_JACKSTAY_DIR=/path/to/jackstay python3 tools/test-jackstay.py
 ```
 
 On Windows, run `python tools\test-jackstay.py` from a Visual Studio developer
-prompt after `build wheelhouse`; it compiles with `cl`.
+prompt after `native\build wheelhouse`; it compiles with `cl`.
 
 The session acceptance suite compiles Wheelhouse's actual module, on RAD's base
 layer, and Jackstay's independent reference sources into separate processes.

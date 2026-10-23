@@ -32,7 +32,7 @@ andamento = args.andamento_lib.resolve()
 cleat = args.cleat_lib.resolve()
 # Reuse the production amalgamation's includes, replacing only its application
 # entry point. This keeps the command routing and UI collaborators real.
-main = (ROOT / 'src/uishell/uishell_main.c').read_text()
+main = (ROOT / 'native/src/uishell/uishell_main.c').read_text()
 prefix = main[:main.index('internal void\nentry_point(CmdLine *cmd_line)')]
 arena_table_definition = '#define ARENA_TABLE_DEBUG BUILD_DEBUG'
 assert arena_table_definition in prefix, 'production arena table definition changed; review the capped harness boundary'
@@ -53,7 +53,7 @@ command = compiler + [
     '-DWM_STUB=1', '-DR_BACKEND=0', '-DFP_BACKEND=0', '-ffunction-sections', '-fdata-sections',
     '-Wno-initializer-overrides', '-Wno-unused-value',
     '-Wno-incompatible-pointer-types-discards-qualifiers',
-    '-I'+str(ROOT/'src'), '-I'+str(args.andamento_include.resolve()),
+    '-I'+str(ROOT/'native/src'), '-I'+str(args.andamento_include.resolve()),
     '-I'+str(args.cleat_include.resolve()), str(source), str(shell_embed_object(compiler)),
     '-L'+str(andamento), '-landamento_ffi', '-lwheelhouse_ingress', '-Wl,-rpath,'+str(andamento),
     '-L'+str(cleat), '-lcleat', '-Wl,-rpath,'+str(cleat), '-lpthread', '-lm', '-ldl',

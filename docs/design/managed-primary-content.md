@@ -41,7 +41,7 @@ expire; it does not destroy the existing content.
 Build from the repo root:
 
 ```sh
-bash build.sh wheelhouse
+bash native/build.sh wheelhouse
 mkdir -p /tmp/wheelhouse-managed-check
 ./build/wheelhouse --user:/tmp/wheelhouse-managed-check/user --project:/tmp/wheelhouse-managed-check/project --managed_content_diagnostics
 ```

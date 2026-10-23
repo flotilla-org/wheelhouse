@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 command -v prlimit >/dev/null || { echo 'sidebar diagnostics require Linux prlimit' >&2; exit 1; }
 command -v "${CC:-cc}" >/dev/null || { echo 'sidebar diagnostics require a C compiler (CC or cc)' >&2; exit 1; }
 # Release avoids the debug arena table's 256 GiB virtual reservation.
-bash build.sh wheelhouse release
+bash native/build.sh wheelhouse release
 task_dir=$(mktemp -d "${TMPDIR:-/tmp}/wheelhouse-sidebar.XXXXXX")
 trap 'rm -rf "$task_dir"' EXIT
 # Process-boundary CPU adapter, shared with benchmark-sidebar.py: keep worker

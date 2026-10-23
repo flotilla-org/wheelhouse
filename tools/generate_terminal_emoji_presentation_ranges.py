@@ -8,7 +8,7 @@ from pathlib import Path
 DEFAULT_EMOJI_DATA_URL = "https://www.unicode.org/Public/UCD/latest/ucd/emoji/emoji-data.txt"
 DEFAULT_EMOJI_SEQUENCES_URL = "https://www.unicode.org/Public/emoji/latest/emoji-sequences.txt"
 DEFAULT_EMOJI_ZWJ_SEQUENCES_URL = "https://www.unicode.org/Public/emoji/latest/emoji-zwj-sequences.txt"
-DEFAULT_SOURCE = "src/uishell/uishell_terminal_glyph.c"
+DEFAULT_SOURCE = "native/src/uishell/uishell_terminal_glyph.c"
 FETCH_DATE = "2026-06-07"
 SEQUENCE_PROPS = {
     "Basic_Emoji",

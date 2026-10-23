@@ -1,6 +1,6 @@
 # Declared docking validity
 
-`src/shell/shell_docking.h` declares View registrations, their traits and
+`native/src/shell/shell_docking.h` declares View registrations, their traits and
 three host kinds. `rd_dock_check` returns a named rule: host acceptance,
 Workspace Subject, minimum width, singleton, one Control Surface per
 Controlled Split, exclusion of a selector from its selected Workspace Region,
@@ -101,11 +101,11 @@ with a controllable OS size boundary. It covers 127/128/129px body widths, root
 bisection, both parent axes, sibling insertion in all directions, and resizing
 between feedback and commit. Last-View moves combine removal and insertion,
 including same-axis sibling insertion, and compare feedback and command
-acceptance with the final rendered body. CI native builds also run it through `build.sh`.
+acceptance with the final rendered body. CI native builds also run it through `native/build.sh`.
 
 The runner accepts `--andamento-include <directory>` and `--cleat-include
 <directory>` for non-sibling checkouts. The Andamento default is this repo's
-`crates/andamento-ffi/include`; the Cleat default honors `WHEELHOUSE_CLEAT_DIR`; `build.sh` passes the configured include directories.
+`crates/andamento-ffi/include`; the Cleat default honors `WHEELHOUSE_CLEAT_DIR`; `native/build.sh` passes the configured include directories.
 Rendering and measurement share window-edge and panel-inset helpers. A drag
 builds one geometry context from its existing mount; command measurement frees
 its temporary panel tree before returning.
@@ -115,7 +115,7 @@ its temporary panel tree before returning.
 
 Projects, Sessions, Attention and Git are `sidebar_section` Views in the
 window's sidebar arrangement, the live copy of the Dashboard's sidebar
-arrangement that Andamento keeps (`src/uishell/uishell_sidebar_store.c`). The shared panel renderer gives every sidebar
+arrangement that Andamento keeps (`native/src/uishell/uishell_sidebar_store.c`). The shared panel renderer gives every sidebar
 panel a section header, whose titles are its Views' tabs. Ordinary workspace
 content uses normal tabs. Placement creation, moves, drops and restore use the existing
 `rd_dock_check` rules. No placement hints were added to KDL.

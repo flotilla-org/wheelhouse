@@ -11,7 +11,7 @@ on:
     paths:
       - .github/workflows/sidebar-memory.yml
       - tools/benchmark-sidebar.py
-      - src/uishell/uishell_sidebar_benchmark.c
+      - native/src/uishell/uishell_sidebar_benchmark.c
 
 permissions:
   contents: read
@@ -67,7 +67,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang pkg-config libx11-dev libxext-dev libgl1-mesa-dev libegl1-mesa-dev libfreetype6-dev xvfb xauth time util-linux
       - name: Build release binary
-        run: bash build.sh wheelhouse release
+        run: bash native/build.sh wheelhouse release
       - name: Capped sidebar memory regression
         run: xvfb-run -a python3 tools/benchmark-sidebar.py --sizes 100 300 1000 --output build/sidebar-benchmark
       - name: Retain complete and partial benchmark logs

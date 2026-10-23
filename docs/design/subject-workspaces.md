@@ -51,7 +51,7 @@ whole life:
   host. Only a change of content triggers a rebind.
 - Commands sent to a Slot that hasn't connected yet are held and replayed when
   it does, as the file view's `pending` view does today
-  (`src/shell/shell_core.c`).
+  (`native/src/shell/shell_core.c`).
 
 This is why the host wraps rather than replaces itself, as `pending` does: a
 file loads once, but a Slot can lose its connection and regain it many times.
@@ -171,7 +171,7 @@ layouts area fills in once a subject has more than one layout.
 
 ### The first cut
 
-Settled for #122 on 2026-10-23 (`src/uishell/uishell_tool_strip.c`):
+Settled for #122 on 2026-10-23 (`native/src/uishell/uishell_tool_strip.c`):
 
 - **Where:** a column of icons, about 3.5 ems wide, between the sidebar and the
   Workspace Region. It shows on every workspace, with or without a subject,

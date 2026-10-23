@@ -4,7 +4,7 @@ This pass treats `uishell` as the only product target in this tree. The original
 
 ## Current Shape
 
-`src/uishell/uishell_main.c` still builds a broad RAD-derived unity:
+`native/src/uishell/uishell_main.c` still builds a broad RAD-derived unity:
 
 - platform/window/render/UI: `base`, `win32`, `window_manager`, `font_provider`, `render`, `font_cache`, `draw`, `ui`
 - shell data/file views: `content`, `file_stream`, `text`, `mutable_text`
@@ -22,14 +22,14 @@ Result: succeeded. `raddbg_core.c` no longer compiles the generic watch/query ta
 Build gate:
 
 ```sh
-bash build.sh uishell
+bash native/build.sh uishell
 ```
 
 Implication: `EV_*` table-view interaction types are no longer needed by shell tab rendering itself. `eval`/`eval_visualization` still remain in the shell build because file expressions, text expand hooks, pending file probing, settings evaluation, and generated/scaffolded RAD core paths still reference them.
 
 ### Delete inactive RAD view/table files
 
-Result: succeeded. With the local RAD product target removed, `src/app_ui/app_ui_tables.*` and `src/raddbg/raddbg_views.*` were only reachable through inactive non-shell include gates. Those include gates have been removed from `raddbg_inc.*`, and the inactive files have been deleted from this shell tree.
+Result: succeeded. With the local RAD product target removed, `native/src/app_ui/app_ui_tables.*` and `native/src/raddbg/raddbg_views.*` were only reachable through inactive non-shell include gates. Those include gates have been removed from `raddbg_inc.*`, and the inactive files have been deleted from this shell tree.
 
 ### Remove inactive generic watch/table renderer from RAD core
 
@@ -37,11 +37,11 @@ Result: succeeded. The large `#if !defined(UI_SHELL_APP)` watch/table branch ins
 
 ### Specialize RAD-facing scaffolding to the shell preprocessor path
 
-Result: succeeded. `src/raddbg/raddbg_core.c`, `src/raddbg/raddbg_core.h`, `src/raddbg/raddbg_eval.c`, and `src/raddbg/raddbg_widgets.c` have been mechanically run through the `UI_SHELL_APP` preprocessor path. This removes inactive local RAD branches from these files without touching platform/window/render/UI layers.
+Result: succeeded. `native/src/raddbg/raddbg_core.c`, `native/src/raddbg/raddbg_core.h`, `native/src/raddbg/raddbg_eval.c`, and `native/src/raddbg/raddbg_widgets.c` have been mechanically run through the `UI_SHELL_APP` preprocessor path. This removes inactive local RAD branches from these files without touching platform/window/render/UI layers.
 
 ### Collapse shell entry identity constants
 
-Result: succeeded. `src/uishell/uishell_main.c` no longer defines `UI_SHELL_APP` or carries fallback RAD identity constants. The entry file now directly defines the shell title, config magic, data folder, default user/project paths, and log names.
+Result: succeeded. `native/src/uishell/uishell_main.c` no longer defines `UI_SHELL_APP` or carries fallback RAD identity constants. The entry file now directly defines the shell title, config magic, data folder, default user/project paths, and log names.
 
 ### Replace runtime-visible inherited RAD identity strings
 
@@ -49,29 +49,29 @@ Result: succeeded. The shell entry now overrides the inherited crash-report link
 
 ### Remove generated RAD command-info table
 
-Result: succeeded. The shell-specialized command path uses `UIShell_CmdInfo`, so the generated `rd_cmd_kind_info_table` was dead. The source generator block was removed from `src/raddbg/raddbg.mdesk`, then `build.sh meta uishell` regenerated `src/raddbg/generated/raddbg.meta.*` without `RD_CmdKindInfo`, `RD_Query`, or the debugger command-info table. The generated UI/theme/icon tables remain because the shell still uses them.
+Result: succeeded. The shell-specialized command path uses `UIShell_CmdInfo`, so the generated `rd_cmd_kind_info_table` was dead. The source generator block was removed from `native/src/raddbg/raddbg.mdesk`, then `native/build.sh meta uishell` regenerated `native/src/raddbg/generated/raddbg.meta.*` without `RD_CmdKindInfo`, `RD_Query`, or the debugger command-info table. The generated UI/theme/icon tables remain because the shell still uses them.
 
 ### Make active commands and default bindings shell-owned
 
 Result: succeeded. The remaining enum-based command pushes in shell views now use name-based shell commands, so active command emission no longer depends on the generated `RD_CmdKind` enum. The generated `RD_CmdKind` enum, generated `rd_default_binding_table`, and stale `RD_DefaultBindingTable` `.mdesk` source block have been removed. Default binding reset uses `uishell_default_binding_table`, and shell command query metadata no longer carries the inherited `D_EntityKind` field.
 
-Implication: command catalog, command dispatch, and default keybinding data are now shell-owned in `src/uishell/uishell_commands.h` and `src/uishell/uishell_dispatch.h`. The queue, keymap, query, and menu plumbing is still RAD-derived and name-based.
+Implication: command catalog, command dispatch, and default keybinding data are now shell-owned in `native/src/uishell/uishell_commands.h` and `native/src/uishell/uishell_dispatch.h`. The queue, keymap, query, and menu plumbing is still RAD-derived and name-based.
 
 ### Make active vocabulary shell-generated
 
-Result: succeeded. `src/uishell/uishell.mdesk` now owns the active shell vocabulary source and generates `src/uishell/generated/uishell.meta.*`, including `uishell_vocab_info_table`. RAD core consumes this through the app-level `RD_APP_VOCAB_INFO_TABLE` hook and also seeds command labels/icons from `uishell_cmd_info_table`.
+Result: succeeded. `native/src/uishell/uishell.mdesk` now owns the active shell vocabulary source and generates `native/src/uishell/generated/uishell.meta.*`, including `uishell_vocab_info_table`. RAD core consumes this through the app-level `RD_APP_VOCAB_INFO_TABLE` hook and also seeds command labels/icons from `uishell_cmd_info_table`.
 
-The old `RD_VocabTable` source table and `rd_vocab_info_table` data block have been removed from `src/raddbg/raddbg.mdesk`, and regenerated `src/raddbg/generated/raddbg.meta.*` no longer declares or defines the 361-entry debugger vocabulary table. `RD_VocabInfo` is now an explicit shared type in `src/raddbg/raddbg_core.h` because the shell-generated vocabulary table and shared vocabulary map still use that row shape.
+The old `RD_VocabTable` source table and `rd_vocab_info_table` data block have been removed from `native/src/raddbg/raddbg.mdesk`, and regenerated `native/src/raddbg/generated/raddbg.meta.*` no longer declares or defines the 361-entry debugger vocabulary table. `RD_VocabInfo` is now an explicit shared type in `native/src/raddbg/raddbg_core.h` because the shell-generated vocabulary table and shared vocabulary map still use that row shape.
 
 ### Remove stale RAD fixed-tab, schema, command, register-array, and README metadata
 
-Result: succeeded. `src/raddbg/raddbg.mdesk` no longer defines the old RAD fixed-tab tables, RAD config schema table, generated command table, generated register slot name/range arrays, or generated README markdown. Regenerated `src/raddbg/generated/raddbg.meta.*` no longer emits `RD_CmdKind`, `RD_CmdKindInfo`, `RD_Query`, default bindings, RAD vocabulary data, fixed-tab fast-path arrays, RAD schema metadata, or generated register slot lookup arrays.
+Result: succeeded. `native/src/raddbg/raddbg.mdesk` no longer defines the old RAD fixed-tab tables, RAD config schema table, generated command table, generated register slot name/range arrays, or generated README markdown. Regenerated `native/src/raddbg/generated/raddbg.meta.*` no longer emits `RD_CmdKind`, `RD_CmdKindInfo`, `RD_Query`, default bindings, RAD vocabulary data, fixed-tab fast-path arrays, RAD schema metadata, or generated register slot lookup arrays.
 
-Implication: active commands, default bindings, menu/open-tab policy, view listing, schemas, vocabulary, and app register-slot lookup are shell-owned. `src/raddbg/generated/raddbg.meta.*` is now limited to shared icon, code-color, theme, font, and app-icon generated data.
+Implication: active commands, default bindings, menu/open-tab policy, view listing, schemas, vocabulary, and app register-slot lookup are shell-owned. `native/src/raddbg/generated/raddbg.meta.*` is now limited to shared icon, code-color, theme, font, and app-icon generated data.
 
 ### Move register and vocabulary compatibility types out of RAD metadata
 
-Result: succeeded. `RD_RegSlot`, the temporary `RD_Regs` compatibility packet, and `RD_VocabInfo` are now explicit types in `src/raddbg/raddbg_core.h` instead of generated output from `src/raddbg/raddbg.mdesk`. The RAD metadesk source no longer contains `RD_RegTable`, `@enum RD_RegSlot`, `@struct RD_Regs`, or `@struct RD_VocabInfo`, and regenerated `src/raddbg/generated/raddbg.meta.*` no longer emits those types.
+Result: succeeded. `RD_RegSlot`, the temporary `RD_Regs` compatibility packet, and `RD_VocabInfo` are now explicit types in `native/src/raddbg/raddbg_core.h` instead of generated output from `native/src/raddbg/raddbg.mdesk`. The RAD metadesk source no longer contains `RD_RegTable`, `@enum RD_RegSlot`, `@struct RD_Regs`, or `@struct RD_VocabInfo`, and regenerated `native/src/raddbg/generated/raddbg.meta.*` no longer emits those types.
 
 Implication: the remaining temporary register packet is still broad and still carries debugger fields because shared compiled scaffolding references those fields, but it is no longer a generated metadata dependency. Future field removal can now happen with direct code edits and compiler feedback.
 
@@ -79,7 +79,7 @@ Implication: the remaining temporary register packet is still broad and still ca
 
 Result: succeeded. `uishell_app_reg_slot_info_table` now contains only shell slot names, not byte ranges into `RD_Regs`. Query numeric fill for the shell address/file-offset slot now assigns `rd_regs()->vaddr` explicitly instead of copying bytes through an app-provided register range.
 
-Implication: shell register metadata no longer needs to mirror a separate temporary `RD_Regs` compatibility layout. The generated all-fields `rd_regs_lit_init_top` macro was also removed from `src/raddbg/raddbg.mdesk`; regenerated RAD metadata no longer emits it, and the shell uses its explicit `UISHELL_REGS_LIT_INIT_TOP`.
+Implication: shell register metadata no longer needs to mirror a separate temporary `RD_Regs` compatibility layout. The generated all-fields `rd_regs_lit_init_top` macro was also removed from `native/src/raddbg/raddbg.mdesk`; regenerated RAD metadata no longer emits it, and the shell uses its explicit `UISHELL_REGS_LIT_INIT_TOP`.
 
 ### Trim app-facing register and command flag enums
 
@@ -89,47 +89,47 @@ Implication: shared command/query metadata still flows through an app-level comm
 
 ### Make binding-version remaps shell-generated
 
-Result: succeeded. `src/uishell/uishell.mdesk` now owns the old-keymap command-name compatibility aliases that still apply to the shell: `commands`, `load_user`, `load_profile`, `load_project`, and `open_profile`. RAD core reads them through the `RD_APP_BINDING_VERSION_REMAP_*` app hooks.
+Result: succeeded. `native/src/uishell/uishell.mdesk` now owns the old-keymap command-name compatibility aliases that still apply to the shell: `commands`, `load_user`, `load_profile`, `load_project`, and `open_profile`. RAD core reads them through the `RD_APP_BINDING_VERSION_REMAP_*` app hooks.
 
 Implication: stale debugger-only keybinding aliases such as breakpoint and debug-info source switching remaps are gone from this tree. Keymap loading keeps shell-relevant migration behavior without keeping debugger command compatibility alive.
 
 ### Remove stale RAD TODO block from shell entry
 
-Result: succeeded. `src/uishell/uishell_main.c` no longer carries the inherited RAD debugger TODO/recently-completed note block above the build options.
+Result: succeeded. `native/src/uishell/uishell_main.c` no longer carries the inherited RAD debugger TODO/recently-completed note block above the build options.
 
 ### Stop starting the demon/control runtime
 
-Result: succeeded. `src/uishell/uishell_main.c` no longer calls `dmn_init()`, `d_set_wakeup_hook(...)`, or `d_init()`, so the shell does not start the demon/control runtime or debug-engine runtime. The shell no longer includes the demon layer at all, and the old manual demon/debug-engine init macros are gone from the shell entry point. RAD-derived UI code that still names `D_*`/`DI_*` APIs is served by `src/uishell/uishell_debug_stubs.c`.
+Result: succeeded. `native/src/uishell/uishell_main.c` no longer calls `dmn_init()`, `d_set_wakeup_hook(...)`, or `d_init()`, so the shell does not start the demon/control runtime or debug-engine runtime. The shell no longer includes the demon layer at all, and the old manual demon/debug-engine init macros are gone from the shell entry point. RAD-derived UI code that still names `D_*`/`DI_*` APIs is served by `native/src/uishell/uishell_debug_stubs.c`.
 
 ### Remove the local `raddbg` build target
 
-Result: succeeded. `build.sh` no longer has a standalone `raddbg` app target. The macOS `bundle` target remains, but now packages `uishell` into `UI Shell.app` using shell-owned plist metadata. The original RAD repository remains the debugger reference.
+Result: succeeded. `native/build.sh` no longer has a standalone `raddbg` app target. The macOS `bundle` target remains, but now packages `uishell` into `UI Shell.app` using shell-owned plist metadata. The original RAD repository remains the debugger reference.
 
 ### Remove non-shell tool build targets
 
-Result: succeeded. `build.sh` now exposes only the product shell app targets (`uishell`, macOS `bundle`) plus the existing `meta` generator path. `build.bat` defaults to and exposes only `uishell` on Windows. Local `radbin`, `torture`, `raddump`, scratch/mule, `radlink`, and debugger targets no longer compile from this repo, so they cannot act as preservation gates for debugger/linker/tooling code.
+Result: succeeded. `native/build.sh` now exposes only the product shell app targets (`uishell`, macOS `bundle`) plus the existing `meta` generator path. `native/build.bat` defaults to and exposes only `uishell` on Windows. Local `radbin`, `torture`, `raddump`, scratch/mule, `radlink`, and debugger targets no longer compile from this repo, so they cannot act as preservation gates for debugger/linker/tooling code.
 
 ### Delete unused app/tool source trees
 
-Result: succeeded. The dependency-checked source deletion pass removed `src/radbin`, `src/raddump`, `src/torture`, `src/mule`, `src/scratch`, the old local `src/raddbg/raddbg_main.c` entry point, and old RAD macOS bundle assets. `uishell` and the macOS shell bundle still build after deletion.
+Result: succeeded. The dependency-checked source deletion pass removed `native/src/radbin`, `native/src/raddump`, `native/src/torture`, `native/src/mule`, `native/src/scratch`, the old local `native/src/raddbg/raddbg_main.c` entry point, and old RAD macOS bundle assets. `uishell` and the macOS shell bundle still build after deletion.
 
 ### Delete unused RAD debug-data compression helper
 
-Result: succeeded. `src/third_party/rad_lzb_simple` was only referenced by deleted `raddump`/RAD debug-data tooling and docs, so it has been removed from the shell tree.
+Result: succeeded. `native/src/third_party/rad_lzb_simple` was only referenced by deleted `raddump`/RAD debug-data tooling and docs, so it has been removed from the shell tree.
 
 ### Delete stranded linker application sources and BLAKE3
 
-Result: succeeded. The unused linker application/debug-info implementation (`lnk*`, linker-local CodeView/PDB/RDI builders, thread-pool helpers, and linker base-extension files not included by the shell) was removed together with `src/third_party/blake3`. A later dependency check showed the remaining linker helper subset was only retained for deleted object/debug-info readers, so `src/linker`, `src/third_party/radsort`, and `src/third_party/martins_bitscan` have now also been removed.
+Result: succeeded. The unused linker application/debug-info implementation (`lnk*`, linker-local CodeView/PDB/RDI builders, thread-pool helpers, and linker base-extension files not included by the shell) was removed together with `native/src/third_party/blake3`. A later dependency check showed the remaining linker helper subset was only retained for deleted object/debug-info readers, so `native/src/linker`, `native/src/third_party/radsort`, and `native/src/third_party/martins_bitscan` have now also been removed.
 
 ### Delete stranded library/tool source directories
 
-Result: succeeded. Exact include/reference checks showed `src/obj`, `src/llvm`, `src/strip_lib_debug`, and `src/msvc_crt` were not included by the shell unity build or active product build scripts, so they have been removed. `src/natvis` remains because the Windows build still references `src/natvis/base.natvis`.
+Result: succeeded. Exact include/reference checks showed `native/src/obj`, `native/src/llvm`, `native/src/strip_lib_debug`, and `native/src/msvc_crt` were not included by the shell unity build or active product build scripts, so they have been removed. `native/src/natvis` remains because the Windows build still references `native/src/natvis/base.natvis`.
 
 ### Delete inert debug parser/converter/runtime source trees
 
-Result: succeeded. Dependency checks plus `build.sh meta uishell` showed that the shell product no longer includes or generates from the old debug parser/converter trees. The cleanup removed `src/dwarf`, `src/arch/dwarf`, `src/codeview`, `src/msf`, `src/pdb`, `src/minidump`, `src/rdi_from_*`, `src/rdi_make`, `src/lib_rdi_make`, and `src/third_party/sinfl`.
+Result: succeeded. Dependency checks plus `native/build.sh meta uishell` showed that the shell product no longer includes or generates from the old debug parser/converter trees. The cleanup removed `native/src/dwarf`, `native/src/arch/dwarf`, `native/src/codeview`, `native/src/msf`, `native/src/pdb`, `native/src/minidump`, `native/src/rdi_from_*`, `native/src/rdi_make`, `native/src/lib_rdi_make`, and `native/src/third_party/sinfl`.
 
-The pass also removed runtime implementation files that have shell stubs instead: `src/dbg_info/dbg_info.c`, `src/dbg_engine/dbg_engine_*.c`, `src/dbg_engine/dbg_engine_inc.c`, `src/demon`, `src/demon/demon_inc.*`, and the debugger-specific OS demon backend directories under `src/linux/demon`, `src/mac/demon`, and `src/win32/demon`.
+The pass also removed runtime implementation files that have shell stubs instead: `native/src/dbg_info/dbg_info.c`, `native/src/dbg_engine/dbg_engine_*.c`, `native/src/dbg_engine/dbg_engine_inc.c`, `native/src/demon`, `native/src/demon/demon_inc.*`, and the debugger-specific OS demon backend directories under `native/src/linux/demon`, `native/src/mac/demon`, and `native/src/win32/demon`.
 
 Implication: cross-platform shell support now means the platform base/window/font/render layers remain for Windows, Linux, and macOS. The debugger OS backends are no longer part of this product tree.
 
@@ -139,19 +139,19 @@ These cuts were checked against the shell target and updated as the runtime stub
 
 ### Remove `stap/stap_parse`
 
-Result: succeeded. Once the shell unity stopped including `demon_inc`/platform demon backends, and later stopped including the no-op demon stub too, the Linux debugger backend no longer constrained the shell build. `src/stap` has been deleted from the shell tree.
+Result: succeeded. Once the shell unity stopped including `demon_inc`/platform demon backends, and later stopped including the no-op demon stub too, the Linux debugger backend no longer constrained the shell build. `native/src/stap` has been deleted from the shell tree.
 
 Implication: cross-platform shell support is preserved through platform/window/render/font layers, not by keeping debugger-specific Linux demon internals in the product unity.
 
 ### Remove `disasm/disasm_inc`
 
-Result: succeeded. Once `dbg_engine_inc.c` was replaced by shell runtime stubs, no included shell source referenced `DASM_*` types or `dasm_*` helpers. `src/disasm`, `src/x64/disasm`, and `src/arm64/disasm` have been deleted.
+Result: succeeded. Once `dbg_engine_inc.c` was replaced by shell runtime stubs, no included shell source referenced `DASM_*` types or `dasm_*` helpers. `native/src/disasm`, `native/src/x64/disasm`, and `native/src/arm64/disasm` have been deleted.
 
 Implication: Zydis and the ARM64 disassembler are no longer required by the shell product.
 
 ### Remove `dbg_engine/dbg_engine_inc`
 
-Result: succeeded for the active shell unity. `src/uishell/uishell_main.c` now includes `dbg_engine_core.h` and `dbg_engine_user.h` directly. `dbg_engine_inc.h` and `dbg_engine_ctrl.h` have been deleted.
+Result: succeeded for the active shell unity. `native/src/uishell/uishell_main.c` now includes `dbg_engine_core.h` and `dbg_engine_user.h` directly. `dbg_engine_inc.h` and `dbg_engine_ctrl.h` have been deleted.
 
 Implication: the debugger control layer types for live process memory, call stacks, and debug-control eval spaces are no longer part of the shell compile path. Core/user debug-engine types remain because shared RAD-shaped UI scaffolding still uses `D_Handle`, `D_EntityKind`, `D_Entity`, and a small set of `D_*`/`DI_*` compatibility stubs.
 
@@ -159,9 +159,9 @@ Update: the shell eval-space bridge no longer depends on `D_EvalSpaceKind_FirstU
 
 ### Remove dead debug-engine metadata and runtime structs
 
-Result: succeeded. `src/dbg_engine/dbg_engine.mdesk` no longer carries the old debugger command table, `D_CmdKind`, exception-code tables, or exception sub-code metadata. Regeneration leaves only developer toggles and `D_EntityKind` metadata in `src/dbg_engine/generated/dbg_engine.meta.*`.
+Result: succeeded. `native/src/dbg_engine/dbg_engine.mdesk` no longer carries the old debugger command table, `D_CmdKind`, exception-code tables, or exception sub-code metadata. Regeneration leaves only developer toggles and `D_EntityKind` metadata in `native/src/dbg_engine/generated/dbg_engine.meta.*`.
 
-Result: succeeded. `src/dbg_engine/dbg_engine_core.h` has been reduced to the handle and entity/list/array types still used by the shell compatibility path. Dead debugger runtime payloads such as `D_MsgID`, handle list/array helpers, breakpoint structs, target/path-map structs, trap/spoof/trap-net structs, TLS model fields, entity context storage, and `d_init` have been removed. Matching no-op shell stubs for stale handle-array, address translation, cached register, cached IP/SP, and thread-register write helpers have also been deleted.
+Result: succeeded. `native/src/dbg_engine/dbg_engine_core.h` has been reduced to the handle and entity/list/array types still used by the shell compatibility path. Dead debugger runtime payloads such as `D_MsgID`, handle list/array helpers, breakpoint structs, target/path-map structs, trap/spoof/trap-net structs, TLS model fields, entity context storage, and `d_init` have been removed. Matching no-op shell stubs for stale handle-array, address translation, cached register, cached IP/SP, and thread-register write helpers have also been deleted.
 
 Implication: the shell keeps the generic control-entity shape needed by inherited query/title/eval helpers, but no longer preserves the old debugger launch/breakpoint/trap/runtime type surface.
 
@@ -173,7 +173,7 @@ Implication: eval visualization is still structural because query/table UI and s
 
 ### Remove executable/object-format readers
 
-Result: succeeded. `src/uishell/uishell_main.c` no longer includes COFF, PE, ELF, Mach-O, or GNU readers, and the directories `src/coff`, `src/pe`, `src/elf`, `src/macho`, and `src/gnu` have been deleted. The small `uishell_debug_support.h` DW/EH compatibility shim and its ULEB128 helper were also removed, along with the now-dead `arch_reg_code_from_dw` declaration/implementation.
+Result: succeeded. `native/src/uishell/uishell_main.c` no longer includes COFF, PE, ELF, Mach-O, or GNU readers, and the directories `native/src/coff`, `native/src/pe`, `native/src/elf`, `native/src/macho`, and `native/src/gnu` have been deleted. The small `uishell_debug_support.h` DW/EH compatibility shim and its ULEB128 helper were also removed, along with the now-dead `arch_reg_code_from_dw` declaration/implementation.
 
 Implication: binary files are still supported as raw byte/hex views, but executable-format interpretation is no longer a product surface.
 
@@ -181,7 +181,7 @@ Implication: binary files are still supported as raw byte/hex views, but executa
 
 Result: in progress. The evaluator is now the largest remaining debugger-shaped dependency cluster. It should not be deleted as a unit: part of it is the app/query/list machinery that preferences, command palette, file-open rows, tab commands, and config views still need; another part is the old debugger expression engine that evaluates against RDI debug info, registers, modules, TLS, and process memory.
 
-First slice: `src/uishell/uishell_eval.*` now owns the shell command/view query name providers. The inherited `commands` and `views` `E_TYPE_*` hooks in `src/raddbg/raddbg_eval.c` are still present as compatibility adapters, but their child-name filtering now routes through shell-owned helpers. This is intentionally not a renderer rewrite; it moves ownership of active shell namespaces while keeping existing list/dialog behavior stable.
+First slice: `native/src/uishell/uishell_eval.*` now owns the shell command/view query name providers. The inherited `commands` and `views` `E_TYPE_*` hooks in `native/src/raddbg/raddbg_eval.c` are still present as compatibility adapters, but their child-name filtering now routes through shell-owned helpers. This is intentionally not a renderer rewrite; it moves ownership of active shell namespaces while keeping existing list/dialog behavior stable.
 
 Second slice: config collection child gathering is now also shell-owned. `cfgs_slice` and `cfgs_query` remain inherited evaluator adapters, but their top-level config collection lookup, collection command lookup, child lookup, and fuzzy title filtering now route through `uishell_eval_cfg_*` helpers. Schema member access, config eval spaces, row IDs, editing, and writes are unchanged.
 
@@ -189,7 +189,7 @@ Third slice: standalone debugger query collections have been removed from the sh
 
 Fourth slice: control-entity eval spaces have been removed. Schema evaluation is now config-only, `RD_EvalSpaceKind_MetaCtrlEntity`/`MetaUnattachedProcess`/`MetaCallStackTree` and their conversion helpers are gone, and hover/query validity checks no longer try to validate debugger control entities. The built-in `list` lens now keys by `E_Space` and reads through the eval space read hook instead of calling debugger process-memory reads, which also removed the last shell stub for `d_process_memory_read`.
 
-Fifth slice: debugger control-entity UI/cache compatibility has been removed from the shell frame and widgets. The shell no longer carries control-entity rich tooltips, debugger-thread drop scaffolding in code slices, loaded-debug-info cache syncing, debug-info conversion event syncing, debugger handle fields in `RD_Regs`, or `D_Entity`/`D_Handle` shell stubs. `src/dbg_engine/dbg_engine.mdesk` now generates only developer toggles; the stale entity-kind metadata and unreferenced debug-engine core type header have been removed. The remaining `dbg_engine_user.h` surface is the generic `d_hash_*` helper naming used by config/keymap/vocabulary code.
+Fifth slice: debugger control-entity UI/cache compatibility has been removed from the shell frame and widgets. The shell no longer carries control-entity rich tooltips, debugger-thread drop scaffolding in code slices, loaded-debug-info cache syncing, debug-info conversion event syncing, debugger handle fields in `RD_Regs`, or `D_Entity`/`D_Handle` shell stubs. `native/src/dbg_engine/dbg_engine.mdesk` now generates only developer toggles; the stale entity-kind metadata and unreferenced debug-engine core type header have been removed. The remaining `dbg_engine_user.h` surface is the generic `d_hash_*` helper naming used by config/keymap/vocabulary code.
 
 Sixth slice: debug-info-derived code coloring has been removed. Syntax token coloring and inherited local/member/register/macro coloring remain, but identifier coloring no longer calls `di_match_from_string` or maps RDI procedure/global/TLS/type matches to `CodeSymbol`/`CodeType`. The color slots remain in theme metadata for compatibility with existing themes; they are no longer used by the shell coloring path.
 
@@ -205,7 +205,7 @@ Eleventh slice: register/module/TLS evaluation context has been removed. `E_Base
 
 Twelfth slice: the fake module/IP base-context scaffolding has been removed. `E_Module`, `e_module_nil`, `thread_ip_vaddr`, `thread_ip_voff`, `modules`, `modules_count`, and `primary_module` are gone from the active evaluator. Pointer type construction now reads an explicit `E_BaseCtx.address_arch`; the shell frame initializes it to `Arch_CURRENT`, which matches app-state/native pointer semantics without pretending a debug module exists.
 
-Thirteenth slice: more active shell query row production has moved into `src/uishell/uishell_eval.*`. The shell provider table now owns `query:themes`, and theme preset/file filtering no longer lives in `raddbg_eval.c`. Schema expansion row gathering for preferences/settings also moved to `uishell_eval_schema_children_from_cfg_and_schemas`; the inherited `E_TYPE_*` wrapper still adapts those shell rows back into the existing evaluator/list machinery.
+Thirteenth slice: more active shell query row production has moved into `native/src/uishell/uishell_eval.*`. The shell provider table now owns `query:themes`, and theme preset/file filtering no longer lives in `raddbg_eval.c`. Schema expansion row gathering for preferences/settings also moved to `uishell_eval_schema_children_from_cfg_and_schemas`; the inherited `E_TYPE_*` wrapper still adapts those shell rows back into the existing evaluator/list machinery.
 
 Fourteenth slice: shell query-root registration has moved into `uishell_eval_register_query_macros`. `rd_frame` no longer constructs the command, tab-command, theme, view, top-level config, or config collection query roots inline. This moves the `query:recent_projects` registration path into shell-owned code while still using the inherited `cfgs_slice` adapter to render the rows.
 
@@ -253,13 +253,13 @@ Thirty-fifth slice: the live/context register slot enum now uses shell names. `R
 
 Thirty-sixth slice: the shell unity no longer directly includes `x64/x64.*` or `arm64/arm64.*`. `Arch` enums still come from `base`, but the shell target no longer defines architecture-register metadata headers.
 
-Thirty-seventh slice: the shell unity no longer includes `rdi/rdi_local.*`. A source scan showed no active shell references to the local RDI dump/string/path helpers or `rdi_parse`, and the build passes when `src/uishell/uishell_main.c` includes only `lib_rdi/rdi.h` and `lib_rdi/rdi.c`. At this point `lib_rdi` remained active only because `eval` still used RDI eval opcodes, type groups, conversion helpers, compatibility checks, and opcode control-bit tables as its internal bytecode vocabulary.
+Thirty-seventh slice: the shell unity no longer includes `rdi/rdi_local.*`. A source scan showed no active shell references to the local RDI dump/string/path helpers or `rdi_parse`, and the build passes when `native/src/uishell/uishell_main.c` includes only `lib_rdi/rdi.h` and `lib_rdi/rdi.c`. At this point `lib_rdi` remained active only because `eval` still used RDI eval opcodes, type groups, conversion helpers, compatibility checks, and opcode control-bit tables as its internal bytecode vocabulary.
 
-Thirty-eighth slice: the unused RDI register-code bridge has been removed from `arch`. `arch_reg_code_from_rdi` and the `arch/rdi` include hook were only connected to the now-dormant generated RDI register mapping tables; no shell code called them. With that bridge gone, `src/arch/rdi` and `src/rdi` were deleted from the shell product tree. At this point `lib_rdi` remained, but only as the evaluator opcode/type-group library.
+Thirty-eighth slice: the unused RDI register-code bridge has been removed from `arch`. `arch_reg_code_from_rdi` and the `arch/rdi` include hook were only connected to the now-dormant generated RDI register mapping tables; no shell code called them. With that bridge gone, `native/src/arch/rdi` and `native/src/rdi` were deleted from the shell product tree. At this point `lib_rdi` remained, but only as the evaluator opcode/type-group library.
 
-Thirty-ninth slice: the top-level architecture register metadata directories are gone. The remaining guarded hooks to `X64_H`, `ARM64_H`, and Win32 x64 thread-context-to-register-block conversion were debugger register-block support, not shell platform/windowing support. Removing those hooks allowed deleting `src/x64`, `src/arm64`, and `src/win32/x64` while preserving the active Win32 base/window-manager shell layer.
+Thirty-ninth slice: the top-level architecture register metadata directories are gone. The remaining guarded hooks to `X64_H`, `ARM64_H`, and Win32 x64 thread-context-to-register-block conversion were debugger register-block support, not shell platform/windowing support. Removing those hooks allowed deleting `native/src/x64`, `native/src/arm64`, and `native/src/win32/x64` while preserving the active Win32 base/window-manager shell layer.
 
-Fortieth slice: evaluator bytecode ownership has moved out of RDI. `src/eval/eval_bytecode.*` now owns `E_BytecodeOp`, `E_TypeGroup`, conversion kinds, opcode control bits, conversion diagnostics, and compatibility checks. `eval_core`, `eval_ir`, `eval_interpret`, `eval_types`, and the remaining shell eval caller now use those local names. The shell unity no longer includes `lib_rdi/rdi.*`, active source scans show no RDI symbols, and `src/lib_rdi` has been deleted.
+Fortieth slice: evaluator bytecode ownership has moved out of RDI. `native/src/eval/eval_bytecode.*` now owns `E_BytecodeOp`, `E_TypeGroup`, conversion kinds, opcode control bits, conversion diagnostics, and compatibility checks. `eval_core`, `eval_ir`, `eval_interpret`, `eval_types`, and the remaining shell eval caller now use those local names. The shell unity no longer includes `lib_rdi/rdi.*`, active source scans show no RDI symbols, and `native/src/lib_rdi` has been deleted.
 
 Thirty-sixth slice: command/query flag metadata now uses shell names at the shared boundary. `RD_QueryFlags`, `RD_CmdKindFlags`, and the `rd_*_from_uishell_*_flags` adapter helpers are gone from source. `UIShell_AppCmdInfo` stores `UIShell_QueryFlags` and `UIShell_CmdFlags` directly, and command filtering compares shell flags without remapping.
 
@@ -267,15 +267,15 @@ Thirty-seventh slice: app command info now uses shell names. `RD_AppCmdInfo` bec
 
 The current source split is:
 
-- `src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
-- `src/raddbg/raddbg_eval.c`: the inherited `environment` set hook remains intentionally retained. Original RAD used it for debugger target launch environment strings, but the shell should treat it as reusable editable config string-list scaffolding rather than debugger runtime behavior.
-- `src/eval/eval_parse.c`: mostly reusable parsing/tokenization. RDI type-name lookup and primary-module architecture assumptions are gone; pointer type construction now uses the evaluator's explicit address architecture.
-- `src/eval/eval_core.*`: mixed infrastructure. Generic expression/type/value/cache shapes are reusable in principle. Module arrays, instruction-pointer fields, thread register/process spaces, thread architecture/unwind state, TLS conversion, and register maps are gone.
-- `src/eval/eval_types.*`: mixed. Basic scalar/array/struct/type formatting can inform the shell value model. RDI type construction and RDI member expansion are gone, but debug-flavored auto-hook/type-lens behavior still needs review.
-- `src/eval/eval_ir.*`: heavily mixed. It builds local bytecode IR/op lists for memory/type evaluation. Register identifier resolution is gone. Shell provider lookup should bypass or replace most of this path rather than pretending app-state rows are debuggee expressions.
-- `src/eval/eval_interpret.*`: still an inherited bytecode VM. It decodes local `E_BytecodeOp` bytecode and still supports memory reads through the selected shell eval space, but register, frame-base, module, and TLS opcodes fail explicitly. Debug constant data and RDI frame-base setup are gone.
-- `src/eval_visualization/eval_visualization_core.*`: mixed UI machinery. Row keys, expansion state, windowed row lists, simple value formatting, and list/tree expansion are useful. RDI-derived pointer/procedure/inline symbol display is gone; remaining pointer/source/module display behavior still needs review.
-- `src/uishell/uishell_views.c`: current shell text/binary views are shell-owned, but list-like dialogs and settings still depend on the inherited query/eval row machinery elsewhere.
+- `native/src/raddbg/raddbg_eval.c`: active shell config behavior still has inherited schema/config `E_TYPE_*` wrappers here. Command, view, theme, config-child, schema-expansion, and query-root registration now live in or delegate into `native/src/uishell/uishell_eval.*`; the remaining work is replacing the config evaluator/list adapter itself instead of continuing to route shell rows through debugger-shaped `E_Eval` hooks.
+- `native/src/raddbg/raddbg_eval.c`: the inherited `environment` set hook remains intentionally retained. Original RAD used it for debugger target launch environment strings, but the shell should treat it as reusable editable config string-list scaffolding rather than debugger runtime behavior.
+- `native/src/eval/eval_parse.c`: mostly reusable parsing/tokenization. RDI type-name lookup and primary-module architecture assumptions are gone; pointer type construction now uses the evaluator's explicit address architecture.
+- `native/src/eval/eval_core.*`: mixed infrastructure. Generic expression/type/value/cache shapes are reusable in principle. Module arrays, instruction-pointer fields, thread register/process spaces, thread architecture/unwind state, TLS conversion, and register maps are gone.
+- `native/src/eval/eval_types.*`: mixed. Basic scalar/array/struct/type formatting can inform the shell value model. RDI type construction and RDI member expansion are gone, but debug-flavored auto-hook/type-lens behavior still needs review.
+- `native/src/eval/eval_ir.*`: heavily mixed. It builds local bytecode IR/op lists for memory/type evaluation. Register identifier resolution is gone. Shell provider lookup should bypass or replace most of this path rather than pretending app-state rows are debuggee expressions.
+- `native/src/eval/eval_interpret.*`: still an inherited bytecode VM. It decodes local `E_BytecodeOp` bytecode and still supports memory reads through the selected shell eval space, but register, frame-base, module, and TLS opcodes fail explicitly. Debug constant data and RDI frame-base setup are gone.
+- `native/src/eval_visualization/eval_visualization_core.*`: mixed UI machinery. Row keys, expansion state, windowed row lists, simple value formatting, and list/tree expansion are useful. RDI-derived pointer/procedure/inline symbol display is gone; remaining pointer/source/module display behavior still needs review.
+- `native/src/uishell/uishell_views.c`: current shell text/binary views are shell-owned, but list-like dialogs and settings still depend on the inherited query/eval row machinery elsewhere.
 
 The intended replacement is a shell provider layer:
 
@@ -326,12 +326,12 @@ Removed:
    - Do not reintroduce the generic watch/query table renderer into `UI_SHELL_APP` unless the shell product explicitly needs table-style config/query views.
 4. Remove debugger runtime from shell initialization and frame code.
    - Done for the shell product path. `dmn_init`, the debugger wakeup hook, and `d_init` are no longer called by the shell entry point.
-   - `dbg_engine_inc.*`, `dbg_engine_ctrl.h`, `dbg_info.c`, `src/demon`, `demon_inc.*`, and the debugger-specific OS demon backends have been deleted from the shell tree; shell stubs provide the remaining `D_*`/`DI_*` APIs used by shared UI scaffolding.
+   - `dbg_engine_inc.*`, `dbg_engine_ctrl.h`, `dbg_info.c`, `native/src/demon`, `demon_inc.*`, and the debugger-specific OS demon backends have been deleted from the shell tree; shell stubs provide the remaining `D_*`/`DI_*` APIs used by shared UI scaffolding.
    - This enabled removing `disasm_inc`, `stap`, `zydis`, and `bn_arm64_disasm`.
 5. Remove debug-info/object-format stack from shell.
    - Done for debug-info conversion/runtime pieces: `codeview`, `msf`, `pdb`, `minidump`, broad `dwarf`, `rdi_from_*`, `rdi_make`, and `lib_rdi_make` have been deleted.
    - Done for executable/object-format readers: `coff`, `pe`, `elf`, `macho`, and `gnu` have been deleted.
-   - The temporary `src/uishell/uishell_debug_support.h` shim was removed once those readers left the unity.
+   - The temporary `native/src/uishell/uishell_debug_support.h` shim was removed once those readers left the unity.
 6. Make shell own app icon/window bootstrap.
    - Then remove `stb_image` if no other shell path needs bitmap decoding.
 7. Reassess base-level third party.
@@ -342,10 +342,10 @@ Removed:
 For this cut-down phase, the required gate is:
 
 ```sh
-bash build.sh uishell
-bash build.sh meta uishell                    # after editing .mdesk inputs
-./build/uishell src/uishell/uishell_main.c   # should stay alive when opening a text file
-bash build.sh bundle                         # macOS
+bash native/build.sh uishell
+bash native/build.sh meta uishell                    # after editing .mdesk inputs
+./build/uishell native/src/uishell/uishell_main.c   # should stay alive when opening a text file
+bash native/build.sh bundle                         # macOS
 ```
 
 On Windows, the equivalent gate is:

@@ -2,7 +2,7 @@
 """Fail when committed generated sources differ from what the last build wrote.
 
 Run after a build that regenerates them. Metagen output is only rewritten by
-`build wheelhouse meta` (Windows); metagen walks src/ in directory order, so
+`native\\build wheelhouse meta` (Windows); metagen walks native/src/ in directory order, so
 Windows is the reference platform for it. Every build rewrites the embedded
 sidebar fixture.
 """
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PATHSPEC = [':(glob)src/**/generated/**']
+PATHSPEC = [':(glob)native/src/**/generated/**']
 
 
 def main():
@@ -22,7 +22,7 @@ def main():
         print('Untracked generated files:\n' + untracked)
     if changed.returncode != 0 or untracked:
         print('Generated sources are out of date; commit the regenerated files '
-              '(`build wheelhouse meta` on Windows).', file=sys.stderr)
+              '(`native\\build wheelhouse meta` on Windows).', file=sys.stderr)
         return 1
     print('Generated sources match the committed copies.')
     return 0

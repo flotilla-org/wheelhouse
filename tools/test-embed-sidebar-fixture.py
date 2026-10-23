@@ -17,7 +17,7 @@ class FixtureGenerationTests(unittest.TestCase):
             shutil.copytree(ROOT / 'data/sidebar', root / 'data/sidebar')
             (root / 'tools').mkdir()
             shutil.copy(ROOT / 'tools/embed-sidebar-fixture.py', root / 'tools')
-            output = root / 'src/uishell/generated/sidebar_fixture.h'
+            output = root / 'native/src/uishell/generated/sidebar_fixture.h'
             output.parent.mkdir(parents=True)
             for source in (root / 'data/sidebar').iterdir():
                 if source.is_file():
@@ -30,7 +30,7 @@ class FixtureGenerationTests(unittest.TestCase):
 
             with patch.object(Path, 'read_text', windows_read):
                 runpy.run_path(str(root / 'tools/embed-sidebar-fixture.py'))
-            self.assertEqual(output.read_bytes(), (ROOT / 'src/uishell/generated/sidebar_fixture.h').read_bytes())
+            self.assertEqual(output.read_bytes(), (ROOT / 'native/src/uishell/generated/sidebar_fixture.h').read_bytes())
 
 
 if __name__ == '__main__':

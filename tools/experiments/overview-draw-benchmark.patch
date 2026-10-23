@@ -1,7 +1,7 @@
-diff --git a/src/uishell/uishell_terminal_glyph.c b/src/uishell/uishell_terminal_glyph.c
+diff --git a/native/src/uishell/uishell_terminal_glyph.c b/native/src/uishell/uishell_terminal_glyph.c
 index 516fd32..4936bb6 100644
---- a/src/uishell/uishell_terminal_glyph.c
-+++ b/src/uishell/uishell_terminal_glyph.c
+--- a/native/src/uishell/uishell_terminal_glyph.c
++++ b/native/src/uishell/uishell_terminal_glyph.c
 @@ -7470,6 +7470,51 @@ uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_f
        .font_set = font_set,
        .cache = &cache,

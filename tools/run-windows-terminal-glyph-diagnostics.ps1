@@ -307,10 +307,10 @@ if(-not [string]::IsNullOrWhiteSpace($FixtureDir)) {
   New-Item -ItemType Directory -Force -Path $FixtureDir | Out-Null
 }
 
-$BuildScript = Join-Path $RepoRoot "build.bat"
+$BuildScript = Join-Path $RepoRoot "native\build.bat"
 & $BuildScript "wheelhouse" @BuildArgs
 if($LASTEXITCODE -ne 0) {
-  throw "build.bat wheelhouse failed with exit code $LASTEXITCODE"
+  throw "native\build.bat wheelhouse failed with exit code $LASTEXITCODE"
 }
 
 $UIShellExe = Join-Path $RepoRoot "build\wheelhouse.exe"

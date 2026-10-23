@@ -2,7 +2,7 @@
 
 A workspace's arrangement and Slots live in Andamento's workspace record, not
 in the presentation file, which keeps only this device's part of them
-(src/uishell/uishell_workspace_store.c). A driver that needs particular
+(native/src/uishell/uishell_workspace_store.c). A driver that needs particular
 Views open writes both: the window, naming the workspace, in the
 presentation file, and the workspace's record in the Dashboard's
 directory, whose core imports it on its first load. Records are

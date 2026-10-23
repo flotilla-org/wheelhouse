@@ -38,10 +38,10 @@ def build(work):
     consumer = work / ("consumer.exe" if WINDOWS else "consumer")
     source = work / ("source.exe" if WINDOWS else "source")
     if WINDOWS:
-        # Same compiler and flags as build.bat: the consumer is RAD C, not C11.
+        # Same compiler and flags as native/build.bat: the consumer is RAD C, not C11.
         subprocess.run(
             ["cl", "/nologo", "/Z7", "/Od", "/DBUILD_DEBUG=1", "/Zc:preprocessor",
-             "/I" + str(ROOT / "src"), "/I" + str(INCLUDE), str(SESSION_C),
+             "/I" + str(ROOT / "native/src"), "/I" + str(INCLUDE), str(SESSION_C),
              "/Fo" + str(work) + "\\", "/Fe" + str(consumer),
              "/link", str(LIB / "jackstay.dll.lib")],
             check=True, cwd=work,
@@ -61,7 +61,7 @@ def build(work):
             "-Wno-unused-but-set-variable", "-Wno-initializer-overrides",
             "-Wno-incompatible-pointer-types-discards-qualifiers",
             "-Wno-writable-strings", "-Wno-unknown-warning-option",
-            "-I" + str(ROOT / "src"), "-I" + str(INCLUDE)]
+            "-I" + str(ROOT / "native/src"), "-I" + str(INCLUDE)]
     if sys.platform == "darwin":
         base += ["-x", "objective-c"]
         link += ["-framework", "Foundation", "-framework", "Metal"]

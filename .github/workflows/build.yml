@@ -121,18 +121,18 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         # `meta` rebuilds metagen so the generated-sources check covers its output.
-        run: call build.bat wheelhouse meta
+        run: call native\build.bat wheelhouse meta
       - name: Build on Linux
         if: runner.os == 'Linux'
-        # With CI set, build.sh also runs the headless harnesses against the
+        # With CI set, native/build.sh also runs the headless harnesses against the
         # real Andamento and Cleat libraries: docking validity and integration,
         # and restart behaviour against golden logical-state snapshots
-        # (tools/test-state-behaviour.py; goldens in src/uishell/tests/).
-        run: bash build.sh wheelhouse
+        # (tools/test-state-behaviour.py; goldens in native/src/uishell/tests/).
+        run: bash native/build.sh wheelhouse
       - name: Build and verify macOS bundle
         if: runner.os == 'macOS'
         run: |
-          bash build.sh bundle
+          bash native/build.sh bundle
           codesign --verify --deep --strict build/Wheelhouse.app
       - name: Verify generated sources
         run: python tools/check-generated.py
@@ -145,9 +145,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         run: |
-          call run_tests.bat
+          call native\run_tests.bat
           if errorlevel 1 exit /b 1
-          call run_tests.bat -Diagnostics preview -NoPreviewBudget
+          call native\run_tests.bat -Diagnostics preview -NoPreviewBudget
       - name: Windows ConPTY packaging
         if: runner.os == 'Windows'
         shell: pwsh
@@ -186,13 +186,13 @@ jobs:
         run: python tools/test-terminal-environment.py
       - name: macOS text positions
         if: runner.os == 'macOS'
-        run: bash src/mac/font_provider/tests/run_text_positions.sh
+        run: bash native/src/mac/font_provider/tests/run_text_positions.sh
       - name: macOS keyboard event regression
         if: runner.os == 'macOS'
-        run: bash src/mac/window_manager/tests/run_key_events.sh
+        run: bash native/src/mac/window_manager/tests/run_key_events.sh
       - name: macOS scroll event regression
         if: runner.os == 'macOS'
-        run: bash src/mac/window_manager/tests/run_scroll_events.sh
+        run: bash native/src/mac/window_manager/tests/run_scroll_events.sh
       - name: macOS UI diagnostics
         if: runner.os == 'macOS'
         run: |

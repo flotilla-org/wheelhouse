@@ -14,16 +14,16 @@ python3 tools/generate_terminal_emoji_presentation_ranges.py --check \
 tools/run-freetype-color-smoke-tests.sh
 tools/validate-terminal-fixture-ppm.py --self-test
 
-zig cc -target x86_64-windows-gnu -c -Isrc tools/dwrite_syntax_probe.c \
+zig cc -target x86_64-windows-gnu -c -Inative/src tools/dwrite_syntax_probe.c \
   -o /tmp/uishell_dwrite_syntax_probe.o \
   -Wno-undefined-internal -Wno-unknown-attributes
 
-zig cc -target x86_64-windows-gnu -c -Isrc tools/d3d11_syntax_probe.c \
+zig cc -target x86_64-windows-gnu -c -Inative/src tools/d3d11_syntax_probe.c \
   -o /tmp/uishell_d3d11_syntax_probe.o \
   -Wno-undefined-internal -Wno-unknown-attributes -Wno-unused-value
 echo "Windows runtime diagnostics are not run on this host; run tools\\run-windows-terminal-glyph-diagnostics.ps1 on Windows for D3D11/DirectWrite runtime evidence." >&2
 
-zig cc -target x86_64-linux-gnu -c -Isrc $(pkg-config --cflags freetype2) tools/freetype_syntax_probe.c \
+zig cc -target x86_64-linux-gnu -c -Inative/src $(pkg-config --cflags freetype2) tools/freetype_syntax_probe.c \
   -o /tmp/uishell_freetype_syntax_probe_linux.o \
   -Wno-undefined-internal -Wno-unknown-attributes
 
@@ -77,7 +77,7 @@ else
 fi
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  bash build.sh wheelhouse
+  bash native/build.sh wheelhouse
 fi
 
 git diff --check
