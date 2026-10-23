@@ -14,16 +14,17 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Live clipboard effects (#304): provider ABI 11 and packet protocol 12.
-  # This also carries #298/#299/#303. Protocol-11 daemons are rejected:
-  # coordinate the Cleat fleet and Wheelhouse daily-driver rollout (#97).
-  CLEAT_REV: 00c072b207dc943f6c93fe3b6b09abaa257695a6
+  # Remote packet attach (cleat#379): `cleat proxy` and provider transports,
+  # additive on provider ABI 11; packet protocol 15. Daemons on an older
+  # protocol are rejected: coordinate the Cleat fleet and daily-driver
+  # rollout (#97). Remote hosts need this Cleat for `cleat proxy` (#104).
+  CLEAT_REV: 8792dff9a8458593bf7e54cc946fff435e1840ed
   # Jackstay main: ABI 0.17, the v3 track handshake (jackstay#119) with
   # affordances as a track.
   JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
-  # Workspace Layouts (andamento#182, for #416) with template facts quoted in
-  # shell commands (andamento#185), pinned to its merge commit. ABI 8.
-  ANDAMENTO_REV: 70f4d30d719029bcb64e7781eb5ab7d2f14eea7d
+  # Cleat session recipes for direct endpoints (andamento#186, for #104), on
+  # Workspace Layouts (andamento#182) and quoted template facts (#185). ABI 9.
+  ANDAMENTO_REV: bdcf4bbfcc70bf2f2aaa6c9e50ec7f340bc0cc97
 
 jobs:
   daily-driver:
@@ -157,7 +158,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tools/check-windows-conpty.ps1 -Expect inbox
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      # --managed_content_diagnostics stays macOS-only: it runs real terminal
+      # --managed_content_diagnostics and tools/test-remote-terminal.sh stay
+      # macOS-only: they run real terminal
       # sessions, which ask Cleat for its Ghostty VT engine, and this job builds
       # Cleat without one (vt: none). Running it here needs a ghostty-vt build.
       - name: Linux UI diagnostics
@@ -178,6 +180,7 @@ jobs:
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
+          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/hosting-user" --project:"$task_dir/hosting-project" --hosting_diagnostics
       - name: Terminal launch environment
         shell: bash
         run: python tools/test-terminal-environment.py
@@ -198,6 +201,8 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/shared-user" --project:"$task_dir/shared-project" --shared_ui_diagnostics --shared_ui_fixture_dir:"$task_dir"
           ./build/wheelhouse --user:"$task_dir/selection-user" --project:"$task_dir/selection-project" --terminal_selection_diagnostics
           ./build/wheelhouse --user:"$task_dir/presentation-user" --project:"$task_dir/presentation-project" --presentation_diagnostics
+          ./build/wheelhouse --user:"$task_dir/hosting-user" --project:"$task_dir/hosting-project" --hosting_diagnostics
+          bash tools/test-remote-terminal.sh ./build/wheelhouse ../cleat/target/debug/cleat
           ./build/wheelhouse --user:"$task_dir/skipped-frame-user" --project:"$task_dir/skipped-frame-project" --skipped_frame_diagnostics
           ./build/wheelhouse --user:"$task_dir/resize-user" --project:"$task_dir/resize-project" --dashboard:"$task_dir/resize-dashboard" --live_resize_diagnostics
           ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics

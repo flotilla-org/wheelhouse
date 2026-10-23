@@ -89,12 +89,14 @@ uishell_managed_install(CFG_Node *view, UIShell_ManagedPrepared *prepared, Strin
 
 // Whether `view`'s terminal is hosted by a Cleat daemon, whose session is the
 // daemon's rather than the View's, so an update never replaces it in place.
+// A Cleat endpoint (`cleat_session`, local or remote) always is.
 internal B32
 uishell_managed_daemon_backed(CFG_Node *view)
 {
   RD_ViewState *vs = rd_view_state_from_view(rd_view_address_from_cfg(view), 0);
   UIShell_TerminalViewState *tv = vs->user_data;
   if(cfg_node_child_from_string(view, str8_lit("daemon")) != &cfg_nil_node) { return 1; }
+  if(cfg_node_child_from_string(view, str8_lit("cleat_session"))->first->string.size != 0) { return 1; }
   if(tv && tv->initialized) { return tv->daemon_backend; }
   return cfg_node_child_from_string(view, str8_lit("session"))->first->string.size != 0;
 }

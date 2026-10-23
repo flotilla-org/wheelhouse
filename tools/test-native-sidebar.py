@@ -113,7 +113,7 @@ def load(path):
     for name, (result, args) in signatures.items():
         fn = getattr(lib, 'andamento_' + name)
         fn.restype, fn.argtypes = result, args
-    assert lib.andamento_abi_version() == 8
+    assert lib.andamento_abi_version() == 9
     # The tests' own forms: patches from PROVIDER, workspaces by number.
     apply_patch_json, complete = lib.andamento_apply_patch_json, lib.andamento_complete
     lib.andamento_apply_patch_json = lambda core, now, json, error: apply_patch_json(core, now, PROVIDER, json, error)
