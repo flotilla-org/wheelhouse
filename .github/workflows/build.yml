@@ -24,7 +24,7 @@ env:
   JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
   # The tool strip (andamento#187, for #122), on #186's Cleat sessions: its
   # PR's head until it merges, then its merge commit. ABI 10.
-  ANDAMENTO_REV: 133d69d839a9ef759c2afcfcc2f9701848152b99
+  ANDAMENTO_REV: e9f863f5f559474125557373aea08b49f4655727
 
 jobs:
   daily-driver:
