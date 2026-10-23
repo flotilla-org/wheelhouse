@@ -375,6 +375,11 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     ManagedCheck(uishell_store_spec_from_view(scratch.arena, direct_view, &spec, taken, &taken_count) &&
                  spec.content == ANDAMENTO_SLOT_CLEAT_SESSION && str8_match(spec.cleat_session, str8_lit("crew-7"), 0),
                  "the endpoint view's spec reads back as a Cleat session");
+    UIShell_ViewSpec typo = spec;
+    typo.cleat_transport = str8_lit("ssh ");
+    ManagedCheck(uishell_store_unshown(scratch.arena, str8_lit("primary"), &spec).size == 0 &&
+                 uishell_store_unshown(scratch.arena, str8_lit("primary"), &typo).size != 0,
+                 "an unknown endpoint transport is unshown, never guessed at");
     AndamentoSlotContent *plan = andamento_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(direct_workspace)),
       uishell_sidebar_text(str8_lit("primary")), uishell_sidebar_text(rd_cfg_setting_child(direct_view, str8_lit("applied"))->first->string), 0);
     ManagedCheck(plan && plan->state == ANDAMENTO_CONTENT_CURRENT, "the next plan finds the endpoint view current");

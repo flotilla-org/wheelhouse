@@ -207,6 +207,25 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
     RemoteCheck(tv->remote_disconnect_logged, "the startup failure reaches the log");
     uishell_terminal_runtime_release(tv);
   }
+  // An unknown transport opens nothing, so it can't attach a same-named local
+  // session; it offers the reconnect that re-reads its settings.
+  CFG_Node *typo = rd_fixture_view(panel, str8_lit("terminal"), str8_zero(), 1);
+  String8 typo_settings[][2] =
+  {
+    {str8_lit("cleat_transport"), str8_lit("ssh ")}, {str8_lit("cleat_host"), host}, {str8_lit("cleat_runtime_root"), root},
+    {str8_lit("cleat_session"), session}, {str8_lit("cleat_command"), cleat},
+  };
+  for(U64 i = 0; i < ArrayCount(typo_settings); i++)
+  { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, typo, typo_settings[i][0]), typo_settings[i][1]); }
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = rd_view_address_from_cfg(typo), .view = rd_view_address_from_cfg(typo))
+  {
+    UIShell_TerminalViewState *tv = rd_view_state(UIShell_TerminalViewState);
+    String8 pill = str8_zero();
+    for(U64 i = 0; i < 25; i++) { pill = uishell_remote_diag_build(scratch.arena, ws, typo, v2f32(640, 480)); sleep_ms(20); }
+    RemoteCheck(tv->provider == 0 && tv->session == 0 && str8_find_needle(pill, 0, str8_lit("click to reconnect"), 0) < pill.size,
+                "an unknown transport attaches nothing and offers reconnect");
+    uishell_terminal_runtime_release(tv);
+  }
   // A local endpoint attaches through the shared daemon provider for its
   // runtime root, with no bridge.
   CFG_Node *local = rd_fixture_view(panel, str8_lit("terminal"), str8_zero(), 1);

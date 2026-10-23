@@ -4354,10 +4354,15 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     String8 endpoint_session = wh_view_setting(ctx, str8_lit("cleat_session"));
     String8 endpoint_transport = wh_view_setting(ctx, str8_lit("cleat_transport"));
     String8 endpoint_root = wh_view_setting(ctx, str8_lit("cleat_runtime_root"));
-    B32 remote_backend = endpoint_session.size != 0 && str8_match(endpoint_transport, str8_lit("ssh"), 0);
-    if(endpoint_session.size != 0 && !remote_backend && !str8_match(endpoint_transport, str8_lit("local"), 0))
+    // An unknown transport opens no provider: attaching locally could show a
+    // different session of the same name. It reads as a bridge that never
+    // started, so its reconnect retries the settings.
+    B32 endpoint_unknown = endpoint_session.size != 0 && !str8_match(endpoint_transport, str8_lit("ssh"), 0) &&
+                           !str8_match(endpoint_transport, str8_lit("local"), 0);
+    B32 remote_backend = endpoint_session.size != 0 && (endpoint_unknown || str8_match(endpoint_transport, str8_lit("ssh"), 0));
+    if(endpoint_unknown)
     {
-      log_infof("Terminal endpoint %S: unknown cleat_transport \"%S\", attaching locally\n", endpoint_session, endpoint_transport);
+      log_user_errorf("Terminal endpoint %S: unknown cleat_transport \"%S\"", endpoint_session, endpoint_transport);
     }
     if(endpoint_session.size != 0)
     {
@@ -4367,7 +4372,8 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     B32 daemon_backend = (attach_session_id.size != 0 || wh_view_setting_b32(ctx, str8_lit("daemon")));
     tv->daemon_backend = daemon_backend;
     tv->remote_backend = remote_backend;
-    if(remote_backend)
+    if(endpoint_unknown) {}
+    else if(remote_backend)
     {
       tv->provider = uishell_cleat_remote_provider_open(wh_view_setting(ctx, str8_lit("cleat_host")), wh_view_setting(ctx, str8_lit("cleat_command")),
                                                         endpoint_root, daemon_name);

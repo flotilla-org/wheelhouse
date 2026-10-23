@@ -693,8 +693,12 @@ uishell_store_unshown(Arena *arena, String8 key, UIShell_ViewSpec *spec)
     case ANDAMENTO_SLOT_COMMAND: case ANDAMENTO_SLOT_FILE: return str8_zero();
     case ANDAMENTO_SLOT_CLEAT_SESSION:
     {
-      // Cleat's ssh bridge is Unix only.
-      if(OS_WINDOWS && str8_match(spec->cleat_transport, str8_lit("ssh"), 0))
+      // Cleat's ssh bridge is Unix only, and a transport Wheelhouse doesn't
+      // know is never guessed at.
+      B32 ssh = str8_match(spec->cleat_transport, str8_lit("ssh"), 0);
+      if(!ssh && !str8_match(spec->cleat_transport, str8_lit("local"), 0))
+      { return push_str8f(arena, "Cleat session %S over transport \"%S\"", spec->cleat_session, spec->cleat_transport); }
+      if(OS_WINDOWS && ssh)
       { return push_str8f(arena, "Cleat session %S on %S", spec->cleat_session, spec->cleat_host); }
       return str8_zero();
     }
