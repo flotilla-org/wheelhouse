@@ -18,7 +18,7 @@ env:
   # additive on provider ABI 11; packet protocol 15. Daemons on an older
   # protocol are rejected: coordinate the Cleat fleet and daily-driver
   # rollout (#97). Remote hosts need this Cleat for `cleat proxy` (#104).
-  CLEAT_REV: 8792dff9a8458593bf7e54cc946fff435e1840ed
+  CLEAT_REV: c88692aa62c10fbeb10ecd22f6e637fb600ebd62
   # Jackstay main: ABI 0.17, the v3 track handshake (jackstay#119) with
   # affordances as a track.
   JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
