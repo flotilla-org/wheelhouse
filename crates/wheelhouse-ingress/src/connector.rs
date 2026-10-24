@@ -572,7 +572,10 @@ mod tests {
         .unwrap();
         wait_for("the first run", || connector.starts() == 1 && connector.running());
         connector.restart();
-        wait_for("the next run", || connector.starts() == 2 && connector.running());
+        // The next run counts as running once spawned, before its echo reaches
+        // the log, so wait for the line too.
+        let started = || std::fs::read_to_string(&log).unwrap_or_default().matches("started\n").count();
+        wait_for("the next run", || connector.starts() == 2 && connector.running() && started() >= 2);
         let text = std::fs::read_to_string(&log).unwrap();
         assert!(text.contains("Connector restarted on request"), "{text}");
         // Started again at once, not after an exit's backoff.

@@ -398,6 +398,21 @@ entry_point(CmdLine *cmdline)
     hidden_view = rd_nil_view_address;
   }
 
+  // A panel a provider's document named stays when a move empties it: that
+  // document planned it (#445). Its unnamed sibling, emptied in turn, goes.
+  {
+    RD_Arrangement *arrangement = build(arena, "split_x panels:{0.3:{text:{selected}} 0.3:{terminal:{selected}} 0.4:{sessions}}");
+    RD_ArrangementPanel *named = arrangement->root->first;
+    named->doc_id = str8_lit("files");
+    RD_PanelID named_id = named->id, unnamed = named->next->id, last = arrangement->root->last->id;
+    RD_ArrangementDrop drop = rd_arrangement_drop(arrangement, tab_at(named, 0), last, Dir2_Invalid, rd_nil_view_address, shown_tab);
+    Check(drop.source == named_id && drop.heir == 0 && rd_arrangement_panel_from_id(arrangement, named_id)->tab_count == 0);
+    drop = rd_arrangement_drop(arrangement, tab_at(rd_arrangement_panel_from_id(arrangement, unnamed), 0), last, Dir2_Invalid, rd_nil_view_address, shown_tab);
+    Check(drop.source == unnamed && drop.heir != 0 && rd_arrangement_panel_from_id(arrangement, unnamed) == &rd_nil_arrangement_panel);
+    Check(arrangement->root->child_count == 2);
+    check_layout(arena, arrangement);
+  }
+
   // Resizing moves one boundary, holding both sides to the floor where they
   // can, after putting drifted siblings right.
   {

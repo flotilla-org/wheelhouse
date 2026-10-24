@@ -1019,14 +1019,16 @@ entry_point(CmdLine *cmdline)
     }
     StateCheck(home_files);
     wheelhouse_arrangement_free(arranged);
-    // Shown beside the agent, so closing it leaves no panel empty: closing
-    // the last tab of a layout's panel closes the panel (#445).
+    // Shown in its home, the files panel, then closed: the layout planned
+    // that panel, so it stays, empty, as the layout first made it (#445).
     RD_PanelID agents = rd_panel_from_cfg(state_slot_view(chip, str8_lit("primary"))).id;
     StateCheck(agents != 0);
-    uishell_store_show_slot(chip, agents, str8_lit("t:shell"));
+    uishell_store_show_slot(chip, 0, str8_lit("t:shell"));
     state_frame(ws);
     CFG_Node *shell = state_slot_view(chip, str8_lit("t:shell"));
     StateCheck(shell != &cfg_nil_node);
+    RD_PanelID files = rd_panel_from_cfg(shell).id;
+    StateCheck(files != 0 && files != agents);
     StateCheck(uishell_store_unplaced(scratch.arena, chip).count == 0);
     state_check_committed(ws);
     uishell_store_remove(shell);
@@ -1034,6 +1036,12 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     StateCheck(state_slot_view(chip, str8_lit("t:shell")) == &cfg_nil_node);
     StateCheck(uishell_store_unplaced(scratch.arena, chip).count == 1);
+    {
+      RD_Arrangement *kept = rd_arrangement_live(uishell_store_owner(chip));
+      RD_ArrangementPanel *files_panel = rd_arrangement_panel_from_id(kept, files);
+      StateCheck(files_panel != &rd_nil_arrangement_panel && files_panel->tab_count == 0 && str8_match(files_panel->doc_id, str8_lit("files"), 0));
+      StateCheck(rd_arrangement_panel_from_id(kept, agents) != &rd_nil_arrangement_panel);
+    }
     state_check_committed(ws);
     WheelhouseSlots *chip_slots = wheelhouse_slots_get(state->core, chip_id, 0);
     StateCheck(uishell_store_slot_find(chip_slots, str8_lit("t:shell"), 0));
