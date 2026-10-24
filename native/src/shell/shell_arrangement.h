@@ -328,6 +328,10 @@ internal B32 rd_arrangement_remove(RD_Arrangement *arrangement, RD_PanelID panel
 // left with one child is replaced by it, merging into a parent along the same
 // axis. Returns the leaf that takes focus if `panel` had it; 0 for the root.
 internal RD_PanelID rd_arrangement_close(RD_Arrangement *arrangement, RD_PanelID panel);
+// Whether `panel` goes when its last tab does (#358). One a provider's
+// document named (`doc_id`, a Workspace Layout's `files`, say) is part of
+// that document's plan, which may leave it empty, so it stays (#445).
+internal B32 rd_arrangement_closes_when_emptied(RD_ArrangementPanel *panel);
 // Moves `view` into `destination` after `prev_view` (nil or not there:
 // first) and selects it there. The View may be another arrangement's, or a
 // new View in none: setting this arrangement makes it this owner's. A panel

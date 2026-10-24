@@ -672,6 +672,12 @@ rd_arrangement_remove(RD_Arrangement *arrangement, RD_PanelID id)
   return 1;
 }
 
+internal B32
+rd_arrangement_closes_when_emptied(RD_ArrangementPanel *panel)
+{
+  return panel->doc_id.size == 0;
+}
+
 internal RD_PanelID
 rd_arrangement_close(RD_Arrangement *arrangement, RD_PanelID id)
 {
@@ -776,7 +782,7 @@ rd_arrangement_settle__heir(RD_Arrangement *arrangement, RD_ArrangementPanel *pa
     if(shown == 0 || shown(tab->view)) { first_shown = tab; }
   }
   B32 split = dir != Dir2_Invalid;
-  if(may_close && (split ? panel->tab_count == 0 : first_shown == 0))
+  if(may_close && (split ? panel->tab_count == 0 : first_shown == 0) && rd_arrangement_closes_when_emptied(panel))
   {
     // Closing the root does nothing.
     *heir = rd_arrangement_close(arrangement, panel->id);

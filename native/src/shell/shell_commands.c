@@ -948,8 +948,9 @@ uishell_dispatch_tab_command(String8 name)
     if(rd_arrangement_remove_tab(arrangement, closed))
     {
       // A panel left with no tabs goes, and its siblings grow into its space
-      // (#358); a root panel stays. Focus passes to its heir.
-      RD_PanelID heir = panel->tab_count == 0 ? rd_arrangement_close(arrangement, panel->id) : 0;
+      // (#358); a root panel, or one a layout planned, stays. Focus passes
+      // to its heir.
+      RD_PanelID heir = panel->tab_count == 0 && rd_arrangement_closes_when_emptied(panel) ? rd_arrangement_close(arrangement, panel->id) : 0;
       rd_arrangement_set(arrangement);
       if(heir != 0 && focused)
       {
