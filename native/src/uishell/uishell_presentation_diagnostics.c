@@ -182,6 +182,9 @@ uishell_skipped_frame_diagnostics(void)
   U64 visible_deadline = now_time_us()+3000000;
   while(!([native->ns_window occlusionState] & NSWindowOcclusionStateVisible) && now_time_us() < visible_deadline)
   { [[NSRunLoop mainRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]]; }
+  // One that stays stopped past the relink interval is replaced, and its
+  // window presents again once a link fires.
+  CAMetalDisplayLink *stopped_link = [mtl_window->display_link retain];
   mtl_window->display_delegate->window = 0;
   {
     U64 begin = now_time_us();
@@ -191,7 +194,28 @@ uishell_skipped_frame_diagnostics(void)
     fprintf(stderr, "skipped frames: 20 builds of a window whose display link stopped took %llu ms: %s\n", elapsed/1000, paced ? "passed" : "FAILED");
     ok = ok && paced;
   }
+  B32 relinked = mtl_window->display_link != stopped_link;
+  fprintf(stderr, "skipped frames: a display link stopped for over %llu ms is replaced: %s\n",
+          (U64)R_MTL_DISPLAY_RELINK_INTERVAL_US/1000, relinked ? "passed" : "FAILED");
+  ok = ok && relinked;
+  [stopped_link release];
   mtl_window->display_delegate->window = mtl_window;
+  {
+    U64 steps_before = uishell_skipped_frame_step, unpresented_before = uishell_skipped_frame_unpresented;
+    for(U64 i = 0; i < 20; i += 1) { update(); }
+    B32 resumed = uishell_skipped_frame_step-steps_before > uishell_skipped_frame_unpresented-unpresented_before;
+    fprintf(stderr, "skipped frames: presentation resumes once the link fires: %s\n", resumed ? "passed" : "FAILED");
+    ok = ok && resumed;
+  }
+  // A link that keeps firing is kept.
+  {
+    CAMetalDisplayLink *firing_link = mtl_window->display_link;
+    U64 begin = now_time_us();
+    while(now_time_us()-begin < 2*R_MTL_DISPLAY_RELINK_INTERVAL_US) { update(); }
+    B32 kept = mtl_window->display_link == firing_link;
+    fprintf(stderr, "skipped frames: a firing display link is kept: %s\n", kept ? "passed" : "FAILED");
+    ok = ok && kept;
+  }
   rd_state->frame_replay.prepare_window = 0;
   scratch_end(scratch);
   return ok;

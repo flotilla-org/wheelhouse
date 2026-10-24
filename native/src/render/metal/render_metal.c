@@ -13,6 +13,7 @@
     [window->ready_drawable release];
     window->ready_drawable = [update.drawable retain];
     window->target_presentation_time = update.targetPresentationTimestamp;
+    window->link_heard_us = now_time_us();
     if(wake) { mac_wm_send_frame_ready_event(window->os_window); }
   }
 }
@@ -526,6 +527,27 @@ r_init(CmdLine *cmdln)
   }
 }
 
+// Gives a window a display link, paused, in place of any it had; a stalled
+// window's caller unpauses the new one.
+internal void
+r_mtl_window_link(R_MTL_Window *window)
+{
+  if(@available(macOS 14.0, *))
+  {
+    [window->display_link invalidate];
+    [window->display_link release];
+    [window->ready_drawable release];
+    window->ready_drawable = 0;
+    window->display_link = [[CAMetalDisplayLink alloc] initWithMetalLayer:window->layer];
+    window->display_link.delegate = window->display_delegate;
+    window->display_link.preferredFrameLatency = 1.f;
+    if(window->display_hz > 0) { window->display_link.preferredFrameRateRange = CAFrameRateRangeMake(window->display_hz, window->display_hz, window->display_hz); }
+    window->display_link.paused = YES;
+    [window->display_link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    window->link_heard_us = now_time_us();
+  }
+}
+
 r_hook R_Handle
 r_window_equip(WM_Window window)
 {
@@ -571,11 +593,7 @@ r_window_equip(WM_Window window)
         {
           result->display_delegate = [R_MTL_DisplayDelegate new];
           result->display_delegate->window = result;
-          result->display_link = [[CAMetalDisplayLink alloc] initWithMetalLayer:result->layer];
-          result->display_link.delegate = result->display_delegate;
-          result->display_link.preferredFrameLatency = 1.f;
-          result->display_link.paused = YES;
-          [result->display_link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+          r_mtl_window_link(result);
         }
       }
     }
@@ -976,8 +994,19 @@ r_window_request_frame(WM_Window window, R_Handle window_equip, B32 requested)
       mtl_window->display_link.preferredFrameRateRange = CAFrameRateRangeMake(hz, hz, hz);
     }
     mtl_window->frame_requested = requested;
+    B32 was_paused = mtl_window->display_link.paused;
     mtl_window->display_link.paused = !requested ||
                                      ![native->ns_window isVisible] || [native->ns_window isMiniaturized];
+    U64 now = now_time_us();
+    if(was_paused && !mtl_window->display_link.paused) { mtl_window->link_heard_us = now; }
+    // A link can stop for good while AppKit still runs the window (after the
+    // screen locks, say), whatever occlusion it reports; a new one fires.
+    else if(!mtl_window->display_link.paused && mtl_window->ready_drawable == 0 &&
+            now - mtl_window->link_heard_us >= R_MTL_DISPLAY_RELINK_INTERVAL_US)
+    {
+      r_mtl_window_link(mtl_window);
+      mtl_window->display_link.paused = NO;
+    }
     if(mtl_window->display_link.paused)
     {
       [mtl_window->ready_drawable release];

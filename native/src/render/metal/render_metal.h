@@ -36,6 +36,9 @@ typedef struct R_MTL_Window R_MTL_Window;
 // How long the shell waits for a visible window's display link before it
 // builds without a drawable: a few display frames at any rate.
 #define R_MTL_DISPLAY_WAIT_LIMIT_US 100000
+// A link that stopped firing may never fire again (after the screen locks,
+// say), so a stalled window replaces it, at most this often while it stalls.
+#define R_MTL_DISPLAY_RELINK_INTERVAL_US 1000000
 
 struct R_MTL_Window
 {
@@ -48,6 +51,7 @@ struct R_MTL_Window
   CFTimeInterval target_presentation_time;
   B32 frame_requested;
   U64 pending_since_us; // when the requested frame began waiting for a drawable; 0 if it isn't
+  U64 link_heard_us; // when display_link was made, unpaused, or last gave a drawable
   S32 display_hz;
   id<MTLTexture> stage_color;
   id<MTLTexture> stage_scratch_color;
