@@ -3783,53 +3783,26 @@ uishell_cleat_daemon_provider_from_name(String8 daemon_name)
 // user's ssh configuration is the authentication, and Wheelhouse stores no
 // credentials. Each View has its own bridge (docs/design/remote-terminals.md).
 
-// `arg` as one word for the remote login shell ssh hands its command to. A
-// leading `~/` stays outside the quotes so the remote shell still expands it;
-// `=` is always quoted, so a first word is never read as an assignment.
-internal String8
-uishell_cleat_remote_shell_word(Arena *arena, String8 arg)
-{
-  B32 plain = arg.size != 0;
-  for(U64 i = 0; i < arg.size; i++)
-  {
-    U8 c = arg.str[i];
-    plain = plain && (char_is_alpha(c) || char_is_digit(c, 10) || c == '/' || c == '.' || c == '_' || c == '-' || c == ':' || c == '@' || c == '+' || c == '~');
-  }
-  if(plain) { return arg; }
-  String8List parts = {0};
-  if(str8_match(str8_prefix(arg, 2), str8_lit("~/"), 0) && arg.size > 2)
-  {
-    str8_list_push(arena, &parts, str8_lit("~/"));
-    arg = str8_skip(arg, 2);
-  }
-  str8_list_push(arena, &parts, str8_lit("'"));
-  U64 start = 0;
-  for(U64 i = 0; i < arg.size; i++)
-  {
-    if(arg.str[i] != '\'') { continue; }
-    str8_list_push(arena, &parts, str8(arg.str+start, i-start));
-    str8_list_push(arena, &parts, str8_lit("'\\''"));
-    start = i+1;
-  }
-  str8_list_push(arena, &parts, str8(arg.str+start, arg.size-start));
-  str8_list_push(arena, &parts, str8_lit("'"));
-  return str8_list_join(arena, &parts, 0);
-}
-
-// The argv of the command a View's provider reaches `host`'s daemon through.
-// BatchMode makes ssh fail with a reason instead of prompting: there is no
-// terminal for it to ask on.
+// The argv of the command a View's provider reaches `host`'s daemon through:
+// Wheelhouse's own route, ssh, around the `cleat proxy` command line Cleat
+// quotes for the far shell (cleat_proxy_command). BatchMode makes ssh fail
+// with a reason instead of prompting: there is no terminal for it to ask on.
+// 0 when Cleat refuses the target (a NUL no shell word can carry).
 internal U64
 uishell_cleat_remote_argv(Arena *arena, String8 host, String8 cleat, String8 runtime_root, String8 daemon, String8 *argv, U64 cap)
 {
-  String8List remote = {0};
-  str8_list_pushf(arena, &remote, "%S proxy", cleat.size != 0 ? uishell_cleat_remote_shell_word(arena, cleat) : str8_lit("cleat"));
-  // `--flag=value`, so a value starting with `-` is never read as a flag.
-  if(daemon.size != 0) { str8_list_pushf(arena, &remote, "--daemon=%S", uishell_cleat_remote_shell_word(arena, daemon)); }
-  if(runtime_root.size != 0) { str8_list_pushf(arena, &remote, "--runtime-root=%S", uishell_cleat_remote_shell_word(arena, runtime_root)); }
-  StringJoin join = {.sep = str8_lit(" ")};
-  String8 words[] = {str8_lit("ssh"), str8_lit("-T"), str8_lit("-o"), str8_lit("BatchMode=yes"), str8_lit("--"), host,
-                     str8_list_join(arena, &remote, &join)};
+  cleat_proxy_target target =
+  {
+    .size = sizeof(target),
+    .cleat = {cleat.str, cleat.size},
+    .daemon = {daemon.str, daemon.size},
+    .runtime_root = {runtime_root.str, runtime_root.size},
+  };
+  size_t len = 0;
+  if(!cleat_proxy_command(&target, 0, 0, &len)) { return 0; }
+  U8 *command = push_array_no_zero(arena, U8, len);
+  if(!cleat_proxy_command(&target, command, len, &len)) { return 0; }
+  String8 words[] = {str8_lit("ssh"), str8_lit("-T"), str8_lit("-o"), str8_lit("BatchMode=yes"), str8_lit("--"), host, str8(command, len)};
   Assert(cap >= ArrayCount(words));
   U64 count = Min(cap, ArrayCount(words));
   for(U64 i = 0; i < count; i++) { argv[i] = words[i]; }
@@ -3842,6 +3815,12 @@ uishell_cleat_remote_provider_open(String8 host, String8 cleat, String8 runtime_
   Temp scratch = scratch_begin(0, 0);
   String8 argv[8];
   U64 argc = uishell_cleat_remote_argv(scratch.arena, host, cleat, runtime_root, daemon, argv, ArrayCount(argv));
+  if(argc == 0)
+  {
+    log_user_errorf("Remote terminal: Cleat refused the endpoint for %S", host);
+    scratch_end(scratch);
+    return 0;
+  }
   cleat_str args[8];
   for(U64 i = 0; i < argc; i++) { args[i] = (cleat_str){argv[i].str, argv[i].size}; }
   cleat_provider_desc desc =
@@ -3863,7 +3842,7 @@ uishell_cleat_remote_provider_open(String8 host, String8 cleat, String8 runtime_
   return provider;
 }
 
-// The provider's transport diagnostics (cleat_provider_transport_state_json):
+// The provider's transport diagnostics (cleat_provider_transport_state):
 // whether it is retrying, and its last error and admission warning.
 typedef struct UIShell_CleatTransportState UIShell_CleatTransportState;
 struct UIShell_CleatTransportState
@@ -3873,69 +3852,45 @@ struct UIShell_CleatTransportState
   String8 warning;
 };
 
-// A JSON string member's value, unescaped for display; empty when absent or
-// null. The state JSON is flat and Cleat's own, so this reads only that. The
-// needle can't match inside another string value: quotes there are escaped.
+// A transport text for display on one line: the error is a command's own
+// stderr line, so control characters (escape sequences among them) read as
+// spaces.
 internal String8
-uishell_cleat_json_string(Arena *arena, String8 json, String8 key)
+uishell_cleat_transport_text(Arena *arena, U8 *text, U64 len)
 {
-  String8 needle = push_str8f(arena, "\"%S\":\"", key);
-  U64 at = str8_find_needle(json, 0, needle, 0);
-  if(at >= json.size) { return str8_zero(); }
-  String8List out = {0};
-  U64 start = at+needle.size;
-  for(U64 i = start; i < json.size; i++)
+  String8 out = push_str8_copy(arena, str8(text, len));
+  for(U64 i = 0; i < out.size; i++)
   {
-    if(json.str[i] == '"') { str8_list_push(arena, &out, str8(json.str+start, i-start)); break; }
-    if(json.str[i] == '\\' && i+1 < json.size)
-    {
-      str8_list_push(arena, &out, str8(json.str+start, i-start));
-      U8 c = json.str[i+1];
-      U64 hex = 0;
-      if(c == 'u' && i+6 <= json.size && str8_is_integer(str8(json.str+i+2, 4), 16))
-      {
-        // Control characters and surrogate halves read as a space.
-        U32 codepoint = (U32)u64_from_str8(str8(json.str+i+2, 4), 16);
-        str8_list_push(arena, &out, codepoint < 0x20 || (codepoint >= 0xD800 && codepoint < 0xE000) ? str8_lit(" ") : str8_from_32(arena, str32(&codepoint, 1)));
-        hex = 4;
-      }
-      else
-      {
-        str8_list_push(arena, &out, c == 'n' || c == 't' || c == 'r' ? str8_lit(" ") : push_str8_copy(arena, str8(json.str+i+1, 1)));
-      }
-      i += 1+hex;
-      start = i+1;
-    }
+    if(out.str[i] < 0x20 || out.str[i] == 0x7f) { out.str[i] = ' '; }
   }
-  return str8_list_join(arena, &out, 0);
+  return out;
 }
 
-// Only an explicit `"retrying":true` keeps the pill waiting: a state that
+// Only a state that says it is retrying keeps the pill waiting: a state that
 // can't be read reads as given up, with a reason, so the reconnect stays
 // reachable.
-internal UIShell_CleatTransportState
-uishell_cleat_transport_state_from_json(Arena *arena, String8 json)
-{
-  UIShell_CleatTransportState state = {0};
-  if(str8_find_needle(json, 0, str8_lit("\"retrying\":"), 0) >= json.size)
-  {
-    state.error = str8_lit("transport state unreadable");
-    return state;
-  }
-  state.retrying = str8_find_needle(json, 0, str8_lit("\"retrying\":true"), 0) < json.size;
-  state.error = uishell_cleat_json_string(arena, json, str8_lit("error"));
-  state.warning = uishell_cleat_json_string(arena, json, str8_lit("warning"));
-  return state;
-}
-
 internal UIShell_CleatTransportState
 uishell_cleat_transport_state(Arena *arena, cleat_provider *provider)
 {
   if(provider == 0) { return (UIShell_CleatTransportState){0}; }
-  U8 buffer[8192];
-  size_t len = 0;
-  B32 read = cleat_provider_transport_state_json(provider, buffer, sizeof(buffer), &len) && len <= sizeof(buffer);
-  return uishell_cleat_transport_state_from_json(arena, read ? str8(buffer, len) : str8_zero());
+  U8 error[1024];
+  U8 warning[1024];
+  cleat_transport_state raw =
+  {
+    .size = sizeof(raw),
+    .error = error, .error_capacity = sizeof(error),
+    .warning = warning, .warning_capacity = sizeof(warning),
+  };
+  UIShell_CleatTransportState state = {0};
+  if(!cleat_provider_transport_state(provider, &raw))
+  {
+    state.error = str8_lit("transport state unreadable");
+    return state;
+  }
+  state.retrying = raw.retrying;
+  state.error = uishell_cleat_transport_text(arena, error, Min(raw.error_len, sizeof(error)));
+  state.warning = uishell_cleat_transport_text(arena, warning, Min(raw.warning_len, sizeof(warning)));
+  return state;
 }
 
 internal WM_Key uishell_terminal_key_from_ui_event(UI_Event *evt);

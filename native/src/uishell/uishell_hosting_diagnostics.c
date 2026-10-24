@@ -39,23 +39,16 @@ uishell_hosting_diagnostics(RD_WindowState *ws)
     HostingCheck(str8_match(argv[argc-1], str8_lit("~/'bin/cleat dev' proxy"), 0), "remote cleat command is one word, home still expanded");
     argc = uishell_cleat_remote_argv(scratch.arena, str8_lit("h"), str8_lit("FOO=bar"), str8_zero(), str8_lit("-x"), argv, ArrayCount(argv));
     HostingCheck(str8_match(argv[argc-1], str8_lit("'FOO=bar' proxy --daemon=-x"), 0), "no assignment or flag injected through the endpoint");
+    U8 nul[] = {'w', 0, 'k'};
+    argc = uishell_cleat_remote_argv(scratch.arena, str8_lit("h"), str8_zero(), str8_zero(), str8(nul, sizeof(nul)), argv, ArrayCount(argv));
+    HostingCheck(argc == 0, "an endpoint no shell word can carry opens no bridge");
   }
-  // The transport state Cleat reports, read for the reconnect pill.
+  // Transport texts Cleat reports, shown on one line beside the pill.
   {
-    U8 json[] = "{\"kind\":\"command\",\"connected\":false,\"error\":\"ssh: connect to host x: \\\"refused\\\"\",\"warning\":null,\"retrying\":false}";
-    String8 text = str8(json, sizeof(json)-1);
-    HostingCheck(str8_match(uishell_cleat_json_string(scratch.arena, text, str8_lit("error")), str8_lit("ssh: connect to host x: \"refused\""), 0), "transport error unescaped");
-    HostingCheck(uishell_cleat_json_string(scratch.arena, text, str8_lit("warning")).size == 0, "null warning is empty");
-    U8 escaped[] = "{\"error\":\"caf\\u00e9\\u001b[0m \\u00C9\"}";
-    HostingCheck(str8_match(uishell_cleat_json_string(scratch.arena, str8(escaped, sizeof(escaped)-1), str8_lit("error")), str8_lit("caf\xc3\xa9 [0m \xc3\x89"), 0), "unicode escapes decoded, controls blanked");
-    UIShell_CleatTransportState state = uishell_cleat_transport_state_from_json(scratch.arena, text);
-    HostingCheck(!state.retrying && state.error.size != 0, "retrying false reads as given up");
-    U8 retrying[] = "{\"kind\":\"command\",\"connected\":false,\"error\":null,\"warning\":null,\"retrying\":true}";
-    state = uishell_cleat_transport_state_from_json(scratch.arena, str8(retrying, sizeof(retrying)-1));
-    HostingCheck(state.retrying, "retrying true keeps waiting");
-    U8 reformatted[] = "{ \"retrying\" : true }";
-    state = uishell_cleat_transport_state_from_json(scratch.arena, str8(reformatted, sizeof(reformatted)-1));
-    HostingCheck(!state.retrying && state.error.size != 0, "unreadable state gives up with a reason");
+    U8 error[] = "ssh: \x1b[31mrefused\x1b[0m\tcaf\xc3\xa9\x7f";
+    String8 text = uishell_cleat_transport_text(scratch.arena, error, sizeof(error)-1);
+    HostingCheck(str8_match(text, str8_lit("ssh:  [31mrefused [0m caf\xc3\xa9 "), 0), "transport text blanks controls, keeps UTF-8");
+    HostingCheck(uishell_cleat_transport_state(scratch.arena, 0).error.size == 0, "no provider reports no transport");
   }
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   // A workspace of its own beside the window's, so its Views have
