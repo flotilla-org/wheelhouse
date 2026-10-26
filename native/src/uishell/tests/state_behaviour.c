@@ -538,11 +538,6 @@ state_workspace_labelled(CFG_Node *window, String8 label)
   return &cfg_nil_node;
 }
 
-// Every workspace of the window is committed, and its panel tree is the
-// document the core keeps: the same panels, weights, tabs by slot key and
-// Selected Views, at the generation the window last saw. The core owns it
-// once a commit changed its structure; one that changed only weights or
-// selections leaves it following the provider (ADR 0013).
 // A panel's weight as a share of its siblings' total.
 internal F64
 state_doc_share(WheelhouseArrangementDoc const *doc, U64 index)
@@ -553,6 +548,11 @@ state_doc_share(WheelhouseArrangementDoc const *doc, U64 index)
   return total > 0 ? doc->panels[index].weight/total : 0;
 }
 
+// Every workspace of the window is committed, and its panel tree is the
+// document the core keeps: the same panels, weights, tabs by slot key and
+// Selected Views, at the generation the window last saw. The core owns it
+// once a commit changed its structure; one that changed only weights or
+// selections leaves it following the provider (ADR 0013).
 // Whether two documents are the same: the same panels, in order, with the
 // same parents, tabs and Selected Views; weights as shares of their siblings'
 // (the core's are relative: a layout's 3 and 2 are this device's 0.6 and
