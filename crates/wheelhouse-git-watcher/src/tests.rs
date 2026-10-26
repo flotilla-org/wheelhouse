@@ -26,14 +26,18 @@ fn write_executable(path: &Path, script: &str) {
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
+        // Short: some tests bind Unix sockets here, whose paths macOS caps at
+        // 104 bytes.
         let path = std::env::temp_dir().join(format!(
-            "git-watcher-{}-{}-{}",
+            "gw-{}-{}-{:x}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
-            SERIAL.fetch_add(1, Ordering::Relaxed)
+            SERIAL.fetch_add(1, Ordering::Relaxed),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u32
         ));
         fs::create_dir_all(&path).unwrap();
-        Self(path)
+        // Discovery canonicalises roots; macOS's temp dir is under the /var
+        // symlink, so compare against the real path.
+        Self(fs::canonicalize(path).unwrap())
     }
 }
 impl Drop for Temp {
@@ -391,7 +395,12 @@ fn non_utf8_paths_never_panic_or_create_lossy_recipes() {
     let temp = Temp::new();
     init(&temp.0);
     let invalid = temp.0.join(std::ffi::OsString::from_vec(vec![0xff]));
-    fs::create_dir(&invalid).unwrap();
+    // APFS refuses names that aren't UTF-8 (EILSEQ, 92 on macOS), so there
+    // discovery never meets one; the observed path and the recipe still can.
+    match fs::create_dir(&invalid) {
+        Err(error) if cfg!(target_os = "macos") && error.raw_os_error() == Some(92) => {}
+        created => created.unwrap(),
+    }
     let trees = discover(std::slice::from_ref(&temp.0), &[]);
     let mut host = transport::Zellij { bin: "/not-invoked".into(), plugin: None, factory_layout: None };
     host.reconcile(&trees, std::slice::from_ref(&invalid), 1000).unwrap();
