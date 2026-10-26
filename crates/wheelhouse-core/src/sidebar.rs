@@ -21,6 +21,7 @@ use crate::{
     sidebar_arrangement::{self, Declared, LocalSection, Report, SidebarArrangement, SidebarDoc, SidebarView},
     slots::{ArrangementCommit, ArrangementDoc, ArrangementView, Baseline, OverlayView, Resolve, SlotInfo},
     state::{ControllerState, ControllerTab, EntityActivation, RevisionEvaluation},
+    stream::{self, SidebarDelta, SubscriptionId},
     suggested_layout::{PrimarySlot, RebindPolicy, ViewSpec},
     target_resolution::{PortableResolution, SavedResolution},
     template_config::{parse_template_config_kdl, TemplateConfigCatalog},
@@ -190,7 +191,7 @@ enum Pending {
 pub struct Sidebar {
     state: ControllerState,
     revision: u64,
-    snapshot: OnceCell<Snapshot>,
+    snapshot: OnceCell<Rc<Snapshot>>,
     evaluation: OnceCell<RevisionEvaluation>,
     details: RefCell<BTreeMap<EntityRef, Option<DetailCard>>>,
     next_request: u64,
@@ -217,6 +218,15 @@ pub struct Sidebar {
     /// reconciliation did.
     sidebar_arrangement: Versioned<SidebarArrangement>,
     sidebar_report: Report,
+    /// Each subscription's last delivered snapshot and the revision it saw.
+    subscriptions: BTreeMap<SubscriptionId, Subscription>,
+    next_subscription: u64,
+}
+
+#[derive(Default)]
+struct Subscription {
+    delivered: Option<Rc<Snapshot>>,
+    seen: Option<u64>,
 }
 
 #[derive(Default)]
@@ -1255,15 +1265,60 @@ impl Sidebar {
 
     /// Borrow the retained immutable snapshot, rebuilding only after a change.
     pub fn snapshot_shared(&self) -> &Snapshot {
-        self.snapshot.get_or_init(|| Snapshot {
-            revision: self.revision,
-            surface: self.state.presentation_in(self.evaluation()),
-            errors: self
-                .errors
-                .iter()
-                .map(|(entity, message)| ActivationError { entity: entity.clone(), message: message.clone() })
-                .collect(),
+        self.snapshot_rc()
+    }
+
+    fn snapshot_rc(&self) -> &Rc<Snapshot> {
+        self.snapshot.get_or_init(|| {
+            Rc::new(Snapshot {
+                revision: self.revision,
+                surface: self.state.presentation_in(self.evaluation()),
+                errors: self
+                    .errors
+                    .iter()
+                    .map(|(entity, message)| ActivationError { entity: entity.clone(), message: message.clone() })
+                    .collect(),
+            })
         })
+    }
+
+    /// Follow the sidebar's changes: the first [`poll`](Self::poll) gives
+    /// everything, and each after it what changed since the one before.
+    pub fn subscribe(&mut self) -> SubscriptionId {
+        let id = SubscriptionId(self.next_subscription);
+        self.next_subscription += 1;
+        self.subscriptions.insert(id, Subscription::default());
+        id
+    }
+
+    /// Stop following; returns whether the subscription existed.
+    pub fn unsubscribe(&mut self, id: SubscriptionId) -> bool {
+        self.subscriptions.remove(&id).is_some()
+    }
+
+    /// Whether a poll might have something to deliver. It builds nothing:
+    /// check after draining a batch, and poll only when it is true. A change
+    /// that turns out to present nothing new still makes it true once.
+    pub fn changed_since(&self, id: SubscriptionId) -> bool {
+        self.subscriptions.get(&id).is_some_and(|subscription| subscription.seen != Some(self.revision))
+    }
+
+    /// What changed since this subscription's last delta, or everything for
+    /// its first; none when nothing it presents changed, or for an unknown
+    /// subscription.
+    pub fn poll(&mut self, id: SubscriptionId) -> Option<SidebarDelta> {
+        if !self.changed_since(id) {
+            return None;
+        }
+        let current = self.snapshot_rc().clone();
+        let subscription = self.subscriptions.get_mut(&id)?;
+        let ops = stream::delta(subscription.delivered.as_deref(), &current);
+        let first = subscription.delivered.is_none();
+        subscription.seen = Some(current.revision);
+        // Keep the current snapshot even when nothing changed, so the next
+        // walk shares its nodes.
+        subscription.delivered = Some(current.clone());
+        (first || !ops.is_empty()).then_some(SidebarDelta { generation: current.revision, ops })
     }
 
     /// The surface a first evaluation of the current state presents, with

@@ -231,6 +231,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hegeltest"
+version = "0.49.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "915e9f52fc86cdde733897ec760f5fc50cfa553cf64d808d4d929f4350ca887a"
+dependencies = [
+ "hegeltest-macros",
+ "parking_lot",
+]
+
+[[package]]
+name = "hegeltest-macros"
+version = "0.49.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf89b7c585e4a7e1398fb29c2ae72aba7703774d8a479894c34c665f8e69368b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -883,6 +904,7 @@ name = "wheelhouse-core"
 version = "0.1.0"
 dependencies = [
  "foldhash 0.2.0",
+ "hegeltest",
  "insta",
  "kdl",
  "serde",

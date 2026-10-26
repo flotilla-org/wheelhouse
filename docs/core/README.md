@@ -132,6 +132,13 @@ without trying tiers until content fits. `default-collapsed=true` starts the
 loop's placements collapsed; toggling one expands it, and that is what the
 saved collapse state records for it.
 
+A field with `presents="status|attention|icon|short-label|medium-label"` fills
+that typed value of its content (`Content.presented`) instead of a flat field.
+It reserves no column, and its prefix and suffix don't apply. The first such
+field with a value fills it, so a later one with the same `presents` is a
+fallback (a template's own icon after `presentation.icon`); attention is set
+when a field gives `true`.
+
 Templates still support `extends`, reusable `fragment`/`use`, field replacement,
 `remove`, chrome, and effective-KDL inspection. User, repository, project,
 fleet, and bundled layers retain their precedence. Node variables inherit down

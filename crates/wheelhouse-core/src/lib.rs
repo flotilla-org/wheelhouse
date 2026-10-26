@@ -29,6 +29,7 @@ pub mod sidebar;
 pub mod sidebar_arrangement;
 pub mod slots;
 pub mod state;
+pub mod stream;
 pub mod suggested_layout;
 pub use sidebar::Sidebar;
 pub mod target_resolution;
@@ -1474,3 +1475,5 @@ mod visibility_tests;
 mod census;
 #[cfg(test)]
 mod scaling_tests;
+#[cfg(test)]
+mod stream_tests;

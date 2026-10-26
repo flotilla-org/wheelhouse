@@ -10,8 +10,8 @@ use crate::census::Census;
 use crate::state::variables_census;
 use crate::state::{ControllerTab, EvaluatedPlacement, EvaluatedSection, NodeVariables};
 use crate::template_config::{
-    AbbreviationTier, ChromeSpec, SurfaceRegionDefinition, TemplateConfigFieldClass, TemplateConfigMatchContext, TemplateConfigNodeKind,
-    TemplateConfigRenderedField, TemplateConfigSlot, TemplateControlSpec, TemplateVariableDefinition,
+    AbbreviationTier, ChromeSpec, Presents, SurfaceRegionDefinition, TemplateConfigFieldClass, TemplateConfigMatchContext,
+    TemplateConfigNodeKind, TemplateConfigRenderedField, TemplateConfigSlot, TemplateControlSpec, TemplateVariableDefinition,
 };
 use crate::{
     ControllerViewModel, DisplayVariableValue, EffectiveKdl, EffectiveNodeVariables, EntityRef, FactMap, MetadataValue, NodeKey,
@@ -126,11 +126,55 @@ pub enum PresentationState {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Content {
     pub fields: Vec<TemplateConfigRenderedField>,
+    /// What the template's `presents` fields gave, typed.
+    #[serde(default, skip_serializing_if = "Presented::is_empty")]
+    pub presented: Presented,
     pub controls: Vec<TemplateControlSpec>,
     pub chrome: ChromeSpec,
     pub template_name: Option<String>,
     pub effective_kdl: EffectiveKdl,
     pub error: Option<String>,
+}
+
+/// Values a template presents by meaning rather than as text: a node's
+/// status and attention, its icon, and its shorter labels. Each frontend
+/// decides how they look.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Presented {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub attention: bool,
+    /// A symbolic name a frontend may map to its own icon, or a glyph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub medium_label: Option<String>,
+}
+
+impl Presented {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// The first field presenting a value fills it; later ones are fallbacks.
+    fn fill(&mut self, presents: Presents, value: String) {
+        let slot = match presents {
+            Presents::Status => &mut self.status,
+            Presents::Icon => &mut self.icon,
+            Presents::ShortLabel => &mut self.short_label,
+            Presents::MediumLabel => &mut self.medium_label,
+            Presents::Attention => {
+                self.attention = self.attention || value == "true";
+                return;
+            }
+        };
+        if slot.is_none() && !value.is_empty() {
+            *slot = Some(value);
+        }
+    }
 }
 
 impl Content {
@@ -565,6 +609,7 @@ fn resolve_content(
     let Some(slot) = slot else {
         return Content::default();
     };
+    let mut presented = Presented::default();
     let fields = if let Some(ready) = &slot.render_ready {
         let context = TemplateConfigMatchContext {
             slot: TemplateConfigSlot::Compact,
@@ -574,10 +619,13 @@ fn resolve_content(
             collapsible,
             active_tab_name: None,
         };
+        for (presents, value) in ready.fields.iter().filter_map(|spec| spec.render_presents(context)) {
+            presented.fill(presents, value);
+        }
         ready
             .fields
             .iter()
-            .filter(|spec| !spec.structured_only)
+            .filter(|spec| !spec.structured_only && spec.presents.is_none())
             .filter_map(|spec| {
                 spec.render(context).or_else(|| {
                     reserve_columns.then(|| TemplateConfigRenderedField {
@@ -602,6 +650,7 @@ fn resolve_content(
     };
     Content {
         fields,
+        presented,
         controls: slot.render_ready.as_ref().map(|r| r.controls.clone()).unwrap_or_default(),
         chrome: slot.render_ready.as_ref().map(|r| r.chrome.clone()).unwrap_or_default(),
         template_name: Some(slot.template_name.clone()),
