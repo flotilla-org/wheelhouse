@@ -1389,6 +1389,7 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
     for(U64 i = 0; i < ids_used; i++) { a->next_id = Max(a->next_id, ids[i]+1); }
     // The core's weights are relative to siblings (a layout's are integers,
     // agents 3 beside files 2); a panel's here is its share of its parent.
+    // The core refuses weights that aren't positive, so a total is too.
     for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
     {
       F32 total = 0;

@@ -544,8 +544,18 @@ state_workspace_labelled(CFG_Node *window, String8 label)
 // once a commit changed its structure; one that changed only weights or
 // selections leaves it following the provider (ADR 0013).
 // Whether two documents are the same: the same panels, in order, with the
-// same parents, tabs and Selected Views; weights within rounding, roots' not
-// at all.
+// same parents, tabs and Selected Views; weights as shares of their siblings'
+// (the core's are relative: a layout's 3 and 2 are this device's 0.6 and
+// 0.4) within rounding, roots' not at all.
+internal F64
+state_doc_share(WheelhouseArrangementDoc const *doc, U64 index)
+{
+  F64 total = 0;
+  U64 up = doc->panels[index].parent;
+  for(U64 i = 0; i < doc->panel_count; i++) { if(doc->panels[i].parent == up) { total += doc->panels[i].weight; } }
+  return total > 0 ? doc->panels[index].weight/total : 0;
+}
+
 internal B32
 state_same_doc(WheelhouseArrangementDoc const *a, WheelhouseArrangementDoc const *b)
 {
@@ -555,7 +565,8 @@ state_same_doc(WheelhouseArrangementDoc const *a, WheelhouseArrangementDoc const
     WheelhouseDocPanel const *p = &a->panels[i], *q = &b->panels[i];
     B32 root = p->parent == WHEELHOUSE_NONE;
     same = (str8_match(uishell_sidebar_string(p->id), uishell_sidebar_string(q->id), 0) && p->parent == q->parent && p->kind == q->kind &&
-            (p->kind != WHEELHOUSE_PANEL_SPLIT || p->axis == q->axis) && (root || abs_f32((F32)(p->weight-q->weight)) < 1e-6f) &&
+            (p->kind != WHEELHOUSE_PANEL_SPLIT || p->axis == q->axis) &&
+            (root || abs_f32((F32)(state_doc_share(a, i)-state_doc_share(b, i))) < 1e-6f) &&
             p->tab_count == q->tab_count && p->selected == q->selected);
     for(U64 t = 0; same && t < p->tab_count; t++) { same = str8_match(uishell_sidebar_string(p->tabs[t]), uishell_sidebar_string(q->tabs[t]), 0); }
   }
