@@ -1008,6 +1008,68 @@ pub fn select_primary_entry(entries: &[CandidateEntry]) -> Option<CandidateEntry
 }
 
 #[cfg(test)]
+impl MetadataStore {
+    /// Count what the store holds: facts by entity, and the resolutions kept.
+    pub(crate) fn census(&self, census: &mut Census) {
+        for (target, keys) in &self.entries {
+            if let EntityId::Entity(entity) = target {
+                census.entity("store: entity ids", entity);
+            }
+            census.shape("store: facts per entity", keys.keys());
+            for key in keys.keys() {
+                if census.first(key) {
+                    census.string("store: fact keys (interned)", key);
+                }
+            }
+            for contributions in keys.values() {
+                for (_, entry) in contributions.shared() {
+                    if census.first(entry) {
+                        census.value("store: fact values", &entry.value);
+                    }
+                }
+            }
+        }
+        for source in &self.sources {
+            census.string("store: sources (interned)", source);
+        }
+        for stored in self.entries.values() {
+            if let Some(cached) = stored.resolved.borrow().as_ref().filter(|cached| census.first(&cached.resolved)) {
+                cached.resolved.census(census, "resolved facts");
+            }
+        }
+        for (target, record) in &self.records {
+            if let EntityId::Entity(entity) = target {
+                census.entity("records: entity ids", entity);
+            }
+            if census.first(&record.facts) {
+                record.facts.census(census, "records");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl ResolvedFacts {
+    pub(crate) fn census(&self, census: &mut Census, prefix: &str) {
+        // Keys and sources are shared (a spine, interned sources); count
+        // each spine once, and the facts each record holds.
+        if census.first(self.shape()) {
+            census.shape(&format!("{prefix}: spines"), self.keys());
+            for key in self.shape().keys() {
+                if census.first(key) {
+                    census.string(&format!("{prefix}: spine keys"), key);
+                }
+            }
+        }
+        for (_, fact) in self.facts() {
+            if census.first(&fact.entry) {
+                census.value(&format!("{prefix}: values (not shared)"), &fact.entry.value);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1264,10 +1326,10 @@ mod tests {
         let second = store.apply_patch(patch, 11);
 
         let entries = store.entries_for(&target, "git.repo", 11);
-        assert_eq!(first.view_changed, true);
-        assert_eq!(first.touched, true);
-        assert_eq!(second.view_changed, false);
-        assert_eq!(second.touched, false);
+        assert!(first.view_changed);
+        assert!(first.touched);
+        assert!(!second.view_changed);
+        assert!(!second.touched);
         assert_eq!(entries[0].entry.updated_at, 10);
     }
 
@@ -1294,10 +1356,10 @@ mod tests {
         let second = store.apply_patch(patch, 11);
 
         let entries = store.entries_for(&target, "git.repo", 11);
-        assert_eq!(first.view_changed, true);
-        assert_eq!(first.touched, true);
-        assert_eq!(second.view_changed, false);
-        assert_eq!(second.touched, true);
+        assert!(first.view_changed);
+        assert!(first.touched);
+        assert!(!second.view_changed);
+        assert!(second.touched);
         assert_eq!(entries[0].entry.updated_at, 11);
     }
 
@@ -1347,67 +1409,5 @@ mod tests {
         let entries = store.entries_for(&target, "zellij.pane.cwd", 2);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].source_id, "shell");
-    }
-}
-
-#[cfg(test)]
-impl MetadataStore {
-    /// Count what the store holds: facts by entity, and the resolutions kept.
-    pub(crate) fn census(&self, census: &mut Census) {
-        for (target, keys) in &self.entries {
-            if let EntityId::Entity(entity) = target {
-                census.entity("store: entity ids", entity);
-            }
-            census.shape("store: facts per entity", keys.keys());
-            for key in keys.keys() {
-                if census.first(key) {
-                    census.string("store: fact keys (interned)", key);
-                }
-            }
-            for contributions in keys.values() {
-                for (_, entry) in contributions.shared() {
-                    if census.first(entry) {
-                        census.value("store: fact values", &entry.value);
-                    }
-                }
-            }
-        }
-        for source in &self.sources {
-            census.string("store: sources (interned)", source);
-        }
-        for stored in self.entries.values() {
-            if let Some(cached) = stored.resolved.borrow().as_ref().filter(|cached| census.first(&cached.resolved)) {
-                cached.resolved.census(census, "resolved facts");
-            }
-        }
-        for (target, record) in &self.records {
-            if let EntityId::Entity(entity) = target {
-                census.entity("records: entity ids", entity);
-            }
-            if census.first(&record.facts) {
-                record.facts.census(census, "records");
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-impl ResolvedFacts {
-    pub(crate) fn census(&self, census: &mut Census, prefix: &str) {
-        // Keys and sources are shared (a spine, interned sources); count
-        // each spine once, and the facts each record holds.
-        if census.first(self.shape()) {
-            census.shape(&format!("{prefix}: spines"), self.keys());
-            for key in self.shape().keys() {
-                if census.first(key) {
-                    census.string(&format!("{prefix}: spine keys"), key);
-                }
-            }
-        }
-        for (_, fact) in self.facts() {
-            if census.first(&fact.entry) {
-                census.value(&format!("{prefix}: values (not shared)"), &fact.entry.value);
-            }
-        }
     }
 }

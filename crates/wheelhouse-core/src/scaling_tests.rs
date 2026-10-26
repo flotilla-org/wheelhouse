@@ -84,7 +84,7 @@ fn fleet(shape: Shape, limit: usize) -> Vec<MetadataPatch> {
     let convoys = limit.min(shape.projects * shape.convoys_per_project);
     let projects = convoys.div_ceil(shape.convoys_per_project).max(1);
     let project = |c: usize| format!("fleet/p{}@fleet", c / shape.convoys_per_project);
-    let every = |n: usize, c: usize| n != 0 && c % n == 0;
+    let every = |n: usize, c: usize| n != 0 && c.is_multiple_of(n);
     let mut patches = vec![];
     for p in 0..projects {
         let id = format!("fleet/p{p}@fleet");
@@ -284,7 +284,7 @@ fn real_catalog_timings() {
         median(&mut evaluations)
     );
     let mut phases: Vec<_> = crate::profile::take().into_iter().collect();
-    phases.sort_by(|a, b| b.1.nanos.cmp(&a.1.nanos));
+    phases.sort_by_key(|phase| std::cmp::Reverse(phase.1.nanos));
     for (name, phase) in phases.iter().take(12) {
         println!("  {name:28} {:?} over {} calls", std::time::Duration::from_nanos(phase.nanos as u64), phase.calls);
     }
@@ -737,7 +737,7 @@ fn stress_shapes() {
         applies.sort();
         evaluations.sort();
         let mut phases: Vec<_> = crate::profile::take().into_iter().collect();
-        phases.sort_by(|a, b| b.1.nanos.cmp(&a.1.nanos));
+        phases.sort_by_key(|phase| std::cmp::Reverse(phase.1.nanos));
         let top: Vec<String> = phases
             .iter()
             .take(phases_shown)

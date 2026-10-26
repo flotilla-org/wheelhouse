@@ -415,9 +415,9 @@ fn resolve_placement_loop_fields(entities: &[Rc<PlacementNode>], cols: usize) ->
     };
 
     if total_width(&visible, &widths) > cols {
-        for column in 0..column_count {
+        for (column, shown) in visible.iter_mut().enumerate() {
             if rows.iter().filter_map(|row| row.get(column)).all(|field| matches!(field, TemplateField::Optional(_))) {
-                visible[column] = false;
+                *shown = false;
             }
         }
     }
@@ -573,7 +573,7 @@ fn show_metadata(model: &ControllerViewModel, node: &PlacementNode) -> bool {
     controls.effective_show(&target, inherited)
 }
 
-fn buffer_section<'a>(model: &ControllerViewModel, section: &'a Section, cols: usize) -> Vec<BufferedLine> {
+fn buffer_section(model: &ControllerViewModel, section: &Section, cols: usize) -> Vec<BufferedLine> {
     let mut lines = render_placement_lines(section.content.text(), &section.nodes, cols);
     if lines.first().is_some_and(|l| l.text.is_empty() && l.inline_hits.is_empty()) {
         lines.remove(0);
