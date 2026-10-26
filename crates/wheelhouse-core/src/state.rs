@@ -2153,7 +2153,6 @@ impl ControllerState {
         let templates = ResolvedTemplateSlots {
             compact: self.resolve_template_slot(TemplateConfigSlot::Compact, TemplateConfigNodeKind::Entity, &metadata),
             detail: self.resolve_template_slot(TemplateConfigSlot::Detail, TemplateConfigNodeKind::Entity, &metadata),
-            ..Default::default()
         };
         EvaluatedPlacement {
             entity: entity.entity.clone(),
@@ -3755,11 +3754,7 @@ impl ControllerState {
             .collect()
     }
 
-    fn resolve_target_metadata(
-        &self,
-        target: &EntityId,
-        seed_values: BTreeMap<String, MetadataEntry>,
-    ) -> (BTreeMap<String, MetadataEntry>, BTreeMap<String, Vec<MetadataSourceEntry>>, Vec<ReachableMetadataIdentity>) {
+    fn resolve_target_metadata(&self, target: &EntityId, seed_values: BTreeMap<String, MetadataEntry>) -> ResolvedTargetMetadata {
         let _phase = profile::span("metadata-resolution");
         let mut values = BTreeMap::new();
         let mut source_entries = BTreeMap::<String, Vec<MetadataSourceEntry>>::new();
@@ -4102,6 +4097,10 @@ fn cwd_group_label(cwd: &str, all_group_cwds: &[Arc<str>]) -> String {
         .unwrap_or_else(|| cwd.to_owned())
 }
 
+/// A target's resolved values, their sources by key, and the identities
+/// they reached.
+type ResolvedTargetMetadata = (BTreeMap<String, MetadataEntry>, BTreeMap<String, Vec<MetadataSourceEntry>>, Vec<ReachableMetadataIdentity>);
+
 fn observed_metadata_identities(resolved_metadata: &[ResolvedMetadata]) -> Vec<ObservedMetadataIdentity> {
     let mut by_identity: BTreeMap<MetadataIdentity, (BTreeSet<EntityId>, usize)> = BTreeMap::new();
     for metadata in resolved_metadata {
@@ -4116,6 +4115,165 @@ fn observed_metadata_identities(resolved_metadata: &[ResolvedMetadata]) -> Vec<O
         .into_iter()
         .map(|(identity, (targets, nearest_distance))| ObservedMetadataIdentity { identity, target_count: targets.len(), nearest_distance })
         .collect()
+}
+
+#[cfg(test)]
+impl ControllerState {
+    /// Count what the state holds and keeps between evaluations.
+    pub(crate) fn census(&self, census: &mut Census) {
+        self.metadata.census(census);
+        let kept = &self.kept;
+        if let Some(catalog) = &kept.catalog.borrow().evaluation {
+            for entity in &catalog.entities {
+                census.entity("catalog: entity refs", &entity.entity);
+                if census.first(&entity.facts) {
+                    entity.facts.census(census, "catalog facts (not shared)");
+                }
+            }
+        }
+        let index = kept.placement_index.borrow();
+        for key in index.by_fact.keys() {
+            if census.first(&key.0) {
+                census.string("index: posting keys (not shared)", &key.0);
+            }
+            match &key.1 {
+                IndexedValue::Scalar(value) => {
+                    if census.first_shared(value) {
+                        census.string("index: posting values (not shared)", value)
+                    }
+                }
+                IndexedValue::Entity(entity) => census.entity("index: posting values", entity),
+            }
+        }
+        drop(index);
+        for (entity, (_, _, display)) in kept.displays.borrow().iter() {
+            census.entity("displays: keys", entity);
+            display.census(census, "displays");
+        }
+        for slot in kept.resolutions.borrow().1.values().flatten() {
+            if census.first(slot) {
+                slot_census(census, "template resolutions", slot);
+            }
+        }
+        if let Some((_, regions)) = kept.placements.borrow().as_ref() {
+            for memo in regions.iter().flatten() {
+                memo.census(census);
+            }
+        }
+        for memo in kept.variables.borrow().nodes.values() {
+            if census.first(&memo.resolved) {
+                variables_census(census, "kept variables", &memo.resolved);
+            }
+        }
+        for memo in kept.surface.borrow().nodes_census() {
+            if census.first(memo) {
+                memo.census(census, "kept surface nodes");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl LoopMemo {
+    fn census(&self, census: &mut Census) {
+        self.reads.census(census);
+        for node in &self.nodes {
+            if census.first(&node.placement) {
+                node.placement.census(census, "placements");
+            }
+            node.related.iter().for_each(|reads| reads.census(census));
+            census.string("placement memo: bindings", &node.binding);
+            census.string("placement memo: bindings", &node.related_binding);
+            node.children.iter().for_each(|child| child.census(census));
+        }
+    }
+}
+
+#[cfg(test)]
+impl LoopReads {
+    fn census(&self, census: &mut Census) {
+        for (name, _) in &self.bound {
+            census.string("placement memo: reads", name);
+        }
+        for read in &self.postings {
+            if let PostingRead::Absent(key) = read {
+                if census.first(key) {
+                    census.string("placement memo: reads", &key.0);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl EvaluatedPlacement {
+    pub(crate) fn census(&self, census: &mut Census, prefix: &str) {
+        census.entity(&format!("{prefix}: entity refs"), &self.entity);
+        if let Some(key) = &self.placement {
+            census.key(&format!("{prefix}: keys"), key);
+        }
+        census.string(&format!("{prefix}: labels"), &self.label);
+        census.string(&format!("{prefix}: forms"), &self.form);
+        if census.first(&self.metadata) {
+            census.facts(&format!("{prefix}: facts"), &format!("{prefix}: fact keys (not shared)"), &self.metadata);
+        }
+        for slot in [&self.templates.compact, &self.templates.detail].into_iter().flatten() {
+            if census.first(slot) {
+                slot_census(census, &format!("{prefix}: templates"), slot);
+            }
+        }
+        if let Some(layout) = &self.annotation.layout {
+            census.string(&format!("{prefix}: layouts"), layout);
+        }
+        for field in &self.annotation.related_detail {
+            census.string(&format!("{prefix}: related detail"), &field.value);
+        }
+        for child in &self.children {
+            if census.first(child) {
+                child.census(census, prefix);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn slot_census(census: &mut Census, prefix: &str, slot: &ResolvedTemplateSlot) {
+    census.string(&format!("{prefix}: names"), &slot.template_name);
+    if let Some(kdl) = slot.effective_kdl.written().filter(|kdl| census.first(kdl)) {
+        census.string(&format!("{prefix}: effective KDL"), kdl);
+    }
+    for field in &slot.fields {
+        census.string(&format!("{prefix}: field text"), &field.text);
+    }
+    if let Some(ready) = &slot.render_ready {
+        census.blob(&format!("{prefix}: render data"), serde_json::to_string(ready).map(|json| json.len()).unwrap_or_default());
+    }
+    if !slot.setters.is_empty() {
+        census.blob(&format!("{prefix}: setters"), serde_json::to_string(&slot.setters).map(|json| json.len()).unwrap_or_default());
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn variables_census(census: &mut Census, prefix: &str, variables: &EffectiveNodeVariables) {
+    census.node_key(&format!("{prefix}: node keys"), &variables.node);
+    census.map(&format!("{prefix}: per node"), &format!("{prefix}: names"), variables.values.keys());
+    for value in variables.values.values() {
+        census.string(&format!("{prefix}: values"), &value.value);
+        for provenance in std::iter::once(&value.provenance).chain(&value.overridden) {
+            census.string(&format!("{prefix}: provenance"), &provenance.setter);
+            census.node_key(&format!("{prefix}: provenance"), &provenance.ancestor);
+            census.string(&format!("{prefix}: provenance"), &provenance.origin.source);
+            if let Some(membership) = &provenance.origin.membership {
+                census.string(&format!("{prefix}: provenance"), membership);
+            }
+        }
+    }
+    if !variables.declarations.is_empty() {
+        census.blob(
+            &format!("{prefix}: declarations"),
+            serde_json::to_string(&variables.declarations).map(|json| json.len()).unwrap_or_default(),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -5349,164 +5507,5 @@ placement "identity-descending" {
         let targets = state.rail_plugin_targets();
 
         assert_eq!(targets, vec![RendererHello { plugin_id: 1, client_id: 4 }, RendererHello { plugin_id: 2, client_id: 4 },]);
-    }
-}
-
-#[cfg(test)]
-impl ControllerState {
-    /// Count what the state holds and keeps between evaluations.
-    pub(crate) fn census(&self, census: &mut Census) {
-        self.metadata.census(census);
-        let kept = &self.kept;
-        if let Some(catalog) = &kept.catalog.borrow().evaluation {
-            for entity in &catalog.entities {
-                census.entity("catalog: entity refs", &entity.entity);
-                if census.first(&entity.facts) {
-                    entity.facts.census(census, "catalog facts (not shared)");
-                }
-            }
-        }
-        let index = kept.placement_index.borrow();
-        for key in index.by_fact.keys() {
-            if census.first(&key.0) {
-                census.string("index: posting keys (not shared)", &key.0);
-            }
-            match &key.1 {
-                IndexedValue::Scalar(value) => {
-                    if census.first_shared(value) {
-                        census.string("index: posting values (not shared)", value)
-                    }
-                }
-                IndexedValue::Entity(entity) => census.entity("index: posting values", entity),
-            }
-        }
-        drop(index);
-        for (entity, (_, _, display)) in kept.displays.borrow().iter() {
-            census.entity("displays: keys", entity);
-            display.census(census, "displays");
-        }
-        for slot in kept.resolutions.borrow().1.values().flatten() {
-            if census.first(slot) {
-                slot_census(census, "template resolutions", slot);
-            }
-        }
-        if let Some((_, regions)) = kept.placements.borrow().as_ref() {
-            for memo in regions.iter().flatten() {
-                memo.census(census);
-            }
-        }
-        for memo in kept.variables.borrow().nodes.values() {
-            if census.first(&memo.resolved) {
-                variables_census(census, "kept variables", &memo.resolved);
-            }
-        }
-        for memo in kept.surface.borrow().nodes_census() {
-            if census.first(memo) {
-                memo.census(census, "kept surface nodes");
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-impl LoopMemo {
-    fn census(&self, census: &mut Census) {
-        self.reads.census(census);
-        for node in &self.nodes {
-            if census.first(&node.placement) {
-                node.placement.census(census, "placements");
-            }
-            node.related.iter().for_each(|reads| reads.census(census));
-            census.string("placement memo: bindings", &node.binding);
-            census.string("placement memo: bindings", &node.related_binding);
-            node.children.iter().for_each(|child| child.census(census));
-        }
-    }
-}
-
-#[cfg(test)]
-impl LoopReads {
-    fn census(&self, census: &mut Census) {
-        for (name, _) in &self.bound {
-            census.string("placement memo: reads", name);
-        }
-        for read in &self.postings {
-            if let PostingRead::Absent(key) = read {
-                if census.first(key) {
-                    census.string("placement memo: reads", &key.0);
-                }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-impl EvaluatedPlacement {
-    pub(crate) fn census(&self, census: &mut Census, prefix: &str) {
-        census.entity(&format!("{prefix}: entity refs"), &self.entity);
-        if let Some(key) = &self.placement {
-            census.key(&format!("{prefix}: keys"), key);
-        }
-        census.string(&format!("{prefix}: labels"), &self.label);
-        census.string(&format!("{prefix}: forms"), &self.form);
-        if census.first(&self.metadata) {
-            census.facts(&format!("{prefix}: facts"), &format!("{prefix}: fact keys (not shared)"), &self.metadata);
-        }
-        for slot in [&self.templates.compact, &self.templates.detail].into_iter().flatten() {
-            if census.first(slot) {
-                slot_census(census, &format!("{prefix}: templates"), slot);
-            }
-        }
-        if let Some(layout) = &self.annotation.layout {
-            census.string(&format!("{prefix}: layouts"), layout);
-        }
-        for field in &self.annotation.related_detail {
-            census.string(&format!("{prefix}: related detail"), &field.value);
-        }
-        for child in &self.children {
-            if census.first(child) {
-                child.census(census, prefix);
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn slot_census(census: &mut Census, prefix: &str, slot: &ResolvedTemplateSlot) {
-    census.string(&format!("{prefix}: names"), &slot.template_name);
-    if let Some(kdl) = slot.effective_kdl.written().filter(|kdl| census.first(kdl)) {
-        census.string(&format!("{prefix}: effective KDL"), kdl);
-    }
-    for field in &slot.fields {
-        census.string(&format!("{prefix}: field text"), &field.text);
-    }
-    if let Some(ready) = &slot.render_ready {
-        census.blob(&format!("{prefix}: render data"), serde_json::to_string(ready).map(|json| json.len()).unwrap_or_default());
-    }
-    if !slot.setters.is_empty() {
-        census.blob(&format!("{prefix}: setters"), serde_json::to_string(&slot.setters).map(|json| json.len()).unwrap_or_default());
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn variables_census(census: &mut Census, prefix: &str, variables: &EffectiveNodeVariables) {
-    census.node_key(&format!("{prefix}: node keys"), &variables.node);
-    census.map(&format!("{prefix}: per node"), &format!("{prefix}: names"), variables.values.keys());
-    for value in variables.values.values() {
-        census.string(&format!("{prefix}: values"), &value.value);
-        for provenance in std::iter::once(&value.provenance).chain(&value.overridden) {
-            census.string(&format!("{prefix}: provenance"), &provenance.setter);
-            census.node_key(&format!("{prefix}: provenance"), &provenance.ancestor);
-            census.string(&format!("{prefix}: provenance"), &provenance.origin.source);
-            if let Some(membership) = &provenance.origin.membership {
-                census.string(&format!("{prefix}: provenance"), membership);
-            }
-        }
-    }
-    if !variables.declarations.is_empty() {
-        census.blob(
-            &format!("{prefix}: declarations"),
-            serde_json::to_string(&variables.declarations).map(|json| json.len()).unwrap_or_default(),
-        );
     }
 }

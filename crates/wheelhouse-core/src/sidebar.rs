@@ -1484,6 +1484,23 @@ fn retained_workspace_expired(_state: &ControllerState, _subjects: &BTreeSet<Ent
 }
 
 #[cfg(test)]
+impl Sidebar {
+    /// Count what the sidebar holds: its snapshot's nodes first, then its
+    /// state and what that keeps (counting only what the snapshot doesn't
+    /// share).
+    pub(crate) fn census(&self, census: &mut Census) {
+        for section in &self.snapshot_shared().surface.sections {
+            for node in &section.nodes {
+                if census.first(node) {
+                    node.census(census, "snapshot nodes");
+                }
+            }
+        }
+        self.state.census(census);
+    }
+}
+
+#[cfg(test)]
 mod evaluation_tests {
     const PROVIDER: &str = "test";
     use super::*;
@@ -1665,22 +1682,5 @@ mod evaluation_tests {
         assert!(sidebar.detail_card(&entity()).is_none());
         sidebar.apply(100, PROVIDER, [patch("base", "appeared")]).unwrap();
         assert_eq!(sidebar.detail_card(&entity()).unwrap().label, "appeared");
-    }
-}
-
-#[cfg(test)]
-impl Sidebar {
-    /// Count what the sidebar holds: its snapshot's nodes first, then its
-    /// state and what that keeps (counting only what the snapshot doesn't
-    /// share).
-    pub(crate) fn census(&self, census: &mut Census) {
-        for section in &self.snapshot_shared().surface.sections {
-            for node in &section.nodes {
-                if census.first(node) {
-                    node.census(census, "snapshot nodes");
-                }
-            }
-        }
-        self.state.census(census);
     }
 }

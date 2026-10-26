@@ -3,65 +3,6 @@
 version = 4
 
 [[package]]
-name = "wheelhouse-core"
-version = "0.1.0"
-dependencies = [
- "foldhash 0.2.0",
- "insta",
- "kdl",
- "serde",
- "serde_json",
- "unicode-width",
-]
-
-[[package]]
-name = "wheelhouse-ffi"
-version = "0.1.0"
-dependencies = [
- "wheelhouse-core",
- "serde_json",
-]
-
-[[package]]
-name = "wheelhouse-git-watcher"
-version = "0.1.0"
-dependencies = [
- "wheelhouse-core",
- "wheelhouse-terminal",
- "serde_json",
-]
-
-[[package]]
-name = "wheelhouse-html"
-version = "0.1.0"
-dependencies = [
- "wheelhouse-core",
- "wheelhouse-terminal",
- "serde_json",
-]
-
-[[package]]
-name = "wheelhouse-terminal"
-version = "0.1.0"
-dependencies = [
- "wheelhouse-core",
- "ansi_term",
- "insta",
- "serde_json",
- "unicode-width",
-]
-
-[[package]]
-name = "wheelhouse-tui"
-version = "0.1.0"
-dependencies = [
- "wheelhouse-core",
- "wheelhouse-terminal",
- "crossterm",
- "serde_json",
-]
-
-[[package]]
 name = "ansi_term"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -938,6 +879,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "wheelhouse-core"
+version = "0.1.0"
+dependencies = [
+ "foldhash 0.2.0",
+ "insta",
+ "kdl",
+ "serde",
+ "serde_json",
+ "unicode-width",
+]
+
+[[package]]
+name = "wheelhouse-ffi"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wheelhouse-core",
+]
+
+[[package]]
+name = "wheelhouse-git-watcher"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wheelhouse-core",
+ "wheelhouse-terminal",
+]
+
+[[package]]
+name = "wheelhouse-html"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wheelhouse-core",
+ "wheelhouse-terminal",
+]
+
+[[package]]
 name = "wheelhouse-ingress"
 version = "0.1.0"
 dependencies = [
@@ -946,6 +925,27 @@ dependencies = [
  "serde_json",
  "tokio",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "wheelhouse-terminal"
+version = "0.1.0"
+dependencies = [
+ "ansi_term",
+ "insta",
+ "serde_json",
+ "unicode-width",
+ "wheelhouse-core",
+]
+
+[[package]]
+name = "wheelhouse-tui"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "serde_json",
+ "wheelhouse-core",
+ "wheelhouse-terminal",
 ]
 
 [[package]]

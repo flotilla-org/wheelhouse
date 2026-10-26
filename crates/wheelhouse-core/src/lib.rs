@@ -369,31 +369,23 @@ impl LatentTab {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum SortMode {
     Controller,
+    #[default]
     Position,
     PinnedFirst,
     LatestStatus,
 }
 
-impl Default for SortMode {
-    fn default() -> Self {
-        Self::Position
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum RailStructure {
+    #[default]
     JoinedCells,
     SplitAroundActive,
     BoxPerTab,
-}
-
-impl Default for RailStructure {
-    fn default() -> Self {
-        Self::JoinedCells
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -949,18 +941,12 @@ pub struct RailRgbColor {
     pub blue: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RailConfig {
     #[serde(default)]
     pub structure: RailStructure,
     #[serde(default)]
     pub segment_between_color: Option<RailRgbColor>,
-}
-
-impl Default for RailConfig {
-    fn default() -> Self {
-        Self { structure: RailStructure::default(), segment_between_color: None }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

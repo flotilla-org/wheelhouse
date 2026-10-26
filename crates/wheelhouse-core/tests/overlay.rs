@@ -157,6 +157,7 @@ fn baseline_changes_drop_nothing_silently() {
     // slot the row is about: its flags and command (none: hidden or gone),
     // and the departed slots with their rebind policies.
     #[rustfmt::skip]
+    #[allow(clippy::type_complexity)]
     let rows: &[(&str, Edit, &[(&str, &str, &str)], &[&str], &str, u32, Option<&str>, &[(&str, RebindPolicy)])] = &[
         ("a new baseline slot appears", Edit::None,
          &[("a", "top", "replace"), ("b", "make", "keep-previous"), ("c", "tail -f log", "ask"), ("d", "htop", "replace")],
