@@ -2776,6 +2776,11 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     // the arrangement.
     B32 placed = 0;
     for(U64 i = 0; i < after->note_count; i++) { placed |= after->notes[i].kind == WHEELHOUSE_NOTE_PLACED; }
+    // So does the space the core shows a panel with: none for a layout's
+    // panel left empty, its weight back for one committed at none.
+    placed |= after->doc.panel_count != out.panel_count;
+    for(U64 i = 0; !placed && i < out.panel_count; i++)
+    { placed |= (after->doc.panels[i].weight > 0) != (out.panels[i].weight > 0); }
     if(placed)
     {
       uishell_store_follow(state, owner, id, &entry->generation);
