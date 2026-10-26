@@ -40,9 +40,12 @@ pub struct Workspace {
     pub selected: bool,
 }
 
+/// A frontend's request to change the sidebar's logical state, the one way
+/// it changes it (docs/design/change-stream.md). Each has a stable name (its
+/// serialized tag), which commands such as the Automation Endpoint's map onto.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "kebab-case")]
-pub enum Action {
+pub enum Intent {
     CopySubjectUrl {
         entity: EntityRef,
     },
@@ -64,6 +67,35 @@ pub enum Action {
     ToggleDisplayVariable {
         name: String,
     },
+}
+
+/// The name [`Sidebar::dispatch`]'s callers use; it goes with `dispatch`.
+pub type Action = Intent;
+
+impl Intent {
+    /// Its stable name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::CopySubjectUrl { .. } => "copy-subject-url",
+            Self::ActivatePlacement { .. } => "activate-placement",
+            Self::Activate { .. } => "activate",
+            Self::TogglePlacement { .. } => "toggle-placement",
+            Self::SetVariable { .. } => "set-variable",
+            Self::ToggleDisplayVariable { .. } => "toggle-display-variable",
+        }
+    }
+}
+
+/// What became of an intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "receipt", rename_all = "kebab-case")]
+pub enum IntentReceipt {
+    /// Applied. Its changes arrive in deltas, the first delta that lists
+    /// `request` holding the last of them; the effects are the platform's
+    /// to carry out for the frontend that sent it.
+    Accepted { request: u64, effects: Vec<HostEffect> },
+    /// Not applied, and nothing changed.
+    Refused { reason: String },
 }
 
 /// In-process/FFI messages for a presentation client. This is separate from
@@ -221,12 +253,15 @@ pub struct Sidebar {
     /// Each subscription's last delivered snapshot and the revision it saw.
     subscriptions: BTreeMap<SubscriptionId, Subscription>,
     next_subscription: u64,
+    next_intent: u64,
 }
 
 #[derive(Default)]
 struct Subscription {
     delivered: Option<Rc<Snapshot>>,
     seen: Option<u64>,
+    /// Intents accepted since the last delta, for the next one to list.
+    intents: Vec<u64>,
 }
 
 #[derive(Default)]
@@ -1303,11 +1338,12 @@ impl Sidebar {
     /// check after draining a batch, and poll only when it is true. A change
     /// that turns out to present nothing new still makes it true once.
     pub fn changed_since(&self, id: SubscriptionId) -> bool {
-        self.subscriptions.get(&id).is_some_and(|subscription| subscription.seen != Some(self.revision))
+        self.subscriptions.get(&id).is_some_and(|subscription| subscription.seen != Some(self.revision) || !subscription.intents.is_empty())
     }
 
     /// What changed since this subscription's last delta, or everything for
-    /// its first; none when nothing it presents changed, or for an unknown
+    /// its first, with the intents accepted since; none when nothing it
+    /// presents changed and no intent was accepted, or for an unknown
     /// subscription.
     pub fn poll(&mut self, id: SubscriptionId) -> Option<SidebarDelta> {
         if !self.changed_since(id) {
@@ -1321,7 +1357,8 @@ impl Sidebar {
         // Keep the current snapshot even when nothing changed, so the next
         // walk shares its nodes.
         subscription.delivered = Some(current.clone());
-        (first || !ops.is_empty()).then_some(SidebarDelta { generation: current.revision, ops })
+        let intents = std::mem::take(&mut subscription.intents);
+        (first || !ops.is_empty() || !intents.is_empty()).then_some(SidebarDelta { generation: current.revision, ops, intents })
     }
 
     /// The surface a first evaluation of the current state presents, with
@@ -1367,13 +1404,37 @@ impl Sidebar {
         self.state.subject_url(entity)
     }
 
+    /// Apply an intent. An accepted one is listed in every subscription's
+    /// next delta, which holds all it changed.
+    pub fn apply_intent(&mut self, intent: Intent) -> IntentReceipt {
+        match self.perform(intent) {
+            Ok(effects) => {
+                self.next_intent += 1;
+                let request = self.next_intent;
+                for subscription in self.subscriptions.values_mut() {
+                    subscription.intents.push(request);
+                }
+                IntentReceipt::Accepted { request, effects }
+            }
+            Err(reason) => IntentReceipt::Refused { reason },
+        }
+    }
+
+    /// [`apply_intent`](Self::apply_intent) for callers that predate it.
     pub fn dispatch(&mut self, action: Action) -> Result<Vec<HostEffect>, String> {
-        match action {
-            Action::CopySubjectUrl { entity } => {
+        match self.apply_intent(action) {
+            IntentReceipt::Accepted { effects, .. } => Ok(effects),
+            IntentReceipt::Refused { reason } => Err(reason),
+        }
+    }
+
+    fn perform(&mut self, intent: Intent) -> Result<Vec<HostEffect>, String> {
+        match intent {
+            Intent::CopySubjectUrl { entity } => {
                 let url = self.state.subject_url(&entity).ok_or("subject URL unavailable")?;
                 Ok(vec![HostEffect::CopyUrl { url }])
             }
-            Action::ActivatePlacement { key } => {
+            Intent::ActivatePlacement { key } => {
                 let node = self.snapshot_shared().surface.node(&key).ok_or("unknown placement")?;
                 // A reference activates what it presents.
                 let entity = self.state.presented_entity(&node.entity);
@@ -1393,10 +1454,10 @@ impl Sidebar {
                     self.invalidate();
                     Ok(vec![HostEffect::Focus { request_id, workspace_id }])
                 } else {
-                    self.dispatch(Action::Activate { entity })
+                    self.perform(Intent::Activate { entity })
                 }
             }
-            Action::Activate { entity } => {
+            Intent::Activate { entity } => {
                 if let Some(url) = self.state.subject_url(&entity) {
                     return Ok(vec![HostEffect::OpenUrl { url }]);
                 }
@@ -1449,7 +1510,7 @@ impl Sidebar {
                 self.invalidate();
                 Ok(vec![effect])
             }
-            Action::TogglePlacement { key } => {
+            Intent::TogglePlacement { key } => {
                 if self.snapshot_shared().surface.node(&key).is_none() {
                     return Err("unknown placement".into());
                 }
@@ -1457,7 +1518,7 @@ impl Sidebar {
                 self.invalidate();
                 Ok(vec![])
             }
-            Action::SetVariable { key, name, value } => {
+            Intent::SetVariable { key, name, value } => {
                 let snapshot = self.snapshot_shared();
                 let node = snapshot.surface.node(&key).ok_or("unknown placement")?;
                 let definition =
@@ -1469,7 +1530,7 @@ impl Sidebar {
                 self.invalidate();
                 Ok(vec![])
             }
-            Action::ToggleDisplayVariable { name } => {
+            Intent::ToggleDisplayVariable { name } => {
                 if !self.state.apply_rail_ui_action(RailUiAction::ToggleVariable { name }) {
                     return Err("unknown display variable".into());
                 }

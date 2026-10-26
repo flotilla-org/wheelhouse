@@ -32,6 +32,14 @@ one delta to now. Apply each delta whole to a `StreamView`, the keyed model of
 sections, nodes and child lists; its generation is then the delta's. Nodes'
 facts and variables stay in the core, as detail cards do.
 
+A frontend changes logical state by intent: `apply_intent(intent)` returns an
+`IntentReceipt`, accepted with a request id and the host effects to carry out
+for it, or refused with a reason and nothing changed. Every subscription's
+next delta lists the request ids accepted since its last one, in order, and
+holds the last of their changes, even when they presented nothing new. An
+intent's `name()` is its stable name and serialized tag. `dispatch` is the
+older entry point: it applies the intent and returns the receipt as a result.
+
 An entity's facts are one record: each key holds its last writer's value and
 source. They carry no TTL, precedence or ordinal: an entity fact given one
 ignores it. A source's unset removes a key only if that source wrote

@@ -9,7 +9,7 @@ use hegel::TestCase;
 
 use crate::presentation::PlacementNode;
 use crate::scaling_tests::{catalog, fleet, patch, text, Shape, CONFIG, PROVIDER};
-use crate::sidebar::{Action, HostEffect, Sidebar, Workspace};
+use crate::sidebar::{HostEffect, Intent, IntentReceipt, Sidebar, Workspace};
 use crate::stream::{apply_list, list_ops, ListOp, StreamView, SubscriptionId};
 use crate::{tab_workspace_id, EntityRef, MetadataPatch, MetadataTarget, MetadataValue};
 
@@ -47,10 +47,22 @@ fn nodes(sidebar: &Sidebar) -> Vec<Rc<PlacementNode>> {
     out
 }
 
+/// Apply an intent, noting its request if accepted.
+fn intend(sidebar: &mut Sidebar, accepted: &mut Vec<u64>, intent: Intent) -> Vec<HostEffect> {
+    match sidebar.apply_intent(intent) {
+        IntentReceipt::Accepted { request, effects } => {
+            accepted.push(request);
+            effects
+        }
+        IntentReceipt::Refused { .. } => vec![],
+    }
+}
+
 /// One change of the kinds a session makes: facts, the catalog, time,
 /// staleness, workspaces, collapse, display variables, sibling order and
-/// local entities.
-fn step(tc: &TestCase, sidebar: &mut Sidebar, now: &mut u64) {
+/// local entities. Returns the intents accepted.
+fn step(tc: &TestCase, sidebar: &mut Sidebar, now: &mut u64) -> Vec<u64> {
+    let mut accepted = vec![];
     *now += 1;
     let now = *now;
     let c = tc.draw(gs::integers::<usize>().max_value(CONVOYS - 1));
@@ -110,14 +122,15 @@ fn step(tc: &TestCase, sidebar: &mut Sidebar, now: &mut u64) {
             let nodes = nodes(sidebar);
             if !nodes.is_empty() {
                 let key = nodes[pick(nodes.len())].key.clone();
-                sidebar.dispatch(Action::TogglePlacement { key }).unwrap();
+                intend(sidebar, &mut accepted, Intent::TogglePlacement { key });
             }
         }
         11 => {
             let names: Vec<String> =
                 sidebar.snapshot_shared().surface.display_variables.iter().map(|variable| variable.name.clone()).collect();
             if !names.is_empty() {
-                let _ = sidebar.dispatch(Action::ToggleDisplayVariable { name: names[pick(names.len())].clone() });
+                // Some aren't toggles, and are refused.
+                intend(sidebar, &mut accepted, Intent::ToggleDisplayVariable { name: names[pick(names.len())].clone() });
             }
         }
         12 => {
@@ -136,7 +149,12 @@ fn step(tc: &TestCase, sidebar: &mut Sidebar, now: &mut u64) {
             let nodes = nodes(sidebar);
             if !nodes.is_empty() {
                 let key = nodes[pick(nodes.len())].key.clone();
-                for effect in sidebar.dispatch(Action::ActivatePlacement { key }).unwrap_or_default() {
+                let intent = if tc.draw(gs::booleans()) {
+                    Intent::ActivatePlacement { key }
+                } else {
+                    Intent::CopySubjectUrl { entity: nodes[0].entity.clone() }
+                };
+                for effect in intend(sidebar, &mut accepted, intent) {
                     let request = match effect {
                         HostEffect::Focus { request_id, .. } | HostEffect::Materialize { request_id, .. } => request_id,
                         _ => continue,
@@ -161,12 +179,15 @@ fn step(tc: &TestCase, sidebar: &mut Sidebar, now: &mut u64) {
             }
         }
     }
+    accepted
 }
 
 /// A frontend following one subscription.
 struct Follower {
     id: SubscriptionId,
     view: Option<StreamView>,
+    /// Intents accepted that no delta has listed yet.
+    awaited: Vec<u64>,
 }
 
 impl Follower {
@@ -174,17 +195,20 @@ impl Follower {
         let delta = sidebar.poll(self.id);
         match (&mut self.view, delta) {
             (None, Some(delta)) => {
+                assert_eq!(delta.intents, std::mem::take(&mut self.awaited));
                 let mut view = StreamView::default();
                 view.apply(&delta).unwrap();
                 self.view = Some(view);
             }
             (None, None) => panic!("a first poll gives everything"),
             (Some(view), Some(delta)) => {
-                assert!(!delta.ops.is_empty(), "a delta after the first changes something");
-                assert!(delta.generation > view.generation, "generations only increase");
+                assert!(!delta.ops.is_empty() || !delta.intents.is_empty(), "a delta after the first changes or answers something");
+                assert!(delta.generation >= view.generation, "generations never go back");
+                assert!(delta.ops.is_empty() || delta.generation > view.generation, "a change moves the generation");
+                assert_eq!(delta.intents, std::mem::take(&mut self.awaited), "a delta lists the intents accepted since the last");
                 view.apply(&delta).unwrap();
             }
-            (Some(_), None) => {}
+            (Some(_), None) => assert!(self.awaited.is_empty(), "an accepted intent is listed by the next poll"),
         }
         let view = self.view.as_ref().unwrap();
         let mut fresh = StreamView::of(sidebar.snapshot_shared());
@@ -199,11 +223,13 @@ impl Follower {
 fn followed_views_match_fresh_snapshots(tc: TestCase, config: &str) {
     let mut sidebar = Sidebar::new(config).unwrap();
     sidebar.apply(0, PROVIDER, fleet(SHAPE, CONVOYS)).unwrap();
-    let mut every = Follower { id: sidebar.subscribe(), view: None };
-    let mut rarely = Follower { id: sidebar.subscribe(), view: None };
+    let mut every = Follower { id: sidebar.subscribe(), view: None, awaited: vec![] };
+    let mut rarely = Follower { id: sidebar.subscribe(), view: None, awaited: vec![] };
     let mut now = 0;
     for _ in 0..tc.draw(gs::integers::<usize>().max_value(24)) {
-        step(&tc, &mut sidebar, &mut now);
+        let accepted = step(&tc, &mut sidebar, &mut now);
+        every.awaited.extend(&accepted);
+        rarely.awaited.extend(&accepted);
         every.poll(&mut sidebar);
         if tc.draw(gs::weighted_booleans(0.2)) {
             rarely.poll(&mut sidebar);
@@ -231,6 +257,69 @@ fn followed_views_match_fresh_snapshots_with_a_shared_placement(tc: TestCase) {
     let shared = CONFIG.replace(r#"placement="attention""#, r#"placement="tree""#);
     assert_ne!(shared, CONFIG);
     followed_views_match_fresh_snapshots(tc, &shared);
+}
+
+/// An intent's name is its serialized tag, so the two can't drift apart.
+#[test]
+fn intent_names_are_their_tags() {
+    let key = crate::PlacementKey::default();
+    let entity = EntityRef::local(".ref", "r");
+    for intent in [
+        Intent::CopySubjectUrl { entity: entity.clone() },
+        Intent::ActivatePlacement { key: key.clone() },
+        Intent::Activate { entity },
+        Intent::TogglePlacement { key: key.clone() },
+        Intent::SetVariable { key, name: "density".into(), value: None },
+        Intent::ToggleDisplayVariable { name: "show-finished".into() },
+    ] {
+        assert_eq!(serde_json::to_value(&intent).unwrap()["action"], intent.name());
+    }
+}
+
+/// A refused intent changes nothing and no delta lists it; an accepted one
+/// that changes nothing presented is still listed, in a delta of no changes.
+#[test]
+fn deltas_list_accepted_intents_only() {
+    let mut sidebar = Sidebar::new(CONFIG).unwrap();
+    sidebar.apply(1, PROVIDER, catalog(20)).unwrap();
+    let id = sidebar.subscribe();
+    sidebar.poll(id).unwrap();
+    let refused = sidebar.apply_intent(Intent::TogglePlacement { key: crate::PlacementKey::default() });
+    assert!(matches!(refused, IntentReceipt::Refused { .. }), "{refused:?}");
+    assert!(!sidebar.changed_since(id) && sidebar.poll(id).is_none());
+    let name = sidebar.snapshot_shared().surface.display_variables[0].name.clone();
+    let IntentReceipt::Accepted { request, .. } = sidebar.apply_intent(Intent::ToggleDisplayVariable { name: name.clone() }) else {
+        panic!("a display variable toggles");
+    };
+    let IntentReceipt::Accepted { request: again, .. } = sidebar.apply_intent(Intent::ToggleDisplayVariable { name }) else {
+        panic!("and toggles back");
+    };
+    let delta = sidebar.poll(id).expect("accepted intents are listed");
+    assert_eq!(delta.intents, [request, again]);
+    assert!(delta.ops.is_empty(), "toggled and back presents nothing new: {:?}", delta.ops);
+}
+
+/// An accepted intent that changes nothing at all, not even the revision
+/// (activating what is already opening), is still listed.
+#[test]
+fn an_intent_that_changes_nothing_is_listed() {
+    let mut sidebar = Sidebar::new(CONFIG).unwrap();
+    sidebar.apply(1, PROVIDER, catalog(20)).unwrap();
+    let id = sidebar.subscribe();
+    sidebar.poll(id).unwrap();
+    let project = EntityRef::new(PROVIDER, "project", "fleet/p0@fleet");
+    let IntentReceipt::Accepted { effects, .. } = sidebar.apply_intent(Intent::Activate { entity: project.clone() }) else {
+        panic!("a project opens");
+    };
+    assert!(matches!(effects.as_slice(), [HostEffect::Materialize { .. }]), "{effects:?}");
+    sidebar.poll(id).unwrap();
+    let revision = sidebar.revision();
+    let IntentReceipt::Accepted { request, effects } = sidebar.apply_intent(Intent::Activate { entity: project }) else {
+        panic!("activating it again is accepted");
+    };
+    assert!(effects.is_empty() && sidebar.revision() == revision, "and changes nothing");
+    assert!(sidebar.changed_since(id));
+    assert_eq!(sidebar.poll(id).expect("it is listed").intents, [request]);
 }
 
 /// List operations turn any list of distinct keys into any other, and move

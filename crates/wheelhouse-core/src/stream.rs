@@ -145,6 +145,9 @@ pub struct SidebarDelta {
     /// The view's generation once this delta is applied.
     pub generation: u64,
     pub ops: Vec<SidebarOp>,
+    /// Intents accepted since the last delta, in order: everything they
+    /// changed is in this delta or an earlier one.
+    pub intents: Vec<u64>,
 }
 
 impl SectionContent {
