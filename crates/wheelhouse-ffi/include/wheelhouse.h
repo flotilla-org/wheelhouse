@@ -259,6 +259,67 @@
 // instance follows, until wheelhouse_slot_release_previous.
 #define WHEELHOUSE_OVERLAY_DEPARTED 1
 
+// A section's content, new or changed (`node` is its content).
+#define WHEELHOUSE_OP_SECTION 0
+
+// A section and its child list go; its nodes go by their own REMOVE ops.
+#define WHEELHOUSE_OP_REMOVE_SECTION 1
+
+// The order of the sections changes by the list ops (keys are section names).
+#define WHEELHOUSE_OP_SECTIONS 2
+
+// A node's content, new or changed (`node` is its content).
+#define WHEELHOUSE_OP_UPSERT 3
+
+// A node and its child list go; its descendants go by their own REMOVE ops.
+#define WHEELHOUSE_OP_REMOVE 4
+
+// A child list changes by the list ops: a node's (`key`), or a section's
+// when `key` is empty. Its keys are placement keys in `section`.
+#define WHEELHOUSE_OP_CHILDREN 5
+
+// The display variables, all of them (the op's items index them).
+#define WHEELHOUSE_OP_DISPLAY_VARIABLES 6
+
+// The diagnostics, all of them.
+#define WHEELHOUSE_OP_DIAGNOSTICS 7
+
+// The activation errors, all of them.
+#define WHEELHOUSE_OP_ERRORS 8
+
+// Insert `key` at `at`.
+#define WHEELHOUSE_LIST_INSERT 0
+
+// Remove the item at `at`.
+#define WHEELHOUSE_LIST_REMOVE 1
+
+// Take the item at `from` out, and put it in at `to` in the list without it.
+#define WHEELHOUSE_LIST_MOVE 2
+
+// An intent's kind; WheelhouseIntent says which of its fields each reads.
+#define WHEELHOUSE_INTENT_COPY_SUBJECT_URL 0
+
+#define WHEELHOUSE_INTENT_ACTIVATE_PLACEMENT 1
+
+#define WHEELHOUSE_INTENT_ACTIVATE 2
+
+#define WHEELHOUSE_INTENT_TOGGLE_PLACEMENT 3
+
+#define WHEELHOUSE_INTENT_SET_VARIABLE 4
+
+#define WHEELHOUSE_INTENT_TOGGLE_DISPLAY_VARIABLE 5
+
+// wheelhouse_apply_intent's result: the intent was malformed, or the
+// sidebar unusable (error_out says why), and nothing changed.
+#define WHEELHOUSE_INTENT_INVALID 0
+
+// Applied: its request is written, its effects are queued for
+// wheelhouse_effects_take, and its changes arrive in deltas.
+#define WHEELHOUSE_INTENT_ACCEPTED 1
+
+// Not applied, and nothing changed; error_out says why.
+#define WHEELHOUSE_INTENT_REFUSED 2
+
 // The workspaces next to the subject's: ancestors, then children.
 #define WHEELHOUSE_STRIP_RELATED 0
 
@@ -268,6 +329,9 @@
 // A sidebar: one presentation client's core. Calls on one are serialised
 // by the host.
 typedef struct WheelhouseCore WheelhouseCore;
+
+// One poll's changes. Text it returns is borrowed from it until release.
+typedef struct WheelhouseDelta WheelhouseDelta;
 
 // A batch of effects, taken once. It owns its text and survives the
 // sidebar; releasing it does not complete its requests.
@@ -769,6 +833,106 @@ typedef struct {
   const WheelhouseOverlayNote *notes;
   size_t note_count;
 } WheelhouseOverlay;
+
+// An operation (WHEELHOUSE_OP_*), in the order to apply them.
+typedef struct {
+  uint32_t kind;
+  // The section the op is about (empty for SECTIONS, DISPLAY_VARIABLES,
+  // DIAGNOSTICS and ERRORS).
+  WheelhouseText section;
+  // UPSERT's and REMOVE's node, or CHILDREN's parent node (empty for a
+  // section's list): an opaque placement key, unique within its section.
+  WheelhouseText key;
+  // SECTION's and UPSERT's content: an index for wheelhouse_delta_node.
+  // SECTIONS' and CHILDREN's first list op, DISPLAY_VARIABLES' first
+  // variable, DIAGNOSTICS' first diagnostic, ERRORS' first error; with
+  // `count` of them.
+  size_t first;
+  size_t count;
+} WheelhouseDeltaOp;
+
+// A section's or node's own content, without its children. Fields and
+// controls are read with wheelhouse_delta_field and _control. Its typed
+// presented values are what its template's `presents` fields gave; absent
+// ones are empty. A node's facts and variables stay in the core.
+typedef struct {
+  uint32_t is_section;
+  WheelhouseText key;
+  WheelhouseEntity entity;
+  uint32_t stale;
+  // A section's name, or a node's label.
+  WheelhouseText label;
+  WheelhouseText layout;
+  WheelhouseText form;
+  // Opaque loop invocation key: compare for equality, don't parse.
+  WheelhouseText loop_key;
+  // WHEELHOUSE_CATALOG, _LATENT, _OPENING or _LIVE.
+  uint32_t state;
+  WheelhouseWorkspaceId workspace_id;
+  uint32_t selected;
+  // Activating it opens something: a latent node that can open, or one
+  // whose subject has a URL.
+  uint32_t openable;
+  uint32_t collapsed;
+  uint32_t pinned;
+  WheelhouseText default_host;
+  uint32_t has_order;
+  int64_t order;
+  size_t first_field;
+  size_t field_count;
+  size_t first_detail;
+  size_t detail_count;
+  size_t first_control;
+  size_t control_count;
+  WheelhouseText status;
+  uint32_t attention;
+  // A symbolic icon name or a glyph.
+  WheelhouseText icon;
+  WheelhouseText short_label;
+  WheelhouseText medium_label;
+} WheelhouseStreamNode;
+
+// A list op (WHEELHOUSE_LIST_*): INSERT reads `at` and `key`, REMOVE `at`,
+// MOVE `from` and `to`; the others are WHEELHOUSE_NONE and empty.
+typedef struct {
+  uint32_t kind;
+  size_t at;
+  size_t from;
+  size_t to;
+  WheelhouseText key;
+} WheelhouseListOp;
+
+// A display variable, with its value (WHEELHOUSE_VALUE_*).
+typedef struct {
+  WheelhouseText name;
+  // Its label, or its name when it has none.
+  WheelhouseText label;
+  WheelhouseText icon;
+  uint32_t persist;
+  uint32_t value_kind;
+  uint32_t checked;
+  WheelhouseText value;
+} WheelhouseDisplayVariable;
+
+// An entity whose activation failed, and why.
+typedef struct {
+  WheelhouseEntity entity;
+  WheelhouseText message;
+} WheelhouseActivationError;
+
+// An intent (WHEELHOUSE_INTENT_*). Each kind reads some fields:
+// ACTIVATE_PLACEMENT and TOGGLE_PLACEMENT a node's `key`; COPY_SUBJECT_URL
+// and ACTIVATE an `entity`; SET_VARIABLE `key`, the variable's `name`, and
+// `value` when `has_value` (none resets it); TOGGLE_DISPLAY_VARIABLE `name`.
+// A key is one a delta gave.
+typedef struct {
+  uint32_t kind;
+  WheelhouseText key;
+  WheelhouseEntity entity;
+  WheelhouseText name;
+  uint32_t has_value;
+  WheelhouseText value;
+} WheelhouseIntent;
 
 typedef struct {
   // WHEELHOUSE_STRIP_*.
@@ -1296,6 +1460,68 @@ WheelhouseOverlay *wheelhouse_overlay_get(WheelhouseCore *h,
                                           char **error_out);
 
 void wheelhouse_overlay_free(WheelhouseOverlay *overlay);
+
+// Follow the sidebar's changes. Write the subscription's ID to `out`.
+uint32_t wheelhouse_subscribe(WheelhouseCore *h, uint64_t *out, char **error_out);
+
+// Stop following; 0 (no error) for a subscription that doesn't exist.
+uint32_t wheelhouse_unsubscribe(WheelhouseCore *h, uint64_t subscription, char **error_out);
+
+// 1 if a poll may have something to deliver. It builds nothing: check after
+// draining a batch, and poll only when it is 1. A change that turns out to
+// present nothing new makes it 1 once.
+uint32_t wheelhouse_changed_since(WheelhouseCore *h, uint64_t subscription, char **error_out);
+
+// What changed since this subscription's last delta (everything, for its
+// first), with the intents accepted since. NULL with no error when there is
+// nothing to deliver or the subscription doesn't exist; NULL with an error
+// on failure. The delta owns its text and survives the sidebar; release it
+// with wheelhouse_delta_release.
+WheelhouseDelta *wheelhouse_poll(WheelhouseCore *h, uint64_t subscription, char **error_out);
+
+// The generation the host's model is at once the delta is applied.
+uint64_t wheelhouse_delta_generation(const WheelhouseDelta *d);
+
+// Intents accepted since the last delta, in order: all they changed is in
+// this delta or an earlier one.
+size_t wheelhouse_delta_intent_count(const WheelhouseDelta *d);
+
+uint32_t wheelhouse_delta_intent(const WheelhouseDelta *d, size_t index, uint64_t *out);
+
+size_t wheelhouse_delta_op_count(const WheelhouseDelta *d);
+
+uint32_t wheelhouse_delta_op(const WheelhouseDelta *d, size_t index, WheelhouseDeltaOp *out);
+
+uint32_t wheelhouse_delta_node(const WheelhouseDelta *d, size_t index, WheelhouseStreamNode *out);
+
+uint32_t wheelhouse_delta_field(const WheelhouseDelta *d, size_t index, WheelhouseField *out);
+
+// A control. Its action is WHEELHOUSE_NONE: a display-variable control's
+// intent is TOGGLE_DISPLAY_VARIABLE of its variable, and its value is the
+// variable's in DISPLAY_VARIABLES.
+uint32_t wheelhouse_delta_control(const WheelhouseDelta *d, size_t index, WheelhouseControl *out);
+
+uint32_t wheelhouse_delta_list_op(const WheelhouseDelta *d, size_t index, WheelhouseListOp *out);
+
+uint32_t wheelhouse_delta_display_variable(const WheelhouseDelta *d,
+                                           size_t index,
+                                           WheelhouseDisplayVariable *out);
+
+uint32_t wheelhouse_delta_diagnostic(const WheelhouseDelta *d, size_t index, WheelhouseText *out);
+
+uint32_t wheelhouse_delta_error(const WheelhouseDelta *d,
+                                size_t index,
+                                WheelhouseActivationError *out);
+
+void wheelhouse_delta_release(WheelhouseDelta *d);
+
+// Apply an intent: WHEELHOUSE_INTENT_ACCEPTED, _REFUSED or _INVALID. An
+// accepted intent's request ID is written to `request_out` (when not NULL),
+// and a later delta lists it.
+uint32_t wheelhouse_apply_intent(WheelhouseCore *h,
+                                 const WheelhouseIntent *intent,
+                                 uint64_t *request_out,
+                                 char **error_out);
 
 // The strip of subject's workspace, as the sidebar's current facts give it:
 // empty for a subject not in the catalog or a kind without a strip. It

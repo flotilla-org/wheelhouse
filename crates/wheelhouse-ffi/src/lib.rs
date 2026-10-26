@@ -16,17 +16,20 @@ use wheelhouse_core::{
     presentation::{Content, PlacementNode, PresentationState},
     profile,
     sidebar::{Action, HostEffect, Workspace},
-    template_config::{TemplateConfigFieldClass, TemplateControlKind},
-    DisplayVariableValue, EntityRef, MetadataPatch, MetadataTarget, MetadataValue, MetadataValueUpdate, PaneTarget, Sidebar, WorkspaceId,
+    template_config::{TemplateConfigFieldClass, TemplateConfigRenderedField, TemplateControlKind},
+    DisplayVariableValue, EntityRef, MetadataPatch, MetadataTarget, MetadataValue, MetadataValueUpdate, PaneTarget, PlacementKey,
+    PlacementSegment, Sidebar, WorkspaceId,
 };
 
 pub mod dashboard;
 pub mod documents;
 pub mod slots;
+pub mod stream;
 pub mod strip;
 pub use dashboard::*;
 pub use documents::*;
 pub use slots::*;
+pub use stream::*;
 pub use strip::*;
 
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
@@ -207,7 +210,7 @@ unsafe fn provider(provider: Text) -> Result<String, String> {
 /// was built against.
 #[no_mangle]
 pub extern "C" fn wheelhouse_abi_version() -> u32 {
-    10
+    11
 }
 /// A sidebar configured with a template catalog (KDL), or NULL with an
 /// error.
@@ -632,10 +635,100 @@ pub const WHEELHOUSE_EFFECT_OPEN_URL: u32 = 3;
 /// Copy the URL in recipe; needs no completion.
 pub const WHEELHOUSE_EFFECT_COPY_URL: u32 = 4;
 
+/// A placement key as hosts see it. Length framing is collision-free even
+/// when IDs contain separators. Hosts compare this opaque value, and give it
+/// back in intents; its encoding is not an interface.
+pub(crate) fn encode_key(key: &PlacementKey) -> String {
+    key.0
+        .iter()
+        .flat_map(|s| [&s.loop_name, &s.entity.provider, &s.entity.kind, &s.entity.id])
+        .map(|s| format!("{}:{}", s.len(), s))
+        .collect()
+}
+
+/// The placement key [`encode_key`] gave.
+pub(crate) fn decode_key(mut text: &str) -> Result<PlacementKey, String> {
+    let mut parts = vec![];
+    while !text.is_empty() {
+        let (len, rest) = text.split_once(':').ok_or("malformed placement key")?;
+        let len: usize = len.parse().map_err(|_| "malformed placement key")?;
+        let part = rest.get(..len).ok_or("malformed placement key")?;
+        parts.push(part.to_owned());
+        text = &rest[len..];
+    }
+    if parts.len() % 4 != 0 {
+        return Err("malformed placement key".into());
+    }
+    Ok(PlacementKey(
+        parts
+            .chunks(4)
+            .map(|c| PlacementSegment { loop_name: c[0].clone(), entity: EntityRef::new(c[1].clone(), c[2].clone(), c[3].clone()) })
+            .collect(),
+    ))
+}
+
+/// A presentation state as its tag, LIVE's workspace and selection, and
+/// LATENT's openability.
+pub(crate) fn state_view(state: &PresentationState) -> (u32, Option<WorkspaceId>, bool, bool) {
+    match *state {
+        PresentationState::Catalog => (WHEELHOUSE_CATALOG, None, false, false),
+        PresentationState::Latent { openable } => (WHEELHOUSE_LATENT, None, false, openable),
+        PresentationState::Opening => (WHEELHOUSE_OPENING, None, false, false),
+        PresentationState::Live { workspace_id, selected } => (WHEELHOUSE_LIVE, Some(workspace_id), selected, false),
+    }
+}
+
+pub(crate) fn field_of(f: &TemplateConfigRenderedField) -> Field {
+    Field {
+        text: f.value.clone(),
+        class_: match f.class {
+            TemplateConfigFieldClass::Required => WHEELHOUSE_FIELD_REQUIRED,
+            TemplateConfigFieldClass::Optional => WHEELHOUSE_FIELD_OPTIONAL,
+            TemplateConfigFieldClass::Priority => WHEELHOUSE_FIELD_PRIORITY,
+        },
+        priority: f.priority,
+    }
+}
+
+pub(crate) fn control_kind(kind: TemplateControlKind) -> u32 {
+    match kind {
+        TemplateControlKind::OpenConfig => WHEELHOUSE_CONTROL_OPEN_CONFIG,
+        TemplateControlKind::DisplayVariable => WHEELHOUSE_CONTROL_DISPLAY_VARIABLE,
+        TemplateControlKind::ScrollDown => WHEELHOUSE_CONTROL_SCROLL_DOWN,
+        TemplateControlKind::ScrollUp => WHEELHOUSE_CONTROL_SCROLL_UP,
+        TemplateControlKind::InspectRoot => WHEELHOUSE_CONTROL_INSPECT_ROOT,
+    }
+}
+
 pub(crate) struct Field {
     text: String,
     class_: u32,
     priority: Option<i64>,
+}
+impl Field {
+    fn view(&self) -> FieldView {
+        FieldView {
+            text: Text::borrowed(&self.text),
+            class_: self.class_,
+            has_priority: self.priority.is_some() as u32,
+            priority: self.priority.unwrap_or_default(),
+        }
+    }
+}
+impl Control {
+    fn view(&self) -> ControlView {
+        ControlView {
+            kind: self.kind,
+            label: Text::borrowed(&self.label),
+            glyph: Text::borrowed(&self.glyph),
+            action: self.action,
+            value_kind: self.value_kind,
+            checked: self.checked as u32,
+            value: Text::borrowed(&self.value),
+            variable: Text::borrowed(if self.kind == WHEELHOUSE_CONTROL_DISPLAY_VARIABLE { &self.variable } else { "" }),
+            persist: (self.kind == WHEELHOUSE_CONTROL_DISPLAY_VARIABLE && self.persist) as u32,
+        }
+    }
 }
 pub(crate) struct Control {
     pub(crate) kind: u32,
@@ -720,26 +813,10 @@ impl WheelhouseSnapshot {
     }
     fn content(&mut self, content: &Content) -> (usize, usize, usize, usize) {
         let start = self.fields.len();
-        for f in &content.fields {
-            self.fields.push(Field {
-                text: f.value.clone(),
-                class_: match f.class {
-                    TemplateConfigFieldClass::Required => WHEELHOUSE_FIELD_REQUIRED,
-                    TemplateConfigFieldClass::Optional => WHEELHOUSE_FIELD_OPTIONAL,
-                    TemplateConfigFieldClass::Priority => WHEELHOUSE_FIELD_PRIORITY,
-                },
-                priority: f.priority,
-            });
-        }
+        self.fields.extend(content.fields.iter().map(field_of));
         let controls = self.controls.len();
         for c in &content.controls {
-            let kind = match c.kind {
-                TemplateControlKind::OpenConfig => WHEELHOUSE_CONTROL_OPEN_CONFIG,
-                TemplateControlKind::DisplayVariable => WHEELHOUSE_CONTROL_DISPLAY_VARIABLE,
-                TemplateControlKind::ScrollDown => WHEELHOUSE_CONTROL_SCROLL_DOWN,
-                TemplateControlKind::ScrollUp => WHEELHOUSE_CONTROL_SCROLL_UP,
-                TemplateControlKind::InspectRoot => WHEELHOUSE_CONTROL_INSPECT_ROOT,
-            };
+            let kind = control_kind(c.kind);
             let action = if kind == WHEELHOUSE_CONTROL_DISPLAY_VARIABLE {
                 c.variable.as_ref().map(|name| self.action(Action::ToggleDisplayVariable { name: name.clone() })).unwrap_or(NONE)
             } else {
@@ -769,21 +846,8 @@ impl WheelhouseSnapshot {
         let has_url = sidebar.subject_url(&n.entity).is_some();
         let copy_url = if has_url { self.action(Action::CopySubjectUrl { entity: n.entity.clone() }) } else { NONE };
         let toggle = self.action(Action::TogglePlacement { key: n.key.clone() });
-        // Length framing is collision-free even when IDs contain separators.
-        // Hosts compare this opaque value; its encoding is not an interface.
-        let key = n
-            .key
-            .0
-            .iter()
-            .flat_map(|s| [&s.loop_name, &s.entity.provider, &s.entity.kind, &s.entity.id])
-            .map(|s| format!("{}:{}", s.len(), s))
-            .collect();
-        let (state, workspace, selected, openable) = match n.state {
-            PresentationState::Catalog => (WHEELHOUSE_CATALOG, None, false, false),
-            PresentationState::Latent { openable } => (WHEELHOUSE_LATENT, None, false, openable),
-            PresentationState::Opening => (WHEELHOUSE_OPENING, None, false, false),
-            PresentationState::Live { workspace_id, selected } => (WHEELHOUSE_LIVE, Some(workspace_id), selected, false),
-        };
+        let key = encode_key(&n.key);
+        let (state, workspace, selected, openable) = state_view(&n.state);
         let index = self.nodes.len();
         self.nodes.push(Node {
             parent,
@@ -1257,12 +1321,7 @@ pub unsafe extern "C" fn wheelhouse_snapshot_field(s: *const WheelhouseSnapshot,
     let (Some(f), Some(out)) = (s.as_ref().and_then(|s| s.fields.get(index)), out.as_mut()) else {
         return 0;
     };
-    *out = FieldView {
-        text: Text::borrowed(&f.text),
-        class_: f.class_,
-        has_priority: f.priority.is_some() as u32,
-        priority: f.priority.unwrap_or_default(),
-    };
+    *out = f.view();
     1
 }
 #[no_mangle]
@@ -1270,17 +1329,7 @@ pub unsafe extern "C" fn wheelhouse_snapshot_control(s: *const WheelhouseSnapsho
     let (Some(c), Some(out)) = (s.as_ref().and_then(|s| s.controls.get(index)), out.as_mut()) else {
         return 0;
     };
-    *out = ControlView {
-        kind: c.kind,
-        label: Text::borrowed(&c.label),
-        glyph: Text::borrowed(&c.glyph),
-        action: c.action,
-        value_kind: c.value_kind,
-        checked: c.checked as u32,
-        value: Text::borrowed(&c.value),
-        variable: Text::borrowed(if c.kind == WHEELHOUSE_CONTROL_DISPLAY_VARIABLE { &c.variable } else { "" }),
-        persist: (c.kind == WHEELHOUSE_CONTROL_DISPLAY_VARIABLE && c.persist) as u32,
-    };
+    *out = c.view();
     1
 }
 

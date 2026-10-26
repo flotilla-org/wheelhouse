@@ -1,4 +1,4 @@
-# The host interface (ABI 10)
+# The host interface (ABI 11)
 
 What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
@@ -159,6 +159,28 @@ single pass, appending each panel to its parent.
   `variable:` and the key.
 
 Committing an arrangement never changes the snapshot's revision.
+
+## From ABI 10
+
+ABI 11 adds the [change stream](../../design/change-stream.md) and intents.
+`wheelhouse_subscribe` gives a subscription; `wheelhouse_changed_since` says
+cheaply whether `wheelhouse_poll` has something, and the poll's
+`WheelhouseDelta` holds what changed since the subscription's last one (all
+of it, the first time), as `WheelhouseDeltaOp`s to apply in order:
+sections, node upserts and removals, positional child-list ops
+(`WheelhouseListOp`), display variables, diagnostics and activation errors.
+A `WheelhouseStreamNode` carries a node's own content and its typed presented
+values (status, attention, icon, short and medium labels). A node is its
+section and opaque placement key. The delta lists the intents accepted since
+the last; release it with `wheelhouse_delta_release`.
+
+`wheelhouse_apply_intent` takes a `WheelhouseIntent` (copy a subject's URL,
+activate a placement or entity, toggle a placement, set a node variable, or
+toggle a display variable), naming nodes by the keys deltas give. It returns
+`WHEELHOUSE_INTENT_ACCEPTED` with a request ID and its effects queued for
+`wheelhouse_effects_take`, `_REFUSED` with the reason, or `_INVALID`.
+Snapshots and `wheelhouse_dispatch` are unchanged, and nothing existing
+changes layout; the version moves so a host can require the stream.
 
 ## From ABI 9
 
