@@ -297,7 +297,7 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
             if(!glyph.size) { glyph = str8_lit("?"); }
             UI_Signal sig = uishell_tool_strip_item(r, glyph, 0, i == layouts.current, 0, key);
             String8 tip = i == layouts.fallback ? push_str8f(scratch.arena, "%S (default)", name) : name;
-            if(i == layouts.current && layouts.owned) { tip = push_str8f(scratch.arena, "%S, rearranged", tip); }
+            if(i == layouts.current && layouts.adjusted) { tip = push_str8f(scratch.arena, layouts.owned ? "%S, rearranged" : "%S, resized", tip); }
             uishell_tool_strip_tooltip(sig, tip);
             if(ui_clicked(sig) && i != layouts.current) { uishell_store_choose_layout(owner, name); }
             UI_Key menu = ui_key_from_stringf(key, "menu");
@@ -306,7 +306,7 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
             {
               if(ui_clicked(ui_button(str8_lit("Show this layout")))) { uishell_store_choose_layout(owner, name); ui_ctx_menu_close(); }
               if(ui_clicked(ui_button(str8_lit("Show the default layout")))) { uishell_store_choose_layout(owner, str8_zero()); ui_ctx_menu_close(); }
-              if(i == layouts.current && layouts.owned && ui_clicked(ui_button(str8_lit("Reset layout"))))
+              if(i == layouts.current && layouts.adjusted && ui_clicked(ui_button(str8_lit("Reset layout"))))
               { uishell_store_reset_layout(owner); ui_ctx_menu_close(); }
             }
           }break;

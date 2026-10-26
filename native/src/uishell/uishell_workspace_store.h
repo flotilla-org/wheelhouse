@@ -86,8 +86,10 @@ struct UIShell_WorkspaceLayouts
   U64 count;
   U64 current;
   U64 fallback;
-  // The user has rearranged the current layout: resetting it does something.
+  // The user has rearranged the current layout.
   B32 owned;
+  // The user has rearranged or resized it: resetting it does something.
+  B32 adjusted;
 };
 
 internal UIShell_WorkspaceLayouts uishell_store_layouts(Arena *arena, CFG_Node *owner);

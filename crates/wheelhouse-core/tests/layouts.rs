@@ -249,12 +249,17 @@ fn each_layout_keeps_its_own_edits() {
     let review = sidebar.arrangement(worker()).unwrap();
     assert!(!review.owned, "review is as its template makes it");
     assert_eq!(review.layout.as_deref(), Some("review"));
-    // A soft edit of review is kept too.
-    let mut soft = review.doc.clone();
-    if let Some(Panel { node: PanelNode::Split { children, .. }, .. }) = &mut soft.root {
-        children[0].weight = 4.0;
-    }
-    assert!(!sidebar.set_arrangement(worker(), soft.clone(), review.generation).unwrap().owned);
+    // A soft edit of review is kept too, in the document's scale: its
+    // panels weigh 1 each, so 4:1 is kept as 1.6 and 0.4.
+    let weigh = |review: f64, agents: f64| {
+        let mut doc = sidebar.arrangement(worker()).unwrap().doc;
+        if let Some(Panel { node: PanelNode::Split { children, .. }, .. }) = &mut doc.root {
+            (children[0].weight, children[1].weight) = (review, agents);
+        }
+        doc
+    };
+    let (edit, soft) = (weigh(4.0, 1.0), weigh(1.6, 0.4));
+    assert!(!sidebar.set_arrangement(worker(), edit, review.generation).unwrap().owned);
 
     sidebar.choose_layout(worker(), Some("work")).unwrap();
     let work = sidebar.arrangement(worker()).unwrap();

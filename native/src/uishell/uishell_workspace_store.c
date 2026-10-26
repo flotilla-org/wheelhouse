@@ -2074,6 +2074,7 @@ uishell_store_layouts(Arena *arena, CFG_Node *owner)
   wheelhouse_layouts_free(list);
   WheelhouseWorkspaceArrangement *stored = result.count ? UIShell_StoreCall(state, wheelhouse_arrangement_get(state->core, workspace, 0)) : 0;
   result.owned = stored && stored->owned;
+  result.adjusted = result.owned || (stored && (stored->flags & WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED));
   wheelhouse_arrangement_free(stored);
   return result;
 }
