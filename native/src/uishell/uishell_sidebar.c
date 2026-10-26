@@ -348,6 +348,9 @@ struct UIShell_SidebarState
   // A sync of both stores asked for while panel trees were being drawn
   // (uishell_store_frame_depth), which their end makes.
   B32 store_sync_due;
+  // The Direct Cleat Attach setting as the core was last told it, plus one
+  // (0: not yet told).
+  U32 direct_attach_sent;
   B32 initialized;
   U64 reveal_workspace_id;
   U8 error[512];
@@ -1759,6 +1762,8 @@ uishell_sidebar_store_settle(UIShell_SidebarState *state, CFG_Node *window)
 #include "uishell/uishell_workspace_store.c"
 #include "uishell/uishell_sidebar_store.c"
 
+internal void uishell_sidebar_sync_direct_attach(UIShell_SidebarState *state);
+
 internal UIShell_SidebarState *
 uishell_sidebar_init(RD_WindowState *ws)
 {
@@ -1782,8 +1787,10 @@ uishell_sidebar_init(RD_WindowState *ws)
     state->core = wheelhouse_create(config.str, config.size, &error);
     if(uishell_sidebar_result(state, state->core != 0, error))
     {
-      // Before any facts or records: what publishes as whom.
+      // Before any facts or records: what publishes as whom, and how
+      // primaries are reached.
       uishell_subscriptions_prepare_core(state->core);
+      uishell_sidebar_sync_direct_attach(state);
       String8 patches = uishell_sidebar_fixture && !uishell_sidebar_live ? str8_cstring((char *)uishell_sidebar_fixture_patches) : str8_zero();
       for(U64 start = 0; start < patches.size;)
       {
@@ -6133,6 +6140,18 @@ uishell_sidebar_observed_workdirs(void *unused, WheelhouseIngressWorkdirEmit emi
   return 1;
 }
 
+// Tell the core the Direct Cleat Attach user setting when it changes: off,
+// primaries open through their command recipes, and open ones rebind.
+internal void
+uishell_sidebar_sync_direct_attach(UIShell_SidebarState *state)
+{
+  U32 direct = rd_setting_b32_from_name(str8_lit("direct_cleat_attach")) ? 1 : 0;
+  if(state->core == 0 || state->direct_attach_sent == direct+1) { return; }
+  char *error = 0;
+  B32 ok = wheelhouse_set_direct_attach(state->core, direct, &error);
+  if(uishell_sidebar_result(state, ok, error)) { state->direct_attach_sent = direct+1; }
+}
+
 internal void
 uishell_sidebar_poll_live(void)
 {
@@ -6162,6 +6181,7 @@ uishell_sidebar_poll_live(void)
   for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
   {
     UIShell_SidebarState *state = uishell_sidebar_init(ws);
+    uishell_sidebar_sync_direct_attach(state);
     if(state->core != 0) { uishell_sidebar_records_save(state, now, 0); }
   }
 }

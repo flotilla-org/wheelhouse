@@ -55,6 +55,7 @@ read_only global UIShell_NameSchemaInfo uishell_name_schema_info_table[] =
     "@default(0) @display_name('Compact Menu Bar') @description(\"Collapses the in-window menu bar into a single drop-down button, freeing the title-bar row.\") 'compact_menu_bar': bool,"
     "@default(0) @display_name('Show Project Selector') @description(\"Shows the project selector (project name) in the title bar.\") 'show_project_selector': bool,"
     "@default(0) @display_name('Show Status Bar') @description(\"Shows the bottom status bar (build/version, task and error status).\") 'show_status_bar': bool,"
+    "@default(1) @display_name('Direct Cleat Attach') @description(\"Opens a vessel's terminal straight onto its Cleat session when its provider offers one, instead of through its attach command. Changing it reopens open terminals the other way.\") 'direct_cleat_attach': bool,"
     "@default(1) @display_name('Show Tool Strip') @description(\"Shows the strip of icons at the workspace's left edge: its subject, layouts, Views, related workspaces and linked items.\") 'show_tool_strip': bool,"
     "@default(1.f) @display_name('Tool Strip Subject Size') @description(\"The height of the tool strip's subject section, in items.\") 'tool_strip_subject_size': @range[0.f, 64.f] f32,"
     "@default(2.f) @display_name('Tool Strip Layouts Size') @description(\"The height of the tool strip's layouts section, in items; it scrolls past that.\") 'tool_strip_layouts_size': @range[0.f, 64.f] f32,"
