@@ -17,8 +17,8 @@ use wheelhouse_core::{
     profile,
     sidebar::{Action, HostEffect, Workspace},
     template_config::{TemplateConfigFieldClass, TemplateConfigRenderedField, TemplateControlKind},
-    DisplayVariableValue, EntityRef, MetadataPatch, MetadataTarget, MetadataValue, MetadataValueUpdate, PaneTarget, PlacementKey,
-    PlacementSegment, Sidebar, WorkspaceId,
+    DisplayVariableValue, EntityRef, MetadataPatch, MetadataTarget, MetadataValue, MetadataValueUpdate, PaneTarget, PlacementKey, Sidebar,
+    WorkspaceId,
 };
 
 pub mod dashboard;
@@ -635,36 +635,14 @@ pub const WHEELHOUSE_EFFECT_OPEN_URL: u32 = 3;
 /// Copy the URL in recipe; needs no completion.
 pub const WHEELHOUSE_EFFECT_COPY_URL: u32 = 4;
 
-/// A placement key as hosts see it. Length framing is collision-free even
-/// when IDs contain separators. Hosts compare this opaque value, and give it
-/// back in intents; its encoding is not an interface.
+/// A placement key as hosts see it ([`PlacementKey::encode`]).
 pub(crate) fn encode_key(key: &PlacementKey) -> String {
-    key.0
-        .iter()
-        .flat_map(|s| [&s.loop_name, &s.entity.provider, &s.entity.kind, &s.entity.id])
-        .map(|s| format!("{}:{}", s.len(), s))
-        .collect()
+    key.encode()
 }
 
-/// The placement key [`encode_key`] gave.
-pub(crate) fn decode_key(mut text: &str) -> Result<PlacementKey, String> {
-    let mut parts = vec![];
-    while !text.is_empty() {
-        let (len, rest) = text.split_once(':').ok_or("malformed placement key")?;
-        let len: usize = len.parse().map_err(|_| "malformed placement key")?;
-        let part = rest.get(..len).ok_or("malformed placement key")?;
-        parts.push(part.to_owned());
-        text = &rest[len..];
-    }
-    if parts.len() % 4 != 0 {
-        return Err("malformed placement key".into());
-    }
-    Ok(PlacementKey(
-        parts
-            .chunks(4)
-            .map(|c| PlacementSegment { loop_name: c[0].clone(), entity: EntityRef::new(c[1].clone(), c[2].clone(), c[3].clone()) })
-            .collect(),
-    ))
+/// The placement key a host gave back.
+pub(crate) fn decode_key(text: &str) -> Result<PlacementKey, String> {
+    PlacementKey::decode(text).ok_or_else(|| "malformed placement key".into())
 }
 
 /// A presentation state as its tag, LIVE's workspace and selection, and

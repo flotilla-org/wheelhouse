@@ -32,6 +32,11 @@ one delta to now. Apply each delta whole to a `StreamView`, the keyed model of
 sections, nodes and child lists; its generation is then the delta's. Nodes'
 facts and variables stay in the core, as detail cards do.
 
+In the browser, `crates/wheelhouse-wasm` offers the same calls to a page, with
+TypeScript types generated from its Rust ones; deltas cross as plain objects.
+The page in `web/` follows them into a SolidJS store and sends intents from
+clicks. It replays the native fixture for now: no relay feeds it yet.
+
 A frontend changes logical state by intent: `apply_intent(intent)` returns an
 `IntentReceipt`, accepted with a request id and the host effects to carry out
 for it, or refused with a reason and nothing changed. Every subscription's

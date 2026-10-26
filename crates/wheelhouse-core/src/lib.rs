@@ -537,7 +537,46 @@ pub struct PlacementLoopKey {
     pub binding: String,
 }
 
+/// Parts, each length-prefixed (`len:text`).
+fn frame<'a>(parts: impl IntoIterator<Item = &'a String>) -> String {
+    parts.into_iter().map(|s| format!("{}:{}", s.len(), s)).collect()
+}
+
+/// The parts [`frame`] joined, or none for text it didn't make.
+fn unframe(text: &str) -> Option<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let (len, tail) = rest.split_once(':')?;
+        let len: usize = len.parse().ok()?;
+        if !tail.is_char_boundary(len.min(tail.len())) || tail.len() < len {
+            return None;
+        }
+        parts.push(tail[..len].to_owned());
+        rest = &tail[len..];
+    }
+    Some(parts)
+}
+
+fn segments(parts: &[String]) -> Vec<PlacementSegment> {
+    parts.chunks(4).map(|c| PlacementSegment { loop_name: c[0].clone(), entity: EntityRef::new(&c[1], &c[2], &c[3]) }).collect()
+}
+
 impl PlacementKey {
+    /// Stable text for hosts: each segment's loop name, entity provider, kind
+    /// and id, length-prefixed (`len:text`), collision-free even when IDs
+    /// contain separators. Hosts treat it as opaque, compare it for equality
+    /// and give it back in intents; only the core decodes it.
+    pub fn encode(&self) -> String {
+        frame(self.0.iter().flat_map(|s| [&s.loop_name, &s.entity.provider, &s.entity.kind, &s.entity.id]))
+    }
+
+    /// Inverse of [`encode`](Self::encode), for keys a host hands back.
+    pub fn decode(text: &str) -> Option<Self> {
+        let parts = unframe(text)?;
+        (parts.len() % 4 == 0).then(|| Self(segments(&parts)))
+    }
+
     pub fn loop_key(&self, region: &str) -> Option<PlacementLoopKey> {
         let (last, parent) = self.0.split_last()?;
         Some(PlacementLoopKey { region: region.to_owned(), parent: PlacementKey(parent.to_vec()), binding: last.loop_name.clone() })
@@ -550,34 +589,22 @@ impl PlacementLoopKey {
     /// kind and id, then the loop binding. Hosts treat it as opaque and
     /// compare it for equality; only the core decodes it.
     pub fn encode(&self) -> String {
-        std::iter::once(&self.region)
-            .chain(self.parent.0.iter().flat_map(|s| [&s.loop_name, &s.entity.provider, &s.entity.kind, &s.entity.id]))
-            .chain(std::iter::once(&self.binding))
-            .map(|s| format!("{}:{}", s.len(), s))
-            .collect()
+        frame(
+            std::iter::once(&self.region)
+                .chain(self.parent.0.iter().flat_map(|s| [&s.loop_name, &s.entity.provider, &s.entity.kind, &s.entity.id]))
+                .chain(std::iter::once(&self.binding)),
+        )
     }
 
     /// Inverse of [`encode`](Self::encode), for keys a host hands back.
     pub fn decode(text: &str) -> Option<Self> {
-        let mut parts = Vec::new();
-        let mut rest = text;
-        while !rest.is_empty() {
-            let (len, tail) = rest.split_once(':')?;
-            let len: usize = len.parse().ok()?;
-            if !tail.is_char_boundary(len.min(tail.len())) || tail.len() < len {
-                return None;
-            }
-            parts.push(tail[..len].to_owned());
-            rest = &tail[len..];
-        }
+        let mut parts = unframe(text)?;
         if parts.len() < 2 || (parts.len() - 2) % 4 != 0 {
             return None;
         }
         let binding = parts.pop()?;
         let region = parts.remove(0);
-        let parent =
-            parts.chunks(4).map(|c| PlacementSegment { loop_name: c[0].clone(), entity: EntityRef::new(&c[1], &c[2], &c[3]) }).collect();
-        Some(Self { region, parent: PlacementKey(parent), binding })
+        Some(Self { region, parent: PlacementKey(segments(&parts)), binding })
     }
 }
 

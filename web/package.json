@@ -1,0 +1,22 @@
+{
+  "name": "wheelhouse-web",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.29.3",
+  "scripts": {
+    "core": "wasm-pack build ../crates/wheelhouse-wasm --release --target web --out-dir ../../web/src/core --no-pack",
+    "dev": "pnpm core && vite",
+    "build": "pnpm core && tsc && vite build",
+    "typecheck": "tsc",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "solid-js": "1.9.9"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "typescript": "5.9.3",
+    "vite": "7.1.12",
+    "vite-plugin-solid": "2.11.10"
+  }
+}
