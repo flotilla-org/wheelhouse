@@ -787,17 +787,18 @@ impl ArrangementDoc {
 
     /// Read a host's commit against `stored`: the host commits shares of
     /// each split, and the panels [`shown`](Self::shown) without space at
-    /// none. A panel with no tabs committed at 0 gets back its stored
-    /// weight; one the host gives a weight keeps it. With `to_stored`, the
-    /// others are scaled so the ones `stored` has keep its total, and an
-    /// unchanged split commits exactly what is stored; otherwise they keep
-    /// the host's weights and the empty panels' are scaled to them.
+    /// none. A panel committed at 0 gets back its stored weight, though the
+    /// commit gives it a tab (showing a slot there); an empty one the host
+    /// gives a weight keeps it. With `to_stored`, the others are scaled so
+    /// the ones `stored` has keep its total, and an unchanged split commits
+    /// exactly what is stored; otherwise they keep the host's weights and
+    /// the restored panels' are scaled to them.
     fn rescale_to(&mut self, stored: &ArrangementDoc, to_stored: bool) {
         fn walk(panel: &mut Panel, stored: &BTreeMap<&str, f64>, to_stored: bool) {
             let PanelNode::Split { children, .. } = &mut panel.node else {
                 return;
             };
-            let dormant = |child: &Panel| child.is_empty() && child.weight <= 0.0;
+            let dormant = |child: &Panel| child.weight <= 0.0;
             let (mut from, mut to) = (0.0, 0.0);
             for child in children.iter().filter(|child| !dormant(child)) {
                 if let Some(weight) = stored.get(child.id.as_str()) {

@@ -167,7 +167,7 @@ sizes need pixels. When a gesture ends it commits the whole document with
    the host reads the arrangement again. The C call returns
    `WHEELHOUSE_STALE` with no error.
 2. **Validation.** Panel IDs are nonempty and unique, weights finite and
-   positive (a panel with no tabs may commit 0, and gets its stored weight
+   positive (a panel shown at 0 may commit 0, and gets its stored weight
    back), splits nonempty, each slot has at most one tab, and a selected
    tab is one of its panel's. Each tab names a current slot, or a slot the
    stored document already tabbed that has since gone; a host can't give a

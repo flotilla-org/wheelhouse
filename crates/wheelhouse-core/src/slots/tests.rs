@@ -346,4 +346,10 @@ fn an_empty_panel_committed_at_none_gets_its_weight_back() {
     committed.rescale_to(&stored, false);
     assert_eq!(weights(&committed), [("x".to_owned(), 3.0), ("y".to_owned(), 2.0)]);
     committed.check().unwrap();
+    // A host showing a slot in a panel it was shown at none gives it the tab
+    // and commits the 0 it had.
+    let mut committed = doc(split("main", vec![weighted(tabs("x", &["a"], Some("a")), 1.0), weighted(tabs("y", &["b"], Some("b")), 0.0)]));
+    committed.rescale_to(&stored, false);
+    assert_eq!(weights(&committed), [("x".to_owned(), 1.0), ("y".to_owned(), 2.0 / 3.0)]);
+    committed.check().unwrap();
 }
