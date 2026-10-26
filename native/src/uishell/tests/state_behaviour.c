@@ -538,14 +538,25 @@ state_workspace_labelled(CFG_Node *window, String8 label)
   return &cfg_nil_node;
 }
 
+// A panel's weight as a share of its siblings' total.
+internal F64
+state_doc_share(WheelhouseArrangementDoc const *doc, U64 index)
+{
+  F64 total = 0;
+  U64 up = doc->panels[index].parent;
+  for(U64 i = 0; i < doc->panel_count; i++) { if(doc->panels[i].parent == up) { total += doc->panels[i].weight; } }
+  return total > 0 ? doc->panels[index].weight/total : 0;
+}
+
 // Every workspace of the window is committed, and its panel tree is the
 // document the core keeps: the same panels, weights, tabs by slot key and
 // Selected Views, at the generation the window last saw. The core owns it
 // once a commit changed its structure; one that changed only weights or
 // selections leaves it following the provider (ADR 0013).
 // Whether two documents are the same: the same panels, in order, with the
-// same parents, tabs and Selected Views; weights within rounding, roots' not
-// at all.
+// same parents, tabs and Selected Views; weights as shares of their siblings'
+// (the core's are relative: a layout's 3 and 2 are this device's 0.6 and
+// 0.4) within rounding, roots' not at all.
 internal B32
 state_same_doc(WheelhouseArrangementDoc const *a, WheelhouseArrangementDoc const *b)
 {
@@ -555,7 +566,8 @@ state_same_doc(WheelhouseArrangementDoc const *a, WheelhouseArrangementDoc const
     WheelhouseDocPanel const *p = &a->panels[i], *q = &b->panels[i];
     B32 root = p->parent == WHEELHOUSE_NONE;
     same = (str8_match(uishell_sidebar_string(p->id), uishell_sidebar_string(q->id), 0) && p->parent == q->parent && p->kind == q->kind &&
-            (p->kind != WHEELHOUSE_PANEL_SPLIT || p->axis == q->axis) && (root || abs_f32((F32)(p->weight-q->weight)) < 1e-6f) &&
+            (p->kind != WHEELHOUSE_PANEL_SPLIT || p->axis == q->axis) &&
+            (root || abs_f32((F32)(state_doc_share(a, i)-state_doc_share(b, i))) < 1e-6f) &&
             p->tab_count == q->tab_count && p->selected == q->selected);
     for(U64 t = 0; same && t < p->tab_count; t++) { same = str8_match(uishell_sidebar_string(p->tabs[t]), uishell_sidebar_string(q->tabs[t]), 0); }
   }
@@ -1007,6 +1019,14 @@ entry_point(CmdLine *cmdline)
     String8Array unplaced = uishell_store_unplaced(scratch.arena, chip);
     StateCheck(unplaced.count == 1 && str8_match(unplaced.v[0], str8_lit("t:shell"), 0));
     StateCheck(str8_match(uishell_store_slot_title(unplaced.v[0]), str8_lit("shell"), 0));
+    // The layout's weights (agents 3, files 2) are relative: the panels
+    // share the workspace 3:2 rather than spanning five times its width.
+    {
+      RD_Arrangement *layout = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, chip));
+      StateCheck(rd_arrangement_problem(scratch.arena, layout).size == 0);
+      StateCheck(layout->root->child_count == 2 &&
+                 abs_f32(layout->root->first->weight - 0.6f) < 0.0001f && abs_f32(layout->root->last->weight - 0.4f) < 0.0001f);
+    }
     // Its home, where showing it with no panel puts it (the tool strip's
     // click), is the files panel: its matchers' but for `hide`.
     arranged = wheelhouse_arrangement_get(state->core, chip_id, 0);
@@ -1499,11 +1519,11 @@ entry_point(CmdLine *cmdline)
     String8 text = state_workspaces_text(scratch.arena);
     String8 expected = str8_lit("workspace \"reviewer\" subject=role/p/reviewer\n"
                                 "      panel split=x\n"
-                                "        panel weight=1.00\n"
+                                "        panel weight=0.50\n"
                                 "          tab terminal \"Terminal\" view=workspace:\"primary\" command=\"exec /bin/sh\" selected\n"
                                 "          tab terminal view=workspace:\"partner\" command=\"attach partner 1\"\n"
                                 "          tab terminal view=workspace:\"watch\" command=\"attach watch 1\"\n"
-                                "        panel weight=1.00\n"
+                                "        panel weight=0.50\n"
                                 "          tab terminal view=workspace:\"log\" command=\"tail -f build.log\" selected");
     StateCheck(str8_find_needle(text, 0, expected, 0) < text.size);
     if(str8_find_needle(text, 0, expected, 0) == text.size) { fprintf(stderr, "workspaces:\n%.*s\n", str8_varg(text)); }
