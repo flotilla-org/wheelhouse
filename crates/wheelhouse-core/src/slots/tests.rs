@@ -323,9 +323,27 @@ fn an_empty_panel_is_shown_without_space() {
 // Empty panels with no sibling to give their space to keep their weights.
 #[test]
 fn panels_that_are_all_empty_keep_their_weights() {
-    let shown = doc(split("main", vec![weighted(tabs("x", &[], None), 3.0), weighted(tabs("y", &[], None), 2.0)])).shown();
+    let shown = doc(split("main", vec![weighted(tabs("x", &[], None), 3.0), weighted(tabs("y", &[], None), 2.0)])).shown(|_| true);
     assert_eq!(weights(&shown), [("x".to_owned(), 3.0), ("y".to_owned(), 2.0)]);
-    let nested =
-        doc(split("main", vec![tabs("x", &["a"], Some("a")), split("s", vec![tabs("p", &[], None), tabs("q", &[], None)])])).shown();
+    let nested = doc(split("main", vec![tabs("x", &["a"], Some("a")), split("s", vec![tabs("p", &[], None), tabs("q", &[], None)])]))
+        .shown(|_| true);
     assert_eq!(weights(&nested), [("x".to_owned(), 1.0), ("s".to_owned(), 0.0), ("p".to_owned(), 1.0), ("q".to_owned(), 1.0)]);
+    // Only the panels that collapse.
+    let some = doc(split("main", vec![tabs("x", &["a"], Some("a")), tabs("p", &[], None), tabs("q", &[], None)])).shown(|id| id == "p");
+    assert_eq!(weights(&some), [("x".to_owned(), 1.0), ("p".to_owned(), 0.0), ("q".to_owned(), 1.0)]);
+}
+
+// An empty panel committed at none gets its stored weight back, even with no
+// sibling left with tabs (it was shown so until the last tab went); one the
+// host gives a weight keeps it.
+#[test]
+fn an_empty_panel_committed_at_none_gets_its_weight_back() {
+    let stored = doc(split("main", vec![weighted(tabs("x", &[], None), 3.0), weighted(tabs("y", &[], None), 2.0)]));
+    let mut committed = doc(split("main", vec![weighted(tabs("x", &[], None), 0.5), weighted(tabs("y", &[], None), 0.0)]));
+    committed.rescale_to(&stored, false);
+    assert_eq!(weights(&committed), [("x".to_owned(), 0.5), ("y".to_owned(), 2.0 / 6.0)]);
+    let mut committed = doc(split("main", vec![weighted(tabs("x", &[], None), 0.0), weighted(tabs("y", &[], None), 0.0)]));
+    committed.rescale_to(&stored, false);
+    assert_eq!(weights(&committed), [("x".to_owned(), 3.0), ("y".to_owned(), 2.0)]);
+    committed.check().unwrap();
 }

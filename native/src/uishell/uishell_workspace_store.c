@@ -903,9 +903,11 @@ uishell_store_doc(Arena *arena, RD_Arrangement *a)
     out->id = uishell_sidebar_text(p->doc_id.size ? p->doc_id : push_str8f(arena, "%I64u", p->id));
     // The core takes finite positive weights; the root's means nothing. A
     // weight is written as config writes it (0.7, not 0.699999988), which
-    // reads back as the same F32.
+    // reads back as the same F32. An empty panel shown without space
+    // commits none, and the core gives it its weight back.
     F32 weight = p == a->root ? 1.f : p->weight;
-    out->weight = (weight > 0 && weight < 1e30f) ? f64_from_str8(rd_arrangement_weight_string(arena, weight)) : 0.01;
+    B32 empty = p->first == &rd_nil_arrangement_panel && p->tab_count == 0;
+    out->weight = (weight > 0 && weight < 1e30f) ? f64_from_str8(rd_arrangement_weight_string(arena, weight)) : (empty && weight == 0) ? 0 : 0.01;
     out->selected = WHEELHOUSE_NONE;
     if(p->first != &rd_nil_arrangement_panel)
     {
@@ -1316,8 +1318,12 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
       U64 up = shape.parent[index];
       if(index && up == WHEELHOUSE_NONE) { continue; }
       if(shape.lifted[index]) { made[index] = made[up]; continue; }
-      RD_PanelID panel_id = up != WHEELHOUSE_NONE ? rd_arrangement_add(a, made[up], shape.weight[index]) : a->root->id;
+      // A panel the core shows without space (weight 0) has none here, not
+      // the equal share rd_arrangement_add gives a weight it can't use.
+      F32 weight = shape.weight[index];
+      RD_PanelID panel_id = up != WHEELHOUSE_NONE ? rd_arrangement_add(a, made[up], weight > 0 ? weight : 1.f) : a->root->id;
       RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(a, panel_id);
+      if(up != WHEELHOUSE_NONE && !(weight > 0)) { panel->weight = 0; }
       String8 src_id = uishell_sidebar_string(src->id);
       B32 word = !(str8_is_integer(src_id, 10) && src_id.size < 18);
       RD_PanelID wanted = word ? 0 : u64_from_str8(src_id, 10);

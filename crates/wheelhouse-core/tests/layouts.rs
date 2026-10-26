@@ -197,6 +197,31 @@ fn the_default_layout_follows_the_facts_until_the_user_chooses() {
     assert_eq!(current(&sidebar).as_deref(), Some("review"));
 }
 
+// An empty panel of the layout's takes no space, even once the user owns the
+// arrangement; one the user split off keeps its space, for what they put
+// there. The layout's opens at its own share once a slot lands in it.
+#[test]
+fn an_empty_layout_panel_takes_no_space_but_the_users_does() {
+    let mut sidebar = session();
+    let view = sidebar.arrangement(worker()).unwrap();
+    // The user moves the side panel's tabs to the agents and splits off a
+    // panel of their own, as a host shows them: the empty side at none.
+    let all = ["primary", "a", "b", "t:files", "r"];
+    let edited = row(vec![tabs("agents", 0.6, &all, Some("primary")), tabs("side", 0.0, &[], None), tabs("9", 0.4, &[], None)]);
+    let commit = sidebar.set_arrangement(worker(), edited.clone(), view.generation).unwrap();
+    assert!(commit.owned);
+    let view = sidebar.arrangement(worker()).unwrap();
+    assert_eq!(view.doc, edited);
+
+    // A review slot lands in the side panel: it is shown at its share of
+    // the agents' again (2 to their 3), and the user's panel keeps its own.
+    sidebar.feed(200, [layout("2", &[("a", "agent"), ("b", "agent"), ("r", "review"), ("s", "review")])]);
+    let view = sidebar.arrangement(worker()).unwrap();
+    let weights: Vec<f64> = view.doc.panels()[1..].iter().map(|panel| panel.weight).collect();
+    assert_eq!(view.doc.panels()[2], &tabs("side", weights[1], &["s"], Some("s")));
+    assert!((weights[0] - 0.6).abs() < 1e-9 && (weights[1] - 0.4).abs() < 1e-9 && (weights[2] - 0.4).abs() < 1e-9, "{weights:?}");
+}
+
 #[test]
 fn an_edited_layout_keeps_its_panels_matchers() {
     let mut sidebar = session();

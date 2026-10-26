@@ -762,45 +762,44 @@ impl ArrangementDoc {
     }
 
     /// The document as the host is shown it: a panel with no tabs under it
-    /// takes no space (weight 0) while a sibling has tabs. The document keeps
-    /// it, at its weight, for slots to land in, and shows it at that weight
-    /// once one does. Weights stay relative; the host takes shares of them.
-    pub fn shown(&self) -> ArrangementDoc {
-        fn walk(panel: &mut Panel) {
+    /// that `collapses` (by ID) takes no space (weight 0) while a sibling has
+    /// tabs. The document keeps it, at its weight, for slots to land in, and
+    /// shows it at that weight once one does. Weights stay relative; the host
+    /// takes shares of them.
+    pub fn shown(&self, collapses: impl Fn(&str) -> bool) -> ArrangementDoc {
+        fn walk(panel: &mut Panel, collapses: &dyn Fn(&str) -> bool) {
             if let PanelNode::Split { children, .. } = &mut panel.node {
-                if children.iter().any(|child| !child.is_empty()) {
-                    for child in children.iter_mut() {
-                        match child.is_empty() {
-                            true => child.weight = 0.0,
-                            false => walk(child),
-                        }
+                let live = children.iter().any(|child| !child.is_empty());
+                for child in children.iter_mut() {
+                    match live && child.is_empty() && collapses(&child.id) {
+                        true => child.weight = 0.0,
+                        false => walk(child, collapses),
                     }
                 }
             }
         }
         let mut doc = self.clone();
         if let Some(root) = &mut doc.root {
-            walk(root);
+            walk(root, &collapses);
         }
         doc
     }
 
     /// Read a host's commit against `stored`: the host commits shares of
     /// each split, and the panels [`shown`](Self::shown) without space at
-    /// none. A panel with no tabs and a sibling with some gets back its
-    /// stored weight. With `to_stored`, the others are scaled so the ones
-    /// `stored` has keep its total, and an unchanged split commits exactly
-    /// what is stored; otherwise they keep the host's weights and the empty
-    /// panels' are scaled to them.
+    /// none. A panel with no tabs committed at 0 gets back its stored
+    /// weight; one the host gives a weight keeps it. With `to_stored`, the
+    /// others are scaled so the ones `stored` has keep its total, and an
+    /// unchanged split commits exactly what is stored; otherwise they keep
+    /// the host's weights and the empty panels' are scaled to them.
     fn rescale_to(&mut self, stored: &ArrangementDoc, to_stored: bool) {
         fn walk(panel: &mut Panel, stored: &BTreeMap<&str, f64>, to_stored: bool) {
             let PanelNode::Split { children, .. } = &mut panel.node else {
                 return;
             };
-            let dormant = |child: &Panel, live: bool| live && child.is_empty();
-            let live = children.iter().any(|child| !child.is_empty());
+            let dormant = |child: &Panel| child.is_empty() && child.weight <= 0.0;
             let (mut from, mut to) = (0.0, 0.0);
-            for child in children.iter().filter(|child| !dormant(child, live)) {
+            for child in children.iter().filter(|child| !dormant(child)) {
                 if let Some(weight) = stored.get(child.id.as_str()) {
                     from += child.weight;
                     to += weight;
@@ -809,7 +808,7 @@ impl ArrangementDoc {
             let scale = if from > 0.0 && to > 0.0 { to / from } else { 1.0 };
             let (live_scale, dormant_scale) = if to_stored { (scale, 1.0) } else { (1.0, 1.0 / scale) };
             for child in children.iter_mut() {
-                match dormant(child, live) {
+                match dormant(child) {
                     true => child.weight = stored.get(child.id.as_str()).copied().filter(|w| *w > 0.0).unwrap_or(1.0) * dormant_scale,
                     false => child.weight *= live_scale,
                 }
@@ -1066,6 +1065,13 @@ impl Arrangement {
         let homes = plan
             .map(|plan| arrangement.unplaced.iter().filter_map(|key| Some((key.clone(), plan.home(key, &arrangement.doc)?))).collect())
             .unwrap_or_default();
+        // An empty panel the provider arranges takes no space until a slot
+        // lands in it. Once the user owns the arrangement, one they made
+        // keeps its space (they split to put something there); the layout's
+        // own still don't.
+        let layout: BTreeSet<&str> =
+            plan.map(|plan| plan.definition.panels().into_iter().map(|panel| panel.id.as_str()).collect()).unwrap_or_default();
+        let doc = arrangement.doc.shown(|id| !arrangement.owned || layout.contains(id));
         ArrangementView {
             homes,
             generation: stored.generation(),
@@ -1074,7 +1080,7 @@ impl Arrangement {
             layout: arrangement.layout.map(|layout| layout.name),
             unplaced: arrangement.unplaced,
             owned: arrangement.owned,
-            doc: arrangement.doc.shown(),
+            doc,
             placed: arrangement.placed,
             soft: arrangement.soft,
             provider_changed: arrangement.provider_changed,

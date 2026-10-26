@@ -167,8 +167,8 @@ sizes need pixels. When a gesture ends it commits the whole document with
    the host reads the arrangement again. The C call returns
    `WHEELHOUSE_STALE` with no error.
 2. **Validation.** Panel IDs are nonempty and unique, weights finite and
-   positive (a panel with no tabs, beside one with some, may commit 0 and
-   gets its stored weight back), splits nonempty, each slot has at most one tab, and a selected
+   positive (a panel with no tabs may commit 0, and gets its stored weight
+   back), splits nonempty, each slot has at most one tab, and a selected
    tab is one of its panel's. Each tab names a current slot, or a slot the
    stored document already tabbed that has since gone; a host can't give a
    tab to a slot it never added. An invalid document changes nothing.
@@ -186,10 +186,12 @@ sizes need pixels. When a gesture ends it commits the whole document with
 
 Reading the arrangement returns the document as the host is shown it: a
 panel with no tabs under it has weight 0 while a sibling has tabs, so it
-takes no space until a slot lands in it. The stored document keeps it at
-its weight, and a commit that gives it 0 gives it back that weight. The
-read also returns its generation, whether the host owns it, and two tab
-flags: **placed** (the core placed it since the
+takes no space until a slot lands in it. Once the user owns the
+arrangement, only the Workspace Layout's own empty panels are shown so; one
+the user split off keeps its space for what they put there. The stored
+document keeps each at its weight, and an empty panel committed at 0 gets
+that weight back. The read also returns its generation, whether the host
+owns it, and two tab flags: **placed** (the core placed it since the
 host last committed) and **gone** (its slot has gone).
 
 The core changes the document itself only when the slot set changes from the
