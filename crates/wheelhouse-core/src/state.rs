@@ -959,7 +959,7 @@ pub struct ControllerState {
     rail_config: RailConfig,
     template_catalog: Option<TemplateConfigCatalog>,
     /// Whether a primary's direct Cleat endpoint is preferred over its
-    /// command recipe (wheelhouse#104). Off, endpoints are passed over.
+    /// command recipe (wheelhouse#104). Off, the recipe is preferred.
     direct_attach: bool,
     /// Moves whenever the template catalog is set, for what is derived from it.
     template_generation: u64,
@@ -1345,8 +1345,8 @@ impl ControllerState {
         }
     }
 
-    /// Prefer primaries' direct Cleat endpoints, or pass them over for their
-    /// command recipes. Returns whether this changed anything.
+    /// Prefer primaries' direct Cleat endpoints, or their command recipes.
+    /// Returns whether this changed anything.
     pub fn set_direct_attach(&mut self, enabled: bool) -> bool {
         std::mem::replace(&mut self.direct_attach, enabled) != enabled
     }
@@ -4060,26 +4060,34 @@ fn materialize_recipe(values: &impl Entries) -> Option<&str> {
 /// today) resolves it to its opening recipe, at its action target: the
 /// recipe is that Slot's content, not a condition for opening the workspace,
 /// so a workspace opened without one fills in when one arrives. A direct
-/// Cleat endpoint, when published, is preferred over the recipe, unless
-/// `direct` is off.
+/// Cleat endpoint, when published, is preferred over the recipe; with
+/// `direct` off, the recipe is preferred and the endpoint is only a
+/// fallback for a subject publishing no recipe.
 fn desired_primary(values: &impl Entries, subject_target: Option<&str>, direct: bool) -> Option<DesiredContent> {
     use crate::managed::TerminalContent;
     let text = |key| metadata_entry_text(values, key).map(str::to_owned);
     let ready = |target: Option<String>| -> Option<DesiredContent> {
         let target = target.filter(|s| !s.is_empty())?;
-        if let Some(recipe) = suggested_layout::direct_primary(text).filter(|_| direct) {
-            return Some(DesiredContent::Ready(Resolved { target: Some(target), recipe }));
+        let endpoint = || {
+            let recipe = suggested_layout::direct_primary(text)?;
+            Some(DesiredContent::Ready(Resolved { target: Some(target.clone()), recipe }))
+        };
+        let command = || {
+            Some(DesiredContent::Ready(
+                TerminalContent {
+                    target: target.clone(),
+                    command: text(KEY_MATERIALIZE_RECIPE).filter(|s| !s.is_empty())?,
+                    // The same fact materialization launches in, so a workspace opened
+                    // from this resolution compares equal to it.
+                    cwd: text(KEY_CHECKOUT_PATH),
+                }
+                .into(),
+            ))
+        };
+        match direct {
+            true => endpoint().or_else(command),
+            false => command().or_else(endpoint),
         }
-        Some(DesiredContent::Ready(
-            TerminalContent {
-                target,
-                command: text(KEY_MATERIALIZE_RECIPE).filter(|s| !s.is_empty())?,
-                // The same fact materialization launches in, so a workspace opened
-                // from this resolution compares equal to it.
-                cwd: text(KEY_CHECKOUT_PATH),
-            }
-            .into(),
-        ))
     };
     match text("workspace.primary.state").as_deref() {
         Some("held") => Some(DesiredContent::Held),

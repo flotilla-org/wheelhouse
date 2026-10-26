@@ -6141,7 +6141,7 @@ uishell_sidebar_observed_workdirs(void *unused, WheelhouseIngressWorkdirEmit emi
 }
 
 // Tell the core the Direct Cleat Attach user setting when it changes: off,
-// primaries open through their command recipes, and open ones rebind.
+// primaries prefer their command recipes, and open ones rebind.
 internal void
 uishell_sidebar_sync_direct_attach(UIShell_SidebarState *state)
 {

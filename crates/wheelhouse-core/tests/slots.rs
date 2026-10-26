@@ -586,6 +586,34 @@ fn direct_attach_off_opens_the_primary_by_its_recipe() {
     assert!(command(&off.resolution.recipe), "{off:?}");
 }
 
+// A subject with an endpoint and no recipe has no other way in: with direct
+// attach turned off, its open primary keeps its Cleat session.
+#[test]
+fn direct_attach_off_keeps_a_primary_with_no_recipe() {
+    let mut sidebar = subject_session();
+    let direct = [
+        ("action.primary.direct.transport", text("ssh")),
+        ("action.primary.direct.host", text("robert@feta")),
+        ("action.primary.direct.runtime_root", text("/run/cleat")),
+        ("action.primary.direct.daemon", text("d1")),
+        ("action.primary.direct.session", text("s1")),
+    ];
+    sidebar.feed(150, [patch(subject(), &direct, &[])]);
+    let effects = sidebar.dispatch(Action::Activate { entity: subject() }).unwrap();
+    let [HostEffect::Materialize { request_id, .. }] = effects[..] else {
+        panic!("expected materialize: {effects:?}");
+    };
+    sidebar.complete(request_id, Ok(Some(worker())));
+    sidebar.observe(vec![Workspace { id: worker(), position: 0, name: "Worker".into(), selected: true }], vec![]);
+    let update = sidebar.plan_slot(worker(), "primary", "").unwrap().update.unwrap();
+    assert!(matches!(update.resolution.recipe, LocalRecipe::CleatSession { .. }), "{update:?}");
+    assert!(sidebar.managed.complete_slot(worker(), "primary", update.token, true));
+
+    sidebar.set_direct_attach(false);
+    let kept = sidebar.plan_slot(worker(), "primary", &update.id).unwrap();
+    assert_eq!((kept.state, kept.update), (ContentState::Current, None));
+}
+
 // An empty opening recipe is none: it opens nothing on its own, and a
 // subject with one opens as a subject without a recipe does.
 #[test]
