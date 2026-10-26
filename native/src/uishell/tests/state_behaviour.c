@@ -1007,6 +1007,14 @@ entry_point(CmdLine *cmdline)
     String8Array unplaced = uishell_store_unplaced(scratch.arena, chip);
     StateCheck(unplaced.count == 1 && str8_match(unplaced.v[0], str8_lit("t:shell"), 0));
     StateCheck(str8_match(uishell_store_slot_title(unplaced.v[0]), str8_lit("shell"), 0));
+    // The layout's weights (agents 3, files 2) are relative: the panels
+    // share the workspace 3:2 rather than spanning five times its width.
+    {
+      RD_Arrangement *layout = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, chip));
+      StateCheck(rd_arrangement_problem(scratch.arena, layout).size == 0);
+      StateCheck(layout->root->child_count == 2 &&
+                 abs_f32(layout->root->first->weight - 0.6f) < 0.0001f && abs_f32(layout->root->last->weight - 0.4f) < 0.0001f);
+    }
     // Its home, where showing it with no panel puts it (the tool strip's
     // click), is the files panel: its matchers' but for `hide`.
     arranged = wheelhouse_arrangement_get(state->core, chip_id, 0);
