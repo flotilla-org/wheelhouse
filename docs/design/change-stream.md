@@ -1,6 +1,6 @@
 # The change stream and intents
 
-Status: draft, 26 October 2026, for step 0 of [#441](https://github.com/flotilla-org/wheelhouse/issues/441). The boundary it implements was decided on [#425](https://github.com/flotilla-org/wheelhouse/issues/425); the costs it removes were measured by the browser sidebar prototype ([#428](https://github.com/flotilla-org/wheelhouse/issues/428), `prototype/web-sidebar`).
+Status: design, agreed 26 October 2026, for step 0 of [#441](https://github.com/flotilla-org/wheelhouse/issues/441). The boundary it implements was decided on [#425](https://github.com/flotilla-org/wheelhouse/issues/425); the costs it removes were measured by the browser sidebar prototype ([#428](https://github.com/flotilla-org/wheelhouse/issues/428), `prototype/web-sidebar`).
 
 Step 0 gives the core one way to tell a frontend what changed and one way to be told what to do. A frontend **subscribes** to a view, gets a **snapshot**, then follows **deltas**, each tagged with the generation it brings the view to. It changes logical state only by sending an **intent**. Intent results and fact-driven changes arrive through the same deltas. The sidebar is the first view; the arrangement, Slots, overlay and local entities follow in later #441 steps on the same machinery.
 
@@ -32,7 +32,9 @@ The view is a keyed tree: sections, then placement nodes by `PlacementKey`. A de
 
 Detail cards stay on demand, as now: they are large and read rarely.
 
-**Typed roles.** Chip meaning moves out of prefixed field strings into the node: status, attention, icon, and the short and medium labels. Native's C parser (`uishell_sidebar.c`) and the web read the same typed fields.
+**Typed roles**, in step 0 so the payload is defined once: chip meaning moves out of prefixed field strings into the node: status, attention, icon, and the short and medium labels. Native's C parser (`uishell_sidebar.c`) goes, and native and the web read the same typed fields.
+
+**Pull.** A frontend calls `poll(subscription)` when it is ready to apply a delta: once a frame for native, from the event loop in the browser. A cheap "changed since" check, as `snapshot_is_current` is now, tells it whether to. A push nudge is added only if a frontend turns out to need one.
 
 ## Intents
 
@@ -46,7 +48,7 @@ Rust types are the source.
 
 - **Rust (TUI):** the types directly.
 - **C (native):** cbindgen. A delta is a handle with accessors, as the snapshot is now: operation count, operation *i*, and text that borrows the handle's buffers until release. The header check in CI covers it.
-- **wasm (browser):** a `wheelhouse-wasm` crate, with TypeScript types generated from the Rust (tsify). Deltas cross as JS objects, not JSON text. The wasm check of `wheelhouse-core` in CI already keeps the core building.
+- **wasm (browser):** a `wheelhouse-wasm` crate, with the SolidJS app beside it in `web/`, with TypeScript types generated from the Rust (tsify). Deltas cross as JS objects, not JSON text. The wasm check of `wheelhouse-core` in CI already keeps the core building.
 
 ## Tests
 
@@ -63,11 +65,8 @@ Stacked:
 2. The intent entry point, with `dispatch` kept as a shim.
 3. The C ABI and its harness.
 4. `wheelhouse-wasm`, the TypeScript types and the browser test.
-5. Native's sidebar follows the stream instead of re-acquiring.
+5. Native's sidebar follows the stream instead of re-acquiring, and its chip parser goes. This is the largest C change, so it comes last.
 
-## Open questions
+## Decided
 
-1. Typed roles in step 0, or after it? They change the node payload the stream defines, so doing them first avoids defining it twice.
-2. Native's switch (PR 5) in step 0, or as the first PR of step 1? It is where native's flatten cost goes away, and it is the largest C change in the set.
-3. Pull or push: a frontend calls `poll(subscription)` when it is ready (it fits an immediate-mode frame and a JS event loop), or the core calls back after each change. Draft: pull, with a cheap "changed since" check as `snapshot_is_current` is now, and a push nudge only if a frontend needs one.
-4. Where the web app lives: `web/` in this repo, beside `crates/wheelhouse-wasm`?
+With Robert, 26 October 2026: typed roles are in step 0; native's switch is step 0's last PR; delivery is pull; the web app lives in `web/` in this repo.
