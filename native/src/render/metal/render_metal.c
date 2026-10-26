@@ -1000,7 +1000,9 @@ r_window_request_frame(WM_Window window, R_Handle window_equip, B32 requested)
     U64 now = now_time_us();
     if(was_paused && !mtl_window->display_link.paused) { mtl_window->link_heard_us = now; }
     // A link can stop for good while AppKit still runs the window (after the
-    // screen locks, say), whatever occlusion it reports; a new one fires.
+    // screen locks, say), whatever occlusion it reports; a new one fires. A
+    // covered window, which may legitimately get no drawables, is relinked
+    // each interval too: cheap, and its occlusion state can't be trusted.
     else if(!mtl_window->display_link.paused && mtl_window->ready_drawable == 0 &&
             now - mtl_window->link_heard_us >= R_MTL_DISPLAY_RELINK_INTERVAL_US)
     {
