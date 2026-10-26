@@ -307,6 +307,17 @@ pub unsafe extern "C" fn wheelhouse_provider_set_stale(
     })
     .is_some() as u32
 }
+/// Prefer primaries' direct Cleat endpoints (nonzero, the default) or pass
+/// them over for their command recipes (zero), a user setting. Open
+/// primaries rebind to the other way in.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_set_direct_attach(h: *mut WheelhouseCore, enabled: u32, error_out: *mut *mut c_char) -> u32 {
+    run(h, error_out, |h| {
+        h.sidebar.set_direct_attach(enabled != 0);
+        Ok(())
+    })
+    .is_some() as u32
+}
 
 /// An WheelhouseFact that unsets its key.
 pub const WHEELHOUSE_FACT_UNSET: u32 = 0;

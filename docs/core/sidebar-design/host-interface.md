@@ -53,6 +53,7 @@ it was built against.
 | `wheelhouse_apply_entity`, `wheelhouse_apply_workspace` | Scalar facts (`WheelhouseFact`) on an entity, or on a workspace (a tab target), from `provider`. |
 | `wheelhouse_tick(h, now_ms)` | Advance time without facts. |
 | `wheelhouse_provider_retract`, `wheelhouse_provider_set_stale` | Drop a subscription's facts; mark one stale or fresh. |
+| `wheelhouse_set_direct_attach(h, enabled)` | Prefer primaries' direct Cleat endpoints (the default), or pass them over for their command recipes; open primaries rebind. |
 | `wheelhouse_observe(h, workspaces, n, panes, m)` | The whole topology: `WheelhouseWorkspace {id, position, name, selected}`, `WheelhousePane`. |
 | `wheelhouse_observe_workdirs` | Directory associations, replaced whole. |
 | `wheelhouse_workspace_register` / `_forget` / `_registered` | Workspaces the host made itself; a forgotten one's record goes. |

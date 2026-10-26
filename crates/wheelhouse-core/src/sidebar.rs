@@ -317,6 +317,16 @@ impl Sidebar {
         Ok(())
     }
 
+    /// Prefer primaries' direct Cleat endpoints (the default), or pass them
+    /// over for their command recipes, a user setting while direct attach is
+    /// new. Open primaries rebind to the other way in, as when an endpoint
+    /// comes or goes.
+    pub fn set_direct_attach(&mut self, enabled: bool) {
+        if self.state.set_direct_attach(enabled) {
+            self.refresh_all_content(true);
+        }
+    }
+
     /// Apply a drained batch from `provider`, the subscription ID the host
     /// received it on, before requesting a snapshot. The provider is stamped
     /// over every entity the patches name; a patch never names its own. Time
