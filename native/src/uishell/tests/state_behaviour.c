@@ -543,10 +543,7 @@ state_workspace_labelled(CFG_Node *window, String8 label)
 // Selected Views, at the generation the window last saw. The core owns it
 // once a commit changed its structure; one that changed only weights or
 // selections leaves it following the provider (ADR 0013).
-// Whether two documents are the same: the same panels, in order, with the
-// same parents, tabs and Selected Views; weights as shares of their siblings'
-// (the core's are relative: a layout's 3 and 2 are this device's 0.6 and
-// 0.4) within rounding, roots' not at all.
+// A panel's weight as a share of its siblings' total.
 internal F64
 state_doc_share(WheelhouseArrangementDoc const *doc, U64 index)
 {
@@ -556,6 +553,10 @@ state_doc_share(WheelhouseArrangementDoc const *doc, U64 index)
   return total > 0 ? doc->panels[index].weight/total : 0;
 }
 
+// Whether two documents are the same: the same panels, in order, with the
+// same parents, tabs and Selected Views; weights as shares of their siblings'
+// (the core's are relative: a layout's 3 and 2 are this device's 0.6 and
+// 0.4) within rounding, roots' not at all.
 internal B32
 state_same_doc(WheelhouseArrangementDoc const *a, WheelhouseArrangementDoc const *b)
 {
@@ -1510,11 +1511,11 @@ entry_point(CmdLine *cmdline)
     String8 text = state_workspaces_text(scratch.arena);
     String8 expected = str8_lit("workspace \"reviewer\" subject=role/p/reviewer\n"
                                 "      panel split=x\n"
-                                "        panel weight=1.00\n"
+                                "        panel weight=0.50\n"
                                 "          tab terminal \"Terminal\" view=workspace:\"primary\" command=\"exec /bin/sh\" selected\n"
                                 "          tab terminal view=workspace:\"partner\" command=\"attach partner 1\"\n"
                                 "          tab terminal view=workspace:\"watch\" command=\"attach watch 1\"\n"
-                                "        panel weight=1.00\n"
+                                "        panel weight=0.50\n"
                                 "          tab terminal view=workspace:\"log\" command=\"tail -f build.log\" selected");
     StateCheck(str8_find_needle(text, 0, expected, 0) < text.size);
     if(str8_find_needle(text, 0, expected, 0) == text.size) { fprintf(stderr, "workspaces:\n%.*s\n", str8_varg(text)); }
