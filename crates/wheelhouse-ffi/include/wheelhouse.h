@@ -827,6 +827,11 @@ uint32_t wheelhouse_provider_set_stale(WheelhouseCore *h,
                                        uint32_t stale,
                                        char **error_out);
 
+// Prefer primaries' direct Cleat endpoints (nonzero, the default) or their
+// command recipes (zero), a user setting; a subject with only one way in
+// keeps it. Open primaries rebind to the other way in.
+uint32_t wheelhouse_set_direct_attach(WheelhouseCore *h, uint32_t enabled, char **error_out);
+
 // Apply scalar facts to an entity, from `provider` as for
 // wheelhouse_apply_patch_json. The batch is validated before it applies.
 uint32_t wheelhouse_apply_entity(WheelhouseCore *h,

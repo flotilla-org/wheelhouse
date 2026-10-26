@@ -384,6 +384,21 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
       uishell_sidebar_text(str8_lit("primary")), uishell_sidebar_text(rd_cfg_setting_child(direct_view, str8_lit("applied"))->first->string), 0);
     ManagedCheck(plan && plan->state == WHEELHOUSE_CONTENT_CURRENT, "the next plan finds the endpoint view current");
     wheelhouse_slot_plan_free(plan);
+    // Turning the Direct Cleat Attach setting off rebinds it to the recipe.
+    {
+      CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+      CFG_Node *setting = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("direct_cleat_attach"));
+      cfg_node_new_replace(rd_state->cfg, setting, str8_lit("0"));
+      uishell_sidebar_sync_direct_attach(&opened);
+      plan = wheelhouse_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(direct_workspace)),
+        uishell_sidebar_text(str8_lit("primary")), uishell_sidebar_text(rd_cfg_setting_child(direct_view, str8_lit("applied"))->first->string), 0);
+      ManagedCheck(plan && plan->state == WHEELHOUSE_CONTENT_UPDATING && plan->recipe.content == WHEELHOUSE_SLOT_COMMAND &&
+                   str8_match(uishell_sidebar_string(plan->recipe.command), str8_lit("printf R; read answer"), 0),
+                   "with direct attach off, the primary rebinds to its command recipe");
+      wheelhouse_slot_plan_free(plan);
+      cfg_node_release(rd_state->cfg, setting);
+      uishell_sidebar_sync_direct_attach(&opened);
+    }
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_observe(&opened, &split);
     cfg_node_release(rd_state->cfg, direct_workspace);
