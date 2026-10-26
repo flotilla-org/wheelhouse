@@ -302,6 +302,10 @@ where
     K: Clone + Eq + Hash,
 {
     let wanted: HashSet<&K> = after.iter().collect();
+    // Placement keys are distinct within a child list by construction (a
+    // loop yields one row per entity); a repeat would make the delta diverge.
+    debug_assert_eq!(wanted.len(), after.len(), "a list's keys are distinct");
+    debug_assert_eq!(before.iter().collect::<HashSet<_>>().len(), before.len(), "a list's keys are distinct");
     let mut list: Vec<K> = before.to_vec();
     let mut ops = vec![];
     for at in (0..list.len()).rev() {
