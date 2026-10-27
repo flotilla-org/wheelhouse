@@ -2705,7 +2705,7 @@ uishell_sidebar_layout_labels(Arena *arena, CFG_Node *workspace, String8 *labels
                        i == layouts.current ? str8_zero() : layouts.names[i]);
   }
   if(layouts.count > 1 && layouts.current != layouts.fallback) { UIShell_LayoutItem(str8_lit("Use default layout"), str8_lit(".default")); }
-  if(layouts.owned) { UIShell_LayoutItem(str8_lit("Reset layout"), str8_lit(".reset")); }
+  if(layouts.adjusted) { UIShell_LayoutItem(str8_lit("Reset layout"), str8_lit(".reset")); }
 #undef UIShell_LayoutItem
   return count;
 }

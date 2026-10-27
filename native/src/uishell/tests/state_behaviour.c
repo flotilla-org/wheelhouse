@@ -1020,12 +1020,13 @@ entry_point(CmdLine *cmdline)
     StateCheck(unplaced.count == 1 && str8_match(unplaced.v[0], str8_lit("t:shell"), 0));
     StateCheck(str8_match(uishell_store_slot_title(unplaced.v[0]), str8_lit("shell"), 0));
     // The layout's weights (agents 3, files 2) are relative: the panels
-    // share the workspace 3:2 rather than spanning five times its width.
+    // share the workspace rather than spanning five times its width. The
+    // files panel has no tab yet, so it takes none of it.
     {
       RD_Arrangement *layout = rd_arrangement_from_panel_owner(scratch.arena, rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, chip));
       StateCheck(rd_arrangement_problem(scratch.arena, layout).size == 0);
       StateCheck(layout->root->child_count == 2 &&
-                 abs_f32(layout->root->first->weight - 0.6f) < 0.0001f && abs_f32(layout->root->last->weight - 0.4f) < 0.0001f);
+                 abs_f32(layout->root->first->weight - 1.f) < 0.0001f && layout->root->last->weight == 0);
     }
     // Its home, where showing it with no panel puts it (the tool strip's
     // click), is the files panel: its matchers' but for `hide`.
@@ -1954,7 +1955,7 @@ entry_point(CmdLine *cmdline)
     rd_boundary_resize_commit();
     state_frame(ws);
     WheelhouseWorkspaceArrangement *stored = wheelhouse_arrangement_get(state->core, id, 0);
-    StateCheck(stored && !stored->owned && stored->flags == WHEELHOUSE_ARRANGEMENT_FLAG_SOFT);
+    StateCheck(stored && !stored->owned && stored->flags == (WHEELHOUSE_ARRANGEMENT_FLAG_SOFT | WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED));
     wheelhouse_arrangement_free(stored);
     RD_PanelAddress first_panel = state_panels(scratch.arena, reviewer).root->first->address;
     F32 weight = state_weight(first_panel);

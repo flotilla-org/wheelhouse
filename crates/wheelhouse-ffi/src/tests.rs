@@ -308,6 +308,84 @@ workspace kind="vessel" {
     }
 }
 
+// A layout's weights through C: an empty panel is shown at no weight, a
+// commit of the shares shown records no override, a resize is flagged
+// RESIZED, and resetting the layout gives its weights back.
+#[test]
+fn layout_weights_reach_c_as_shown() {
+    unsafe {
+        let template = r#"
+workspace kind="vessel" {
+  slot "shell" role="shell" kind="command" command="zsh"
+  slot "logs" role="shell" kind="command" command="tail"
+  layout "pair" {
+    split axis="row" {
+      tabs id="agents" weight=3 { slots role="agent"; };
+      tabs id="side" weight=2 { slots role="shell"; };
+      tabs id="files" weight=1 { slots role="files"; };
+    };
+  }
+}
+"#;
+        let config = format!("{}\n{template}", include_str!("../../wheelhouse-core/tests/fixtures/abbreviation.kdl"));
+        let mut error = ptr::null_mut();
+        let h = create(&config);
+        let patch = r#"{"type":"metadata-patch","target":{"kind":"entity","value":{"kind":"vessel","id":"worker"}},"source_id":"test","set":{"flotilla.vessel":{"value":{"type":"text","value":"worker"}},"display.label":{"value":{"type":"text","value":"worker"}}},"unset":[]}"#;
+        assert_eq!(wheelhouse_apply_patch_json(h, 0, text(PROVIDER), text(patch), &mut error), 1);
+        let snapshot = wheelhouse_snapshot_acquire(h, &mut error);
+        assert_eq!(wheelhouse_dispatch(h, snapshot, node(snapshot, 1).activate, &mut error), 1);
+        wheelhouse_snapshot_release(snapshot);
+        let effects = wheelhouse_effects_take(h, &mut error);
+        let mut effect = MaybeUninit::<EffectView>::uninit();
+        assert_eq!(wheelhouse_effects_get(effects, 0, effect.as_mut_ptr()), 1);
+        let request = effect.assume_init().request_id;
+        wheelhouse_effects_release(effects);
+        let id = WorkspaceId::from_bytes([7; 16]);
+        assert_eq!(wheelhouse_complete(h, request, WHEELHOUSE_COMPLETE_MATERIALIZE, id.into(), text(""), &mut error), 1);
+        let workspace = WorkspaceInput { id: id.into(), position: 0, name: text("worker"), selected: 1 };
+        assert_eq!(wheelhouse_observe(h, &workspace, 1, ptr::null(), 0, &mut error), 1);
+
+        // The weights shown, whether resized, and the generation.
+        let read = |arrangement: *mut WheelhouseWorkspaceArrangement| {
+            let a = &*arrangement;
+            let weights: Vec<f64> = slice(a.doc.panels, a.doc.panel_count).unwrap().iter().skip(1).map(|panel| panel.weight).collect();
+            let out = (weights, a.flags & (WHEELHOUSE_ARRANGEMENT_FLAG_SOFT | WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED), a.owned, a.generation);
+            wheelhouse_arrangement_free(arrangement);
+            out
+        };
+        // Commit the document shown with these weights, as a host would,
+        // selecting the side panel's second tab.
+        let commit = |weights: [f64; 3], error: &mut *mut c_char| {
+            let shown = wheelhouse_arrangement_get(h, id.into(), error);
+            let mut panels: Vec<WheelhouseDocPanel> =
+                slice((*shown).doc.panels, (*shown).doc.panel_count).unwrap().iter().map(|p| ptr::read(p)).collect();
+            for (panel, weight) in panels.iter_mut().skip(1).zip(weights) {
+                panel.weight = weight;
+            }
+            panels[2].selected = 1;
+            let doc = WheelhouseArrangementDoc { panels: panels.as_ptr(), panel_count: panels.len() };
+            let committed = wheelhouse_arrangement_commit(h, id.into(), &doc, (*shown).generation, error);
+            wheelhouse_arrangement_free(shown);
+            read(committed)
+        };
+        let (weights, resized, owned, _) = read(wheelhouse_arrangement_get(h, id.into(), &mut error));
+        assert_eq!((weights, resized, owned), (vec![3.0, 2.0, 0.0], 0, 0));
+        let (weights, resized, owned, _) = commit([0.6, 0.4, 0.0], &mut error);
+        assert_eq!((weights, resized, owned), (vec![3.0, 2.0, 0.0], WHEELHOUSE_ARRANGEMENT_FLAG_SOFT, 0), "the shares shown are no resize");
+        let (weights, resized, owned, generation) = commit([0.5, 0.5, 0.0], &mut error);
+        let both = WHEELHOUSE_ARRANGEMENT_FLAG_SOFT | WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED;
+        assert_eq!((weights, resized, owned), (vec![2.5, 2.5, 0.0], both, 0), "a resize, in the layout's scale");
+        assert_eq!(
+            wheelhouse_arrangement_resolve(h, id.into(), WHEELHOUSE_ARRANGEMENT_FOLLOW, generation, ptr::null_mut(), &mut error),
+            WHEELHOUSE_COMMITTED
+        );
+        let (weights, resized, _, _) = read(wheelhouse_arrangement_get(h, id.into(), &mut error));
+        assert_eq!((weights, resized), (vec![3.0, 2.0, 0.0], 0), "reset");
+        wheelhouse_destroy(h);
+        assert!(error.is_null());
+    }
+}
+
 // A display-variable control names its variable and whether it persists;
 // both borrow from the snapshot, which outlives the sidebar.
 #[test]

@@ -197,6 +197,31 @@ fn the_default_layout_follows_the_facts_until_the_user_chooses() {
     assert_eq!(current(&sidebar).as_deref(), Some("review"));
 }
 
+// An empty panel of the layout's takes no space, even once the user owns the
+// arrangement; one the user split off keeps its space, for what they put
+// there. The layout's opens at its own share once a slot lands in it.
+#[test]
+fn an_empty_layout_panel_takes_no_space_but_the_users_does() {
+    let mut sidebar = session();
+    let view = sidebar.arrangement(worker()).unwrap();
+    // The user moves the side panel's tabs to the agents and splits off a
+    // panel of their own, as a host shows them: the empty side at none.
+    let all = ["primary", "a", "b", "t:files", "r"];
+    let edited = row(vec![tabs("agents", 0.6, &all, Some("primary")), tabs("side", 0.0, &[], None), tabs("9", 0.4, &[], None)]);
+    let commit = sidebar.set_arrangement(worker(), edited.clone(), view.generation).unwrap();
+    assert!(commit.owned);
+    let view = sidebar.arrangement(worker()).unwrap();
+    assert_eq!(view.doc, edited);
+
+    // A review slot lands in the side panel: it is shown at its share of
+    // the agents' again (2 to their 3), and the user's panel keeps its own.
+    sidebar.feed(200, [layout("2", &[("a", "agent"), ("b", "agent"), ("r", "review"), ("s", "review")])]);
+    let view = sidebar.arrangement(worker()).unwrap();
+    let weights: Vec<f64> = view.doc.panels()[1..].iter().map(|panel| panel.weight).collect();
+    assert_eq!(view.doc.panels()[2], &tabs("side", weights[1], &["s"], Some("s")));
+    assert!((weights[0] - 0.6).abs() < 1e-9 && (weights[1] - 0.4).abs() < 1e-9 && (weights[2] - 0.4).abs() < 1e-9, "{weights:?}");
+}
+
 #[test]
 fn an_edited_layout_keeps_its_panels_matchers() {
     let mut sidebar = session();
@@ -249,12 +274,17 @@ fn each_layout_keeps_its_own_edits() {
     let review = sidebar.arrangement(worker()).unwrap();
     assert!(!review.owned, "review is as its template makes it");
     assert_eq!(review.layout.as_deref(), Some("review"));
-    // A soft edit of review is kept too.
-    let mut soft = review.doc.clone();
-    if let Some(Panel { node: PanelNode::Split { children, .. }, .. }) = &mut soft.root {
-        children[0].weight = 4.0;
-    }
-    assert!(!sidebar.set_arrangement(worker(), soft.clone(), review.generation).unwrap().owned);
+    // A soft edit of review is kept too, in the document's scale: its
+    // panels weigh 1 each, so 4:1 is kept as 1.6 and 0.4.
+    let weigh = |review: f64, agents: f64| {
+        let mut doc = sidebar.arrangement(worker()).unwrap().doc;
+        if let Some(Panel { node: PanelNode::Split { children, .. }, .. }) = &mut doc.root {
+            (children[0].weight, children[1].weight) = (review, agents);
+        }
+        doc
+    };
+    let (edit, soft) = (weigh(4.0, 1.0), weigh(1.6, 0.4));
+    assert!(!sidebar.set_arrangement(worker(), edit, review.generation).unwrap().owned);
 
     sidebar.choose_layout(worker(), Some("work")).unwrap();
     let work = sidebar.arrangement(worker()).unwrap();

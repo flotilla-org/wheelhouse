@@ -5918,6 +5918,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           F32 header = uishell_sidebar_row_height(), h = 0;
           if(uishell_sidebar_panel_collapsed(min_child, header, &h) || uishell_sidebar_panel_collapsed(max_child, header, &h)) { continue; }
         }
+        // A workspace panel shown without space (an empty one its layout
+        // keeps for slots to land in) has no boundary to drag.
+        else if(min_child->pct_of_parent <= 0 || max_child->pct_of_parent <= 0) { continue; }
         Rng2F32 min_child_rect = rd_target_rect_from_panel_node_child(panel_rect, panel, min_child);
         Rng2F32 max_child_rect = rd_target_rect_from_panel_node_child(panel_rect, panel, max_child);
         Rng2F32 boundary_rect = {0};

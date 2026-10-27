@@ -316,7 +316,9 @@ fn a_removed_overrides_policy_is_frozen_with_it() {
 fn a_divider_resize_does_not_stop_provider_structure_flowing() {
     let mut sidebar = session(&V1);
     let view = sidebar.arrangement(worker()).unwrap();
-    // Resize the divider and select another tab: soft overrides only.
+    // Resize the divider to 3:1 and select another tab: soft overrides
+    // only. The resize moves both panels' shares, kept in the document's
+    // scale (its panels weigh 1 each, so 1.5 and 0.5).
     let mut doc = view.doc.clone();
     panel_mut(&mut doc, "left").weight = 3.0;
     if let PanelNode::Tabs { selected, .. } = &mut panel_mut(&mut doc, "left").node {
@@ -326,10 +328,13 @@ fn a_divider_resize_does_not_stop_provider_structure_flowing() {
     assert!(!commit.owned);
     let view = sidebar.arrangement(worker()).unwrap();
     assert!(!view.owned);
+    panel_mut(&mut doc, "left").weight = 1.5;
+    panel_mut(&mut doc, "right").weight = 0.5;
     assert_eq!(view.doc, doc);
-    assert_eq!(view.soft["left"].weight, Some(3.0));
+    assert_eq!(view.soft["left"].weight, Some(1.5));
     assert_eq!(view.soft["left"].selected.as_deref(), Some("b"));
-    assert_eq!(view.soft.len(), 1);
+    assert_eq!(view.soft["right"].weight, Some(0.5));
+    assert_eq!(view.soft.len(), 2);
 
     // The provider restructures: a new panel splits c off, and d arrives.
     let v2 = Layout {
@@ -341,7 +346,7 @@ fn a_divider_resize_does_not_stop_provider_structure_flowing() {
     let view = sidebar.arrangement(worker()).unwrap();
     assert!(!view.owned);
     assert_eq!(view.doc.tabs(), ["a", "b", "d", "c"], "the new structure");
-    assert_eq!(weight(&view.doc, "left"), 3.0, "the resize is reapplied");
+    assert_eq!(weight(&view.doc, "left"), 1.5, "the resize is reapplied");
     let PanelNode::Tabs { selected, .. } = &view.doc.panels().into_iter().find(|p| p.id == "left").unwrap().node else { panic!() };
     assert_eq!(selected.as_deref(), Some("b"));
     assert!(view.unresolved.is_empty());
@@ -350,8 +355,8 @@ fn a_divider_resize_does_not_stop_provider_structure_flowing() {
     let v3 = Layout { version: "3", slots: v2.slots, hint: &[("all", &["a", "b", "c", "d"])] };
     publish(&mut sidebar, 300, Some(&v2), &v3);
     let view = sidebar.arrangement(worker()).unwrap();
-    assert_eq!(view.unresolved, set(&["left"]));
-    assert_eq!(view.soft["left"].weight, Some(3.0));
+    assert_eq!(view.unresolved, set(&["left", "right"]));
+    assert_eq!(view.soft["left"].weight, Some(1.5));
 }
 
 #[test]

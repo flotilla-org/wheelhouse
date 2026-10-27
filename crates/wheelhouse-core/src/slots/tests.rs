@@ -237,3 +237,135 @@ fn hints_convert_from_suggested_layouts() {
         doc(Panel { id: "main".into(), weight: 1.0, node: PanelNode::Split { axis: Axis::Column, children: vec![expected] } })
     );
 }
+
+fn weighted(mut panel: Panel, weight: f64) -> Panel {
+    panel.weight = weight;
+    panel
+}
+
+fn weights(doc: &ArrangementDoc) -> Vec<(String, f64)> {
+    doc.panels().into_iter().skip(1).map(|panel| (panel.id.clone(), panel.weight)).collect()
+}
+
+fn hinted(hint: Panel, keys: &[&str]) -> Baseline {
+    let mut hinted = baseline(keys);
+    hinted.hint = Some(doc(hint));
+    hinted
+}
+
+// #477: the host shows weights as shares of their split (3:2 as 0.6 and
+// 0.4) and commits them so. A commit that only moves a selection records no
+// weight override, and the stored document keeps its own scale; a real drag
+// is an override in that scale.
+#[test]
+fn a_commit_in_shares_is_read_in_the_documents_scale() {
+    let hint = split("main", vec![weighted(tabs("x", &["a", "c"], Some("a")), 3.0), weighted(tabs("y", &["b"], Some("b")), 2.0)]);
+    let slots = WorkspaceSlots { baseline: Some(hinted(hint, &["a", "b", "c"])), ..Default::default() };
+    let mut stored = None;
+    Arrangement::follow(&mut stored, slots.baseline.as_ref(), &slots.slots(), None);
+    let shares = |x: f64, y: f64| {
+        doc(split("main", vec![weighted(tabs("x", &["a", "c"], Some("c")), x), weighted(tabs("y", &["b"], Some("b")), y)]))
+    };
+    Arrangement::commit(&mut stored, shares(0.6, 0.4), slots.baseline.as_ref(), &slots.slots(), None).unwrap();
+    let arrangement = arranged(&stored);
+    assert!(!arrangement.owned);
+    assert_eq!(arrangement.soft, BTreeMap::from([("x".to_owned(), SoftOverride { weight: None, selected: Some("c".into()) })]));
+    assert_eq!(weights(&arrangement.doc), [("x".to_owned(), 3.0), ("y".to_owned(), 2.0)]);
+    // The host's shares are quantized: near enough is unchanged.
+    Arrangement::commit(&mut stored, shares(0.60001, 0.39999), slots.baseline.as_ref(), &slots.slots(), None).unwrap();
+    assert!(arranged(&stored).soft["x"].weight.is_none());
+    // A drag to halves is an override of each, in the document's scale.
+    Arrangement::commit(&mut stored, shares(0.5, 0.5), slots.baseline.as_ref(), &slots.slots(), None).unwrap();
+    let arrangement = arranged(&stored);
+    assert_eq!((arrangement.soft["x"].weight, arrangement.soft["y"].weight), (Some(2.5), Some(2.5)));
+    // Following again keeps the halves.
+    Arrangement::follow(&mut stored, slots.baseline.as_ref(), &slots.slots(), None);
+    assert_eq!(weights(&arranged(&stored).doc), [("x".to_owned(), 2.5), ("y".to_owned(), 2.5)]);
+}
+
+// Overrides saved before #477 are in shares, and the host committed every
+// panel of a split, so a record holds the whole split in one scale: following
+// it keeps its ratio, as the daily driver's 0.40245/0.59755 against 3:2.
+#[test]
+fn share_scale_overrides_saved_before_keep_their_ratio() {
+    let hint = split("main", vec![weighted(tabs("x", &["a"], Some("a")), 3.0), weighted(tabs("y", &["b"], Some("b")), 2.0)]);
+    let slots = WorkspaceSlots { baseline: Some(hinted(hint, &["a", "b"])), ..Default::default() };
+    let mut stored = None;
+    Arrangement::follow(&mut stored, slots.baseline.as_ref(), &slots.slots(), None);
+    let share = |weight| SoftOverride { weight: Some(weight), selected: None };
+    stored.as_mut().unwrap().soft = BTreeMap::from([("x".to_owned(), share(0.40245)), ("y".to_owned(), share(0.59755))]);
+    Arrangement::follow(&mut stored, slots.baseline.as_ref(), &slots.slots(), None);
+    let shown = weights(&arranged(&stored).doc);
+    assert!((shown[0].1 / (shown[0].1 + shown[1].1) - 0.40245).abs() < 1e-9, "{shown:?}");
+}
+
+// A tab panel with no tabs takes no space in what the host is shown while a
+// sibling has tabs; the document keeps it, at its weight, for slots to land
+// in. The host's commit of it at no weight changes nothing, and once it has
+// a tab it is shown at its weight again.
+#[test]
+fn an_empty_panel_is_shown_without_space() {
+    let hint =
+        |files: &[&str]| split("main", vec![weighted(tabs("agents", &["a"], Some("a")), 3.0), weighted(tabs("files", files, None), 2.0)]);
+    let mut slots = WorkspaceSlots { baseline: Some(hinted(hint(&[]), &["a"])), ..Default::default() };
+    let mut stored = StoredArrangement::default();
+    let mut clock = crate::versioned::Clock::default();
+    stored
+        .edit(&mut clock, |a| {
+            Arrangement::follow(a, slots.baseline.as_ref(), &slots.slots(), None);
+            Ok(())
+        })
+        .unwrap();
+    let view = Arrangement::view(&stored, &slots.slots(), None);
+    assert_eq!(weights(&view.doc), [("agents".to_owned(), 3.0), ("files".to_owned(), 0.0)]);
+    // The host shows agents whole and commits it so.
+    let host = doc(split("main", vec![weighted(tabs("agents", &["a"], Some("a")), 1.0), weighted(tabs("files", &[], None), 0.0)]));
+    stored.edit(&mut clock, |a| Arrangement::commit(a, host, slots.baseline.as_ref(), &slots.slots(), None).map(|_| ())).unwrap();
+    let arrangement = stored.get().as_ref().unwrap();
+    assert!(!arrangement.owned && arrangement.soft.is_empty(), "{arrangement:?}");
+    assert_eq!(weights(&arrangement.doc), [("agents".to_owned(), 3.0), ("files".to_owned(), 2.0)]);
+    // A slot lands in it: it is shown at its weight again.
+    slots.set_baseline(hinted(hint(&["f"]), &["a", "f"]));
+    stored
+        .edit(&mut clock, |a| {
+            Arrangement::follow(a, slots.baseline.as_ref(), &slots.slots(), None);
+            Ok(())
+        })
+        .unwrap();
+    let view = Arrangement::view(&stored, &slots.slots(), None);
+    assert_eq!(weights(&view.doc), [("agents".to_owned(), 3.0), ("files".to_owned(), 2.0)]);
+}
+
+// Empty panels with no sibling to give their space to keep their weights.
+#[test]
+fn panels_that_are_all_empty_keep_their_weights() {
+    let shown = doc(split("main", vec![weighted(tabs("x", &[], None), 3.0), weighted(tabs("y", &[], None), 2.0)])).shown(|_| true);
+    assert_eq!(weights(&shown), [("x".to_owned(), 3.0), ("y".to_owned(), 2.0)]);
+    let nested = doc(split("main", vec![tabs("x", &["a"], Some("a")), split("s", vec![tabs("p", &[], None), tabs("q", &[], None)])]))
+        .shown(|_| true);
+    assert_eq!(weights(&nested), [("x".to_owned(), 1.0), ("s".to_owned(), 0.0), ("p".to_owned(), 1.0), ("q".to_owned(), 1.0)]);
+    // Only the panels that collapse.
+    let some = doc(split("main", vec![tabs("x", &["a"], Some("a")), tabs("p", &[], None), tabs("q", &[], None)])).shown(|id| id == "p");
+    assert_eq!(weights(&some), [("x".to_owned(), 1.0), ("p".to_owned(), 0.0), ("q".to_owned(), 1.0)]);
+}
+
+// An empty panel committed at none gets its stored weight back, even with no
+// sibling left with tabs (it was shown so until the last tab went); one the
+// host gives a weight keeps it.
+#[test]
+fn an_empty_panel_committed_at_none_gets_its_weight_back() {
+    let stored = doc(split("main", vec![weighted(tabs("x", &[], None), 3.0), weighted(tabs("y", &[], None), 2.0)]));
+    let mut committed = doc(split("main", vec![weighted(tabs("x", &[], None), 0.5), weighted(tabs("y", &[], None), 0.0)]));
+    committed.rescale_to(&stored, false);
+    assert_eq!(weights(&committed), [("x".to_owned(), 0.5), ("y".to_owned(), 2.0 / 6.0)]);
+    let mut committed = doc(split("main", vec![weighted(tabs("x", &[], None), 0.0), weighted(tabs("y", &[], None), 0.0)]));
+    committed.rescale_to(&stored, false);
+    assert_eq!(weights(&committed), [("x".to_owned(), 3.0), ("y".to_owned(), 2.0)]);
+    committed.check().unwrap();
+    // A host showing a slot in a panel it was shown at none gives it the tab
+    // and commits the 0 it had.
+    let mut committed = doc(split("main", vec![weighted(tabs("x", &["a"], Some("a")), 1.0), weighted(tabs("y", &["b"], Some("b")), 0.0)]));
+    committed.rescale_to(&stored, false);
+    assert_eq!(weights(&committed), [("x".to_owned(), 1.0), ("y".to_owned(), 2.0 / 3.0)]);
+    committed.check().unwrap();
+}

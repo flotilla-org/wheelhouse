@@ -93,7 +93,11 @@ one, the document the host read at that generation:
   is **soft**. Each panel's weight and selection is compared with the
   provider's document (the hint, less tombstoned slots, every slot placed),
   and each that differs becomes a soft override keyed by panel ID; one that
-  matches drops out. The arrangement stays unowned.
+  matches drops out. The arrangement stays unowned. A host commits each
+  split's weights as shares, so the commit is read in the stored
+  document's scale: the shares it was shown commit no weight override.
+  Weights within a relative 1e-4 of the provider's match, so shares a host
+  rounds don't count as a resize.
 - Any other commit is **structural** (a split, move, close, reorder or added
   tab). The overlay owns the whole document from then on, and its soft
   overrides fold into it.
@@ -104,7 +108,10 @@ slot placed, then soft overrides reapplied where their panel (and selected
 tab) still exists. So a divider resize or a tab switch leaves the
 provider's structure flowing. A soft override whose panel has gone is kept
 and reported `unresolved` (`WHEELHOUSE_ARRANGEMENT_FLAG_UNRESOLVED`, and an
-UNRESOLVED note naming the panel).
+UNRESOLVED note naming the panel). A soft override that sets a weight
+flags the arrangement `WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED`: the user
+resized a layout the provider still arranges, so the host offers to reset
+it (`Follow`, below). A selection alone is not flagged.
 
 An owned arrangement only has new slots placed. A provider change to its
 hint is neither applied nor ignored: the arrangement is flagged

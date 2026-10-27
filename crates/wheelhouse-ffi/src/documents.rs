@@ -101,6 +101,9 @@ pub const WHEELHOUSE_ARRANGEMENT_FLAG_PROVIDER_CHANGED: u32 = 1;
 pub const WHEELHOUSE_ARRANGEMENT_FLAG_SOFT: u32 = 2;
 /// A soft override no longer resolves (an UNRESOLVED note).
 pub const WHEELHOUSE_ARRANGEMENT_FLAG_UNRESOLVED: u32 = 4;
+/// A soft override sets a panel's weight: the user resized a layout the
+/// provider still arranges, and resetting it gives its weights back.
+pub const WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED: u32 = 8;
 
 /// A workspace's arrangement as stored, or after a commit. While the user
 /// doesn't own it, it is derived from the provider's hint, less slots the
@@ -295,6 +298,7 @@ fn workspace_c(view: ArrangementView, status: u32) -> *mut WheelhouseWorkspaceAr
         (view.provider_changed, WHEELHOUSE_ARRANGEMENT_FLAG_PROVIDER_CHANGED),
         (!view.soft.is_empty(), WHEELHOUSE_ARRANGEMENT_FLAG_SOFT),
         (!view.unresolved.is_empty(), WHEELHOUSE_ARRANGEMENT_FLAG_UNRESOLVED),
+        (view.soft.values().any(|edit| edit.weight.is_some()), WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED),
     ];
     let value = WheelhouseWorkspaceArrangement {
         status,

@@ -472,6 +472,11 @@ impl Panel {
             })
             .collect()
     }
+
+    /// No tab is in this panel or under it.
+    pub fn is_empty(&self) -> bool {
+        self.tabs().is_empty()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -756,6 +761,67 @@ impl ArrangementDoc {
         self.root.as_mut().and_then(|root| walk(root, id))
     }
 
+    /// The document as the host is shown it: a panel with no tabs under it
+    /// that `collapses` (by ID) takes no space (weight 0) while a sibling has
+    /// tabs. The document keeps it, at its weight, for slots to land in, and
+    /// shows it at that weight once one does. Weights stay relative; the host
+    /// takes shares of them.
+    pub fn shown(&self, collapses: impl Fn(&str) -> bool) -> ArrangementDoc {
+        fn walk(panel: &mut Panel, collapses: &dyn Fn(&str) -> bool) {
+            if let PanelNode::Split { children, .. } = &mut panel.node {
+                let live = children.iter().any(|child| !child.is_empty());
+                for child in children.iter_mut() {
+                    match live && child.is_empty() && collapses(&child.id) {
+                        true => child.weight = 0.0,
+                        false => walk(child, collapses),
+                    }
+                }
+            }
+        }
+        let mut doc = self.clone();
+        if let Some(root) = &mut doc.root {
+            walk(root, &collapses);
+        }
+        doc
+    }
+
+    /// Read a host's commit against `stored`: the host commits shares of
+    /// each split, and the panels [`shown`](Self::shown) without space at
+    /// none. A panel committed at 0 gets back its stored weight, though the
+    /// commit gives it a tab (showing a slot there); an empty one the host
+    /// gives a weight keeps it. With `to_stored`, the others are scaled so
+    /// the ones `stored` has keep its total, and an unchanged split commits
+    /// exactly what is stored; otherwise they keep the host's weights and
+    /// the restored panels' are scaled to them.
+    fn rescale_to(&mut self, stored: &ArrangementDoc, to_stored: bool) {
+        fn walk(panel: &mut Panel, stored: &BTreeMap<&str, f64>, to_stored: bool) {
+            let PanelNode::Split { children, .. } = &mut panel.node else {
+                return;
+            };
+            let dormant = |child: &Panel| child.weight <= 0.0;
+            let (mut from, mut to) = (0.0, 0.0);
+            for child in children.iter().filter(|child| !dormant(child)) {
+                if let Some(weight) = stored.get(child.id.as_str()) {
+                    from += child.weight;
+                    to += weight;
+                }
+            }
+            let scale = if from > 0.0 && to > 0.0 { to / from } else { 1.0 };
+            let (live_scale, dormant_scale) = if to_stored { (scale, 1.0) } else { (1.0, 1.0 / scale) };
+            for child in children.iter_mut() {
+                match dormant(child) {
+                    true => child.weight = stored.get(child.id.as_str()).copied().filter(|w| *w > 0.0).unwrap_or(1.0) * dormant_scale,
+                    false => child.weight *= live_scale,
+                }
+                walk(child, stored, to_stored);
+            }
+        }
+        let weights: BTreeMap<&str, f64> = stored.panels().into_iter().map(|panel| (panel.id.as_str(), panel.weight)).collect();
+        if let Some(root) = &mut self.root {
+            walk(root, &weights, to_stored);
+        }
+    }
+
     /// Apply soft overrides whose panel (and selected tab) resolve.
     fn apply_soft(&mut self, soft: &BTreeMap<String, SoftOverride>) {
         for (id, edit) in soft {
@@ -816,18 +882,21 @@ impl Arrangement {
     /// unplaced; otherwise it is placed by the default rule.
     pub fn commit(
         stored: &mut Option<Self>,
-        doc: ArrangementDoc,
+        mut doc: ArrangementDoc,
         baseline: Option<&Baseline>,
         slots: &[SlotInfo],
         plan: Option<&LayoutPlan>,
     ) -> Result<Vec<String>, String> {
+        // A commit of weights and selections alone is read in the stored
+        // document's scale, so an unchanged weight is no override (#477).
+        let soft_from = stored.as_ref().filter(|a| !a.owned && shape(&doc) == shape(&a.doc));
+        doc.rescale_to(stored.as_ref().map(|stored| &stored.doc).unwrap_or(&ArrangementDoc::default()), soft_from.is_some());
         doc.check()?;
         let known: BTreeSet<&str> = slots.iter().map(|slot| slot.key.as_str()).collect();
         let tabbed: BTreeSet<&str> = stored.iter().flat_map(|a| a.doc.tabs()).collect();
         if let Some(tab) = doc.tabs().into_iter().find(|tab| !known.contains(tab) && !tabbed.contains(tab)) {
             return Err(format!("no slot {tab:?}: add a slot before giving it a tab"));
         }
-        let soft_from = stored.as_ref().filter(|a| !a.owned && shape(&doc) == shape(&a.doc));
         let layout = match stored.as_ref() {
             Some(stored) => stored.layout.clone(),
             None => plan.map(|plan| plan.definition.clone()),
@@ -845,7 +914,10 @@ impl Arrangement {
                 let Some(from) = base.panels().into_iter().find(|p| p.id == panel.id) else {
                     continue;
                 };
-                let mut edit = SoftOverride { weight: (panel.weight != from.weight).then_some(panel.weight), selected: None };
+                // The host's shares are quantized, so a weight within
+                // their precision of the provider's is the provider's.
+                let moved = (panel.weight - from.weight).abs() > 1e-4 * panel.weight.abs().max(from.weight.abs());
+                let mut edit = SoftOverride { weight: moved.then_some(panel.weight), selected: None };
                 if let (PanelNode::Tabs { selected, .. }, PanelNode::Tabs { selected: provider, .. }) = (&panel.node, &from.node) {
                     if selected != provider {
                         edit.selected = selected.clone();
@@ -994,6 +1066,13 @@ impl Arrangement {
         let homes = plan
             .map(|plan| arrangement.unplaced.iter().filter_map(|key| Some((key.clone(), plan.home(key, &arrangement.doc)?))).collect())
             .unwrap_or_default();
+        // An empty panel the provider arranges takes no space until a slot
+        // lands in it. Once the user owns the arrangement, one they made
+        // keeps its space (they split to put something there); the layout's
+        // own still don't.
+        let layout: BTreeSet<&str> =
+            plan.map(|plan| plan.definition.panels().into_iter().map(|panel| panel.id.as_str()).collect()).unwrap_or_default();
+        let doc = arrangement.doc.shown(|id| !arrangement.owned || layout.contains(id));
         ArrangementView {
             homes,
             generation: stored.generation(),
@@ -1002,7 +1081,7 @@ impl Arrangement {
             layout: arrangement.layout.map(|layout| layout.name),
             unplaced: arrangement.unplaced,
             owned: arrangement.owned,
-            doc: arrangement.doc,
+            doc,
             placed: arrangement.placed,
             soft: arrangement.soft,
             provider_changed: arrangement.provider_changed,

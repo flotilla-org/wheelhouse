@@ -171,6 +171,10 @@
 // A soft override no longer resolves (an UNRESOLVED note).
 #define WHEELHOUSE_ARRANGEMENT_FLAG_UNRESOLVED 4
 
+// A soft override sets a panel's weight: the user resized a layout the
+// provider still arranges, and resetting it gives its weights back.
+#define WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED 8
+
 // Keep the user's arrangement over the provider's change.
 #define WHEELHOUSE_ARRANGEMENT_KEEP 0
 
