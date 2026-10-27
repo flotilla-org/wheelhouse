@@ -65,8 +65,15 @@ Stacked:
 2. The intent entry point, with `dispatch` kept as a shim.
 3. The C ABI and its harness.
 4. `wheelhouse-wasm`, the TypeScript types and the browser test.
-5. Native's sidebar follows the stream instead of re-acquiring, and its chip parser goes. This is the largest C change, so it comes last.
+5. Native's sidebar follows the stream instead of re-acquiring, and its chip parser goes. This is the largest C change, so it comes last, as a stack of its own:
+   1. A keyed C model built only from deltas (`uishell_sidebar_model.c`), checked against fresh snapshots.
+   2. Rows and sections render from the model; the chip parser goes, for `presents=`.
+   3. Activation and toggles are intents by key; snapshot action indices leave native.
+   4. Hover cards ask the core for one entity's detail.
+   5. Diagnostics that build snapshots by hand build deltas; the sidebar stops acquiring snapshots.
 
 ## Decided
 
 With Robert, 26 October 2026: typed roles are in step 0; native's switch is step 0's last PR; delivery is pull; the web app lives in `web/` in this repo.
+
+With Robert, 27 October 2026: native moves wholly onto a model of its own built from deltas, rather than reading the stream for presented values beside the snapshot, so one sidebar has one model.

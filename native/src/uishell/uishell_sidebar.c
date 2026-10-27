@@ -370,6 +370,8 @@ uishell_sidebar_string(WheelhouseText s)
   return str8((U8 *)s.data, s.len);
 }
 
+#include "uishell/uishell_sidebar_model.c"
+
 internal WheelhouseEntity
 uishell_sidebar_entity(String8 provider, String8 kind, String8 id)
 {
@@ -5783,11 +5785,13 @@ uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
 
 #include "uishell/uishell_sidebar_selection_diagnostics.c"
 #include "uishell/uishell_sidebar_reorder_diagnostics.c"
+#include "uishell/uishell_sidebar_model_diagnostics.c"
 
 internal B32
 uishell_sidebar_diagnostics(CFG_Node *window)
 {
   if(!uishell_sidebar_labels_diagnostics()) { return 0; }
+  if(!uishell_sidebar_model_diagnostics()) { return 0; }
   Temp scratch = scratch_begin(0, 0);
   RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
   B32 disclosure_ok = uishell_sidebar_disclosure_diagnostics(ws);
