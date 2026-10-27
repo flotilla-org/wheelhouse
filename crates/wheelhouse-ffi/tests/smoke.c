@@ -71,7 +71,7 @@ static int same(WheelhouseWorkspaceId a, WheelhouseWorkspaceId b) {
 
 /* Facts, topology, the snapshot, dispatch, effects and completion. */
 static void check_sidebar(const char *config_path, const char *patches_path) {
-    assert(wheelhouse_abi_version() == 10);
+    assert(wheelhouse_abi_version() == 11);
     char *config = read_file(config_path);
     WheelhouseCore *h = create(config);
     ok(wheelhouse_configure(h, text(config), &error));
@@ -452,6 +452,55 @@ static void check_stale_sidebar_placements(void) {
     wheelhouse_destroy(h);
 }
 
+/* The change stream: subscribe, poll a delta and read it, apply an intent
+ * by a key the delta gave, and see it listed; NULL handling. */
+static void check_stream(const char *config_path, const char *patches_path) {
+    char *config = read_file(config_path);
+    WheelhouseCore *h = create(config);
+    free(config);
+    uint64_t subscription = 0;
+    ok(wheelhouse_subscribe(h, &subscription, &error));
+    apply_lines(h, patches_path, 100);
+    assert(wheelhouse_changed_since(h, subscription, &error) && !error);
+    WheelhouseDelta *d = wheelhouse_poll(h, subscription, &error);
+    assert(d && !error && wheelhouse_delta_generation(d) > 0);
+    WheelhouseText key = {0};
+    for (size_t i = 0; i < wheelhouse_delta_op_count(d); ++i) {
+        WheelhouseDeltaOp op;
+        assert(wheelhouse_delta_op(d, i, &op));
+        if (op.kind != WHEELHOUSE_OP_UPSERT) continue;
+        WheelhouseStreamNode node;
+        assert(wheelhouse_delta_node(d, op.first, &node) && !node.is_section);
+        assert(node.key.len == op.key.len && memcmp(node.key.data, op.key.data, op.key.len) == 0);
+        assert(node.status.data && node.icon.data && node.short_label.data && node.medium_label.data);
+        for (size_t f = node.first_field; f < node.first_field + node.field_count; ++f) {
+            WheelhouseField field;
+            assert(wheelhouse_delta_field(d, f, &field) && field.text.data);
+        }
+        if (!key.len) key = op.key;
+    }
+    assert(key.len);
+    WheelhouseIntent intent = {WHEELHOUSE_INTENT_TOGGLE_PLACEMENT, key, {T(""), T(""), T("")}, T(""), 0, T("")};
+    uint64_t request = 0;
+    assert(wheelhouse_apply_intent(h, &intent, &request, &error) == WHEELHOUSE_INTENT_ACCEPTED && !error && request);
+    wheelhouse_delta_release(d); /* the key was borrowed from it until now */
+    d = wheelhouse_poll(h, subscription, &error);
+    assert(d && !error && wheelhouse_delta_intent_count(d) == 1);
+    uint64_t listed = 0;
+    assert(wheelhouse_delta_intent(d, 0, &listed) && listed == request);
+    assert(!wheelhouse_delta_intent(d, 1, &listed));
+    wheelhouse_delta_release(d);
+    assert(!wheelhouse_poll(h, subscription, &error) && !error);
+    intent.kind = 99;
+    assert(wheelhouse_apply_intent(h, &intent, &request, &error) == WHEELHOUSE_INTENT_INVALID);
+    fails(0);
+    ok(wheelhouse_unsubscribe(h, subscription, &error));
+    assert(wheelhouse_delta_op_count(NULL) == 0 && wheelhouse_delta_generation(NULL) == 0);
+    wheelhouse_delta_release(NULL);
+    assert(!wheelhouse_poll(NULL, 0, &error));
+    fails(0);
+    wheelhouse_destroy(h);
+}
 int main(int argc, char **argv) {
     assert(argc == 3);
     check_sidebar(argv[1], argv[2]);
@@ -460,6 +509,7 @@ int main(int argc, char **argv) {
     check_stale_sidebar_placements();
     check_workspace(argv[1]);
     check_handles();
+    check_stream(argv[1], argv[2]);
     puts("C ABI smoke test passed");
     return 0;
 }

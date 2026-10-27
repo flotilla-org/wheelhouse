@@ -511,3 +511,213 @@ fn create_rejects_null_nonempty_and_invalid_utf8() {
         }
     }
 }
+
+thread_local! {
+    /// Moves a followed delta made, to show a session reordered something.
+    static MOVES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A node's label, state, collapse and field texts.
+type FollowedNode = (String, u32, u32, Vec<String>);
+
+/// What a host following the stream knows: sections in order, each node's
+/// content by section and key, and each child list.
+#[derive(Debug, Default, PartialEq)]
+struct Followed {
+    sections: Vec<String>,
+    /// (section, key) to label, state, collapsed and field texts; a section's
+    /// own content has an empty key.
+    nodes: BTreeMap<(String, String), FollowedNode>,
+    children: BTreeMap<(String, String), Vec<String>>,
+}
+
+unsafe fn texts(first: usize, count: usize, get: impl Fn(usize, *mut FieldView) -> u32) -> Vec<String> {
+    (first..first + count)
+        .map(|i| {
+            let mut field = MaybeUninit::uninit();
+            assert_eq!(get(i, field.as_mut_ptr()), 1);
+            field.assume_init().text.read().unwrap()
+        })
+        .collect()
+}
+
+/// The same from a snapshot, read through the C calls.
+unsafe fn from_snapshot(h: *mut WheelhouseCore) -> Followed {
+    let s = wheelhouse_snapshot_acquire(h, ptr::null_mut());
+    let mut followed = Followed::default();
+    let mut placed: Vec<(String, String)> = vec![];
+    for i in 0..wheelhouse_snapshot_node_count(s) {
+        let n = node(s, i);
+        let fields = texts(n.first_field, n.field_count, |i, out| wheelhouse_snapshot_field(s, i, out));
+        let at = if n.is_section != 0 {
+            let name = n.label.read().unwrap();
+            followed.sections.push(name.clone());
+            (name, String::new())
+        } else {
+            let parent = placed[n.parent].clone();
+            let key = n.key.read().unwrap();
+            followed.children.entry(parent.clone()).or_default().push(key.clone());
+            (parent.0, key)
+        };
+        followed.nodes.insert(at.clone(), (n.label.read().unwrap(), n.state, n.collapsed, fields));
+        placed.push(at);
+    }
+    wheelhouse_snapshot_release(s);
+    followed
+}
+
+impl Followed {
+    /// Apply a delta through the C calls; returns the intents it lists.
+    unsafe fn apply(&mut self, d: *const WheelhouseDelta) -> Vec<u64> {
+        let list = |i: usize| {
+            let mut op = MaybeUninit::uninit();
+            assert_eq!(wheelhouse_delta_list_op(d, i, op.as_mut_ptr()), 1);
+            op.assume_init()
+        };
+        let apply_list = |items: &mut Vec<String>, first: usize, count: usize| {
+            for i in first..first + count {
+                let op = list(i);
+                match op.kind {
+                    WHEELHOUSE_LIST_INSERT => items.insert(op.at, op.key.read().unwrap()),
+                    WHEELHOUSE_LIST_REMOVE => drop(items.remove(op.at)),
+                    WHEELHOUSE_LIST_MOVE => {
+                        MOVES.with(|moves| moves.set(moves.get() + 1));
+                        let item = items.remove(op.from);
+                        items.insert(op.to, item);
+                    }
+                    other => panic!("list op {other}"),
+                }
+            }
+        };
+        for i in 0..wheelhouse_delta_op_count(d) {
+            let mut op = MaybeUninit::uninit();
+            assert_eq!(wheelhouse_delta_op(d, i, op.as_mut_ptr()), 1);
+            let op = op.assume_init();
+            let at = (op.section.read().unwrap(), op.key.read().unwrap());
+            match op.kind {
+                WHEELHOUSE_OP_SECTION | WHEELHOUSE_OP_UPSERT => {
+                    let mut n = MaybeUninit::uninit();
+                    assert_eq!(wheelhouse_delta_node(d, op.first, n.as_mut_ptr()), 1);
+                    let n = n.assume_init();
+                    assert_eq!(n.is_section, (op.kind == WHEELHOUSE_OP_SECTION) as u32);
+                    let fields = texts(n.first_field, n.field_count, |i, out| wheelhouse_delta_field(d, i, out));
+                    self.nodes.insert(at, (n.label.read().unwrap(), n.state, n.collapsed, fields));
+                }
+                WHEELHOUSE_OP_REMOVE_SECTION | WHEELHOUSE_OP_REMOVE => {
+                    self.nodes.remove(&at);
+                    self.children.remove(&at);
+                }
+                WHEELHOUSE_OP_SECTIONS => apply_list(&mut self.sections, op.first, op.count),
+                WHEELHOUSE_OP_CHILDREN => {
+                    let items = self.children.entry(at.clone()).or_default();
+                    apply_list(items, op.first, op.count);
+                    if items.is_empty() {
+                        self.children.remove(&at);
+                    }
+                }
+                WHEELHOUSE_OP_DISPLAY_VARIABLES | WHEELHOUSE_OP_DIAGNOSTICS | WHEELHOUSE_OP_ERRORS => {}
+                other => panic!("op {other}"),
+            }
+        }
+        (0..wheelhouse_delta_intent_count(d))
+            .map(|i| {
+                let mut request = 0;
+                assert_eq!(wheelhouse_delta_intent(d, i, &mut request), 1);
+                request
+            })
+            .collect()
+    }
+}
+
+/// A host following the stream through the C calls has what the snapshot
+/// presents after each change, and the intents it applies are listed.
+#[test]
+fn a_host_following_the_stream_has_what_the_snapshot_presents() {
+    unsafe {
+        let h = create(include_str!("../../../data/sidebar/daily-driver.kdl"));
+        let mut error = ptr::null_mut();
+        let mut subscription = 0;
+        assert_eq!(wheelhouse_subscribe(h, &mut subscription, &mut error), 1);
+        for line in include_str!("../../../data/sidebar/fixture.jsonl").lines() {
+            assert_eq!(wheelhouse_apply_patch_json(h, 0, text(PROVIDER), text(line), &mut error), 1);
+        }
+        let mut followed = Followed::default();
+        let follow = |followed: &mut Followed| {
+            if wheelhouse_changed_since(h, subscription, ptr::null_mut()) == 0 {
+                return vec![];
+            }
+            let d = wheelhouse_poll(h, subscription, ptr::null_mut());
+            assert!(!d.is_null());
+            let intents = followed.apply(d);
+            wheelhouse_delta_release(d);
+            assert_eq!(*followed, from_snapshot(h));
+            intents
+        };
+        follow(&mut followed);
+        assert!(followed.nodes.len() > 4, "{followed:?}");
+
+        // Collapse and expand nodes by the keys the stream gave.
+        let keys: Vec<String> = followed.children.values().flatten().take(4).cloned().collect();
+        for key in &keys {
+            let intent = IntentView {
+                kind: WHEELHOUSE_INTENT_TOGGLE_PLACEMENT,
+                key: text(key),
+                entity: EntityView::empty(),
+                name: text(""),
+                has_value: 0,
+                value: text(""),
+            };
+            let mut request = 0;
+            assert_eq!(wheelhouse_apply_intent(h, &intent, &mut request, &mut error), WHEELHOUSE_INTENT_ACCEPTED);
+            assert!(error.is_null());
+            assert_eq!(follow(&mut followed), [request]);
+        }
+
+        // Activating one opens it, and its effect is queued.
+        let intent = IntentView {
+            kind: WHEELHOUSE_INTENT_ACTIVATE_PLACEMENT,
+            key: text(&keys[0]),
+            entity: EntityView::empty(),
+            name: text(""),
+            has_value: 0,
+            value: text(""),
+        };
+        let mut request = 0;
+        assert_eq!(wheelhouse_apply_intent(h, &intent, &mut request, &mut error), WHEELHOUSE_INTENT_ACCEPTED);
+        assert_eq!(follow(&mut followed), [request]);
+        let effects = wheelhouse_effects_take(h, ptr::null_mut());
+        assert_eq!(wheelhouse_effects_count(effects), 1, "its effect is queued");
+        wheelhouse_effects_release(effects);
+
+        // A key no node has is refused; one that isn't a key is invalid.
+        let mut intent = IntentView { key: text("5:other1:x1:y1:z"), ..intent };
+        assert_eq!(wheelhouse_apply_intent(h, &intent, &mut request, &mut error), WHEELHOUSE_INTENT_REFUSED);
+        assert!(CStr::from_ptr(error).to_string_lossy().contains("unknown placement"));
+        wheelhouse_string_free(error);
+        intent.key = text("9:short");
+        assert_eq!(wheelhouse_apply_intent(h, &intent, &mut request, &mut error), WHEELHOUSE_INTENT_INVALID);
+        wheelhouse_string_free(error);
+        error = ptr::null_mut();
+        assert_eq!(wheelhouse_changed_since(h, subscription, ptr::null_mut()), 0, "neither changed anything");
+
+        // A fact change arrives as a delta too.
+        let rename = r#"{"target":{"kind":"entity","value":{"kind":"vessel","id":"chip-v"}},"source_id":"fixture","set":{"display.label":{"value":{"type":"text","value":"Renamed"}}},"unset":[]}"#;
+        assert_eq!(wheelhouse_apply_patch_json(h, 1, text(PROVIDER), text(rename), &mut error), 1);
+        follow(&mut followed);
+        assert!(followed.nodes.values().any(|(label, ..)| label == "Renamed"));
+
+        // Renames that sort a node to the end of its list move it.
+        for (i, id) in ["v", "multi", "chip-v"].into_iter().enumerate() {
+            let rename = format!(
+                r#"{{"target":{{"kind":"entity","value":{{"kind":"vessel","id":"{id}"}}}},"source_id":"fixture","set":{{"display.label":{{"value":{{"type":"text","value":"~{i}"}}}}}},"unset":[]}}"#
+            );
+            assert_eq!(wheelhouse_apply_patch_json(h, 2, text(PROVIDER), text(&rename), &mut error), 1);
+            follow(&mut followed);
+        }
+        assert!(MOVES.with(|moves| moves.get()) > 0, "a rename reordered a list");
+
+        assert_eq!(wheelhouse_unsubscribe(h, subscription, ptr::null_mut()), 1);
+        assert!(wheelhouse_poll(h, subscription, ptr::null_mut()).is_null());
+        wheelhouse_destroy(h);
+    }
+}
