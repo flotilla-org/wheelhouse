@@ -22,7 +22,11 @@ PAGE_KIB = os.sysconf('SC_PAGE_SIZE') // 1024
 
 
 def group_rss_kib(group):
-    """Resident KiB of every process in `group`, read from /proc."""
+    """Resident KiB of every process in `group`, read from /proc.
+
+    Pages shared between processes (libc, Mesa) count once per process, so
+    this errs high, which is the safe side for a ceiling.
+    """
     total = 0
     for entry in os.scandir('/proc'):
         if not entry.name.isdigit():

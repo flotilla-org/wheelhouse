@@ -130,7 +130,7 @@ passed on the governor-applied commit `bfd5ac1`, including the RSS plateau gates
 and log upload.
 The runner enforces a resident-memory ceiling (1 GiB by default, watched while each run
 goes and checked against GNU time's peak) and the storage/slope gate before increasing the catalog.
-It no longer caps address space, which reserving costs nothing until pages are touched;
+It no longer caps address space, since reserving it costs nothing until pages are touched;
 there is no absolute timing threshold on shared runners.
 
 Native context diagnostics cover generated hash collisions, duplicate placements,
