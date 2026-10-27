@@ -12,14 +12,14 @@ use crate::{tab_workspace_id, EntityRef, MetadataPatch, MetadataTarget, Metadata
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-const PROVIDER: &str = "subscription";
-const CONFIG: &str = include_str!("../tests/fixtures/sidebar.kdl");
+pub(crate) const PROVIDER: &str = "subscription";
+pub(crate) const CONFIG: &str = include_str!("../tests/fixtures/sidebar.kdl");
 
-fn text(value: impl Into<String>) -> MetadataValue {
+pub(crate) fn text(value: impl Into<String>) -> MetadataValue {
     MetadataValue::Text(value.into().into())
 }
 
-fn patch(kind: &str, id: &str, facts: Vec<(String, MetadataValue)>) -> MetadataPatch {
+pub(crate) fn patch(kind: &str, id: &str, facts: Vec<(String, MetadataValue)>) -> MetadataPatch {
     let mut set: BTreeMap<String, MetadataValueUpdate> =
         facts.into_iter().map(|(key, value)| (key, MetadataValueUpdate { value, ttl_ms: None, precedence: None, ordinal: None })).collect();
     for (key, value) in [("entity.kind", kind), ("entity.id", id), ("source", "flotilla")] {
@@ -33,7 +33,7 @@ fn patch(kind: &str, id: &str, facts: Vec<(String, MetadataValue)>) -> MetadataP
     }
 }
 
-fn labels(label: &str) -> Vec<(String, MetadataValue)> {
+pub(crate) fn labels(label: &str) -> Vec<(String, MetadataValue)> {
     vec![
         ("display.label".into(), text(label)),
         ("display.label.medium".into(), text(label)),
@@ -43,17 +43,17 @@ fn labels(label: &str) -> Vec<(String, MetadataValue)> {
 
 /// The shape of a generated fleet.
 #[derive(Debug, Clone, Copy)]
-struct Shape {
-    projects: usize,
-    convoys_per_project: usize,
+pub(crate) struct Shape {
+    pub(crate) projects: usize,
+    pub(crate) convoys_per_project: usize,
     /// A change request for one convoy in this many (0: none).
-    change_request_every: usize,
+    pub(crate) change_request_every: usize,
     /// A role for one convoy in this many (0: none).
-    role_every: usize,
+    pub(crate) role_every: usize,
     /// One convoy in this many is active, the rest landed.
-    active_every: usize,
+    pub(crate) active_every: usize,
     /// One vessel in this many needs attention (0: none).
-    attention_every: usize,
+    pub(crate) attention_every: usize,
 }
 
 impl Shape {
@@ -74,13 +74,13 @@ impl Shape {
 /// A fleet of `convoys` convoys, each with a vessel, in a handful of
 /// projects, with roles and change requests in the proportions of the real
 /// catalog.
-fn catalog(convoys: usize) -> Vec<MetadataPatch> {
+pub(crate) fn catalog(convoys: usize) -> Vec<MetadataPatch> {
     fleet(Shape::like_the_fleet(convoys), convoys)
 }
 
 /// `limit` convoys (at most the shape's) of a fleet shaped like `shape`.
 /// Convoy `c` belongs to project `c / convoys_per_project`.
-fn fleet(shape: Shape, limit: usize) -> Vec<MetadataPatch> {
+pub(crate) fn fleet(shape: Shape, limit: usize) -> Vec<MetadataPatch> {
     let convoys = limit.min(shape.projects * shape.convoys_per_project);
     let projects = convoys.div_ceil(shape.convoys_per_project).max(1);
     let project = |c: usize| format!("fleet/p{}@fleet", c / shape.convoys_per_project);
@@ -172,7 +172,7 @@ fn fleet(shape: Shape, limit: usize) -> Vec<MetadataPatch> {
 }
 
 /// A delta that changes one convoy's phase, as the fleet does as it works.
-fn delta(c: usize, phase: &str) -> MetadataPatch {
+pub(crate) fn delta(c: usize, phase: &str) -> MetadataPatch {
     let id = format!("fleet/convoy-{c:08x}");
     let mut patch = patch("convoy", &id, vec![("flotilla.convoy.phase".into(), text(phase))]);
     patch.set.retain(|key, _| key == "flotilla.convoy.phase");

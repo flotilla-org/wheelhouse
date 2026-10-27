@@ -16,7 +16,7 @@ The prototype put numbers on the snapshot path in the browser: at 734 rows a who
 
 Evaluation already keeps what it can between revisions (`Kept` in `state.rs`): a node whose placement, variables, state, collapse, staleness and children are unchanged comes back as the same `Rc<PlacementNode>` (`Resolver::node`). So the core can produce a delta by walking the subscriber's last surface against the current one and skipping every pair that is `Rc::ptr_eq`. The walk costs in proportion to the changed nodes and the child lists along their paths, not to the surface.
 
-Each subscription keeps the surface it last delivered (an `Rc`, so sharing is free). A subscriber that falls several revisions behind gets one delta from its surface to now. There is no history log to keep or trim, and a slow consumer never sees an intermediate state.
+The snapshot is the first delta: a subscription's first poll compares nothing with the current surface. Each subscription keeps the surface it last delivered (an `Rc`, so sharing is free). A subscriber that falls several revisions behind gets one delta from its surface to now. There is no history log to keep or trim, and a slow consumer never sees an intermediate state.
 
 A frontend never sees a half-applied change: a delta is applied whole, and its generation is the view's generation once applied.
 
@@ -32,7 +32,7 @@ The view is a keyed tree: sections, then placement nodes by `PlacementKey`. A de
 
 Detail cards stay on demand, as now: they are large and read rarely.
 
-**Typed roles**, in step 0 so the payload is defined once: chip meaning moves out of prefixed field strings into the node: status, attention, icon, and the short and medium labels. Native's C parser (`uishell_sidebar.c`) goes, and native and the web read the same typed fields.
+**Typed roles**, in step 0 so the payload is defined once: chip meaning moves out of prefixed field strings into the node: status, attention, icon, and the short and medium labels. A template declares them with `presents="…"` on a field, and they arrive in the node's content as `presented`. Native's C parser (`uishell_sidebar.c`) goes, and native and the web read the same typed fields.
 
 **Pull.** A frontend calls `poll(subscription)` when it is ready to apply a delta: once a frame for native, from the event loop in the browser. A cheap "changed since" check, as `snapshot_is_current` is now, tells it whether to. A push nudge is added only if a frontend turns out to need one.
 

@@ -1819,6 +1819,46 @@ impl DetailRole {
     }
 }
 
+/// What a field presents, typed instead of carried in a field's text: a
+/// field that presents one of these fills that value of its content and is
+/// left out of the flat fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Presents {
+    Status,
+    /// Set when any field presenting it has exactly the value `true`.
+    Attention,
+    Icon,
+    ShortLabel,
+    MediumLabel,
+}
+
+impl Presents {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Attention => "attention",
+            Self::Icon => "icon",
+            Self::ShortLabel => "short-label",
+            Self::MediumLabel => "medium-label",
+        }
+    }
+}
+
+impl std::str::FromStr for Presents {
+    type Err = TemplateConfigError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "status" => Ok(Self::Status),
+            "attention" => Ok(Self::Attention),
+            "icon" => Ok(Self::Icon),
+            "short-label" => Ok(Self::ShortLabel),
+            "medium-label" => Ok(Self::MediumLabel),
+            _ => Err(TemplateConfigError::Validation(format!("unsupported presents: {value:?}"))),
+        }
+    }
+}
+
 impl std::str::FromStr for DetailRole {
     type Err = TemplateConfigError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -1845,6 +1885,9 @@ pub struct TemplateConfigFieldSpec {
     #[serde(default)]
     /// Fields without a role remain flat-only and are omitted from structured cards.
     pub role: Option<DetailRole>,
+    /// The typed value this field fills instead of a flat field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presents: Option<Presents>,
     #[serde(default)]
     pub label: Option<String>,
     pub class: TemplateConfigFieldClass,
@@ -1861,12 +1904,22 @@ pub struct TemplateConfigFieldSpec {
 
 impl TemplateConfigFieldSpec {
     pub fn render(&self, context: TemplateConfigMatchContext<'_>) -> Option<TemplateConfigRenderedField> {
-        if self.structured_only || !self.condition.matches(context) {
+        if self.structured_only || self.presents.is_some() || !self.condition.matches(context) {
             return None;
         }
         let resolved = self.sources.iter().find_map(|source| source.resolve(context))?;
         let value = format!("{}{}{}", self.prefix, resolved.value, self.suffix);
         Some(TemplateConfigRenderedField { class: self.class, priority: self.priority, value, source: resolved.source })
+    }
+
+    /// The value this field presents, without its prefix and suffix, which
+    /// only dress flat text.
+    pub fn render_presents(&self, context: TemplateConfigMatchContext<'_>) -> Option<(Presents, String)> {
+        let presents = self.presents?;
+        if self.structured_only || !self.condition.matches(context) {
+            return None;
+        }
+        Some((presents, self.sources.iter().find_map(|source| source.resolve(context))?.value))
     }
 
     fn order_priority(&self) -> i64 {
@@ -1879,9 +1932,12 @@ impl TemplateConfigFieldSpec {
     fn to_kdl(&self, indent: usize) -> String {
         let pad = " ".repeat(indent);
         let mut properties = format!("class={}", quote_kdl(self.class.as_str()));
-        for (key, value) in
-            [("section", self.section.as_deref()), ("role", self.role.map(DetailRole::as_str)), ("label", self.label.as_deref())]
-        {
+        for (key, value) in [
+            ("section", self.section.as_deref()),
+            ("role", self.role.map(DetailRole::as_str)),
+            ("presents", self.presents.map(Presents::as_str)),
+            ("label", self.label.as_deref()),
+        ] {
             if let Some(value) = value {
                 properties.push_str(&format!(" {key}={}", quote_kdl(value)));
             }
@@ -2525,6 +2581,7 @@ fn parse_kdl_field(node: &KdlNode) -> Result<TemplateConfigFieldSpec, TemplateCo
             .transpose()?
             .unwrap_or(false),
         role: kdl_optional_string(node, "role")?.map(|role| role.parse()).transpose()?,
+        presents: kdl_optional_string(node, "presents")?.map(|presents| presents.parse()).transpose()?,
         label: kdl_optional_string(node, "label")?,
         class,
         priority,

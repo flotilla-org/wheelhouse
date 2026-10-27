@@ -22,6 +22,16 @@ requests one `snapshot()`. Time is monotonic milliseconds local to the client;
 an empty batch advances expiry, and a backwards clock input cannot revive an
 expired value. Patches retain the existing producer schema and namespaces.
 
+Instead of whole snapshots, a frontend can follow the sidebar's change stream
+([design](../../design/change-stream.md)). `subscribe()` gives a
+`SubscriptionId`; each `poll(id)` gives a `SidebarDelta` from what that
+subscription last had to now, the first one everything. `changed_since(id)` says,
+without building anything, whether a poll may have something. A change that
+presents nothing new delivers nothing, and a subscriber that polls rarely gets
+one delta to now. Apply each delta whole to a `StreamView`, the keyed model of
+sections, nodes and child lists; its generation is then the delta's. Nodes'
+facts and variables stay in the core, as detail cards do.
+
 An entity's facts are one record: each key holds its last writer's value and
 source. They carry no TTL, precedence or ordinal: an entity fact given one
 ignores it. A source's unset removes a key only if that source wrote
