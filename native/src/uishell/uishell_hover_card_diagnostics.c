@@ -5,6 +5,25 @@ action_node_copy(UIShell_SidebarState *state, U64 index)
   return wheelhouse_snapshot_detail(state->snapshot, index, &detail) ? detail.copy_url : WHEELHOUSE_NONE;
 }
 
+// Whether the first row of entity `id` offers Copy URL: 0 or 1, or -1 with no row.
+internal S32
+row_copies_url(UIShell_SidebarState *state, String8 id)
+{
+  for(U64 i = 0; i < uishell_sidebar_node_count(state); i++)
+  {
+    UIShell_SidebarNode node = {0}; uishell_sidebar_node(state, i, &node);
+    if(!node.is_section && str8_match(uishell_sidebar_string(node.entity.id), id, 0)) { return uishell_sidebar_copy_url_intent(node).some; }
+  }
+  return -1;
+}
+
+internal size_t
+action_node_activate(UIShell_SidebarState *state, U64 index)
+{
+  WheelhouseDetail detail = {0};
+  return wheelhouse_snapshot_detail(state->snapshot, index, &detail) ? detail.activate : WHEELHOUSE_NONE;
+}
+
 // Commit through the same creation-drag routing and finish phases as a center
 // drop on the panel showing local group `area`'s section.
 internal void
@@ -62,7 +81,7 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
     if(frame) { ui_event_list_push(ws->ui->arena, &events, &event); }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = mouse; MemoryZeroArray(ui_state->hover_card_keys); ui_state->hover_card_extra = 0;
-    WheelhouseNode node = {0};
+    UIShell_SidebarNode node = {0};
     U64 index = uishell_sidebar_card_find(state, card->path[card->depth-1], &node);
     if(index == WHEELHOUSE_NONE) { ui_end_build(); return 0; }
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
@@ -81,7 +100,7 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
     ui_end_build();
     if(frame == 0)
     {
-      WheelhouseNode source = {0};
+      UIShell_SidebarNode source = {0};
       if(card->depth > 1 && uishell_sidebar_card_find(state, card->path[0], &source) != WHEELHOUSE_NONE)
       {
         for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
@@ -177,8 +196,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   ui_select_state(test);
   UI_Box source = {.key = ui_key_make(700), .rect = r2f32p(10, 100, 100, 130)};
   UI_Signal hover = {.box = &source, .f = UI_SignalFlag_Hovering};
-  WheelhouseNode a = {.entity.kind = uishell_sidebar_text(str8_lit("issue")), .entity.id = uishell_sidebar_text(str8_lit("a"))};
-  WheelhouseNode b = {.entity.kind = uishell_sidebar_text(str8_lit("issue")), .entity.id = uishell_sidebar_text(str8_lit("b"))};
+  UIShell_SidebarNode a = {.entity.kind = uishell_sidebar_text(str8_lit("issue")), .entity.id = uishell_sidebar_text(str8_lit("a"))};
+  UIShell_SidebarNode b = {.entity.kind = uishell_sidebar_text(str8_lit("issue")), .entity.id = uishell_sidebar_text(str8_lit("b"))};
   UIShell_HoverCard *card = &fixture.cards[0];
   test->mouse = v2f32(50, 115);
   uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1000000);
@@ -391,8 +410,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
             "demand-only target is published");
   uishell_sidebar_refresh(&demand);
   CardCheck(wheelhouse_snapshot_detail_count(demand.snapshot) == 0, "plain revision starts without details");
-  WheelhouseNode demand_node = {0};
-  CardCheck(uishell_sidebar_card_find(&demand, demand_entity, &demand_node) != WHEELHOUSE_NONE,
+  UIShell_SidebarNode demand_node = {0};
+  U64 demand_index = uishell_sidebar_card_find(&demand, demand_entity, &demand_node);
+  size_t demand_activate = action_node_activate(&demand, demand_index);
+  CardCheck(demand_index != WHEELHOUSE_NONE,
             "identity without placement can be demanded");
   // One held card, with no navigation: slot cards[0] and root path[0] are
   // deliberate. The host clock supplies only the UI transition timestamp;
@@ -403,7 +424,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   CardCheck(wheelhouse_apply_entity(demand.core, 1, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
             "held target label changes");
   CardCheck(str8_match(uishell_sidebar_string(demand_node.label), str8_lit("Before"), 0) &&
-            !wheelhouse_dispatch(demand.core, demand.snapshot, demand_node.activate, 0),
+            !wheelhouse_dispatch(demand.core, demand.snapshot, demand_activate, 0),
             "old output remains readable with stale actions rejected");
   uishell_sidebar_refresh(&demand);
   CardCheck(wheelhouse_snapshot_detail_count(demand.snapshot) == 0 &&
@@ -486,10 +507,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(fixture.snapshot != 0, "render snapshot exists");
     CardCheck(wheelhouse_snapshot_detail_count(fixture.snapshot) == 0,
               "refresh without live cards resolves no catalog details");
-    U64 index = WHEELHOUSE_NONE; WheelhouseNode live = {0};
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+    U64 index = WHEELHOUSE_NONE; UIShell_SidebarNode live = {0};
+    for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("pr-281"), 0))
       { index = i; live = node; break; }
     }
@@ -569,7 +590,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_end_build();
         CardCheck(card->cap_below && card->cap.rect.y0 == 299, "a card at the top takes its cap on its bottom edge");
       }
-      WheelhouseNode parent = {0}; wheelhouse_snapshot_node(fixture.snapshot, live.parent, &parent);
+      UIShell_SidebarNode parent = {0}; uishell_sidebar_node(&fixture, live.parent, &parent);
       String8 parent_label = uishell_sidebar_string(parent.label);
       CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, 0) && card->depth == 2,
                 "clicking a related widget navigates within the card");
@@ -587,9 +608,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // modifier-open. No placement-edge fallback may invent a relation.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       B32 hidden_in_tree = 0;
-      for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+      for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
       {
-        WheelhouseNode row = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &row);
+        UIShell_SidebarNode row = {0}; uishell_sidebar_node(&fixture, i, &row);
         hidden_in_tree |= str8_match(uishell_sidebar_string(row.entity.id), str8_lit("hidden-detail"), 0);
       }
       CardCheck(!hidden_in_tree, "hidden relation target has no tree placement");
@@ -628,10 +649,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         if(frame)
         {
-          WheelhouseNode next = {0};
-          for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+          UIShell_SidebarNode next = {0};
+          for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
           {
-            wheelhouse_snapshot_node(fixture.snapshot, i, &next);
+            uishell_sidebar_node(&fixture, i, &next);
             if(str8_match(uishell_sidebar_string(next.entity.id), str8_lit("pr-1000"), 0)) { break; }
           }
           uishell_sidebar_card_set(card, next, ui_key_zero(), str8_zero(), 0, now_time_us());
@@ -804,7 +825,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       ui_end_build();
       // A reveal/observe refresh can replace the snapshot after the card emits
       // its intent but before sidebar dispatch. Never retain the old index.
-      WheelhouseNode action_node = {0};
+      UIShell_SidebarNode action_node = {0};
       U64 action_index = uishell_sidebar_card_find(&fixture, card->path[0], &action_node);
       size_t copy_action = action_node_copy(&fixture, action_index);
       CardCheck(copy_action != WHEELHOUSE_NONE, "refresh trace starts with a Copy URL action");
@@ -820,16 +841,19 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(copy_action != WHEELHOUSE_NONE && uishell_sidebar_card_take_action(&fixture) == copy_action &&
                 !fixture.card_has_action && uishell_sidebar_card_take_action(&fixture) == WHEELHOUSE_NONE,
                 "Copy URL intent resolves against the refreshed snapshot exactly once");
-      uishell_sidebar_card_queue_action(&fixture, action_node, action_node.activate);
-      CardCheck(action_node.activate != WHEELHOUSE_NONE && uishell_sidebar_card_take_action(&fixture) == action_node.activate,
+      size_t open_action = action_node_activate(&fixture, action_index);
+      uishell_sidebar_card_queue_action(&fixture, action_node, open_action);
+      CardCheck(open_action != WHEELHOUSE_NONE && uishell_sidebar_card_take_action(&fixture) == open_action,
                 "Open intent remains distinct from Copy URL intent");
       uishell_sidebar_card_queue_action(&fixture, action_node, copy_action);
+      CardCheck(row_copies_url(&fixture, str8_lit("pr-281")) == 1, "a subject's row with a URL offers Copy URL");
       String8 remove_url = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"pr-281\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"flotilla.forge\"]}");
       CardCheck(wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(remove_url), 0), "refresh trace removes URL metadata");
       uishell_sidebar_refresh(&fixture);
       action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_target, &action_node);
       CardCheck(action_index != WHEELHOUSE_NONE && action_node_copy(&fixture, action_index) == WHEELHOUSE_NONE,
                 "refresh keeps the entity but removes its Copy URL action");
+      CardCheck(row_copies_url(&fixture, str8_lit("pr-281")) == 0, "a subject's row without a URL offers no Copy URL");
       CardCheck(uishell_sidebar_card_take_action(&fixture) == WHEELHOUSE_NONE && !fixture.card_has_action,
                 "refresh drops a removed action rather than dispatching an old snapshot index");
     }
@@ -847,7 +871,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     for(U64 i = 0; i < ArrayCount(cards); i++)
     {
       WheelhouseEntity entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_cstring(cards[i].kind), str8_cstring(cards[i].id));
-      WheelhouseNode node = {0}; U64 index = uishell_sidebar_card_find(&fixture, entity, &node);
+      UIShell_SidebarNode node = {0}; U64 index = uishell_sidebar_card_find(&fixture, entity, &node);
       CardCheck(index != WHEELHOUSE_NONE, "all six shipped detail templates have a catalog target");
       uishell_sidebar_card_set(card, node, ui_key_zero(), str8_zero(), 0, now_time_us());
       card->enriched = 1;
@@ -913,10 +937,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       }
       if(subscribed.core) { uishell_sidebar_refresh(&subscribed); }
       WheelhouseEntity project = uishell_sidebar_entity(provider, str8_lit("project"), str8_lit("p"));
-      WheelhouseNode row = {0}; B32 has_row = 0;
-      for(U64 i = 0; subscribed.snapshot && i < wheelhouse_snapshot_node_count(subscribed.snapshot) && !has_row; i++)
+      UIShell_SidebarNode row = {0}; B32 has_row = 0;
+      for(U64 i = 0; subscribed.snapshot && i < uishell_sidebar_node_count(&subscribed) && !has_row; i++)
       {
-        wheelhouse_snapshot_node(subscribed.snapshot, i, &row);
+        uishell_sidebar_node(&subscribed, i, &row);
         has_row = !row.is_section && uishell_sidebar_card_entity_match(row.entity, project);
       }
       CardCheck(has_row, "a subscription's project has its row, under its provider");
@@ -928,7 +952,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         uishell_sidebar_card_source_at(&subscribed, row, hover, str8_zero(), 0, 1000000+UIShell_HoverCardOpenDelayUS);
         CardCheck(sub_card->open && uishell_sidebar_card_entity_match(sub_card->path[0], project),
                   "hovering a subscription entity's row opens its card, keyed by its provider");
-        WheelhouseNode node = {0};
+        UIShell_SidebarNode node = {0};
         U64 index = uishell_sidebar_card_find(&subscribed, project, &node);
         CardCheck(index != WHEELHOUSE_NONE && str8_match(uishell_sidebar_string(node.label), str8_lit("Subscribed project"), 0),
                   "a subscription entity's card finds its own details, not the host's same kind and ID");
@@ -990,8 +1014,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(wheelhouse_apply_entity(freshness.core, 1000, uishell_sidebar_text(uishell_sidebar_host_provider), entity.kind, entity.id, uishell_sidebar_text(str8_lit("fixture")), facts, ArrayCount(facts), 0),
               "retained observation fixture applies");
     uishell_sidebar_refresh(&freshness);
-    WheelhouseNode node = {0}; U64 index = uishell_sidebar_card_find(&freshness, entity, &node);
-    CardCheck(wheelhouse_dispatch(freshness.core, freshness.snapshot, node.activate, 0), "freshness fixture activates its control");
+    UIShell_SidebarNode node = {0}; U64 index = uishell_sidebar_card_find(&freshness, entity, &node);
+    CardCheck(uishell_sidebar_intend(&freshness, uishell_sidebar_activate_intent(node), 0), "freshness fixture activates its control");
     WheelhouseEffects *effects = wheelhouse_effects_take(freshness.core, 0);
     WheelhouseEffect effect = {0};
     CardCheck(wheelhouse_effects_get(effects, 0, &effect) && effect.kind == WHEELHOUSE_EFFECT_MATERIALIZE,
@@ -1042,9 +1066,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   // that the move controls request. No KDL or producer data is edited.
   if(fixture.snapshot)
   {
-    WheelhouseNode entity = {0};
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
-    { wheelhouse_snapshot_node(fixture.snapshot, i, &entity); if(!entity.is_section && entity.entity.id.len) { break; } }
+    UIShell_SidebarNode entity = {0};
+    for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
+    { uishell_sidebar_node(&fixture, i, &entity); if(!entity.is_section && entity.entity.id.len) { break; } }
     // Rendering sections publishes local sections, which replaces the
     // snapshot; keep the entity's text in storage the test owns.
     Arena *entity_arena = arena_alloc();
@@ -1180,7 +1204,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     CardCheck(center_pin->open && !center_pin->moving && str8_match(uishell_sidebar_card_pin_id(center_pin), saved_ghost, 0) &&
       saved && str8_match(saved->ghost, saved_ghost, 0),
       "dropping the pinned card into its own area preserves its controller and saved identity");
-    WheelhouseNode other_entity = entity;
+    UIShell_SidebarNode other_entity = entity;
     other_entity.entity.id = uishell_sidebar_text(str8_lit("center-drop-second"));
     uishell_sidebar_card_set(original, other_entity, ui_key_zero(), str8_zero(), 0, now_time_us());
     uishell_hover_card_test_center_drop(ws, original, center_area);
@@ -1299,7 +1323,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     UI_EventList absent_events = {0}; ui_begin_build(ws->os, &absent_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     MemoryZeroArray(test->hover_card_keys); test->hover_card_extra = 0;
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) UI_PrefWidth(ui_px(280, 1)) UI_PrefHeight(ui_em(1.6f, 1))
-    { uishell_sidebar_detached_content(&fixture, ws, pinned, u64_hash_from_str8(saved_ghost), (WheelhouseNode){0}, WHEELHOUSE_NONE, 280, 1); }
+    { uishell_sidebar_detached_content(&fixture, ws, pinned, u64_hash_from_str8(saved_ghost), (UIShell_SidebarNode){0}, WHEELHOUSE_NONE, 280, 1); }
     ui_end_build();
     B32 absent = 0;
     for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
@@ -1455,9 +1479,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_end_build();
         // The ghost's tree row is keyed by its placement.
         String8 node_key = str8_zero();
-        for(U64 i = 0; fixture.snapshot && i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+        for(U64 i = 0; fixture.snapshot && i < uishell_sidebar_node_count(&fixture); i++)
         {
-          WheelhouseNode n = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &n);
+          UIShell_SidebarNode n = {0}; uishell_sidebar_node(&fixture, i, &n);
           if(str8_match(uishell_sidebar_string(n.entity.id), ghost_guid, 0)) { node_key = push_str8_copy(ghost_scratch.arena, uishell_sidebar_string(n.key)); }
         }
         // After × (frames 10-11), the ghost's row goes too, once republished.
@@ -2202,10 +2226,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_publish(&fixture, &drop_split);
       uishell_sidebar_refresh(&fixture);
       String8 loop = str8_zero();
-      for(U64 i = 0; fixture.snapshot && i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+      for(U64 i = 0; fixture.snapshot && i < uishell_sidebar_node_count(&fixture); i++)
       {
-        WheelhouseNode n = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &n);
-        if(str8_match(uishell_sidebar_string(n.entity.id), ghosts[0], 0)) { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(fixture.snapshot, i)); }
+        UIShell_SidebarNode n = {0}; uishell_sidebar_node(&fixture, i, &n);
+        if(str8_match(uishell_sidebar_string(n.entity.id), ghosts[0], 0)) { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(&fixture, i)); }
       }
       CardCheck(loop.size != 0, "a local group's ghosts are placed as one run");
       if(!fixture.group_claim_arena) { fixture.group_claim_arena = arena_alloc(); }

@@ -88,7 +88,7 @@ pub unsafe extern "C" fn wheelhouse_changed_since(h: *mut WheelhouseCore, subscr
 pub unsafe extern "C" fn wheelhouse_poll(h: *mut WheelhouseCore, subscription: u64, error_out: *mut *mut c_char) -> *mut WheelhouseDelta {
     run(h, error_out, |h| {
         let _phase = profile::span("abi-poll");
-        Ok(h.sidebar.poll(SubscriptionId(subscription)).map(|delta| Box::into_raw(Box::new(WheelhouseDelta::of(delta, &h.sidebar)))))
+        Ok(h.sidebar.poll(SubscriptionId(subscription)).map(|delta| Box::into_raw(Box::new(WheelhouseDelta::of(delta)))))
     })
     .flatten()
     .unwrap_or(ptr::null_mut())
@@ -115,6 +115,7 @@ struct StreamNode {
     workspace: Option<WorkspaceId>,
     selected: bool,
     openable: bool,
+    has_url: bool,
     collapsed: bool,
     pinned: bool,
     default_host: String,
@@ -156,7 +157,7 @@ pub struct WheelhouseDelta {
 }
 
 impl WheelhouseDelta {
-    fn of(delta: SidebarDelta, sidebar: &Sidebar) -> Self {
+    fn of(delta: SidebarDelta) -> Self {
         let mut out = Self {
             generation: delta.generation,
             intents: delta.intents,
@@ -183,7 +184,7 @@ impl WheelhouseDelta {
                     Op { kind: WHEELHOUSE_OP_SECTIONS, section: String::new(), key: String::new(), first, count }
                 }
                 SidebarOp::Upsert { section, node } => {
-                    let first = out.node(&node, sidebar);
+                    let first = out.node(&node);
                     Op { kind: WHEELHOUSE_OP_UPSERT, section, key: encode_key(&node.key), first, count: 1 }
                 }
                 SidebarOp::Remove(id) => {
@@ -271,6 +272,7 @@ impl WheelhouseDelta {
             workspace: None,
             selected: false,
             openable: false,
+            has_url: false,
             collapsed: false,
             pinned: section.pinned,
             default_host: section.default_host.clone().unwrap_or_default(),
@@ -283,7 +285,7 @@ impl WheelhouseDelta {
         self.nodes.len() - 1
     }
 
-    fn node(&mut self, node: &NodeContent, sidebar: &Sidebar) -> usize {
+    fn node(&mut self, node: &NodeContent) -> usize {
         let (fields, controls) = self.content(&node.content);
         let (details, _) = self.content(&node.detail);
         let (state, workspace, selected, openable) = state_view(&node.state);
@@ -299,7 +301,8 @@ impl WheelhouseDelta {
             state,
             workspace,
             selected,
-            openable: openable || sidebar.subject_url(&node.entity).is_some(),
+            openable: openable || node.has_url,
+            has_url: node.has_url,
             collapsed: node.collapsed,
             pinned: false,
             default_host: String::new(),
@@ -400,6 +403,8 @@ pub struct StreamNodeView {
     /// Activating it opens something: a latent node that can open, or one
     /// whose subject has a URL.
     pub openable: u32,
+    /// Its subject has a URL: COPY_SUBJECT_URL of its entity copies it.
+    pub has_url: u32,
     pub collapsed: u32,
     pub pinned: u32,
     pub default_host: Text,
@@ -437,6 +442,7 @@ pub unsafe extern "C" fn wheelhouse_delta_node(d: *const WheelhouseDelta, index:
         workspace_id: workspace_view(n.workspace),
         selected: n.selected as u32,
         openable: n.openable as u32,
+        has_url: n.has_url as u32,
         collapsed: n.collapsed as u32,
         pinned: n.pinned as u32,
         default_host: Text::borrowed(&n.default_host),

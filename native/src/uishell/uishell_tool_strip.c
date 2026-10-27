@@ -103,7 +103,7 @@ uishell_tool_strip_tooltip(UI_Signal sig, String8 text)
 internal void
 uishell_tool_strip_entity(UIShell_SidebarState *state, Rng2F32 rect, WheelhouseEntity entity, UI_Key key)
 {
-  WheelhouseNode node = {0};
+  UIShell_SidebarNode node = {0};
   U64 index = uishell_sidebar_card_find(state, entity, &node);
   B32 found = index != WHEELHOUSE_NONE;
   RD_IconKind icon = uishell_sidebar_card_icon(entity.kind);
@@ -276,7 +276,7 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
         {
           case UIShell_StripSection_Subject:
           {
-            WheelhouseNode node = {0};
+            UIShell_SidebarNode node = {0};
             U64 index = uishell_sidebar_card_find(state, subject, &node);
             UI_Signal sig = uishell_tool_strip_item(r, rd_icon_kind_text_table[uishell_sidebar_card_icon(subject.kind)], 1, 0, 0, key);
             if(index != WHEELHOUSE_NONE) { uishell_sidebar_card_source(state, node, sig, str8_zero(), 1); }

@@ -33,21 +33,21 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   // Producer suggestion, local template override, then kind fallback. Labels
   // must never participate in icon resolution.
   B32 icon_font = 0;
-  WheelhouseNode default_role = {.entity.kind = uishell_sidebar_text(str8_lit("role")),
+  UIShell_SidebarNode default_role = {.entity.kind = uishell_sidebar_text(str8_lit("role")),
     .label = uishell_sidebar_text(str8_lit("terminal overview governor"))};
   ok = str8_match(uishell_sidebar_chip_icon(&fixture, default_role, &icon_font),
     rd_icon_kind_text_table[RD_IconKind_Threads], 0) && icon_font && ok;
-  String8 override_field = str8_lit("value=\"\" prefix=\"chip-icon-override:\"");
+  String8 override_field = str8_lit("value=\"\" presents=\"icon\"");
   U64 at = str8_find_needle(config, 0, override_field, 0);
-  String8 override_config = push_str8f(scratch.arena, "%Svalue=\"review\" prefix=\"chip-icon-override:\"%S",
+  String8 override_config = push_str8f(scratch.arena, "%Svalue=\"review\" presents=\"icon\"%S",
     str8_prefix(config, at), str8_skip(config, at+override_field.size));
   ok = wheelhouse_configure(fixture.core, uishell_sidebar_text(override_config), 0) && ok;
   uishell_sidebar_refresh(&fixture);
   for(U64 phase = 0; phase < 2; phase++)
   {
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+    for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0) &&
          str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0))
       { ok = str8_match(uishell_sidebar_chip_icon(&fixture, node, &icon_font),
@@ -66,15 +66,54 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   unicode_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"pr-281\"}},\"source_id\":\"fixture\",\"set\":{\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"漢!281\"}}},\"unset\":[]}");
   ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(unicode_patch), 0) && ok;
   uishell_sidebar_refresh(&fixture);
-  for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+  for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
   {
-    WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+    UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
     if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("build"), 0))
     {
-      ok = !uishell_sidebar_chip_fact(&fixture, node, str8_lit("chip-icon:")).size &&
-        !uishell_sidebar_chip_field(&fixture, node, 0, str8_lit("chip-icon:列車の作業")) &&
+      ok = !uishell_sidebar_string(node.icon).size &&
+        str8_match(uishell_sidebar_string(node.medium_label), str8_lit("chip-status:列車"), 0) &&
         str8_match(uishell_sidebar_chip_status(&fixture, node), str8_lit("active"), 0) && ok;
     }
+  }
+  // A chip takes its status and attention from what the template presents,
+  // here a fact other than the row's own status.
+  {
+    String8 activity_field = str8_lit("field \"activity\" key=\"status.state\" presents=\"status\"");
+    U64 activity_at = str8_find_needle(config, 0, activity_field, 0);
+    String8 presented_config = push_str8f(scratch.arena, "%Sfield \"activity\" key=\"presented.status\" presents=\"status\"%S",
+      str8_prefix(config, activity_at), str8_skip(config, activity_at+activity_field.size));
+    ok = activity_at < config.size && wheelhouse_configure(fixture.core, uishell_sidebar_text(presented_config), 0) && ok;
+    String8 attentions[] = {str8_lit("true"), str8_lit("false")};
+    for(U64 step = 0; step < ArrayCount(attentions); step++)
+    {
+      String8 patch = push_str8f(scratch.arena, "{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"chip-v\"}},\"source_id\":\"fixture\","
+        "\"set\":{\"status.state\":{\"value\":{\"type\":\"text\",\"value\":\"idle\"}},"
+        "\"presented.status\":{\"value\":{\"type\":\"text\",\"value\":\"waiting\"}},"
+        "\"status.attention\":{\"value\":{\"type\":\"text\",\"value\":\"%S\"}}},\"unset\":[]}", attentions[step]);
+      ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0) && ok;
+      uishell_sidebar_refresh(&fixture);
+      B32 found = 0;
+      for(U64 i = 0; !found && i < uishell_sidebar_node_count(&fixture); i++)
+      {
+        UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
+        if(!str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0)) { continue; }
+        found = 1;
+        node.state = WHEELHOUSE_LIVE; node.selected = 0;
+        String8 status = uishell_sidebar_chip_status(&fixture, node);
+        B32 attention = uishell_sidebar_chip_attention(&fixture, node);
+        B32 presented = str8_match(status, str8_lit("waiting"), 0) && attention == (step == 0);
+        if(!presented)
+        { fprintf(stderr, "FAIL chip presented values: step %llu status %.*s attention %d\n", (unsigned long long)step, (int)status.size, status.str, attention); }
+        ok = presented && ok;
+      }
+      ok = found && ok;
+    }
+    String8 restore = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"chip-v\"}},\"source_id\":\"fixture\","
+      "\"set\":{\"status.state\":{\"value\":{\"type\":\"text\",\"value\":\"active\"}}},\"unset\":[\"presented.status\",\"status.attention\"]}");
+    ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(restore), 0) && ok;
+    ok = wheelhouse_configure(fixture.core, uishell_sidebar_text(config), 0) && ok;
+    uishell_sidebar_refresh(&fixture);
   }
   ws->sidebar = &fixture;
   ui_select_state(test);
@@ -83,17 +122,17 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   // renderer in both directions.
   for(U32 phase = 0; phase < 3; phase++)
   {
-    WheelhouseNode convoy = {0};
+    UIShell_SidebarNode convoy = {0};
     String8 vessel_key = str8_zero(), owner_key = str8_zero();
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+    for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("build"), 0)) { convoy = node; }
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0) &&
          str8_match(uishell_sidebar_string(node.layout), str8_lit("inline"), 0))
       {
         vessel_key = push_str8_copy(scratch.arena, uishell_sidebar_string(node.key));
-        WheelhouseNode owner = {0}; wheelhouse_snapshot_node(fixture.snapshot, node.parent, &owner);
+        UIShell_SidebarNode owner = {0}; uishell_sidebar_node(&fixture, node.parent, &owner);
         owner_key = push_str8_copy(scratch.arena, uishell_sidebar_string(owner.key));
       }
     }
@@ -105,7 +144,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     }
     if(phase)
     {
-      ok = wheelhouse_dispatch(fixture.core, fixture.snapshot, convoy.toggle, 0) && ok;
+      ok = uishell_sidebar_intend(&fixture, uishell_sidebar_toggle_intent(convoy), 0) && ok;
       uishell_sidebar_refresh(&fixture);
     }
     for(U32 frame = 0; frame < 2; frame++)
@@ -154,11 +193,11 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
       // the trailing slot at precisely the same location for this width.
       if(phase == 1)
       {
-        for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+        for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
         {
-          WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+          UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
           if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0))
-          { ok = wheelhouse_dispatch(fixture.core, fixture.snapshot, node.activate, 0) && ok; break; }
+          { ok = uishell_sidebar_intend(&fixture, uishell_sidebar_activate_intent(node), 0) && ok; break; }
         }
         uishell_sidebar_refresh(&fixture);
       }
@@ -174,10 +213,10 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
         }
         uishell_sidebar_refresh(&fixture);
       }
-      WheelhouseNode convoy = {0};
-      for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+      UIShell_SidebarNode convoy = {0};
+      for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
       {
-        WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+        UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
         if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("build"), 0)) { convoy = node; break; }
       }
       String8 convoy_key = push_str8_copy(scratch.arena, uishell_sidebar_string(convoy.key));
@@ -335,17 +374,17 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   {
     // Simulate a template with stale activity presentation. The core's retained
     // terminal status still wins, including pending glyphs and menu labels.
-    String8 activity_field = str8_lit("field \"activity\" key=\"status.state\" prefix=\"chip-status:\"");
+    String8 activity_field = str8_lit("field \"activity\" key=\"status.state\" presents=\"status\"");
     U64 activity_at = str8_find_needle(config, 0, activity_field, 0);
-    String8 stale_config = push_str8f(scratch.arena, "%Sfield \"activity\" source=\"literal\" value=\"active\" prefix=\"chip-status:\"%S",
+    String8 stale_config = push_str8f(scratch.arena, "%Sfield \"activity\" source=\"literal\" value=\"active\" presents=\"status\"%S",
       str8_prefix(config, activity_at), str8_skip(config, activity_at+activity_field.size));
     ok = activity_at < config.size && wheelhouse_configure(fixture.core, uishell_sidebar_text(stale_config), 0) && ok;
     uishell_sidebar_refresh(&fixture);
-    for(U64 i = 0; fixture.snapshot && i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+    for(U64 i = 0; fixture.snapshot && i < uishell_sidebar_node_count(&fixture); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0))
-      { ok = wheelhouse_dispatch(fixture.core, fixture.snapshot, node.activate, 0) && ok; break; }
+      { ok = uishell_sidebar_intend(&fixture, uishell_sidebar_activate_intent(node), 0) && ok; break; }
     }
     WheelhouseEffects *effects = wheelhouse_effects_take(fixture.core, 0);
     WheelhouseEffect effect = {0};
@@ -362,31 +401,31 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     ok = wheelhouse_apply_patch_json(fixture.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(terminal_patch), 0) && ok;
     uishell_sidebar_refresh(&fixture);
     B32 toggled = 0;
-    for(U64 i = 0; !toggled && i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+    for(U64 i = 0; !toggled && i < uishell_sidebar_node_count(&fixture); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
       for(U64 c = 0; c < node.control_count; c++)
       {
-        WheelhouseControl control = {0}; wheelhouse_snapshot_control(fixture.snapshot, node.first_control+c, &control);
+        WheelhouseControl control = {0}; control = uishell_sidebar_node_control(&fixture, node, c);
         if(str8_match(uishell_sidebar_string(control.label), str8_lit("Show finished"), 0))
-        { toggled = wheelhouse_dispatch(fixture.core, fixture.snapshot, control.action, 0); break; }
+        { toggled = uishell_sidebar_intend(&fixture, uishell_sidebar_control_intent(control), 0); break; }
       }
     }
     uishell_sidebar_refresh(&fixture);
     B32 ended_chip = 0;
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+    for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
       if(uishell_sidebar_node_cfg(&node) == 4242 && str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0))
       {
         node.state = WHEELHOUSE_OPENING;
-        ended_chip = str8_match(uishell_sidebar_chip_fact(&fixture, node, str8_lit("chip-status:")), str8_lit("active"), 0) &&
+        ended_chip = str8_match(uishell_sidebar_string(node.status), str8_lit("active"), 0) &&
           str8_match(uishell_sidebar_chip_status(&fixture, node), str8_lit("ended"), 0) &&
           str8_match(uishell_sidebar_status_mark(node, uishell_sidebar_chip_status(&fixture, node)), str8_lit("×"), 0) &&
           str8_match(uishell_sidebar_chip_label(&fixture, node), str8_lit("Subject workspace ×"), 0);
         if(!ended_chip)
         {
-          String8 activity = uishell_sidebar_chip_fact(&fixture, node, str8_lit("chip-status:"));
+          String8 activity = uishell_sidebar_string(node.status);
           String8 status = uishell_sidebar_chip_status(&fixture, node), label = uishell_sidebar_chip_label(&fixture, node);
           fprintf(stderr, "FAIL retained chip: activity %.*s status %.*s label %.*s\n",
             (int)activity.size, activity.str, (int)status.size, status.str, (int)label.size, label.str);

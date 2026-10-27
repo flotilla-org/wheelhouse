@@ -317,14 +317,14 @@ uishell_sidebar_saved_header_diagnostics(RD_WindowState *ws, UIShell_ControlledS
 // A boolean display variable's value as its first control shows it: 1 or 0,
 // or -1 when no control shows it.
 internal S32
-uishell_sidebar_docking_variable(WheelhouseSnapshot *snapshot, String8 variable)
+uishell_sidebar_docking_variable(UIShell_SidebarState *state, String8 variable)
 {
-  for(U64 i = 0; snapshot && i < wheelhouse_snapshot_node_count(snapshot); i++)
+  for(U64 i = 0; i < uishell_sidebar_node_count(state); i++)
   {
-    WheelhouseNode node = {0}; wheelhouse_snapshot_node(snapshot, i, &node);
+    UIShell_SidebarNode node = {0}; uishell_sidebar_node(state, i, &node);
     for(U64 c = 0; c < node.control_count; c++)
     {
-      WheelhouseControl control = {0}; wheelhouse_snapshot_control(snapshot, node.first_control+c, &control);
+      WheelhouseControl control = uishell_sidebar_node_control(state, node, c);
       if(control.value_kind == WHEELHOUSE_VALUE_BOOL && str8_match(uishell_sidebar_string(control.variable), variable, 0)) { return !!control.checked; }
     }
   }
@@ -756,12 +756,12 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   display.core = wheelhouse_create(daily.str, daily.size, &error);
   DockFailure(!uishell_sidebar_result(&display, display.core != 0, error));
   uishell_sidebar_refresh(&display);
-  WheelhouseNode section = {0}; wheelhouse_snapshot_node(display.snapshot, 0, &section);
+  UIShell_SidebarNode section = {0}; uishell_sidebar_node(&display, 0, &section);
   WheelhouseControl control = {0};
-  wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
+  control = uishell_sidebar_node_control(&display, section, 0);
   B32 default_value = control.checked;
   error = 0;
-  DockFailure(!wheelhouse_dispatch(display.core, display.snapshot, control.action, &error));
+  DockFailure(!uishell_sidebar_intend(&display, uishell_sidebar_control_intent(control), &error));
   if(error) { wheelhouse_string_free(error); }
   uishell_sidebar_refresh(&display);
   String8 record = uishell_sidebar_record_get(scratch.arena, display.core, str8_lit("dashboard"));
@@ -772,8 +772,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!uishell_sidebar_result(&display, wheelhouse_record_put(display.core, uishell_sidebar_text(str8_lit("dashboard")),
     uishell_sidebar_text(record), &error), error));
   uishell_sidebar_refresh(&display);
-  wheelhouse_snapshot_node(display.snapshot, 0, &section);
-  wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
+  uishell_sidebar_node(&display, 0, &section);
+  control = uishell_sidebar_node_control(&display, section, 0);
   DockFailure(!!control.checked == default_value);
   // Exercise real header buttons at both acceptance widths, including their
   // pressed appearance and dispatch through the native UI event path.
@@ -784,7 +784,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   F32 widths[] = {260, 600};
   for(U64 w = 0; w < ArrayCount(widths); w++)
   {
-    wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
+    control = uishell_sidebar_node_control(&display, section, 0);
     B32 before_click = !!control.checked;
     for(U32 frame = 0; frame < 5; frame++)
     {
@@ -820,7 +820,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
       for(U64 c = 0; c < section.control_count; c++)
       {
         WheelhouseControl each = {0};
-        wheelhouse_snapshot_control(display.snapshot, section.first_control+c, &each);
+        each = uishell_sidebar_node_control(&display, section, c);
         any_on |= each.value_kind == 1 && each.checked;
       }
       UI_Box *first_toggle = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_0", key));
@@ -838,7 +838,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
         DockFailure(ui_box_is_nil(grip) || ui_box_display_string(grip).size == 0);
         // Find the tooltip holding this toggle's label, then its drawn frame.
         WheelhouseControl first_control = {0};
-        wheelhouse_snapshot_control(display.snapshot, section.first_control, &first_control);
+        first_control = uishell_sidebar_node_control(&display, section, 0);
         UI_Box *tip = &ui_nil_box;
         for(UI_Box *b = ui_state->tooltip_root; !ui_box_is_nil(b) && ui_box_is_nil(tip); b = ui_box_rec_df_pre(b, ui_state->tooltip_root).next)
         { if(str8_match(ui_box_display_string(b), uishell_sidebar_string(first_control.label), 0)) { tip = b; } }
@@ -859,7 +859,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
         previous_right = button->rect.x1;
       }
     }
-    wheelhouse_snapshot_control(display.snapshot, section.first_control, &control);
+    control = uishell_sidebar_node_control(&display, section, 0);
     DockFailure(!!control.checked == before_click);
     UI_Box *button = ui_box_from_key(ui_key_from_stringf(controls_key, "###control_%S_0", key));
     DockFailure(!!(button->flags & UI_BoxFlag_DrawBackground) != !!control.checked);
@@ -917,8 +917,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!uishell_sidebar_result(&display, wheelhouse_set_display_variable(display.core, uishell_sidebar_text(str8_lit("show-role-attempts")),
                                                                                 uishell_sidebar_text(str8_lit("true")), &error), error));
   uishell_sidebar_refresh(&display);
-  S32 issues = uishell_sidebar_docking_variable(display.snapshot, str8_lit("show-issues"));
-  DockFailure(issues < 0 || uishell_sidebar_docking_variable(display.snapshot, str8_lit("show-role-attempts")) != 1);
+  S32 issues = uishell_sidebar_docking_variable(&display, str8_lit("show-issues"));
+  DockFailure(issues < 0 || uishell_sidebar_docking_variable(&display, str8_lit("show-role-attempts")) != 1);
   record = uishell_sidebar_record_get(scratch.arena, display.core, str8_lit("dashboard"));
   UIShell_SidebarState reread = {.initialized = 1};
   error = 0; reread.core = wheelhouse_create(daily.str, daily.size, &error);
@@ -927,8 +927,8 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   DockFailure(!uishell_sidebar_result(&reread, wheelhouse_record_put(reread.core, uishell_sidebar_text(str8_lit("dashboard")),
     uishell_sidebar_text(record), &error), error));
   uishell_sidebar_refresh(&reread);
-  DockFailure(uishell_sidebar_docking_variable(reread.snapshot, str8_lit("show-issues")) != issues);
-  DockFailure(uishell_sidebar_docking_variable(reread.snapshot, str8_lit("show-role-attempts")) != 0);
+  DockFailure(uishell_sidebar_docking_variable(&reread, str8_lit("show-issues")) != issues);
+  DockFailure(uishell_sidebar_docking_variable(&reread, str8_lit("show-role-attempts")) != 0);
   uishell_sidebar_release(&reread);
   uishell_sidebar_release(&display);
   ws->active_panel = saved_sidebar_focus;
@@ -1002,6 +1002,9 @@ uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, Whe
   if(core != s->core)
   {
     uishell_sidebar_replace_snapshot(s, 0);
+    if(s->subscribed) { wheelhouse_unsubscribe(s->core, s->subscription, 0); }
+    uishell_sidebar_model_release(&s->model);
+    s->subscribed = 0;
     wheelhouse_destroy(s->core);
     s->core = core;
     s->sidebar_synced = 0; s->sidebar_version = s->sidebar_generation = 0;
@@ -1011,7 +1014,7 @@ uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, Whe
   p->ws.cfg_id = window->id;
   rd_state->window_state_last_accessed_id = window->id;
   p->split.owner_cfg = window;
-  uishell_sidebar_replace_snapshot(s, core ? wheelhouse_snapshot_acquire(core, 0) : 0);
+  if(core) { uishell_sidebar_refresh(s); }
 }
 
 // A frame: the sidebar commits what changed, or follows the core, then lays
@@ -1027,7 +1030,7 @@ internal B32
 uishell_section_placement_configure(UIShell_SectionPlacement *p, String8 config)
 {
   B32 ok = wheelhouse_configure(p->sidebar.core, uishell_sidebar_text(config), 0);
-  uishell_sidebar_replace_snapshot(&p->sidebar, wheelhouse_snapshot_acquire(p->sidebar.core, 0));
+  uishell_sidebar_refresh(&p->sidebar);
   uishell_section_placement_frame(p);
   return ok;
 }
@@ -1504,6 +1507,7 @@ uishell_section_placement_diagnostics(String8 source_path)
     PlacementCheck(abs_f32(rd_arrangement_panel_from_id(dock, uishell_section_placement_panel(restored, x))->weight-.5f) < .00001f);
   }
   uishell_sidebar_replace_snapshot(&p.sidebar, 0);
+  uishell_sidebar_model_release(&p.sidebar.model);
   wheelhouse_destroy(p.sidebar.core);
   if(p.sidebar.titles_arena) { arena_release(p.sidebar.titles_arena); }
   if(p.sidebar.roles_arena) { arena_release(p.sidebar.roles_arena); }

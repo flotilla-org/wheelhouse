@@ -19,7 +19,7 @@ enum
 StaticAssert(UIShell_HoverCardNearGapPT > UIShell_HoverCardCorridorPaddingPT, hover_card_scan_gap);
 
 internal WheelhouseEntity
-uishell_sidebar_card_entity(WheelhouseNode node)
+uishell_sidebar_card_entity(UIShell_SidebarNode node)
 { return node.entity; }
 
 internal B32
@@ -59,7 +59,7 @@ uishell_sidebar_card_retain_label(UIShell_HoverCard *card, String8 label)
 // BTreeMap lookup cost, the shared 64-identity bound and eviction policy.
 // Measure repeated misses before introducing frontend negative caching.
 internal U64
-uishell_sidebar_card_find(UIShell_SidebarState *state, WheelhouseEntity entity, WheelhouseNode *out)
+uishell_sidebar_card_find(UIShell_SidebarState *state, WheelhouseEntity entity, UIShell_SidebarNode *out)
 {
   U64 index = state->snapshot ? wheelhouse_snapshot_detail_find(state->snapshot, entity) : WHEELHOUSE_NONE;
   // Every card path funnels through exact identity lookup: current, outgoing,
@@ -75,8 +75,8 @@ uishell_sidebar_card_find(UIShell_SidebarState *state, WheelhouseEntity entity, 
   if(out)
   {
     if(!wheelhouse_snapshot_detail(state->snapshot, index, &detail)) { return WHEELHOUSE_NONE; }
-    *out = (WheelhouseNode){.entity = detail.entity,
-      .label = detail.label, .activate = detail.activate, .detail_count = detail.field_count,
+    *out = (UIShell_SidebarNode){.entity = detail.entity,
+      .label = detail.label, .detail_count = detail.field_count,
       .state = detail.has_workspace ? WHEELHOUSE_LIVE : WHEELHOUSE_LATENT, .workspace_id = detail.workspace_id};
   }
   return index;
@@ -85,7 +85,7 @@ uishell_sidebar_card_find(UIShell_SidebarState *state, WheelhouseEntity entity, 
 // Resolve semantic intent only after sidebar reconciliation/reveal has replaced
 // snapshots. A disappearing or changed control cancels the pending action.
 internal void
-uishell_sidebar_card_queue_action(UIShell_SidebarState *state, WheelhouseNode node, size_t action)
+uishell_sidebar_card_queue_action(UIShell_SidebarState *state, UIShell_SidebarNode node, size_t action)
 {
   U64 index = uishell_sidebar_card_find(state, uishell_sidebar_card_entity(node), 0);
   if(index == WHEELHOUSE_NONE) { return; }
@@ -175,7 +175,7 @@ uishell_sidebar_card_corridor(UIShell_HoverCard *card, Vec2F32 mouse, U64 now)
 }
 
 internal void
-uishell_sidebar_card_set(UIShell_HoverCard *card, WheelhouseNode node, UI_Key source,
+uishell_sidebar_card_set(UIShell_HoverCard *card, UIShell_SidebarNode node, UI_Key source,
                         String8 context, B32 contains_current, U64 now)
 {
   Temp scratch = scratch_begin(0, 0);
@@ -212,7 +212,7 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, WheelhouseNode node, UI_Key so
 // Hovering `sig` opens the node's hover card after the delay. Any row may
 // offer it; only the node's home row is its source (card_source_at).
 internal void
-uishell_sidebar_card_hover_at(UIShell_SidebarState *state, WheelhouseNode node,
+uishell_sidebar_card_hover_at(UIShell_SidebarState *state, UIShell_SidebarNode node,
                               UI_Signal sig, String8 context, B32 contains_current, U64 now)
 {
   if(ui_any_ctx_menu_is_open() || !ui_hovering(sig) || state->row_drag_key.size) { return; }
@@ -245,7 +245,7 @@ uishell_sidebar_card_hover_at(UIShell_SidebarState *state, WheelhouseNode node,
 // The node's home row: it anchors the node's inline and detached cards, and
 // offers the hover card.
 internal void
-uishell_sidebar_card_source_at(UIShell_SidebarState *state, WheelhouseNode node,
+uishell_sidebar_card_source_at(UIShell_SidebarState *state, UIShell_SidebarNode node,
                                UI_Signal sig, String8 context, B32 contains_current, U64 now)
 {
   for(UIShell_HoverCard *c = state->detached; c; c = c->next)
@@ -257,7 +257,7 @@ uishell_sidebar_card_source_at(UIShell_SidebarState *state, WheelhouseNode node,
 }
 
 internal void
-uishell_sidebar_card_source(UIShell_SidebarState *state, WheelhouseNode node,
+uishell_sidebar_card_source(UIShell_SidebarState *state, UIShell_SidebarNode node,
                             UI_Signal sig, String8 context, B32 contains_current)
 {
   uishell_sidebar_card_source_at(state, node, sig, context, contains_current, now_time_us());
@@ -601,7 +601,7 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
       if(occupied[bucket]) { continue; }
       occupied[bucket] = 1; seen[bucket] = relation.entity;
       if(!related_label) { UI_TagF("weak") { ui_label(str8_lit("Related")); } related_label = 1; }
-      WheelhouseNode related = {0};
+      UIShell_SidebarNode related = {0};
       U64 related_index = uishell_sidebar_card_find(state, relation.entity, &related);
       B32 available = related_index != WHEELHOUSE_NONE;
       if(available)
@@ -643,7 +643,7 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
 }
 
 internal void
-uishell_sidebar_card_preview(RD_WindowState *ws, U64 slot, WheelhouseNode node, F32 width)
+uishell_sidebar_card_preview(RD_WindowState *ws, U64 slot, UIShell_SidebarNode node, F32 width)
 {
   CFG_ID workspace = node.state == WHEELHOUSE_LIVE ? uishell_sidebar_node_cfg(&node) : 0;
   if(workspace)
@@ -714,7 +714,7 @@ uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card
 
 internal size_t
 uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UIShell_HoverCard *card,
-                            U64 slot, WheelhouseNode node, U64 index, F32 width, B32 interactive)
+                            U64 slot, UIShell_SidebarNode node, U64 index, F32 width, B32 interactive)
 {
   WheelhouseDetail detail = {0};
   if(!wheelhouse_snapshot_detail(state->snapshot, index, &detail)) { return WHEELHOUSE_NONE; }
@@ -1004,7 +1004,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     F32 reveal = ui_anim(reveal_key, (F32)over, .initial = 0, .rate = rd_state->menu_animation_rate, .epsilon = 0.01f, .reset = !eligible);
     if(!eligible || reveal <= 0) { continue; }
     if(reveal < 1) { rd_request_frame(); }
-    WheelhouseNode node = {0};
+    UIShell_SidebarNode node = {0};
     U64 index = uishell_sidebar_card_find(state, c->path[c->depth-1], &node);
     size_t action = WHEELHOUSE_NONE;
     UI_Box *outline;
@@ -1072,7 +1072,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     B32 other_menu = ui_any_ctx_menu_is_open() && !ui_ctx_menu_is_open(card->menu);
     if(!floating && (other_menu || (!window_focused && card->focused)))
     { uishell_sidebar_card_close(card); continue; }
-    WheelhouseNode node = {0};
+    UIShell_SidebarNode node = {0};
     U64 index = uishell_sidebar_card_find(state, card->path[card->depth-1], &node);
     if(index == WHEELHOUSE_NONE && !floating) { uishell_sidebar_card_close(card); continue; }
     if(!floating && !card->moving && !ui_key_match(card->source, ui_key_zero()))
@@ -1161,7 +1161,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
         }
         if(t < 1 && card->previous.id.len)
         {
-          WheelhouseNode previous = {0}; U64 previous_index = uishell_sidebar_card_find(state, card->previous, &previous);
+          UIShell_SidebarNode previous = {0}; U64 previous_index = uishell_sidebar_card_find(state, card->previous, &previous);
           if(previous_index != WHEELHOUSE_NONE)
           {
             UI_Parent(scroll.content_box) UI_PrefWidth(ui_px(content_width, 1)) UI_PrefHeight(ui_children_sum(1))

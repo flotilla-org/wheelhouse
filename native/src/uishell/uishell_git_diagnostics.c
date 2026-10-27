@@ -20,9 +20,9 @@ uishell_sidebar_git_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *spl
   }
   uishell_sidebar_refresh(&fixture);
   U64 repos = 0, worktrees = 0;
-  for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+  for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
   {
-    WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+    UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
     repos += str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("repo"), 0);
     if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("worktree"), 0))
     { worktrees++; ok = ok && node.state == WHEELHOUSE_LATENT; }
@@ -41,16 +41,16 @@ uishell_sidebar_git_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *spl
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
       {
         uishell_sidebar_ui(r2f32p(0, 0, width, 900), split);
-        for(U64 i = 0; i < wheelhouse_snapshot_node_count(fixture.snapshot); i++)
+        for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
         {
-          WheelhouseNode node = {0}; wheelhouse_snapshot_node(fixture.snapshot, i, &node);
+          UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
           if(!str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("worktree"), 0)) { continue; }
-          String8 text = uishell_sidebar_fields(scratch.arena, fixture.snapshot, node, width-66);
+          String8 text = uishell_sidebar_fields(scratch.arena, node, width-66);
           ok = ok && str8_find_needle(text, 0, str8_lit("dirty:"), 0) < text.size;
           ok = ok && (str8_find_needle(text, 0, str8_lit("main"), 0) < text.size ||
                       str8_find_needle(text, 0, str8_lit("feature"), 0) < text.size);
           if(width_index) { ok = ok && str8_find_needle(text, 0, str8_lit("↑"), 0) < text.size; }
-          else { ok = ok && text.size < uishell_sidebar_fields(scratch.arena, fixture.snapshot, node, 800).size; }
+          else { ok = ok && text.size < uishell_sidebar_fields(scratch.arena, node, 800).size; }
         }
       }
       ui_end_build();

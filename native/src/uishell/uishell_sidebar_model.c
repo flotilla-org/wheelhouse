@@ -15,6 +15,9 @@
 // `revision` is the generation its content last changed at, so a cache of
 // something drawn from one node can tell it is stale without comparing.
 
+internal WheelhouseText uishell_sidebar_text(String8 s);
+internal String8 uishell_sidebar_string(WheelhouseText s);
+
 typedef struct UIShell_SidebarModelNode UIShell_SidebarModelNode;
 typedef struct UIShell_SidebarModelSection UIShell_SidebarModelSection;
 
@@ -620,6 +623,8 @@ uishell_sidebar_model_count(UIShell_SidebarModelNode *node)
 internal UIShell_SidebarModelNode **
 uishell_sidebar_model_preorder(UIShell_SidebarModel *model, U64 *count_out)
 {
+  // A model nothing has been applied to has no arena, and no nodes.
+  if(!model->arena) { *count_out = 0; return 0; }
   if(model->preorder_dirty || !model->preorder)
   {
     U64 count = 0;

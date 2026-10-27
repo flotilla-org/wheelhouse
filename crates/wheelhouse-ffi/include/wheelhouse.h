@@ -873,6 +873,8 @@ typedef struct {
   // Activating it opens something: a latent node that can open, or one
   // whose subject has a URL.
   uint32_t openable;
+  // Its subject has a URL: COPY_SUBJECT_URL of its entity copies it.
+  uint32_t has_url;
   uint32_t collapsed;
   uint32_t pinned;
   WheelhouseText default_host;

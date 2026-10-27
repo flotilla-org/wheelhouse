@@ -339,12 +339,12 @@ state_restart(RD_WindowState *ws, UI_Theme *theme, String8 dashboard)
 }
 
 internal B32
-state_find(UIShell_SidebarState *state, String8 kind, String8 id, WheelhouseNode *out)
+state_find(UIShell_SidebarState *state, String8 kind, String8 id, UIShell_SidebarNode *out)
 {
-  for(U64 i = 0; state->snapshot && i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; state->snapshot && i < uishell_sidebar_node_count(state); i++)
   {
-    WheelhouseNode node = {0};
-    wheelhouse_snapshot_node(state->snapshot, i, &node);
+    UIShell_SidebarNode node = {0};
+    uishell_sidebar_node(state, i, &node);
     if(!node.is_section && str8_match(uishell_sidebar_string(node.entity.kind), kind, 0) &&
        (!id.size || str8_match(uishell_sidebar_string(node.entity.id), id, 0)))
     { *out = node; return 1; }
@@ -356,10 +356,10 @@ state_find(UIShell_SidebarState *state, String8 kind, String8 id, WheelhouseNode
 internal U64
 state_find_local(UIShell_SidebarState *state, String8 label)
 {
-  for(U64 i = 0; state->snapshot && i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; state->snapshot && i < uishell_sidebar_node_count(state); i++)
   {
-    WheelhouseNode node = {0};
-    wheelhouse_snapshot_node(state->snapshot, i, &node);
+    UIShell_SidebarNode node = {0};
+    uishell_sidebar_node(state, i, &node);
     if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".workspace"), 0) &&
        str8_match(uishell_sidebar_string(node.label), label, 0)) { return i; }
   }
@@ -370,9 +370,9 @@ state_find_local(UIShell_SidebarState *state, String8 label)
 internal String8
 state_section_key(Arena *arena, UIShell_SidebarState *state, String8 title)
 {
-  for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; i < uishell_sidebar_node_count(state); i++)
   {
-    WheelhouseNode node = {0};
+    UIShell_SidebarNode node = {0};
     uishell_sidebar_node_at(state, i, &node);
     if(node.is_section && str8_match(uishell_logical_section_title(state, node), title, 0))
     { return push_str8_copy(arena, uishell_sidebar_string(node.key)); }
@@ -382,9 +382,9 @@ state_section_key(Arena *arena, UIShell_SidebarState *state, String8 title)
 
 // A click on a sidebar control, as the sidebar's render takes one.
 internal void
-state_click(RD_WindowState *ws, size_t action)
+state_click(RD_WindowState *ws, UIShell_SidebarIntent action)
 {
-  StateCheck(action != WHEELHOUSE_NONE);
+  StateCheck(action.some);
   Temp scratch = scratch_begin(0, 0);
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, cfg_node_from_id(ws->cfg_id));
   uishell_sidebar_perform(ws->sidebar, &split, action);
@@ -396,9 +396,9 @@ state_click(RD_WindowState *ws, size_t action)
 internal CFG_Node *
 state_open_subject(RD_WindowState *ws, String8 kind, String8 id)
 {
-  WheelhouseNode node = {0};
+  UIShell_SidebarNode node = {0};
   StateCheck(state_find(ws->sidebar, kind, id, &node) && node.state == WHEELHOUSE_LATENT && node.openable);
-  state_click(ws, node.activate);
+  state_click(ws, uishell_sidebar_activate_intent(node));
   CFG_Node *workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
   StateCheck(str8_match(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string, id, 0));
   return workspace;
@@ -410,10 +410,10 @@ internal U64
 state_count_from(UIShell_SidebarState *state, String8 kind, String8 id, String8 provider, B32 *stale)
 {
   U64 count = 0;
-  for(U64 i = 0; state->snapshot && i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; state->snapshot && i < uishell_sidebar_node_count(state); i++)
   {
-    WheelhouseNode node = {0};
-    wheelhouse_snapshot_node(state->snapshot, i, &node);
+    UIShell_SidebarNode node = {0};
+    uishell_sidebar_node(state, i, &node);
     if(node.is_section || !str8_match(uishell_sidebar_string(node.entity.kind), kind, 0) ||
        !str8_match(uishell_sidebar_string(node.entity.id), id, 0) ||
        !str8_match(uishell_sidebar_string(node.entity.provider), provider, 0)) { continue; }
@@ -748,9 +748,9 @@ state_has_view_state(RD_ViewAddress view)
 internal CFG_Node *
 state_open_v(RD_WindowState *ws)
 {
-  WheelhouseNode node = {0};
+  UIShell_SidebarNode node = {0};
   StateCheck(state_find(ws->sidebar, str8_lit("vessel"), str8_lit("v"), &node) && node.openable);
-  state_click(ws, node.activate);
+  state_click(ws, uishell_sidebar_activate_intent(node));
   CFG_Node *workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
   StateCheck(str8_match(workspace->string, str8_lit("workspace"), 0) &&
              str8_match(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string, str8_lit("v"), 0));
@@ -1095,21 +1095,21 @@ entry_point(CmdLine *cmdline)
   //- Sidebar: a display variable off, a project collapsed, and the
   // Workspaces group's rows reordered.
   {
-    UIShell_DisplayControlIterator it = {state->snapshot};
+    UIShell_DisplayControlIterator it = {state};
     WheelhouseControl control = {0}; WheelhouseText name = {0};
-    size_t toggle = WHEELHOUSE_NONE;
+    UIShell_SidebarIntent toggle = {0};
     while(uishell_sidebar_next_persistent_control(&it, &control, &name))
-    { if(str8_match(uishell_sidebar_string(name), str8_lit("show-issues"), 0)) { toggle = control.action; break; } }
+    { if(str8_match(uishell_sidebar_string(name), str8_lit("show-issues"), 0)) { toggle = uishell_sidebar_control_intent(control); break; } }
     state_click(ws, toggle);
-    WheelhouseNode project = {0};
+    UIShell_SidebarNode project = {0};
     StateCheck(state_find(state, str8_lit("project"), str8_lit("p"), &project) && !project.collapsed);
-    state_click(ws, project.toggle);
+    state_click(ws, uishell_sidebar_toggle_intent(project));
     // A row drop commits the run's whole order once the render ends.
     U64 row = state_find_local(state, str8_lit("Notes"));
     StateCheck(row != WHEELHOUSE_NONE);
-    String8 loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(state->snapshot, row));
+    String8 loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(state, row));
     WheelhouseEntity *siblings = 0;
-    U64 count = uishell_sidebar_siblings(scratch.arena, state->snapshot, loop, &siblings);
+    U64 count = uishell_sidebar_siblings(scratch.arena, state, loop, &siblings);
     StateCheck(count >= 2);
     WheelhouseEntity *order = push_array(scratch.arena, WheelhouseEntity, count);
     for(U64 i = 0; i < count; i++) { order[i] = siblings[count-1-i]; }
@@ -1677,10 +1677,10 @@ entry_point(CmdLine *cmdline)
     Rng2F32 rect = r2f32p(0, 0, 640, 384);
     CFG_Node *previous = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     // It waits from the frame it opens in, before the store keys its View.
-    WheelhouseNode row = {0};
+    UIShell_SidebarNode row = {0};
     StateCheck(state_find(state, str8_lit("vessel"), str8_lit("bare"), &row) && row.state == WHEELHOUSE_LATENT && row.openable);
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
-    uishell_sidebar_perform(state, &split, row.activate);
+    uishell_sidebar_perform(state, &split, uishell_sidebar_activate_intent(row));
     CFG_Node *bare = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
     StateCheck(str8_match(cfg_node_child_from_string(bare, str8_lit("sidebar_entity_id"))->first->string, str8_lit("bare"), 0));
     CFG_Node *primary = rd_cfg_from_view(state_panels(scratch.arena, bare).root->tabs.first->v);
@@ -2207,11 +2207,11 @@ entry_point(CmdLine *cmdline)
   {
     state = ws->sidebar;
     String8 path = push_str8f(scratch.arena, "%S/dashboard.record", state->records_dir);
-    UIShell_DisplayControlIterator it = {state->snapshot};
+    UIShell_DisplayControlIterator it = {state};
     WheelhouseControl control = {0}; WheelhouseText name = {0};
-    size_t toggle = WHEELHOUSE_NONE;
+    UIShell_SidebarIntent toggle = {0};
     while(uishell_sidebar_next_persistent_control(&it, &control, &name))
-    { if(str8_match(uishell_sidebar_string(name), str8_lit("show-role-attempts"), 0)) { toggle = control.action; break; } }
+    { if(str8_match(uishell_sidebar_string(name), str8_lit("show-role-attempts"), 0)) { toggle = uishell_sidebar_control_intent(control); break; } }
     String8 before = data_from_file_path(scratch.arena, path);
     state_click(ws, toggle);
     U64 now = 1000000;
@@ -2328,9 +2328,9 @@ entry_point(CmdLine *cmdline)
     state_draw_sidebar = 0;
     window = cfg_node_from_id(ws->cfg_id);
     String8 container = {0};
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(ws->sidebar->snapshot); i++)
+    for(U64 i = 0; i < uishell_sidebar_node_count(ws->sidebar); i++)
     {
-      WheelhouseNode node = {0};
+      UIShell_SidebarNode node = {0};
       if(uishell_sidebar_node_at(ws->sidebar, i, &node) == UIShell_SidebarRole_Container)
       { container = push_str8_copy(scratch.arena, uishell_sidebar_string(node.key)); }
     }
@@ -2457,13 +2457,13 @@ entry_point(CmdLine *cmdline)
                      state_count_from(ws->sidebar, vessel, fleet_v, alpha_id, 0) >= 1 && state_count_from(ws->sidebar, vessel, fleet_v, beta_id, 0) >= 1);
     StateCheck(file_path_exists(push_str8f(scratch.arena, "%S/flotilla-%S.log", dir, alpha_id)));
     // Opening alpha's vessel opens a workspace on it, not on beta's.
-    size_t activate = WHEELHOUSE_NONE;
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(ws->sidebar->snapshot); i++)
+    UIShell_SidebarIntent activate = {0};
+    for(U64 i = 0; i < uishell_sidebar_node_count(ws->sidebar); i++)
     {
-      WheelhouseNode node = {0};
-      wheelhouse_snapshot_node(ws->sidebar->snapshot, i, &node);
+      UIShell_SidebarNode node = {0};
+      uishell_sidebar_node(ws->sidebar, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), fleet_v, 0) && str8_match(uishell_sidebar_string(node.entity.provider), alpha_id, 0) &&
-         node.openable) { activate = node.activate; break; }
+         node.openable) { activate = uishell_sidebar_activate_intent(node); break; }
     }
     state_click(ws, activate);
     CFG_Node *opened = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
@@ -2495,11 +2495,11 @@ entry_point(CmdLine *cmdline)
     WheelhouseEntity fleet_beta = uishell_sidebar_entity(push_str8_copy(scratch.arena, beta_id), project, fleet);
     String8 fleet_pin = str8_zero();
     {
-      WheelhouseNode row = {0};
-      for(U64 i = 0; i < wheelhouse_snapshot_node_count(ws->sidebar->snapshot); i++)
+      UIShell_SidebarNode row = {0};
+      for(U64 i = 0; i < uishell_sidebar_node_count(ws->sidebar); i++)
       {
-        WheelhouseNode node = {0};
-        wheelhouse_snapshot_node(ws->sidebar->snapshot, i, &node);
+        UIShell_SidebarNode node = {0};
+        uishell_sidebar_node(ws->sidebar, i, &node);
         if(!node.is_section && uishell_sidebar_card_entity_match(node.entity, fleet_beta)) { row = node; break; }
       }
       StateCheck(uishell_sidebar_card_entity_match(row.entity, fleet_beta));
@@ -2510,7 +2510,7 @@ entry_point(CmdLine *cmdline)
       uishell_sidebar_card_source_at(ws->sidebar, row, hover, str8_zero(), 0, 1000000);
       uishell_sidebar_card_source_at(ws->sidebar, row, hover, str8_zero(), 0, 1000000+UIShell_HoverCardOpenDelayUS);
       StateCheck(card->open && card->depth == 1 && uishell_sidebar_card_entity_match(card->path[0], fleet_beta));
-      WheelhouseNode found = {0};
+      UIShell_SidebarNode found = {0};
       U64 index = card->open ? uishell_sidebar_card_find(ws->sidebar, card->path[0], &found) : WHEELHOUSE_NONE;
       WheelhouseDetail detail = {0};
       StateCheck(index != WHEELHOUSE_NONE && wheelhouse_snapshot_detail(ws->sidebar->snapshot, index, &detail));
@@ -2524,7 +2524,7 @@ entry_point(CmdLine *cmdline)
       uishell_sidebar_card_close(card);
       state_frame(ws);
       // Its ghost row offers the subscription entity's card.
-      WheelhouseNode ghost = {0};
+      UIShell_SidebarNode ghost = {0};
       StateCheck(state_find(ws->sidebar, str8_lit(".ref"), fleet_pin, &ghost));
     }
 
@@ -2552,7 +2552,7 @@ entry_point(CmdLine *cmdline)
       UIShell_LocalPin *pin = uishell_sidebar_pin_find(cfg_node_from_id(ws->cfg_id), fleet_beta);
       StateCheck(pin != 0);
       UIShell_HoverCard *pinned = pin ? uishell_sidebar_saved_card(ws, pin) : 0;
-      WheelhouseNode found = {0};
+      UIShell_SidebarNode found = {0};
       StateCheck(pinned && uishell_sidebar_card_entity_match(pinned->path[0], fleet_beta) &&
                  uishell_sidebar_card_find(ws->sidebar, pinned->path[0], &found) != WHEELHOUSE_NONE &&
                  str8_match(uishell_sidebar_string(found.label), str8_lit("Fleet via beta"), 0));

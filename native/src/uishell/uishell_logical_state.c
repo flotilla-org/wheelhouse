@@ -263,12 +263,12 @@ uishell_logical_workspaces(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
 
 // A section's title, as docking names it: its first field, else its label.
 internal String8
-uishell_logical_section_title(UIShell_SidebarState *state, WheelhouseNode node)
+uishell_logical_section_title(UIShell_SidebarState *state, UIShell_SidebarNode node)
 {
   if(node.field_count)
   {
     WheelhouseField field = {0};
-    wheelhouse_snapshot_field(state->snapshot, node.first_field, &field);
+    field = uishell_sidebar_node_field(node, 0);
     return uishell_sidebar_string(field.text);
   }
   return uishell_sidebar_string(node.label);
@@ -278,9 +278,9 @@ uishell_logical_section_title(UIShell_SidebarState *state, WheelhouseNode node)
 internal String8
 uishell_logical_section_key_title(Arena *arena, UIShell_SidebarState *state, CFG_Node *window, String8 key)
 {
-  for(U64 i = 0; state && state->snapshot && i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; state && state->snapshot && i < uishell_sidebar_node_count(state); i++)
   {
-    WheelhouseNode node = {0};
+    UIShell_SidebarNode node = {0};
     uishell_sidebar_node_at(state, i, &node);
     if(node.is_section && str8_match(uishell_sidebar_string(node.key), key, 0)) { return uishell_logical_section_title(state, node); }
   }
@@ -293,7 +293,7 @@ internal void
 uishell_logical_display(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *state)
 {
   String8List seen = {0};
-  UIShell_DisplayControlIterator it = {state->snapshot};
+  UIShell_DisplayControlIterator it = {state};
   WheelhouseControl control = {0};
   WheelhouseText name = {0};
   while(uishell_sidebar_next_persistent_control(&it, &control, &name))
@@ -309,12 +309,12 @@ internal void
 uishell_logical_rows(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *state)
 {
   Arena *arena = t->arena;
-  U64 count = wheelhouse_snapshot_node_count(state->snapshot);
+  U64 count = uishell_sidebar_node_count(state);
   U64 *depths = push_array(arena, U64, count);
   B32 *hidden = push_array(arena, B32, count);
   for(U64 i = 0; i < count; i++)
   {
-    WheelhouseNode node = {0};
+    UIShell_SidebarNode node = {0};
     UIShell_SidebarRole role = uishell_sidebar_node_at(state, i, &node);
     depths[i] = node.parent == WHEELHOUSE_NONE ? 0 : depths[node.parent]+1;
     // The sidebar leaves out the empty leftover section, and what's under a
@@ -350,10 +350,10 @@ internal String8
 uishell_logical_order_entity(Arena *arena, UIShell_SidebarState *state, WheelhouseEntity entity)
 {
   String8 name = uishell_logical_entity(arena, uishell_sidebar_string(entity.kind), uishell_sidebar_string(entity.id));
-  for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; i < uishell_sidebar_node_count(state); i++)
   {
-    WheelhouseNode node = {0};
-    wheelhouse_snapshot_node(state->snapshot, i, &node);
+    UIShell_SidebarNode node = {0};
+    uishell_sidebar_node(state, i, &node);
     if(!node.is_section && uishell_sidebar_card_entity_match(node.entity, entity))
     { return push_str8f(arena, "%S %S", name, uishell_logical_quote(arena, uishell_sidebar_string(node.label))); }
   }
@@ -371,10 +371,10 @@ uishell_logical_orders(UIShell_LogicalText *t, U64 depth, UIShell_SidebarState *
   {
     WheelhouseSiblingOrder *order = (WheelhouseSiblingOrder *)&dashboard->orders[o];
     String8 loop = uishell_sidebar_string(order->loop_key), under = str8_lit("(no rows)");
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+    for(U64 i = 0; i < uishell_sidebar_node_count(state); i++)
     {
-      WheelhouseNode node = {0}, parent = {0};
-      wheelhouse_snapshot_node(state->snapshot, i, &node);
+      UIShell_SidebarNode node = {0}, parent = {0};
+      uishell_sidebar_node(state, i, &node);
       if(node.is_section || node.parent == WHEELHOUSE_NONE || !str8_match(uishell_sidebar_string(node.loop_key), loop, 0)) { continue; }
       uishell_sidebar_node_at(state, node.parent, &parent);
       under = uishell_logical_quote(arena, parent.is_section ? uishell_logical_section_title(state, parent) : uishell_sidebar_string(parent.label));

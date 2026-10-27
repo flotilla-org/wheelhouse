@@ -821,7 +821,7 @@ impl WheelhouseSnapshot {
         let (fields, field_count, controls, control_count) = self.content(&n.content);
         let (details, detail_count, _, _) = self.content(&n.detail);
         let activate = self.action(Action::ActivatePlacement { key: n.key.clone() });
-        let has_url = sidebar.subject_url(&n.entity).is_some();
+        let has_url = n.has_url;
         let copy_url = if has_url { self.action(Action::CopySubjectUrl { entity: n.entity.clone() }) } else { NONE };
         let toggle = self.action(Action::TogglePlacement { key: n.key.clone() });
         let key = encode_key(&n.key);

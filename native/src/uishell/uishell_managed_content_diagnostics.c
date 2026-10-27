@@ -73,14 +73,14 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
   wheelhouse_string_free(error);
   uishell_sidebar_refresh(&state);
-  size_t activate = WHEELHOUSE_NONE;
-  for(U64 i = 0; state.snapshot && i < wheelhouse_snapshot_node_count(state.snapshot); i++)
+  UIShell_SidebarIntent activate = {0};
+  for(U64 i = 0; state.snapshot && i < uishell_sidebar_node_count(&state); i++)
   {
-    WheelhouseNode node = {0};
-    if(wheelhouse_snapshot_node(state.snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
-    { activate = node.activate; }
+    UIShell_SidebarNode node = {0};
+    if(uishell_sidebar_node(&state, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
+    { activate = uishell_sidebar_activate_intent(node); }
   }
-  ManagedCheck(activate != WHEELHOUSE_NONE && wheelhouse_dispatch(state.core, state.snapshot, activate, 0), "role entry dispatches its opening");
+  ManagedCheck(activate.some && uishell_sidebar_intend(&state, activate, 0), "role entry dispatches its opening");
   // As a frame does, the window's workspaces are observed before anything
   // plans them: a Slot is of a workspace the core knows.
   {
@@ -248,14 +248,14 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
       uishell_sidebar_text(str8_lit("producer-worktree")), uishell_sidebar_text(str8_lit("fixture")), producer, 2, 0),
       "producer recipe and root accepted without managed state");
     uishell_sidebar_refresh(&opened);
-    size_t activate = WHEELHOUSE_NONE;
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(opened.snapshot); i++)
+    UIShell_SidebarIntent activate = {0};
+    for(U64 i = 0; i < uishell_sidebar_node_count(&opened); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(opened.snapshot, i, &node);
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&opened, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("producer-worktree"), 0))
-      { ManagedCheck(node.state == WHEELHOUSE_LATENT, "producer worktree starts latent"); activate = node.activate; }
+      { ManagedCheck(node.state == WHEELHOUSE_LATENT, "producer worktree starts latent"); activate = uishell_sidebar_activate_intent(node); }
     }
-    ManagedCheck(activate != WHEELHOUSE_NONE && wheelhouse_dispatch(opened.core, opened.snapshot, activate, 0),
+    ManagedCheck(activate.some && uishell_sidebar_intend(&opened, activate, 0),
                  "producer worktree activation dispatches");
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(&opened, &split);
@@ -282,14 +282,14 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     U64 workspace_count = split.inventory.count;
     uishell_sidebar_observe(&opened, &split);
     B32 matched = 0;
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(opened.snapshot); i++)
+    for(U64 i = 0; i < uishell_sidebar_node_count(&opened); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(opened.snapshot, i, &node);
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&opened, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("producer-worktree"), 0))
-      { matched = node.state == WHEELHOUSE_LIVE && uishell_sidebar_node_cfg(&node) == existing->id; activate = node.activate; }
+      { matched = node.state == WHEELHOUSE_LIVE && uishell_sidebar_node_cfg(&node) == existing->id; activate = uishell_sidebar_activate_intent(node); }
     }
     ManagedCheck(matched, "existing terminal directory marks producer worktree open");
-    ManagedCheck(wheelhouse_dispatch(opened.core, opened.snapshot, activate, 0), "matched worktree dispatches focus");
+    ManagedCheck(uishell_sidebar_intend(&opened, activate, 0), "matched worktree dispatches focus");
     uishell_sidebar_effects(&opened, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     ManagedCheck(split.inventory.count == workspace_count && ws->root_controlled_split_selected_workspace_id == existing->id,
@@ -301,9 +301,9 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     uishell_managed_set(existing_view, str8_lit("cwd"), str8_lit("/"));
     uishell_sidebar_observe(&opened, &split);
     B32 latent = 0;
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(opened.snapshot); i++)
+    for(U64 i = 0; i < uishell_sidebar_node_count(&opened); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(opened.snapshot, i, &node);
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&opened, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("producer-worktree"), 0))
       { latent = node.state == WHEELHOUSE_LATENT; if(!latent) { fprintf(stderr, "Unexpected worktree state=%u workspace=%lu after cwd change (existing=%lu)\n", node.state, uishell_sidebar_node_cfg(&node), existing->id); } }
     }
@@ -340,13 +340,13 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
       uishell_sidebar_text(str8_lit("direct-worktree")), uishell_sidebar_text(str8_lit("fixture")), producer, ArrayCount(producer), 0),
       "direct endpoint facts accepted");
     uishell_sidebar_refresh(&opened);
-    size_t activate = WHEELHOUSE_NONE;
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(opened.snapshot); i++)
+    UIShell_SidebarIntent activate = {0};
+    for(U64 i = 0; i < uishell_sidebar_node_count(&opened); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(opened.snapshot, i, &node);
-      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("direct-worktree"), 0)) { activate = node.activate; }
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&opened, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("direct-worktree"), 0)) { activate = uishell_sidebar_activate_intent(node); }
     }
-    ManagedCheck(activate != WHEELHOUSE_NONE && wheelhouse_dispatch(opened.core, opened.snapshot, activate, 0), "direct worktree activation dispatches");
+    ManagedCheck(activate.some && uishell_sidebar_intend(&opened, activate, 0), "direct worktree activation dispatches");
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(&opened, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);

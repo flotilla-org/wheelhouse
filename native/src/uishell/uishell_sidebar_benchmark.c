@@ -8,9 +8,9 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
   Temp scratch = scratch_begin(0, 0);
   B32 saved_uncached = uishell_sidebar_benchmark_uncached, ok = 1;
   uishell_sidebar_benchmark_uncached = 0;
-  U64 count = wheelhouse_snapshot_node_count(state->snapshot);
-  WheelhouseNode *nodes = push_array(scratch.arena, WheelhouseNode, count);
-  for(U64 i = 0; i < count; i++) { wheelhouse_snapshot_node(state->snapshot, i, &nodes[i]); }
+  U64 count = uishell_sidebar_node_count(state);
+  UIShell_SidebarNode *nodes = push_array(scratch.arena, UIShell_SidebarNode, count);
+  for(U64 i = 0; i < count; i++) { uishell_sidebar_node(state, i, &nodes[i]); }
   String8 identity = str8_lit("bench-project-0");
   String8 label = uishell_sidebar_context_label(state, nodes, count, identity);
   ok &= str8_match(label, str8_lit("Benchmark project 0"), 0);
@@ -33,9 +33,9 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
     ok &= uishell_sidebar_result(state, applied, error);
     uishell_sidebar_refresh(state);
     ok &= !state->labels && !state->labels_snapshot;
-    count = wheelhouse_snapshot_node_count(state->snapshot);
-    nodes = push_array(scratch.arena, WheelhouseNode, count);
-    for(U64 n = 0; n < count; n++) { wheelhouse_snapshot_node(state->snapshot, n, &nodes[n]); }
+    count = uishell_sidebar_node_count(state);
+    nodes = push_array(scratch.arena, UIShell_SidebarNode, count);
+    for(U64 n = 0; n < count; n++) { uishell_sidebar_node(state, n, &nodes[n]); }
     ok &= str8_match(uishell_sidebar_context_label(state, nodes, count, identity), str8_cstring(values[i]), 0);
   }
   uishell_sidebar_labels_invalidate(state);
@@ -215,7 +215,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
           merged ? "merged" : "four", scrolling ? "precise" : "idle", tree_body->view_off_target.y,
           attention_body->view_off_target.y, dim_2f32(tree_body->rect).y, dim_2f32(attention_body->rect).y);
         fprintf(stderr, "SIDEBAR_BENCH issues=%llu nodes=%llu panels=%s input=%s frames=%u frame_us=%.2f analysis_us=%.2f context_us=%.2f\n",
-          (unsigned long long)sizes[size_index], (unsigned long long)wheelhouse_snapshot_node_count(state.snapshot), merged ? "merged" : "four",
+          (unsigned long long)sizes[size_index], (unsigned long long)uishell_sidebar_node_count(&state), merged ? "merged" : "four",
           scrolling ? "precise" : "idle", frames-warmup, elapsed/(F64)(frames-warmup), analysis/(F64)(frames-warmup), context/(F64)(frames-warmup));
         ui_select_state(saved_ui); ui_state_release(test_ui);
       }

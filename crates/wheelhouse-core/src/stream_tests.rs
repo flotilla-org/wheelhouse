@@ -470,3 +470,27 @@ fn presents_fields_fill_typed_values() {
     let node = &sidebar.snapshot_shared().surface.sections[0].nodes[0];
     assert_eq!(node.content.presented.icon.as_deref(), Some("terminal"), "the producer's icon comes first");
 }
+
+/// Whether a subject has a URL is its node's content: forge facts that
+/// arrive after the subject's give its node a URL by an Upsert, and the
+/// snapshot and the stream agree on it.
+#[test]
+fn a_url_that_arrives_later_reaches_the_stream() {
+    let fixture: Vec<MetadataPatch> =
+        include_str!("../../../data/sidebar/fixture.jsonl").lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let is_forge = |patch: &MetadataPatch| patch.set.contains_key("flotilla.forge.web_url");
+    let (forge, rest): (Vec<_>, Vec<_>) = fixture.into_iter().partition(is_forge);
+    assert_eq!(forge.len(), 1, "the fixture has one forge");
+    let mut sidebar = Sidebar::new(DAILY_DRIVER).unwrap();
+    sidebar.apply(1, "fixture", rest).unwrap();
+    let id = sidebar.subscribe();
+    let mut followed = StreamView::default();
+    followed.apply(&sidebar.poll(id).unwrap()).unwrap();
+    let with_url = |view: &StreamView| view.nodes.values().filter(|n| n.has_url).count();
+    assert_eq!(with_url(&followed), 0);
+    sidebar.apply(2, "fixture", forge).unwrap();
+    let delta = sidebar.poll(id).expect("the forge gave subjects URLs");
+    followed.apply(&delta).unwrap();
+    assert!(with_url(&followed) > 0);
+    assert_eq!(followed, StreamView::of(&sidebar.snapshot_shared()));
+}

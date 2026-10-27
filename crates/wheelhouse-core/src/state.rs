@@ -1875,7 +1875,14 @@ impl ControllerState {
             }
         };
         let surface_phase = profile::span("surface");
-        let cx = SurfaceContext { generation: self.template_generation, variables: &node_variables.nodes, state: &state, stale: &stale };
+        let has_url = |entity: &EntityRef| self.subject_url(entity).is_some();
+        let cx = SurfaceContext {
+            generation: self.template_generation,
+            variables: &node_variables.nodes,
+            state: &state,
+            stale: &stale,
+            has_url: &has_url,
+        };
         let presentation = SurfaceSnapshot::resolve(&model, &surface_regions, cx, &mut self.kept.surface.borrow_mut());
         model.presentation = Some(presentation);
         drop(surface_phase);
