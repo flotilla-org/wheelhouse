@@ -283,6 +283,22 @@ fn a_commit_in_shares_is_read_in_the_documents_scale() {
     assert_eq!(weights(&arranged(&stored).doc), [("x".to_owned(), 2.5), ("y".to_owned(), 2.5)]);
 }
 
+// Overrides saved before #477 are in shares, and the host committed every
+// panel of a split, so a record holds the whole split in one scale: following
+// it keeps its ratio, as the daily driver's 0.40245/0.59755 against 3:2.
+#[test]
+fn share_scale_overrides_saved_before_keep_their_ratio() {
+    let hint = split("main", vec![weighted(tabs("x", &["a"], Some("a")), 3.0), weighted(tabs("y", &["b"], Some("b")), 2.0)]);
+    let slots = WorkspaceSlots { baseline: Some(hinted(hint, &["a", "b"])), ..Default::default() };
+    let mut stored = None;
+    Arrangement::follow(&mut stored, slots.baseline.as_ref(), &slots.slots(), None);
+    let share = |weight| SoftOverride { weight: Some(weight), selected: None };
+    stored.as_mut().unwrap().soft = BTreeMap::from([("x".to_owned(), share(0.40245)), ("y".to_owned(), share(0.59755))]);
+    Arrangement::follow(&mut stored, slots.baseline.as_ref(), &slots.slots(), None);
+    let shown = weights(&arranged(&stored).doc);
+    assert!((shown[0].1 / (shown[0].1 + shown[1].1) - 0.40245).abs() < 1e-9, "{shown:?}");
+}
+
 // A tab panel with no tabs takes no space in what the host is shown while a
 // sibling has tabs; the document keeps it, at its weight, for slots to land
 // in. The host's commit of it at no weight changes nothing, and once it has
