@@ -47,14 +47,19 @@ fn nodes(sidebar: &Sidebar) -> Vec<Rc<PlacementNode>> {
     out
 }
 
-/// Apply an intent, noting its request if accepted.
+/// Apply an intent, noting its request if accepted. A refused one must
+/// change nothing.
 fn intend(sidebar: &mut Sidebar, accepted: &mut Vec<u64>, intent: Intent) -> Vec<HostEffect> {
+    let revision = sidebar.revision();
     match sidebar.apply_intent(intent) {
         IntentReceipt::Accepted { request, effects } => {
             accepted.push(request);
             effects
         }
-        IntentReceipt::Refused { .. } => vec![],
+        IntentReceipt::Refused { reason } => {
+            assert_eq!(sidebar.revision(), revision, "a refused intent ({reason}) moved the revision");
+            vec![]
+        }
     }
 }
 
@@ -148,11 +153,11 @@ fn step(tc: &TestCase, sidebar: &mut Sidebar, now: &mut u64) -> Vec<u64> {
             // a failed activation is an error the sidebar presents.
             let nodes = nodes(sidebar);
             if !nodes.is_empty() {
-                let key = nodes[pick(nodes.len())].key.clone();
+                let node = &nodes[pick(nodes.len())];
                 let intent = if tc.draw(gs::booleans()) {
-                    Intent::ActivatePlacement { key }
+                    Intent::ActivatePlacement { key: node.key.clone() }
                 } else {
-                    Intent::CopySubjectUrl { entity: nodes[0].entity.clone() }
+                    Intent::CopySubjectUrl { entity: node.entity.clone() }
                 };
                 for effect in intend(sidebar, &mut accepted, intent) {
                     let request = match effect {

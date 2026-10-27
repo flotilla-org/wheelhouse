@@ -260,7 +260,8 @@ pub struct Sidebar {
 struct Subscription {
     delivered: Option<Rc<Snapshot>>,
     seen: Option<u64>,
-    /// Intents accepted since the last delta, for the next one to list.
+    /// Intents accepted since the last delta, for the next one to list. They
+    /// accumulate until a poll, as the delivered snapshot is held until one.
     intents: Vec<u64>,
 }
 
@@ -1464,14 +1465,21 @@ impl Sidebar {
                 if self.entity_is_pending(&entity) {
                     return Ok(vec![]);
                 }
+                let activation = self.state.activation_for_entity(&entity);
+                // Refusal comes before any change, so a refused intent leaves
+                // the error badge and the revision as they were.
+                let focus = match &activation {
+                    Some(EntityActivation::FocusTab { position }) => {
+                        Some(self.state.workspaces().iter().find(|w| w.position == *position).ok_or("workspace disappeared")?.tab_id)
+                    }
+                    _ => None,
+                };
                 if self.errors.remove(&entity).is_some() {
                     self.invalidate();
                 }
-                let activation = self.state.activation_for_entity(&entity);
                 let effect = match activation {
-                    Some(EntityActivation::FocusTab { position }) => {
-                        let workspace_id =
-                            self.state.workspaces().iter().find(|w| w.position == position).ok_or("workspace disappeared")?.tab_id;
+                    Some(EntityActivation::FocusTab { .. }) => {
+                        let workspace_id = focus.expect("resolved above");
                         let request_id = self.request_id();
                         self.pending.insert(request_id, Pending::Focus(entity));
                         HostEffect::Focus { request_id, workspace_id }
