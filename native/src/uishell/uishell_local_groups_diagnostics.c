@@ -5,11 +5,11 @@
 
 #define GroupsCheck(cond, msg) do { if(!(cond)) { ok = 0; fprintf(stderr, "FAIL local groups: %s\n", msg); } } while(0)
 
-// The snapshot label of the section or group published for `kind`/`id`.
+// The label, as the view has it, of the section or group published for `kind`/`id`.
 internal String8
 uishell_local_groups_label(Arena *arena, UIShell_SidebarState *state, String8 kind, String8 id)
 {
-  for(U64 i = 0; state->snapshot && i < uishell_sidebar_node_count(state); i++)
+  for(U64 i = 0; uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
   {
     UIShell_SidebarNode n = {0}; uishell_sidebar_node(state, i, &n);
     if(str8_match(uishell_sidebar_string(n.entity.kind), kind, 0) && str8_match(uishell_sidebar_string(n.entity.id), id, 0))
@@ -430,7 +430,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     UIShell_SidebarNode n = {0}; uishell_sidebar_node(state, i, &n);
     retracted &= !str8_match(uishell_sidebar_string(n.entity.id), tests_id, 0);
   }
-  GroupsCheck(retracted, "a deleted group's entity leaves the core's snapshot");
+  GroupsCheck(retracted, "a deleted group's entity leaves the core's view");
   GroupsCheck(str8_match(uishell_local_groups_title(arena, window, section_id), str8_lit("CI"), 0), "a name you gave the section sticks with one group again");
   uishell_sidebar_local_rename_section(window, section_id, str8_zero());
   GroupsCheck(str8_match(uishell_local_groups_title(arena, window, section_id), str8_lit("Nightly"), 0), "clearing the section's name makes it show its group's again");

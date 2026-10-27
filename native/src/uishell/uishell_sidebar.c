@@ -198,7 +198,7 @@ struct UIShell_SidebarPublished
   String8 entry;
   U64 hash;
 };
-// A section the snapshot declares: its key, the title its Views take (KDL
+// A section the view declares: its key, the title its Views take (KDL
 // owns them: its first field, else its label), and whether it stands aside
 // while empty (the leftover section, uishell_sidebar_leftover_hidden).
 typedef struct UIShell_SectionTitle UIShell_SectionTitle;
@@ -228,14 +228,13 @@ struct UIShell_SidebarState
   String8 records_dir;
   UIShell_SidebarRecord *records;
   U64 records_due;
-  // Snapshots taken (uishell_sidebar_replace_snapshot), and how many had been
-  // when records were last compared with the core's.
-  U64 snapshot_count, records_snapshot_count;
+  // The revision count (below) when records were last compared with the core's.
+  U64 records_revision_count;
   WheelhouseDashboard *dashboard;
   // The Dashboard's local sections, groups and pins, made from `dashboard`
   // (uishell_sidebar_locals). Each read leaves the ones before it valid
   // until the next frame, so an edit can read, change and read again.
-  // Edits sent since the snapshot was last taken set `locals_sent`.
+  // Edits sent since the view last changed set `locals_sent`.
   Arena *locals_arena;
   UIShell_Locals *locals;
   U64 locals_frame;
@@ -243,7 +242,7 @@ struct UIShell_SidebarState
   Arena *labels_arena;
   UIShell_SidebarLabel *labels;
   U64 labels_capacity;
-  WheelhouseSnapshot *labels_snapshot;
+  U64 labels_view;
   UIShell_SidebarSection *sections;
   UIShell_HoverCard cards[2];
   UIShell_HoverCard *detached;
@@ -295,7 +294,7 @@ struct UIShell_SidebarState
   // A group header's ⋯, clicked this build: its menu opens there.
   UI_Key header_more_anchor;
   B32 header_more_open;
-  // A drop or Reset order waits for the end of render, which owns the snapshot.
+  // A drop or Reset order waits for the end of render, which reads the model.
   B32 order_pending;
   String8 order_loop;
   WheelhouseEntity *order;
@@ -345,29 +344,29 @@ struct UIShell_SidebarState
   WheelhouseCore *core;
   // The sidebar as its change stream gives it (uishell_sidebar_model.c):
   // what the rows draw, by preorder index (uishell_sidebar_node_at).
-  // `view_count` counts the deltas applied, for what is cached from rows.
-  // The snapshot beside it, kept current with it, is for diagnostics and
-  // the store syncs until they follow the stream too.
+  // `view_count` counts the deltas applied and the restarts, so what is
+  // cached from rows keys on it. `revision_count` counts the times the core
+  // was seen to change, shown or not: managed content, records and the
+  // store syncs follow that, since what they read needn't be in the view.
   UIShell_SidebarModel model;
   U64 subscription;
   B32 subscribed;
-  U64 view_count;
-  WheelhouseSnapshot *snapshot;
-  // The sections the snapshot declares, with their titles, in its order
-  // (uishell_sidebar_section_titles), cached per snapshot.
+  U64 view_count, revision_count;
+  // The sections the view declares, with their titles, in its order
+  // (uishell_sidebar_section_titles), cached per view count.
   Arena *titles_arena;
-  WheelhouseSnapshot *titles_snapshot;
+  U64 titles_view;
   UIShell_SectionTitle *titles;
   U64 title_count, title_builds;
-  // The snapshot and config gen section Views' labels were last refreshed at.
-  U64 labels_snapshot_count, labels_cfg_gen;
+  // The view count and config gen section Views' labels were last refreshed at.
+  U64 labels_view_count, labels_cfg_gen;
   UI_Key revealed_chip;
   F32 revealed_chip_width;
   U64 revealed_chip_build_index;
   U64 topology_hash;
-  // How the renderer reads each snapshot node (uishell_sidebar_node_at),
-  // cached per snapshot.
-  WheelhouseSnapshot *roles_snapshot;
+  // How the renderer reads each node (uishell_sidebar_node_at), cached per
+  // view count.
+  U64 roles_view;
   Arena *roles_arena;
   U8 *roles;
   String8 *role_keys;
@@ -391,21 +390,21 @@ struct UIShell_SidebarState
   U64 observed_count;
   // Workspace arrangements and Slots in the core (uishell_workspace_store.c):
   // each workspace's arrangement as last committed or followed; the config
-  // gen, arrangement version, content revision and snapshot count last
+  // gen, arrangement version, content revision and revision count last
   // synced; and the calls and commits made, which the behaviour harness
   // counts across a gesture.
   Arena *store_arena;
   UIShell_StoreEntry *store_entries;
   U64 store_entry_count, store_entry_capacity;
   B32 store_synced;
-  U64 store_cfg_gen, store_arrangement_version, store_content_revision, store_snapshot_count;
+  U64 store_cfg_gen, store_arrangement_version, store_content_revision, store_revision_count;
   U64 store_calls, store_commits;
   // What the core last said of the Workspace Overlays (flags, tombstones;
   // uishell_store_read_overlay).
   Arena *store_overlay_arena;
   // The Dashboard's sidebar arrangement in the core (uishell_sidebar_store.c):
   // its arrangements' version as last committed or followed, the document
-  // then, and its generation; the snapshot count last synced; what
+  // then, and its generation; the revision count last synced; what
   // the core's notes say is closed and what no longer resolves (template
   // drift); and the commits made, which the behaviour harness counts across
   // a gesture.
@@ -414,7 +413,7 @@ struct UIShell_SidebarState
   WheelhouseSidebarDoc sidebar_seen;
   B32 sidebar_seen_valid;
   B32 sidebar_synced;
-  U64 sidebar_snapshot_count;
+  U64 sidebar_revision_count;
   Arena *sidebar_notes_arena;
   String8 *sidebar_closed, *sidebar_gone;
   U64 sidebar_closed_count, sidebar_gone_count;
@@ -521,13 +520,31 @@ uishell_sidebar_result(UIShell_SidebarState *state, B32 ok, char *error)
 
 #include "uishell/uishell_managed_content.c"
 
-// Labels contain borrowed snapshot text. Drop them before replacing/releasing
-// that snapshot, even if an allocator subsequently reuses its address.
+// Whether the sidebar has a view to show: the model has had its first delta.
+internal B32
+uishell_sidebar_viewing(UIShell_SidebarState *state)
+{
+  return state->model.arena != 0;
+}
+
+// What the core has to say about the view: its first diagnostic, else its
+// first activation error. Empty when it has nothing.
+internal String8
+uishell_sidebar_notice(Arena *arena, UIShell_SidebarState *state)
+{
+  UIShell_SidebarModel *m = &state->model;
+  if(m->diagnostic_count) { return uishell_sidebar_string(m->diagnostics[0]); }
+  if(!m->error_count) { return str8_zero(); }
+  WheelhouseActivationError e = m->errors[0];
+  return push_str8f(arena, "%S:%S: %S", uishell_sidebar_string(e.entity.kind), uishell_sidebar_string(e.entity.id), uishell_sidebar_string(e.message));
+}
+
+// Labels borrow the model's text, which a delta or a compaction frees.
 internal void
 uishell_sidebar_labels_invalidate(UIShell_SidebarState *state)
 {
-  // Deliberately rebuild O(n) on the next lookup after dispatch; borrow only current snapshot labels.
-  state->labels_snapshot = 0;
+  // Deliberately rebuild O(n) on the next lookup; borrow only the current view's labels.
+  state->labels_view = 0;
   state->labels = 0;
   state->labels_capacity = 0;
   if(state->labels_arena) { arena_clear(state->labels_arena); }
@@ -535,7 +552,7 @@ uishell_sidebar_labels_invalidate(UIShell_SidebarState *state)
 
 
 // Identity alone is the existing display contract (not kind + identity).
-// Insert in snapshot order, retaining the first non-section placement, including
+// Insert in the view's order, retaining the first non-section placement, including
 // an empty label. Font, width, animations and scroll do not affect this lookup.
 internal String8
 uishell_sidebar_context_label(UIShell_SidebarState *state, UIShell_SidebarNode *nodes, U64 count, String8 identity)
@@ -549,7 +566,7 @@ uishell_sidebar_context_label(UIShell_SidebarState *state, UIShell_SidebarNode *
     }
     return identity;
   }
-  if(state->labels_snapshot != state->snapshot || !state->labels)
+  if(state->labels_view != state->view_count || !state->labels)
   {
     uishell_sidebar_labels_invalidate(state);
     if(!state->labels_arena) { state->labels_arena = arena_alloc(); }
@@ -567,7 +584,7 @@ uishell_sidebar_context_label(UIShell_SidebarState *state, UIShell_SidebarNode *
       if(!state->labels[slot].identity.size)
       { state->labels[slot] = (UIShell_SidebarLabel){key, uishell_sidebar_string(nodes[i].label)}; }
     }
-    state->labels_snapshot = state->snapshot;
+    state->labels_view = state->view_count;
   }
   U64 slot = u64_hash_from_str8(identity)&(state->labels_capacity-1);
   while(state->labels[slot].identity.size)
@@ -646,9 +663,9 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     if(state->group_claim_arena) { arena_release(state->group_claim_arena); state->group_claim_arena = 0; }
     if(state->groups_claim_arena) { arena_release(state->groups_claim_arena); state->groups_claim_arena = 0; }
     if(state->roles_arena) { arena_release(state->roles_arena); state->roles_arena = 0; }
-    state->roles_snapshot = 0;
+    state->roles_view = 0;
     if(state->titles_arena) { arena_release(state->titles_arena); state->titles_arena = 0; }
-    state->titles_snapshot = 0;
+    state->titles_view = 0;
     state->titles = 0;
     state->title_count = 0;
     if(state->sidebar_notes_arena) { arena_release(state->sidebar_notes_arena); state->sidebar_notes_arena = 0; }
@@ -667,19 +684,17 @@ uishell_sidebar_release(UIShell_SidebarState *state)
       if(c->label_arena) { arena_release(c->label_arena); }
     }
     state->detached = state->drag_card = 0;
-    wheelhouse_snapshot_release(state->snapshot);
     uishell_sidebar_catalog_clear(state);
     if(state->catalog_arena) { arena_release(state->catalog_arena); state->catalog_arena = 0; }
     uishell_sidebar_model_release(&state->model);
     state->subscribed = 0;
     wheelhouse_destroy(state->core);
-    state->snapshot = 0;
     state->core = 0;
   }
 }
 
 // Generated identities exercise hash collisions and duplicates independently of
-// placement labels. Text remains borrowed until explicit snapshot invalidation.
+// placement labels. Text remains borrowed until the view changes.
 internal B32
 uishell_sidebar_labels_diagnostics(void)
 {
@@ -712,10 +727,10 @@ uishell_sidebar_labels_diagnostics(void)
     String8 actual = uishell_sidebar_context_label(&state, nodes, ArrayCount(nodes), identities[i]);
     ok &= str8_match(expected, actual, 0);
   }
-  // Invalidation must drop borrowed labels even when a snapshot's address is
-  // reused. An empty snapshot and a later repopulation also stay correct.
+  // Invalidation must drop borrowed labels even when the view count comes
+  // round again. An empty view and a later repopulation also stay correct.
   uishell_sidebar_labels_invalidate(&state);
-  ok &= !state.labels && !state.labels_capacity && !state.labels_snapshot;
+  ok &= !state.labels && !state.labels_capacity && !state.labels_view;
   nodes[1].label = uishell_sidebar_text(str8_lit("replacement"));
   ok &= str8_match(uishell_sidebar_context_label(&state, nodes, ArrayCount(nodes), first), str8_lit("replacement"), 0);
   uishell_sidebar_labels_invalidate(&state);
@@ -741,16 +756,16 @@ uishell_sidebar_labels_diagnostics(void)
   return ok;
 }
 
+// Drop the view, to follow the stream again from a new subscription's first
+// delta (a delta that doesn't fit, or a core swapped in).
 internal void
-uishell_sidebar_replace_snapshot(UIShell_SidebarState *state, WheelhouseSnapshot *snapshot)
+uishell_sidebar_restart(UIShell_SidebarState *state)
 {
-  // Invalidate before releasing: the allocator may reuse the snapshot address.
-  state->titles_snapshot = 0;
-  state->roles_snapshot = 0;
+  if(state->subscribed) { wheelhouse_unsubscribe(state->core, state->subscription, 0); }
+  uishell_sidebar_model_release(&state->model);
   uishell_sidebar_labels_invalidate(state);
-  wheelhouse_snapshot_release(state->snapshot);
-  state->snapshot = snapshot;
-  state->snapshot_count++;
+  state->subscribed = 0;
+  state->view_count++;
 }
 
 // Apply what the change stream has. A delta that doesn't fit the model
@@ -767,20 +782,19 @@ uishell_sidebar_follow(UIShell_SidebarState *state)
       state->subscribed = 1;
     }
     if(!wheelhouse_changed_since(state->core, state->subscription, &error)) { uishell_sidebar_result(state, !error, error); return; }
+    state->revision_count++;
+    state->managed_dirty = 1;
     WheelhouseDelta *delta = wheelhouse_poll(state->core, state->subscription, &error);
     if(!delta) { uishell_sidebar_result(state, !error, error); return; }
     B32 applied = uishell_sidebar_model_apply(&state->model, delta);
     wheelhouse_delta_release(delta);
-    // What is cached from rows borrows the model's text.
-    state->titles_snapshot = 0;
-    state->roles_snapshot = 0;
+    // What is cached from rows borrows the model's text. Labels go now, so
+    // their arena doesn't hold the replaced text.
     uishell_sidebar_labels_invalidate(state);
     state->view_count++;
     if(applied) { return; }
     uishell_sidebar_set_error(state, str8_lit("The sidebar's change stream gave a delta that doesn't fit; following it again"));
-    wheelhouse_unsubscribe(state->core, state->subscription, 0);
-    uishell_sidebar_model_release(&state->model);
-    state->subscribed = 0;
+    uishell_sidebar_restart(state);
   }
 }
 
@@ -789,16 +803,6 @@ uishell_sidebar_refresh(UIShell_SidebarState *state)
 {
   uishell_sidebar_follow(state);
   uishell_sidebar_catalog_follow(state);
-  char *error = 0;
-  B32 current = wheelhouse_snapshot_is_current(state->core, state->snapshot, &error);
-  if(error != 0) { uishell_sidebar_result(state, 0, error); return; }
-  if(current) { return; }
-  WheelhouseSnapshot *next = wheelhouse_snapshot_acquire(state->core, &error);
-  if(uishell_sidebar_result(state, next != 0, error))
-  {
-    uishell_sidebar_replace_snapshot(state, next);
-    state->managed_dirty = 1;
-  }
 }
 
 internal U64
@@ -1026,7 +1030,7 @@ uishell_sidebar_local_lives_in(CFG_Node *workspace)
   return cfg_node_child_from_string(workspace, str8_lit("lives_in"))->first->string;
 }
 
-// How the sidebar reads a snapshot node. A `layout="section"` node (a
+// How the sidebar reads a node. A `layout="section"` node (a
 // section someone made) is a section of its own, as a region is, keyed
 // `.section:<id>`; the region holding them is a container that isn't shown;
 // a section's only group passes through, so its items are the section's rows
@@ -1062,12 +1066,12 @@ uishell_sidebar_local_key_id(String8 key)
 internal void
 uishell_sidebar_roles(UIShell_SidebarState *state)
 {
-  if(state->roles_snapshot == state->snapshot) { return; }
+  if(state->roles_view == state->view_count && state->roles_view) { return; }
   if(!state->roles_arena) { state->roles_arena = arena_alloc(); }
   arena_clear(state->roles_arena);
-  state->roles_snapshot = state->snapshot;
+  state->roles_view = state->view_count;
   state->roles_default_section = 0;
-  U64 count = state->snapshot ? uishell_sidebar_node_count(state) : 0;
+  U64 count = uishell_sidebar_viewing(state) ? uishell_sidebar_node_count(state) : 0;
   state->roles = push_array(state->roles_arena, U8, count);
   state->role_keys = push_array(state->roles_arena, String8, count);
   U64 *groups = push_array(state->roles_arena, U64, count);
@@ -1098,7 +1102,7 @@ uishell_sidebar_roles(UIShell_SidebarState *state)
   }
 }
 
-// Whether node `i` has children (they follow it in the snapshot's order).
+// Whether node `i` has children (they follow it in preorder).
 internal B32
 uishell_sidebar_has_children(UIShell_SidebarState *state, U64 i)
 {
@@ -1430,8 +1434,8 @@ uishell_sidebar_group_handle(UIShell_LocalGroup *group)
 { return group ? uishell_sidebar_local_handle(str8_lit(".group"), group->id) : 0; }
 
 //- Changing them. Each change is sent at once, and what reads them next
-// reads the core's Dashboard again. The snapshot is taken again once the
-// rows built from the current one are done (uishell_sidebar_publish).
+// reads the core's Dashboard again. The stream is followed again once the
+// rows built from the current view are done (uishell_sidebar_publish).
 
 typedef struct UIShell_LocalFacts UIShell_LocalFacts;
 struct UIShell_LocalFacts
@@ -1839,7 +1843,7 @@ uishell_sidebar_publish_workspaces(UIShell_SidebarState *state, UIShell_Controll
 }
 
 // Publishes the window's local workspaces, which live in its groups (the
-// default one made first), and takes the snapshot again after edits of the
+// default one made first), and follows the stream again after edits of the
 // local sections, groups and pins.
 internal void
 uishell_sidebar_publish(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
@@ -2220,7 +2224,7 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
 internal U64
 uishell_sidebar_reveal_target(UIShell_SidebarState *state, U64 workspace_id)
 {
-  if(state == 0 || state->snapshot == 0) { return WHEELHOUSE_NONE; }
+  if(state == 0 || !uishell_sidebar_viewing(state)) { return WHEELHOUSE_NONE; }
   U64 result = WHEELHOUSE_NONE, best_depth = 0;
   U64 count = uishell_sidebar_node_count(state);
   for(U64 i = 0; i < count; i++)
@@ -2238,7 +2242,7 @@ uishell_sidebar_reveal_target(UIShell_SidebarState *state, U64 workspace_id)
   return result;
 }
 
-// Use the same occurrence as Reveal. Snapshot labels belong to the placement,
+// Use the same occurrence as Reveal. Node labels belong to the placement,
 // not to the workspace title; the latter is only the unplaced fallback.
 internal String8
 uishell_sidebar_workspace_path(Arena *arena, UIShell_SidebarState *state,
@@ -2445,7 +2449,7 @@ typedef struct UIShell_SidebarRow UIShell_SidebarRow;
 struct UIShell_SidebarRow
 {
   UIShell_SidebarNode node;
-  B32 present;                    // the node is in the snapshot
+  B32 present;                    // the node is in the view
   String8 key;                    // unique suffix for the row's boxes
   String8 text;                   // the label column
   String8 status;
@@ -2853,7 +2857,7 @@ internal B32
 uishell_sidebar_workspace_subject_ended(RD_WindowState *ws, CFG_ID workspace_id)
 {
   UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
-  for(U64 i = 0; state && state->snapshot && i < uishell_sidebar_node_count(state); i++)
+  for(U64 i = 0; state && uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
   {
     UIShell_SidebarNode node = {0}; uishell_sidebar_node(state, i, &node);
     if(!node.is_section && node.state == WHEELHOUSE_LIVE && uishell_sidebar_node_cfg(&node) == workspace_id &&
@@ -4099,7 +4103,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
      !ui_key_match(root->default_nav_focus_hot_key, state->revealed_chip))
   { state->revealed_chip = ui_key_zero(); }
   U64 analysis_start = uishell_sidebar_benchmark_active ? now_time_us() : 0;
-  U64 count = state->snapshot ? uishell_sidebar_node_count(state) : 0;
+  U64 count = uishell_sidebar_viewing(state) ? uishell_sidebar_node_count(state) : 0;
   UIShell_SidebarNode *nodes = push_array(scratch.arena, UIShell_SidebarNode, count);
   B32 *hidden = push_array(scratch.arena, B32, count);
   U64 *depth = push_array(scratch.arena, U64, count);
@@ -4192,7 +4196,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   }
   // One navigation handle per workspace: prefer the deepest selected subject
   // appearance, with stable section order resolving equal-depth duplicates.
-  // nodes follows snapshot section order, then each section's traversal order.
+  // nodes follows the view's section order, then each section's traversal order.
   U64 selected_entry = WHEELHOUSE_NONE;
   for(U64 i = 0; i < count; i++)
   {
@@ -5125,17 +5129,17 @@ uishell_sidebar_section_key(CFG_Node *view)
 }
 
 
-// The sections the snapshot declares, in its order (UIShell_SectionTitle).
+// The sections the view declares, in its order (UIShell_SectionTitle).
 // A container of local sections is not one: they are, in its place. Built
-// once per snapshot.
+// once per view count.
 internal void
 uishell_sidebar_section_titles(UIShell_SidebarState *state)
 {
-  if(state->titles_snapshot == state->snapshot && state->titles_snapshot) { return; }
+  if(state->titles_view == state->view_count && state->titles_view) { return; }
   if(!state->titles_arena) { state->titles_arena = arena_alloc(); }
   else { arena_clear(state->titles_arena); }
   Arena *arena = state->titles_arena;
-  U64 nodes = state->snapshot ? uishell_sidebar_node_count(state) : 0, capacity = 0, count = 0;
+  U64 nodes = uishell_sidebar_viewing(state) ? uishell_sidebar_node_count(state) : 0, capacity = 0, count = 0;
   // Count first so retained storage scales with sections, not all rows.
   for(U64 i = 0; i < nodes; i++)
   {
@@ -5155,7 +5159,7 @@ uishell_sidebar_section_titles(UIShell_SidebarState *state)
     titles[count++] = (UIShell_SectionTitle){push_str8_copy(arena, uishell_sidebar_string(node.key)), push_str8_copy(arena, title),
                                              uishell_sidebar_leftover_hidden(state, i, node)};
   }
-  state->titles_snapshot = state->snapshot;
+  state->titles_view = state->view_count;
   state->titles = titles;
   state->title_count = count;
   state->title_builds++;
@@ -5171,11 +5175,11 @@ uishell_sidebar_section_title(UIShell_SidebarState *state, String8 key)
   return 0;
 }
 
-// Whether `key` is the snapshot's container of local sections.
+// Whether `key` is the view's container of local sections.
 internal B32
 uishell_sidebar_section_container(UIShell_SidebarState *state, String8 key)
 {
-  for(U64 i = 0; state->snapshot && i < uishell_sidebar_node_count(state); i++)
+  for(U64 i = 0; uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
   {
     UIShell_SidebarNode node = {0};
     if(uishell_sidebar_node_at(state, i, &node) == UIShell_SidebarRole_Container && str8_match(uishell_sidebar_string(node.key), key, 0)) { return 1; }
@@ -5190,7 +5194,7 @@ uishell_sidebar_view_hidden(CFG_Node *view)
 {
   if(!str8_match(view->string, str8_lit("sidebar_section"), 0)) { return 0; }
   RD_WindowState *ws = rd_window_state_from_cfg__existing(rd_window_from_cfg(view));
-  if(ws == &rd_nil_window_state || !ws->sidebar || !ws->sidebar->snapshot) { return 0; }
+  if(ws == &rd_nil_window_state || !ws->sidebar || !uishell_sidebar_viewing(ws->sidebar)) { return 0; }
   UIShell_SectionTitle *title = uishell_sidebar_section_title(ws->sidebar, uishell_sidebar_section_key(view));
   return title && title->hidden;
 }
@@ -5256,7 +5260,7 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
 {
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
-  if(!state->snapshot) { return; }
+  if(!uishell_sidebar_viewing(state)) { return; }
   uishell_sidebar_store_load(state, split->owner_cfg);
   uishell_sidebar_close_empty_panels(split->owner_cfg);
   uishell_sidebar_store_labels(state, split->owner_cfg);
@@ -5266,7 +5270,7 @@ uishell_sidebar_dock_layout(UIShell_ControlledSplit *split)
 
 // The Sections menu's Restore: the core places the section by its hints,
 // with an equal share of the dock. A section that has a View is left where
-// it is, and an undeclared one, or one with no snapshot to name it, fails
+// it is, and an undeclared one, or one with no view to name it, fails
 // without changing anything.
 internal B32
 uishell_sidebar_restore_region(UIShell_ControlledSplit *split, String8 key)
@@ -5274,7 +5278,7 @@ uishell_sidebar_restore_region(UIShell_ControlledSplit *split, String8 key)
   RD_WindowState *ws = rd_window_state_from_cfg__existing(split->owner_cfg);
   if(ws == &rd_nil_window_state || !ws->sidebar) { return 0; }
   UIShell_SidebarState *state = ws->sidebar;
-  if(!state->snapshot || !state->core || !uishell_sidebar_section_title(state, key)) { return 0; }
+  if(!uishell_sidebar_viewing(state) || !state->core || !uishell_sidebar_section_title(state, key)) { return 0; }
   if(uishell_sidebar_region_view(split->owner_cfg, key) != &cfg_nil_node) { return 1; }
   B32 restored = uishell_sidebar_store_restore(state, split->owner_cfg, key);
   if(restored) { rd_request_frame(); }
@@ -5588,9 +5592,7 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   UIShell_SidebarState *state = ws->sidebar;
   F32 row_height = floor_f32(ui_top_font_size()*2.2f);
   Vec2F32 dim = dim_2f32(rect);
-  WheelhouseText diagnostic = {0};
-  if(state->snapshot && wheelhouse_snapshot_diagnostic_count(state->snapshot))
-  { wheelhouse_snapshot_diagnostic(state->snapshot, 0, &diagnostic); }
+  String8 diagnostic = uishell_sidebar_notice(ui_build_arena(), state);
   UI_Box *root;
   UI_Focus(UI_FocusKind_On) UI_Rect(rect)
   { root = ui_build_box_from_string(UI_BoxFlag_Clip|UI_BoxFlag_DefaultFocusNav, str8_lit("###sidebar_footer")); }
@@ -5606,7 +5608,7 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
     // must use their own layout, otherwise they inherit a clipped hit area.
     UI_Parent(notice) UI_PrefHeight(ui_pct(1, 1))
     {
-      String8 message = state->error[0] ? str8_cstring((char *)state->error) : state->inspection[0] ? str8_cstring((char *)state->inspection) : uishell_sidebar_string(diagnostic);
+      String8 message = state->error[0] ? str8_cstring((char *)state->error) : state->inspection[0] ? str8_cstring((char *)state->inspection) : diagnostic;
       // The footer survives an empty sidebar. Section restoration
       // must remain reachable after closing the last selector section too.
       UI_Key menu_key = ui_key_from_string(root->key, str8_lit("section_restore_menu"));
@@ -5614,7 +5616,7 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
       if(ui_ctx_menu_is_open(menu_key))
       {
         uishell_sidebar_section_titles(state);
-        for(U64 i = 0; state->snapshot && i < state->title_count; i++)
+        for(U64 i = 0; uishell_sidebar_viewing(state) && i < state->title_count; i++)
         {
           UIShell_SectionTitle region = state->titles[i];
           if(region.hidden || uishell_sidebar_region_view(split->owner_cfg, region.key) != &cfg_nil_node) { continue; }
@@ -5633,7 +5635,7 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
         // The declared sections with no View: those the core records as
         // closed, and any closed since the last commit.
         uishell_sidebar_section_titles(state);
-        for(U64 i = 0; state->snapshot && i < state->title_count; i++)
+        for(U64 i = 0; uishell_sidebar_viewing(state) && i < state->title_count; i++)
         {
           UIShell_SectionTitle region = state->titles[i];
           if(region.hidden || uishell_sidebar_region_view(split->owner_cfg, region.key) != &cfg_nil_node) { continue; }
@@ -5644,7 +5646,7 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
             uishell_sidebar_restore_from_menu(split, region.key);
           }
         }
-        if(!available) UI_TagF("weak") { ui_label(state->snapshot ? str8_lit("All sections are open") : str8_lit("Sections unavailable")); }
+        if(!available) UI_TagF("weak") { ui_label(uishell_sidebar_viewing(state) ? str8_lit("All sections are open") : str8_lit("Sections unavailable")); }
       }
       UI_PrefWidth(ui_text_dim(8, 1))
       {
@@ -5937,7 +5939,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
   RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
   B32 disclosure_ok = uishell_sidebar_disclosure_diagnostics(ws);
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
-  if(state->core == 0 || state->snapshot == 0)
+  if(state->core == 0 || !uishell_sidebar_viewing(state))
   {
     fprintf(stderr, "Sidebar host diagnostics: FAILED (initialization: %s)\n", state->error);
     scratch_end(scratch);
@@ -6009,7 +6011,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = ok && rd_cfg_from_view(tree.root->last->selected_tab) == tools_tab;
     uishell_sidebar_refresh(state);
     // Reveal prefers the nested tree occurrence over Attention, expands its
-    // ancestor through fresh snapshot actions, and emits no host effects.
+    // ancestor through intents, and emits no host effects.
     U64 reveal_target = uishell_sidebar_reveal_target(state, created);
     UIShell_SidebarNode reveal_node = {0}, reveal_parent = {0};
     ok = ok && reveal_target != WHEELHOUSE_NONE &&
@@ -6091,7 +6093,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     uishell_sidebar_observe(state, &split);
     path = uishell_sidebar_workspace_path(scratch.arena, state, created, str8_lit("Local fallback"), 0);
     ok = ok && str8_match(path, str8_lit("Local fallback"), 0);
-    ok = ok && wheelhouse_snapshot_diagnostic_count(state->snapshot) > 0;
+    ok = ok && uishell_sidebar_notice(scratch.arena, state).size > 0;
     B32 latent = 0;
     for(U64 i = 0; i < uishell_sidebar_node_count(state); i++)
     {
@@ -6147,6 +6149,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     ok = uishell_sidebar_result(state, retained_call_ok, error) && ok;
     uishell_sidebar_refresh(state);
     B32 retained_live = 0;
+    activate = (UIShell_SidebarIntent){0};
     for(U64 i = 0; i < uishell_sidebar_node_count(state); i++)
     {
       UIShell_SidebarNode node = {0}; uishell_sidebar_node(state, i, &node);
@@ -6177,6 +6180,23 @@ uishell_sidebar_diagnostics(CFG_Node *window)
     MemoryZeroStruct(state);
     state = uishell_sidebar_init(ws);
     String8 unavailable_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"multi\"}},\"source_id\":\"fixture\",\"set\":{},\"unset\":[\"action.primary.recipe\"]}");
+    // A core change the view doesn't show still moves what follows the core
+    // (managed content, records, the store syncs), and not what follows rows.
+    {
+      uishell_sidebar_refresh(state);
+      U64 views = state->view_count, revisions = state->revision_count;
+      state->managed_dirty = 0;
+      WheelhouseFact unseen = {0};
+      unseen.key = uishell_sidebar_text(str8_lit("diagnostics.unseen"));
+      unseen.kind = WHEELHOUSE_FACT_TEXT;
+      unseen.text = uishell_sidebar_text(str8_lit("x"));
+      error = 0;
+      B32 applied = wheelhouse_apply_entity(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("unshown")),
+        uishell_sidebar_text(str8_lit("x")), uishell_sidebar_text(str8_lit("fixture")), &unseen, 1, &error);
+      ok = uishell_sidebar_result(state, applied, error) && ok;
+      uishell_sidebar_refresh(state);
+      ok = ok && state->view_count == views && state->revision_count == revisions+1 && state->managed_dirty;
+    }
     B32 restore_ok = 1;
     state->inspection[0] = 0;
     for(U64 cycle = 0; cycle < 3; cycle++)
@@ -6220,7 +6240,7 @@ uishell_sidebar_diagnostics(CFG_Node *window)
   return ok;
 }
 
-// Called between frames only: snapshots used by clicks have finished dispatch.
+// Called between frames only: intents from clicks have been applied.
 // A subscription's endpoint (`context`) stamps its patches with that
 // subscription as their provider; the local endpoint's are the host's own. A stale subscription is fresh again once it publishes.
 internal U32

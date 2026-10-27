@@ -8,7 +8,7 @@
 internal B32
 uishell_workspace_lifecycle_find(UIShell_SidebarState *state, String8 entity_id, CFG_ID workspace_id, UIShell_SidebarNode *out)
 {
-  for(U64 i = 0; state->snapshot && i < uishell_sidebar_node_count(state); i++)
+  for(U64 i = 0; uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
   {
     UIShell_SidebarNode node = {0}; uishell_sidebar_node(state, i, &node);
     if(node.is_section) { continue; }

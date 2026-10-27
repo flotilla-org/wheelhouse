@@ -749,7 +749,7 @@ uishell_sidebar_docking_diagnostics(RD_WindowState *ws)
   rd_dock_restore_window(window);
   DockFailure(!rd_panel_address_match(rd_panel_from_cfg(view), recovered_panel) || uishell_sidebar_docking_gen() != recovered_gen);
   // A display value crosses to a new core instance in the core's dashboard
-  // record, imported before the first snapshot as at startup.
+  // record, imported before the first delta as at startup.
   UIShell_SidebarState display = {0};
   String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
   char *error = 0;
@@ -1001,10 +1001,7 @@ uishell_section_placement_use(UIShell_SectionPlacement *p, CFG_Node *window, Whe
   UIShell_SidebarState *s = &p->sidebar;
   if(core != s->core)
   {
-    uishell_sidebar_replace_snapshot(s, 0);
-    if(s->subscribed) { wheelhouse_unsubscribe(s->core, s->subscription, 0); }
-    uishell_sidebar_model_release(&s->model);
-    s->subscribed = 0;
+    uishell_sidebar_restart(s);
     wheelhouse_destroy(s->core);
     s->core = core;
     s->sidebar_synced = 0; s->sidebar_version = s->sidebar_generation = 0;
@@ -1439,10 +1436,10 @@ uishell_section_placement_diagnostics(String8 source_path)
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("y"))->id == kept_y_id && uishell_sidebar_section_gone(&p.sidebar, str8_lit("y")));
   // A provider outage changes nothing.
   CFG_Node *x = uishell_sidebar_region_view(restored, str8_lit("x"));
-  WheelhouseSnapshot *saved_snapshot = p.sidebar.snapshot; p.sidebar.snapshot = 0;
+  UIShell_SidebarModel saved_model = p.sidebar.model; MemoryZeroStruct(&p.sidebar.model);
   generation = uishell_sidebar_docking_gen(); uishell_sidebar_dock_layout(&p.split);
   PlacementCheck(uishell_sidebar_docking_gen() == generation && uishell_sidebar_region_view(restored, str8_lit("x")) == x);
-  p.sidebar.snapshot = saved_snapshot;
+  p.sidebar.model = saved_model;
   // Closing every section leaves the dock empty across a restart.
   String8 only_x = str8_lit("region \"x\" root-template=\"flotilla/region/tree\"\n");
   PlacementCheck(uishell_section_placement_configure(&p, only_x));
@@ -1456,19 +1453,19 @@ uishell_section_placement_diagnostics(String8 source_path)
   restored = p.window;
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit("x")) == &cfg_nil_node);
   PlacementCheck(uishell_sidebar_region_view(restored, str8_lit(".unplaced")) == &cfg_nil_node);
-  // Restore needs the snapshot and the window's sidebar; with them, the
+  // Restore needs the view and the window's sidebar; with them, the
   // section goes to the dock, not into a child Workspace level.
   CFG_Node *child = cfg_node_new(state.cfg, restored, str8_lit("workspace"));
   RD_PanelOwner child_owner = rd_fixture_owner(child);
   rd_fixture_leaf(child_owner);
   uishell_section_placement_frame(&p);
-  saved_snapshot = p.sidebar.snapshot; p.sidebar.snapshot = 0;
+  saved_model = p.sidebar.model; MemoryZeroStruct(&p.sidebar.model);
   generation = uishell_sidebar_docking_gen();
   PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("x")) && uishell_sidebar_docking_gen() == generation);
   p.ws.sidebar = 0;
   PlacementCheck(!uishell_sidebar_restore_region(&p.split, str8_lit("x")) && uishell_sidebar_docking_gen() == generation);
   p.ws.sidebar = &p.sidebar;
-  p.sidebar.snapshot = saved_snapshot;
+  p.sidebar.model = saved_model;
   PlacementCheck(uishell_sidebar_restore_region(&p.split, str8_lit("x")));
   x = uishell_sidebar_region_view(restored, str8_lit("x"));
   PlacementCheck(uishell_sidebar_docking_valid(x));
@@ -1506,8 +1503,7 @@ uishell_section_placement_diagnostics(String8 source_path)
     PlacementCheck(abs_f32(rd_arrangement_panel_from_id(dock, ordinary_panel)->weight-.5f) < .00001f);
     PlacementCheck(abs_f32(rd_arrangement_panel_from_id(dock, uishell_section_placement_panel(restored, x))->weight-.5f) < .00001f);
   }
-  uishell_sidebar_replace_snapshot(&p.sidebar, 0);
-  uishell_sidebar_model_release(&p.sidebar.model);
+  uishell_sidebar_restart(&p.sidebar);
   wheelhouse_destroy(p.sidebar.core);
   if(p.sidebar.titles_arena) { arena_release(p.sidebar.titles_arena); }
   if(p.sidebar.roles_arena) { arena_release(p.sidebar.roles_arena); }

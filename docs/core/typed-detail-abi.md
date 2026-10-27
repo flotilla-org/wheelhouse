@@ -90,8 +90,8 @@ A card's actions are intents on its entity, applied with
 `wheelhouse_apply_intent`, so there is no stale action index: a host that
 queues an action keeps its entity and intent name, and matches them against a
 current card when it acts. Native keeps the cards it asked for until the first,
-the oldest, is no longer current. The snapshot detail exports below remain
-until native stops acquiring snapshots (PR 5.5).
+the oldest, is no longer current. Native no longer reads the snapshot detail
+exports below; they remain for the ABI's own tests until those move to cards.
 
 ### Snapshot details
 

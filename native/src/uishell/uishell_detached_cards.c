@@ -628,7 +628,7 @@ uishell_sidebar_detached_apply(RD_WindowState *ws, UIShell_HoverCard *card)
     if(placement == UIShell_CardPlacement_Inline)
     {
       c->source_row = c->source_key;
-      for(U64 i = 0; ws->sidebar->snapshot && i < uishell_sidebar_node_count(ws->sidebar); i++)
+      for(U64 i = 0; uishell_sidebar_viewing(ws->sidebar) && i < uishell_sidebar_node_count(ws->sidebar); i++)
       {
         UIShell_SidebarNode node = {0}; uishell_sidebar_node(ws->sidebar, i, &node);
         if(str8_match(c->source_key, uishell_sidebar_string(node.key), 0) &&
@@ -745,7 +745,7 @@ uishell_sidebar_group_order(UIShell_SidebarState *state, WheelhouseEntity placed
 }
 
 // A row's release in its sibling run saves the run's full new order, which
-// render applies (it owns the snapshot).
+// render applies (it reads the model).
 internal void
 uishell_sidebar_reorder_commit(UIShell_SidebarState *state)
 {
@@ -980,7 +980,7 @@ uishell_sidebar_detached_finish(RD_WindowState *ws)
     if(c->placement == UIShell_CardPlacement_Inline && c->open)
     {
       B32 present = 0;
-      for(U64 i = 0; ws->sidebar->snapshot && i < uishell_sidebar_node_count(ws->sidebar); i++)
+      for(U64 i = 0; uishell_sidebar_viewing(ws->sidebar) && i < uishell_sidebar_node_count(ws->sidebar); i++)
       {
         UIShell_SidebarNode node = {0}; uishell_sidebar_node(ws->sidebar, i, &node);
         if(str8_match(c->source_key, uishell_sidebar_string(node.key), 0)) { present = 1; break; }

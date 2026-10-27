@@ -74,7 +74,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
   wheelhouse_string_free(error);
   uishell_sidebar_refresh(&state);
   UIShell_SidebarIntent activate = {0};
-  for(U64 i = 0; state.snapshot && i < uishell_sidebar_node_count(&state); i++)
+  for(U64 i = 0; i < uishell_sidebar_node_count(&state); i++)
   {
     UIShell_SidebarNode node = {0};
     if(uishell_sidebar_node(&state, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
@@ -192,18 +192,15 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     wheelhouse_apply_entity(opened.core, 4, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("role")),
       uishell_sidebar_text(str8_lit("p/governor")), uishell_sidebar_text(str8_lit("fixture")), facts, 3, &error);
     wheelhouse_string_free(error);
-    error = 0;
-    WheelhouseSnapshot *snapshot = wheelhouse_snapshot_acquire(opened.core, &error);
-    wheelhouse_string_free(error);
-    size_t activate = WHEELHOUSE_NONE;
-    for(U64 i = 0; snapshot && i < wheelhouse_snapshot_node_count(snapshot); i++)
+    uishell_sidebar_refresh(&opened);
+    UIShell_SidebarIntent activate = {0};
+    for(U64 i = 0; i < uishell_sidebar_node_count(&opened); i++)
     {
-      WheelhouseNode node = {0};
-      if(wheelhouse_snapshot_node(snapshot, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
-      { activate = node.activate; }
+      UIShell_SidebarNode node = {0};
+      if(uishell_sidebar_node(&opened, i, &node) && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("role"), 0))
+      { activate = uishell_sidebar_activate_intent(node); }
     }
-    ManagedCheck(activate != WHEELHOUSE_NONE && wheelhouse_dispatch(opened.core, snapshot, activate, 0), "role entry dispatches its opening");
-    wheelhouse_snapshot_release(snapshot);
+    ManagedCheck(uishell_sidebar_intend(&opened, activate, 0), "role entry dispatches its opening");
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_effects(&opened, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
@@ -224,6 +221,7 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
                  str8_match(rd_expr_from_cfg(role_view), str8_lit("printf C; read answer"), 0),
                  "first plan for freshly opened content is current, without restarting it");
     wheelhouse_slot_plan_free(plan);
+    uishell_sidebar_model_release(&opened.model);
     wheelhouse_destroy(opened.core);
     cfg_node_release(rd_state->cfg, role_workspace);
   }

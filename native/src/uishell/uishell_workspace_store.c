@@ -2805,10 +2805,10 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
   U64 revision = UIShell_StoreCall(state, wheelhouse_workspace_content_revision(state->core, &error));
   wheelhouse_string_free(error);
   B32 revision_moved = state->store_synced && revision != state->store_content_revision;
-  // A new snapshot can mean a workspace the core didn't know has registered
+  // A core change can mean a workspace the core didn't know has registered
   // (a subject's, once it opened), which then commits. An arrangement set,
   // or a View's config edited, can be a change to commit.
-  if(state->store_synced && cfg_change_gen() == state->store_cfg_gen && state->snapshot_count == state->store_snapshot_count &&
+  if(state->store_synced && cfg_change_gen() == state->store_cfg_gen && state->revision_count == state->store_revision_count &&
      !revision_moved && rd_state->arrangement_version == state->store_arrangement_version)
   {
     scratch_end(scratch);
@@ -2833,7 +2833,7 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
   state->store_synced = 1;
   state->store_cfg_gen = cfg_change_gen();
   state->store_arrangement_version = rd_state->arrangement_version;
-  state->store_snapshot_count = state->snapshot_count;
+  state->store_revision_count = state->revision_count;
   state->store_content_revision = UIShell_StoreCall(state, wheelhouse_workspace_content_revision(state->core, 0));
   scratch_end(scratch);
 }

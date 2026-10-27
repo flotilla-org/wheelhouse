@@ -394,7 +394,7 @@ uishell_sidebar_store_notes(UIShell_SidebarState *state, WheelhouseSidebarArrang
   }
 }
 
-// Reads the core's notes again: what resolves follows the snapshot, and the
+// Reads the core's notes again: what resolves follows the core, and the
 // document's generation doesn't move when nothing in it did.
 internal void
 uishell_sidebar_store_read_notes(UIShell_SidebarState *state)
@@ -780,7 +780,7 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
   if(!state->core || !state->window || window->id != state->window) { return; }
   if(!force && uishell_store_gesture_in_flight()) { return; }
   Temp scratch = scratch_begin(0, 0);
-  B32 snapshot = state->snapshot_count != state->sidebar_snapshot_count;
+  B32 moved = state->revision_count != state->sidebar_revision_count;
   uishell_sidebar_store_load(state, window);
   B32 marked = cfg_node_child_from_string(window, str8_lit("sidebar_generation")) != &cfg_nil_node;
   // Arrangements set since, but set back, haven't changed.
@@ -798,8 +798,8 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
   B32 followed = 0;
   if(marked && generation != state->sidebar_generation && uishell_sidebar_store_version(window) == state->sidebar_version)
   { followed = uishell_sidebar_store_follow(state, window); }
-  // What resolves follows the snapshot even when the document doesn't move.
-  B32 notes = followed || snapshot || !state->sidebar_synced;
+  // What resolves follows the core even when the document doesn't move.
+  B32 notes = followed || moved || !state->sidebar_synced;
   if(!followed && notes) { uishell_sidebar_store_read_notes(state); }
   if(notes) { uishell_sidebar_store_drop_containers(state, window); }
   if(marked)
@@ -851,7 +851,7 @@ uishell_sidebar_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 fo
   }
   scratch_end(scratch);
   state->sidebar_synced = 1;
-  state->sidebar_snapshot_count = state->snapshot_count;
+  state->sidebar_revision_count = state->revision_count;
 }
 
 //- Menu commands
@@ -904,11 +904,11 @@ uishell_sidebar_reset_regions(CFG_Node *window)
 //- Labels
 
 // KDL owns section titles: each section View's label follows its section's,
-// checked once per snapshot or config change.
+// checked once per view or config change.
 internal void
 uishell_sidebar_store_labels(UIShell_SidebarState *state, CFG_Node *window)
 {
-  if(!state->snapshot || (state->labels_snapshot_count == state->snapshot_count && state->labels_cfg_gen == cfg_change_gen())) { return; }
+  if(!uishell_sidebar_viewing(state) || (state->labels_view_count == state->view_count && state->labels_cfg_gen == cfg_change_gen())) { return; }
   Temp scratch = scratch_begin(0, 0);
   CFG_NodePtrList views = rd_view_namespace_views(scratch.arena, window, RD_ViewOwnerKind_Dashboard);
   for(CFG_NodePtrNode *n = views.first; n; n = n->next)
@@ -921,7 +921,7 @@ uishell_sidebar_store_labels(UIShell_SidebarState *state, CFG_Node *window)
     cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("label")), title->title);
   }
   scratch_end(scratch);
-  state->labels_snapshot_count = state->snapshot_count;
+  state->labels_view_count = state->view_count;
   state->labels_cfg_gen = cfg_change_gen();
 }
 

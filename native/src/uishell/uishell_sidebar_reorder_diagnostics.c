@@ -109,7 +109,7 @@ uishell_sidebar_reorder_gesture(RD_WindowState *ws, UIShell_ControlledSplit *spl
   UI_State *test_ui = ui_state_alloc(); ui_select_state(test_ui);
   UI_IconInfo icons = ws->ui->icon_info; UI_AnimationInfo animation = {0};
   Vec2F32 start = v2f32(-100, -100), pointer = start;
-  // Rendering refreshes the snapshot, so keys are copied.
+  // Rendering follows the stream, so keys are copied.
   Temp scratch = scratch_begin(0, 0);
   String8 key = push_str8_copy(scratch.arena, uishell_sidebar_string(uishell_sidebar_reorder_node(state, id).key));
   String8 to_key = to_id.size ? push_str8_copy(scratch.arena, uishell_sidebar_string(uishell_sidebar_reorder_node(state, to_id).key)) : str8_zero();

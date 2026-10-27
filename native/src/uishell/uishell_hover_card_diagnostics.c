@@ -513,7 +513,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       start = end+1;
     }
     uishell_sidebar_refresh(&fixture);
-    CardCheck(fixture.snapshot != 0, "render snapshot exists");
+    CardCheck(uishell_sidebar_viewing(&fixture), "the sidebar has a view");
     CardCheck(fixture.catalog_count == 0,
               "refresh without live cards resolves no catalog details");
     U64 index = WHEELHOUSE_NONE; UIShell_SidebarNode live = {0};
@@ -958,7 +958,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       if(subscribed.core) { uishell_sidebar_refresh(&subscribed); }
       WheelhouseEntity project = uishell_sidebar_entity(provider, str8_lit("project"), str8_lit("p"));
       UIShell_SidebarNode row = {0}; B32 has_row = 0;
-      for(U64 i = 0; subscribed.snapshot && i < uishell_sidebar_node_count(&subscribed) && !has_row; i++)
+      for(U64 i = 0; uishell_sidebar_viewing(&subscribed) && i < uishell_sidebar_node_count(&subscribed) && !has_row; i++)
       {
         uishell_sidebar_node(&subscribed, i, &row);
         has_row = !row.is_section && uishell_sidebar_card_entity_match(row.entity, project);
@@ -1084,7 +1084,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   fprintf(stderr, "Hover card diagnostics: detached lifecycle\n");
   // Detached lifecycle and saved-layout round-trip use the same transitions
   // that the move controls request. No KDL or producer data is edited.
-  if(fixture.snapshot)
+  if(uishell_sidebar_viewing(&fixture))
   {
     UIShell_SidebarNode entity = {0};
     for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
@@ -1339,7 +1339,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     uishell_sidebar_card_wm_event(ws, &overlap);
     CardCheck(top->focused && !original->focused && !pinned->focused, "float owns clicks above transient and pinned cards");
     uishell_sidebar_card_close(top);
-    WheelhouseSnapshot *snapshot = fixture.snapshot; fixture.snapshot = 0;
+    UIShell_SidebarModel model = fixture.model; MemoryZeroStruct(&fixture.model);
     UI_EventList absent_events = {0}; ui_begin_build(ws->os, &absent_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     MemoryZeroArray(test->hover_card_keys); test->hover_card_extra = 0;
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12) UI_PrefWidth(ui_px(280, 1)) UI_PrefHeight(ui_em(1.6f, 1))
@@ -1349,7 +1349,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
     { absent |= str8_match(ui_box_display_string(b), str8_lit("No longer present"), 0); }
     CardCheck(absent && pinned->open && uishell_sidebar_pin_by_ghost(window, saved_ghost), "missing subject retains pinned card with an explicit marker");
-    fixture.snapshot = snapshot;
+    fixture.model = model;
     String8 area = center_area;
     // Dragged through the shared finish to a docking site below its panel.
     // The site's split command and sizing are undone below for later checks.
@@ -1499,7 +1499,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         ui_end_build();
         // The ghost's tree row is keyed by its placement.
         String8 node_key = str8_zero();
-        for(U64 i = 0; fixture.snapshot && i < uishell_sidebar_node_count(&fixture); i++)
+        for(U64 i = 0; uishell_sidebar_viewing(&fixture) && i < uishell_sidebar_node_count(&fixture); i++)
         {
           UIShell_SidebarNode n = {0}; uishell_sidebar_node(&fixture, i, &n);
           if(str8_match(uishell_sidebar_string(n.entity.id), ghost_guid, 0)) { node_key = push_str8_copy(ghost_scratch.arena, uishell_sidebar_string(n.key)); }
@@ -2246,7 +2246,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_publish(&fixture, &drop_split);
       uishell_sidebar_refresh(&fixture);
       String8 loop = str8_zero();
-      for(U64 i = 0; fixture.snapshot && i < uishell_sidebar_node_count(&fixture); i++)
+      for(U64 i = 0; uishell_sidebar_viewing(&fixture) && i < uishell_sidebar_node_count(&fixture); i++)
       {
         UIShell_SidebarNode n = {0}; uishell_sidebar_node(&fixture, i, &n);
         if(str8_match(uishell_sidebar_string(n.entity.id), ghosts[0], 0)) { loop = push_str8_copy(scratch.arena, uishell_sidebar_loop_key(&fixture, i)); }

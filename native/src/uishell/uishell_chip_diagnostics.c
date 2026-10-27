@@ -24,7 +24,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     start = end+1;
   }
   uishell_sidebar_refresh(&fixture);
-  if(!ok || !fixture.snapshot)
+  if(!ok || !uishell_sidebar_viewing(&fixture))
   {
     uishell_sidebar_release(&fixture); ui_state_release(test); scratch_end(scratch);
     fprintf(stderr, "Chip sidebar diagnostics: FAILED (fixture patches)\n");
@@ -359,7 +359,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     }
     // Restore subjects and cancel the synthetic pending request for next width.
     uishell_sidebar_release(&fixture);
-    fixture.core = 0; fixture.snapshot = 0;
+    fixture.core = 0;
     fixture.core = wheelhouse_create(config.str, config.size, 0);
     if(!fixture.core) { ok = 0; break; }
     for(U64 start = 0; start < patches.size;)
@@ -370,7 +370,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     }
     uishell_sidebar_refresh(&fixture);
   }
-  if(fixture.core && fixture.snapshot)
+  if(fixture.core && uishell_sidebar_viewing(&fixture))
   {
     // Simulate a template with stale activity presentation. The core's retained
     // terminal status still wins, including pending glyphs and menu labels.
@@ -380,7 +380,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
       str8_prefix(config, activity_at), str8_skip(config, activity_at+activity_field.size));
     ok = activity_at < config.size && wheelhouse_configure(fixture.core, uishell_sidebar_text(stale_config), 0) && ok;
     uishell_sidebar_refresh(&fixture);
-    for(U64 i = 0; fixture.snapshot && i < uishell_sidebar_node_count(&fixture); i++)
+    for(U64 i = 0; uishell_sidebar_viewing(&fixture) && i < uishell_sidebar_node_count(&fixture); i++)
     {
       UIShell_SidebarNode node = {0}; uishell_sidebar_node(&fixture, i, &node);
       if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("chip-v"), 0))

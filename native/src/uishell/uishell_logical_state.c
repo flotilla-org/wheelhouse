@@ -1,5 +1,5 @@
 // The logical state as text (uishell_logical_state.h). It reads the config
-// tree, each window's current core snapshot and dashboard record, and
+// tree, each window's current sidebar view and dashboard record, and
 // what its workspace store last read of each Workspace Overlay, and changes
 // none of them, so it can run between any two commands.
 //
@@ -278,7 +278,7 @@ uishell_logical_section_title(UIShell_SidebarState *state, UIShell_SidebarNode n
 internal String8
 uishell_logical_section_key_title(Arena *arena, UIShell_SidebarState *state, CFG_Node *window, String8 key)
 {
-  for(U64 i = 0; state && state->snapshot && i < uishell_sidebar_node_count(state); i++)
+  for(U64 i = 0; state && uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
   {
     UIShell_SidebarNode node = {0};
     uishell_sidebar_node_at(state, i, &node);
@@ -441,7 +441,7 @@ uishell_logical_sidebar(UIShell_LogicalText *t, U64 depth, CFG_Node *window)
   RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
   UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
   uishell_logical_linef(t, depth, "sidebar");
-  if(!state || !state->snapshot) { uishell_logical_linef(t, depth+1, "unavailable"); }
+  if(!state || !uishell_sidebar_viewing(state)) { uishell_logical_linef(t, depth+1, "unavailable"); }
   else
   {
     uishell_logical_display(t, depth+1, state);

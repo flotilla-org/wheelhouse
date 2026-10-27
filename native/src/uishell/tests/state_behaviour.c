@@ -285,7 +285,7 @@ state_open_window(UI_Theme *theme)
   ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
   ui_end_build();
   UIShell_SidebarState *state = uishell_sidebar_init(ws);
-  StateCheck(state->core != 0 && state->snapshot != 0);
+  StateCheck(state->core != 0 && uishell_sidebar_viewing(state));
   state_producer(state);
   if(state_draw_sidebar)
   {
@@ -341,7 +341,7 @@ state_restart(RD_WindowState *ws, UI_Theme *theme, String8 dashboard)
 internal B32
 state_find(UIShell_SidebarState *state, String8 kind, String8 id, UIShell_SidebarNode *out)
 {
-  for(U64 i = 0; state->snapshot && i < uishell_sidebar_node_count(state); i++)
+  for(U64 i = 0; uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
   {
     UIShell_SidebarNode node = {0};
     uishell_sidebar_node(state, i, &node);
@@ -356,7 +356,7 @@ state_find(UIShell_SidebarState *state, String8 kind, String8 id, UIShell_Sideba
 internal U64
 state_find_local(UIShell_SidebarState *state, String8 label)
 {
-  for(U64 i = 0; state->snapshot && i < uishell_sidebar_node_count(state); i++)
+  for(U64 i = 0; uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
   {
     UIShell_SidebarNode node = {0};
     uishell_sidebar_node(state, i, &node);
@@ -410,7 +410,7 @@ internal U64
 state_count_from(UIShell_SidebarState *state, String8 kind, String8 id, String8 provider, B32 *stale)
 {
   U64 count = 0;
-  for(U64 i = 0; state->snapshot && i < uishell_sidebar_node_count(state); i++)
+  for(U64 i = 0; uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
   {
     UIShell_SidebarNode node = {0};
     uishell_sidebar_node(state, i, &node);

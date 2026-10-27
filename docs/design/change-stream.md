@@ -70,7 +70,7 @@ Stacked:
    2. Rows and sections render from the model; the chip parser goes, for `presents=`.
    3. Activation and toggles are intents by key; snapshot action indices leave native's rows. Whether a subject has a URL is node content (`has_url`), so Copy URL is offered from the model. 2 and 3 land as one PR; hover cards keep detail action indices until 4.
    4. Hover cards ask the core for one entity's card (`wheelhouse_card_acquire`), whose actions are intents on its entity.
-   5. Diagnostics that build snapshots by hand build deltas; the sidebar stops acquiring snapshots.
+   5. Diagnostics that build snapshots by hand build deltas; the sidebar stops acquiring snapshots. What native caches from rows keys on the count of deltas it has applied; managed content, records and the store syncs follow the times the core changed, shown or not; diagnostics and activation errors come from the model. Snapshots stay in native only as the model diagnostics' oracle.
 
 ## Decided
 

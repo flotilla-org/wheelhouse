@@ -27,7 +27,7 @@ uishell_sidebar_git_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *spl
     if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit("worktree"), 0))
     { worktrees++; ok = ok && node.state == WHEELHOUSE_LATENT; }
   }
-  ok = ok && repos == 2 && worktrees == 4 && wheelhouse_snapshot_diagnostic_count(fixture.snapshot) == 0;
+  ok = ok && repos == 2 && worktrees == 4 && !fixture.model.diagnostic_count && !fixture.model.error_count;
   ws->sidebar = &fixture;
   ui_select_state(test);
   for(U32 width_index = 0; width_index < 2; width_index++)
