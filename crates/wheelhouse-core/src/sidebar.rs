@@ -1283,7 +1283,10 @@ impl Sidebar {
     }
 
     /// Follow the sidebar's changes: the first [`poll`](Self::poll) gives
-    /// everything, and each after it what changed since the one before.
+    /// everything, and each after it what changed since the one before. A
+    /// subscription holds the surface it last delivered until
+    /// [`unsubscribe`](Self::unsubscribe), so a frontend that stops following
+    /// unsubscribes.
     pub fn subscribe(&mut self) -> SubscriptionId {
         let id = SubscriptionId(self.next_subscription);
         self.next_subscription += 1;

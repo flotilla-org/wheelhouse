@@ -274,7 +274,7 @@ impl StreamView {
     }
 }
 
-pub fn apply_list<K>(list: &mut Vec<K>, ops: &[ListOp<K>]) -> Result<(), String>
+pub(crate) fn apply_list<K>(list: &mut Vec<K>, ops: &[ListOp<K>]) -> Result<(), String>
 where
     K: Clone,
 {
@@ -297,7 +297,7 @@ where
 /// Operations that turn `before` into `after`, both lists of distinct keys.
 /// Keys in both keep their place where they can: the longest run already in
 /// order stays put, and only the others move, each at most twice.
-pub fn list_ops<K>(before: &[K], after: &[K]) -> Vec<ListOp<K>>
+pub(crate) fn list_ops<K>(before: &[K], after: &[K]) -> Vec<ListOp<K>>
 where
     K: Clone + Eq + Hash,
 {

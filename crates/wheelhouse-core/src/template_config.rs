@@ -1826,6 +1826,7 @@ impl DetailRole {
 #[serde(rename_all = "kebab-case")]
 pub enum Presents {
     Status,
+    /// Set by a field whose value is exactly `true`.
     Attention,
     Icon,
     ShortLabel,
