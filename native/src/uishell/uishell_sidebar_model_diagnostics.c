@@ -135,6 +135,14 @@ uishell_sidebar_model_follow(Arena *arena, UIShell_SidebarModelRun *run, char *s
   wheelhouse_delta_release(delta);
   String8 mismatch = applied ? uishell_sidebar_model_mismatch(arena, &run->model, run->core) : str8_lit("the delta doesn't fit");
   if(mismatch.size) { fprintf(stderr, "FAIL sidebar model after %s: %.*s\n", step, str8_varg(mismatch)); run->failures++; }
+  // What the model counts as live or garbage is what it took of its arena,
+  // less the arena's header and alignment, so compaction comes on time.
+  if(applied)
+  {
+    U64 pos = arena_pos(run->model.arena), counted = run->model.live+run->model.garbage;
+    if(counted > pos || pos-counted > 512+pos/128)
+    { fprintf(stderr, "FAIL sidebar model after %s: %llu bytes counted of %llu used\n", step, (unsigned long long)counted, (unsigned long long)pos); run->failures++; }
+  }
 }
 
 internal void

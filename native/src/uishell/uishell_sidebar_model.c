@@ -71,12 +71,17 @@ struct UIShell_SidebarModel
   UIShell_SidebarModelSection **order;
   U64 order_count;
   U64 order_capacity;
+  // Each list with its text, replaced whole; *_bytes is what it takes of
+  // the arena.
   WheelhouseDisplayVariable *variables;
   U64 variable_count;
+  U64 variables_bytes;
   WheelhouseText *diagnostics;
   U64 diagnostic_count;
+  U64 diagnostics_bytes;
   WheelhouseActivationError *errors;
   U64 error_count;
+  U64 errors_bytes;
   UIShell_SidebarModelNode **preorder;
   U64 preorder_count;
   B32 preorder_dirty;
@@ -185,6 +190,7 @@ uishell_sidebar_model_add_section(UIShell_SidebarModel *model, UIShell_SidebarMo
     UIShell_SidebarModelSection **sections = push_array(model->arena, UIShell_SidebarModelSection *, capacity);
     if(model->section_count) { MemoryCopy(sections, model->sections, model->section_count*sizeof(*sections)); }
     model->garbage += model->section_capacity*sizeof(*sections);
+    model->live += (capacity-model->section_capacity)*sizeof(*sections);
     model->sections = sections; model->section_capacity = capacity;
   }
   model->sections[model->section_count++] = section;
@@ -304,6 +310,7 @@ uishell_sidebar_model_order_ops(UIShell_SidebarModel *model, const WheelhouseDel
         v = push_array(model->arena, UIShell_SidebarModelSection *, capacity);
         if(model->order_count) { MemoryCopy(v, model->order, model->order_count*sizeof(*v)); }
         model->garbage += model->order_capacity*sizeof(*v);
+        model->live += (capacity-model->order_capacity)*sizeof(*v);
         model->order = v; model->order_capacity = capacity;
       }
       MemoryCopy(v+l.at+1, v+l.at, (model->order_count-l.at)*sizeof(*v));
@@ -357,6 +364,9 @@ uishell_sidebar_model_upsert(UIShell_SidebarModel *model, const WheelhouseDelta 
       uishell_sidebar_model_add_section(model, section);
       model->live += sizeof(*section)+sizeof(*section->node)+name.size;
     }
+    // The core doesn't remove and re-add a section in one delta, but if it
+    // did the section would stay.
+    section->removed = 0;
     node = section->node;
   }
   else if(ok && section)
@@ -419,6 +429,7 @@ uishell_sidebar_model_compact(UIShell_SidebarModel *model)
   model->sections = 0; model->section_count = model->section_capacity = 0;
   model->order = push_array(model->arena, UIShell_SidebarModelSection *, Max(8, old.order_count));
   model->order_capacity = Max(8, old.order_count);
+  model->live += model->order_capacity*sizeof(*model->order);
   model->order_count = 0;
   // Between deltas every section is in the order.
   for(U64 s = 0; s < old.order_count; s++)
@@ -432,6 +443,7 @@ uishell_sidebar_model_compact(UIShell_SidebarModel *model)
     uishell_sidebar_model_add_section(model, section);
     model->order[model->order_count++] = section;
   }
+  U64 start = arena_pos(model->arena);
   WheelhouseDisplayVariable *variables = push_array(model->arena, WheelhouseDisplayVariable, old.variable_count);
   for(U64 i = 0; i < old.variable_count; i++)
   {
@@ -443,14 +455,20 @@ uishell_sidebar_model_compact(UIShell_SidebarModel *model)
     variables[i] = v;
   }
   model->variables = variables;
+  model->variables_bytes = arena_pos(model->arena)-start;
+  start = arena_pos(model->arena);
   model->diagnostics = push_array(model->arena, WheelhouseText, old.diagnostic_count);
   for(U64 i = 0; i < old.diagnostic_count; i++) { model->diagnostics[i] = uishell_sidebar_model_text(model->arena, old.diagnostics[i]); }
+  model->diagnostics_bytes = arena_pos(model->arena)-start;
+  start = arena_pos(model->arena);
   model->errors = push_array(model->arena, WheelhouseActivationError, old.error_count);
   for(U64 i = 0; i < old.error_count; i++)
   {
     model->errors[i].entity = uishell_sidebar_model_entity(model->arena, old.errors[i].entity);
     model->errors[i].message = uishell_sidebar_model_text(model->arena, old.errors[i].message);
   }
+  model->errors_bytes = arena_pos(model->arena)-start;
+  model->live += model->variables_bytes+model->diagnostics_bytes+model->errors_bytes;
   model->preorder = 0; model->preorder_count = 0;
   model->preorder_dirty = 1;
   model->compactions++;
@@ -509,7 +527,9 @@ uishell_sidebar_model_apply(UIShell_SidebarModel *model, const WheelhouseDelta *
       }break;
       case WHEELHOUSE_OP_DISPLAY_VARIABLES:
       {
-        model->garbage += model->variable_count*sizeof(*model->variables);
+        model->garbage += model->variables_bytes;
+        model->live -= model->variables_bytes;
+        U64 start = arena_pos(model->arena);
         model->variables = push_array(model->arena, WheelhouseDisplayVariable, op.count);
         model->variable_count = op.count;
         for(U64 j = 0; ok && j < op.count; j++)
@@ -522,10 +542,14 @@ uishell_sidebar_model_apply(UIShell_SidebarModel *model, const WheelhouseDelta *
           v.value = uishell_sidebar_model_text(model->arena, v.value);
           model->variables[j] = v;
         }
+        model->variables_bytes = arena_pos(model->arena)-start;
+        model->live += model->variables_bytes;
       }break;
       case WHEELHOUSE_OP_DIAGNOSTICS:
       {
-        model->garbage += model->diagnostic_count*sizeof(*model->diagnostics);
+        model->garbage += model->diagnostics_bytes;
+        model->live -= model->diagnostics_bytes;
+        U64 start = arena_pos(model->arena);
         model->diagnostics = push_array(model->arena, WheelhouseText, op.count);
         model->diagnostic_count = op.count;
         for(U64 j = 0; ok && j < op.count; j++)
@@ -534,10 +558,14 @@ uishell_sidebar_model_apply(UIShell_SidebarModel *model, const WheelhouseDelta *
           ok = wheelhouse_delta_diagnostic(delta, op.first+j, &text);
           model->diagnostics[j] = uishell_sidebar_model_text(model->arena, text);
         }
+        model->diagnostics_bytes = arena_pos(model->arena)-start;
+        model->live += model->diagnostics_bytes;
       }break;
       case WHEELHOUSE_OP_ERRORS:
       {
-        model->garbage += model->error_count*sizeof(*model->errors);
+        model->garbage += model->errors_bytes;
+        model->live -= model->errors_bytes;
+        U64 start = arena_pos(model->arena);
         model->errors = push_array(model->arena, WheelhouseActivationError, op.count);
         model->error_count = op.count;
         for(U64 j = 0; ok && j < op.count; j++)
@@ -547,6 +575,8 @@ uishell_sidebar_model_apply(UIShell_SidebarModel *model, const WheelhouseDelta *
           model->errors[j].entity = uishell_sidebar_model_entity(model->arena, e.entity);
           model->errors[j].message = uishell_sidebar_model_text(model->arena, e.message);
         }
+        model->errors_bytes = arena_pos(model->arena)-start;
+        model->live += model->errors_bytes;
       }break;
       default: { ok = 0; }break;
     }
@@ -557,8 +587,9 @@ uishell_sidebar_model_apply(UIShell_SidebarModel *model, const WheelhouseDelta *
     UIShell_SidebarModelSection *section = model->sections[i];
     if(!section->removed) { i++; continue; }
     uishell_sidebar_model_forget(model, section->node);
-    model->garbage += section->slot_count*sizeof(*section->slots);
-    model->live -= section->slot_count*sizeof(*section->slots);
+    U64 bytes = section->slot_count*sizeof(*section->slots)+sizeof(*section)+section->name.size;
+    model->garbage += bytes;
+    model->live -= bytes;
     MemoryCopy(model->sections+i, model->sections+i+1, (model->section_count-i-1)*sizeof(*model->sections));
     model->section_count--;
     model->preorder_dirty = 1;
@@ -593,8 +624,11 @@ uishell_sidebar_model_preorder(UIShell_SidebarModel *model, U64 *count_out)
   {
     U64 count = 0;
     for(U64 i = 0; i < model->order_count; i++) { count += uishell_sidebar_model_count(model->order[i]->node); }
-    model->garbage += model->preorder ? model->preorder_count*sizeof(*model->preorder) : 0;
+    U64 old = model->preorder ? Max(model->preorder_count, 1)*sizeof(*model->preorder) : 0;
+    model->garbage += old;
+    model->live -= old;
     model->preorder = push_array(model->arena, UIShell_SidebarModelNode *, Max(count, 1));
+    model->live += Max(count, 1)*sizeof(*model->preorder);
     model->preorder_count = 0;
     for(U64 i = 0; i < model->order_count; i++) { uishell_sidebar_model_visit(model, model->order[i]->node); }
     model->preorder_dirty = 0;
