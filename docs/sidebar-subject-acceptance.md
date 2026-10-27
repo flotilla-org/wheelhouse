@@ -28,14 +28,13 @@ Subject references and overflow labels retain their text beside the marker.
 
 To assign a local role icon, select a template explicitly, for example a
 `role/governor` template extending `role/native`, overriding `icon-override`
-with `source="literal" value="gear" prefix="chip-icon-override:"`. Match that
-role loop on `flotilla.role.name`, rather than changing the renderer. Producer
-suggestions still win. The shipped template leaves the override empty.
-Keep the inherited field order when extending a native template: the renderer
-expects the presentation marker after one field for projects, four for roles
-and three for other entries. Adding or removing earlier fields disables the
-presentation block, so chips use their defaults. Typed ABI metadata will
-eventually replace this convention.
+with `source="literal" value="gear" presents="icon"`. Match that role loop on
+`flotilla.role.name`, rather than changing the renderer. Producer suggestions
+still win: the first `presents="icon"` field with a value is the icon, and
+`presentation.icon` comes first. The shipped template leaves the override
+empty. Fields that present a value (`presents=`) reach native as the node's
+typed presentation, not as fields, so extending a template may add or reorder
+fields freely.
 
 ## Kiwi human review
 

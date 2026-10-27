@@ -79,9 +79,9 @@ same after a restart.
   `WheelhouseStripEntry`, each with its section (`WHEELHOUSE_STRIP_RELATED` or
   `_LINKED`) and entity. Free it with `wheelhouse_strip_free`. A subject not in
   the catalog, or a kind without a strip, gives an empty list.
-- For an entry's label, state and hover card, request its detail
-  (`wheelhouse_snapshot_detail_request`). Its primary action is the detail's:
-  open its URL, focus its workspace or open one.
+- For an entry's label, state and hover card, ask for its card
+  (`wheelhouse_card_acquire`). Its primary action is the card's: open its
+  URL, focus its workspace or open one.
 
 The other sections of the strip come from the workspace:
 

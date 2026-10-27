@@ -104,6 +104,10 @@ pub struct PlacementNode {
     /// stale: its facts are kept from when its connection dropped.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stale: bool,
+    /// The subject it presents has a URL to open or copy (a change request's
+    /// or issue's, from its forge).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_url: bool,
     /// Retained even when collapsed, for inspection and native input handling.
     pub children: Vec<Rc<PlacementNode>>,
 }
@@ -305,6 +309,8 @@ impl SurfaceSnapshot {
                 facts: Default::default(),
                 variables: None,
                 collapsed: false,
+                // A workspace has no forge URL.
+                has_url: false,
                 stale: is_stale,
                 children: Vec::new(),
             }));
@@ -400,6 +406,8 @@ pub(crate) struct SurfaceContext<'a> {
     pub(crate) state: &'a dyn Fn(&EntityRef, &FactMap) -> PresentationState,
     /// Whether the entity a node presents has a stale provider.
     pub(crate) stale: &'a dyn Fn(&EntityRef) -> bool,
+    /// Whether the subject a node presents has a URL.
+    pub(crate) has_url: &'a dyn Fn(&EntityRef) -> bool,
 }
 
 /// A node's resolution, kept while what it was resolved from is the same.
@@ -410,6 +418,7 @@ pub(crate) struct SurfaceMemo {
     state: PresentationState,
     collapsed: bool,
     stale: bool,
+    has_url: bool,
     node: Rc<PlacementNode>,
 }
 
@@ -442,6 +451,7 @@ impl Resolver<'_> {
         // The collapse set holds placements toggled away from their default.
         let collapsed = entity.annotation.default_collapsed != self.model.collapsed_placements.contains(key);
         let stale = (self.cx.stale)(&entity.entity);
+        let has_url = (self.cx.has_url)(&entity.entity);
         if let Some(memo) = self.prior.remove(&address) {
             let same = Rc::ptr_eq(&memo.placement, entity)
                 && match (&memo.variables, &variables) {
@@ -452,6 +462,7 @@ impl Resolver<'_> {
                 && memo.state == state
                 && memo.collapsed == collapsed
                 && memo.stale == stale
+                && memo.has_url == has_url
                 && memo.node.children.len() == children.len()
                 && memo.node.children.iter().zip(&children).all(|(before, now)| Rc::ptr_eq(before, now));
             if same {
@@ -460,8 +471,9 @@ impl Resolver<'_> {
                 return Some(node);
             }
         }
-        let node = Rc::new(resolve_node(entity, variables.as_deref(), region, state.clone(), collapsed, stale, children)?);
-        self.next.insert(address, SurfaceMemo { placement: entity.clone(), variables, state, collapsed, stale, node: node.clone() });
+        let node = Rc::new(resolve_node(entity, variables.as_deref(), region, state.clone(), collapsed, stale, has_url, children)?);
+        self.next
+            .insert(address, SurfaceMemo { placement: entity.clone(), variables, state, collapsed, stale, has_url, node: node.clone() });
         Some(node)
     }
 }
@@ -550,6 +562,7 @@ fn order_run(data: Vec<Rc<PlacementNode>>, order: &[EntityRef]) -> Vec<Rc<Placem
     placed.into_iter().filter_map(|index| data[index].take()).collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_node(
     entity: &EvaluatedPlacement,
     variables: Option<&EffectiveNodeVariables>,
@@ -557,6 +570,7 @@ fn resolve_node(
     state: PresentationState,
     collapsed: bool,
     stale: bool,
+    has_url: bool,
     children: Vec<Rc<PlacementNode>>,
 ) -> Option<PlacementNode> {
     let key = entity.placement.clone()?;
@@ -596,6 +610,7 @@ fn resolve_node(
         variables,
         collapsed,
         stale,
+        has_url,
         children,
     })
 }

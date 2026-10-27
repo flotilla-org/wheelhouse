@@ -203,6 +203,8 @@ pub struct Node {
     pub detail: Rendered,
     pub collapsed: bool,
     pub stale: bool,
+    /// Its subject has a URL: copy-subject-url of its entity copies it.
+    pub has_url: bool,
 }
 
 impl From<&NodeContent> for Node {
@@ -219,6 +221,7 @@ impl From<&NodeContent> for Node {
             detail: (&n.detail).into(),
             collapsed: n.collapsed,
             stale: n.stale,
+            has_url: n.has_url,
         }
     }
 }

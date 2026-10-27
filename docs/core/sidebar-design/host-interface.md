@@ -170,7 +170,8 @@ of it, the first time), as `WheelhouseDeltaOp`s to apply in order:
 sections, node upserts and removals, positional child-list ops
 (`WheelhouseListOp`), display variables, diagnostics and activation errors.
 A `WheelhouseStreamNode` carries a node's own content and its typed presented
-values (status, attention, icon, short and medium labels). A node is its
+values (status, attention, icon, short and medium labels), and whether its
+subject has a URL (`has_url`; a URL that arrives later is an upsert). A node is its
 section and opaque placement key. The delta lists the intents accepted since
 the last; release it with `wheelhouse_delta_release`.
 

@@ -1103,7 +1103,6 @@ int main(void) {
             self.assertEqual(lib.wheelhouse_snapshot_field(snapshot, index, C.byref(field)), 1)
             fields.append(field.text.string())
         self.assertEqual(fields[:3], ['w', 'vessel', ''])
-        self.assertIn('chip-short:w', fields)
         self.assertEqual(vessel.label.string(), 'Full worker label')
         self.assertTrue(vessel.openable)
 

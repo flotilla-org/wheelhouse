@@ -102,6 +102,7 @@ pub struct NodeContent {
     pub detail: Content,
     pub collapsed: bool,
     pub stale: bool,
+    pub has_url: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,6 +185,7 @@ impl NodeContent {
             detail: node.detail.clone(),
             collapsed: node.collapsed,
             stale: node.stale,
+            has_url: node.has_url,
         }
     }
 }
@@ -201,6 +203,7 @@ fn same_content(a: &PlacementNode, b: &PlacementNode) -> bool {
         && a.detail == b.detail
         && a.collapsed == b.collapsed
         && a.stale == b.stale
+        && a.has_url == b.has_url
 }
 
 impl StreamView {

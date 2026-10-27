@@ -5,13 +5,13 @@
 
 #define GroupsCheck(cond, msg) do { if(!(cond)) { ok = 0; fprintf(stderr, "FAIL local groups: %s\n", msg); } } while(0)
 
-// The snapshot label of the section or group published for `kind`/`id`.
+// The label, as the view has it, of the section or group published for `kind`/`id`.
 internal String8
 uishell_local_groups_label(Arena *arena, UIShell_SidebarState *state, String8 kind, String8 id)
 {
-  for(U64 i = 0; state->snapshot && i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
   {
-    WheelhouseNode n = {0}; wheelhouse_snapshot_node(state->snapshot, i, &n);
+    UIShell_SidebarNode n = {0}; uishell_sidebar_node(state, i, &n);
     if(str8_match(uishell_sidebar_string(n.entity.kind), kind, 0) && str8_match(uishell_sidebar_string(n.entity.id), id, 0))
     { return push_str8_copy(arena, uishell_sidebar_string(n.label)); }
   }
@@ -425,12 +425,12 @@ uishell_local_groups_diagnostics(CFG_Node *window)
               "deleting a group moves its workspaces to the default group");
   uishell_local_groups_publish(state, window, arena);
   B32 retracted = 1;
-  for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; i < uishell_sidebar_node_count(state); i++)
   {
-    WheelhouseNode n = {0}; wheelhouse_snapshot_node(state->snapshot, i, &n);
+    UIShell_SidebarNode n = {0}; uishell_sidebar_node(state, i, &n);
     retracted &= !str8_match(uishell_sidebar_string(n.entity.id), tests_id, 0);
   }
-  GroupsCheck(retracted, "a deleted group's entity leaves the core's snapshot");
+  GroupsCheck(retracted, "a deleted group's entity leaves the core's view");
   GroupsCheck(str8_match(uishell_local_groups_title(arena, window, section_id), str8_lit("CI"), 0), "a name you gave the section sticks with one group again");
   uishell_sidebar_local_rename_section(window, section_id, str8_zero());
   GroupsCheck(str8_match(uishell_local_groups_title(arena, window, section_id), str8_lit("Nightly"), 0), "clearing the section's name makes it show its group's again");
@@ -503,7 +503,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                 !ui_any_ctx_menu_is_open(), "New group adds a group and starts renaming it");
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    WheelhouseNode added_node = uishell_sidebar_reorder_node(state, added_id);
+    UIShell_SidebarNode added_node = uishell_sidebar_reorder_node(state, added_id);
     String8 added_entry = push_str8f(arena, "###entry_%S", uishell_sidebar_string(added_node.key));
     UI_Box *added_header = uishell_sidebar_reorder_box(ui_state->root, added_entry);
     GroupsCheck(!ui_box_is_nil(added_header) && !ui_box_is_nil(uishell_sidebar_reorder_box(added_header->first, str8_lit("New group"))),
@@ -518,7 +518,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     // Two groups now: each has a header, whose menu deletes it.
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    WheelhouseNode group_node = uishell_sidebar_reorder_node(state, added_id);
+    UIShell_SidebarNode group_node = uishell_sidebar_reorder_node(state, added_id);
     String8 group_row = push_str8f(arena, "###entry_%S", uishell_sidebar_string(group_node.key));
     found = uishell_local_groups_click(ws, window, arena, group_row, WM_Key_RightMouseButton);
     GroupsCheck(found && ui_any_ctx_menu_is_open(), "right-clicking a group's header opens its menu");
@@ -686,7 +686,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
     }
     uishell_local_groups_publish(state, window, arena);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    WheelhouseNode alpha_node = uishell_sidebar_reorder_node(state, alpha_id);
+    UIShell_SidebarNode alpha_node = uishell_sidebar_reorder_node(state, alpha_id);
     header_box = uishell_local_groups_box(alpha_header);
     GroupsCheck(alpha_node.collapsed && !ui_box_is_nil(uishell_sidebar_reorder_box(header_box->first, str8_lit("1"))),
                 "a click on the header's empty part collapses the group, which shows its count");

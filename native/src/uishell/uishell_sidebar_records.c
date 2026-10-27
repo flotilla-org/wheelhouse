@@ -132,7 +132,7 @@ uishell_sidebar_record_note(UIShell_SidebarState *state, String8 name, U64 gener
 // Writes the records whose generation moved since they were written, and
 // deletes those the core no longer has (a forgotten workspace's), once due:
 // a second after a change was first seen, or with `flush`, now. Generations
-// are read only when one may have moved: after a new snapshot, when the
+// are read only when one may have moved: after the core changes, when the
 // names changed, or while due.
 internal void
 uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
@@ -144,9 +144,9 @@ uishell_sidebar_records_save(UIShell_SidebarState *state, U64 now, B32 flush)
   for(String8Node *n = names.first; n; n = n->next) { present += uishell_sidebar_record_written(state, n->string) != 0; }
   for(UIShell_SidebarRecord *r = state->records; r; r = r->next) { written++; }
   B32 changed = present != written || present != names.node_count;
-  if(!changed && !flush && !state->records_due && state->records_snapshot_count == state->snapshot_count)
+  if(!changed && !flush && !state->records_due && state->records_revision_count == state->revision_count)
   { scratch_end(scratch); return; }
-  state->records_snapshot_count = state->snapshot_count;
+  state->records_revision_count = state->revision_count;
   U64 *generations = push_array(scratch.arena, U64, names.node_count);
   U64 index = 0;
   for(String8Node *n = names.first; n; n = n->next, index++)

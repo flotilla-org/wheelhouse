@@ -6,9 +6,9 @@ uishell_sidebar_coverage_diagnostics(UIShell_SidebarState *state, UIShell_Contro
   for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
   {
     B32 found = 0;
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+    for(U64 i = 0; i < uishell_sidebar_node_count(state); i++)
     {
-      WheelhouseNode node = {0}; wheelhouse_snapshot_node(state->snapshot, i, &node);
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(state, i, &node);
       if(!node.is_section && node.state == WHEELHOUSE_LIVE && uishell_sidebar_node_cfg(&node) == w->id) { found = 1; break; }
     }
     if(!found) { fprintf(stderr, "Open workspace without sidebar entry: %llu (%.*s)\n", (unsigned long long)w->id, (int)w->display_name.size, w->display_name.str); ok = 0; }
@@ -114,12 +114,12 @@ uishell_sidebar_selection_diagnostics(RD_WindowState *ws, UIShell_ControlledSpli
     ok &= uishell_sidebar_coverage_diagnostics(&state, &split);
     for(U64 kind = 0; kind < 2; kind++)
     {
-      for(U64 index = 0; index < wheelhouse_snapshot_node_count(state.snapshot); index++)
+      for(U64 index = 0; index < uishell_sidebar_node_count(&state); index++)
       {
-        WheelhouseNode node = {0}; wheelhouse_snapshot_node(state.snapshot, index, &node);
+        UIShell_SidebarNode node = {0}; uishell_sidebar_node(&state, index, &node);
         if(str8_match(uishell_sidebar_string(node.entity.id), str8_cstring(ids[kind]), 0) &&
            node.collapsed != (kind ? convoy_closed : project_closed))
-        { uishell_sidebar_dispatch(&state, node.toggle, 0); uishell_sidebar_refresh(&state); break; }
+        { uishell_sidebar_intend(&state, uishell_sidebar_toggle_intent(node), 0); uishell_sidebar_refresh(&state); break; }
       }
     }
     UI_State *test_ui = ui_state_alloc(); ui_select_state(test_ui);

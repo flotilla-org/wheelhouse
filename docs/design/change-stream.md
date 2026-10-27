@@ -65,8 +65,15 @@ Stacked:
 2. The intent entry point, with `dispatch` kept as a shim.
 3. The C ABI and its harness.
 4. `wheelhouse-wasm`, the TypeScript types and the browser test.
-5. Native's sidebar follows the stream instead of re-acquiring, and its chip parser goes. This is the largest C change, so it comes last.
+5. Native's sidebar follows the stream instead of re-acquiring, and its chip parser goes. This is the largest C change, so it comes last, as a stack of its own:
+   1. A keyed C model built only from deltas (`uishell_sidebar_model.c`), checked against fresh snapshots.
+   2. Rows and sections render from the model; the chip parser goes, for `presents=`.
+   3. Activation and toggles are intents by key; snapshot action indices leave native's rows. Whether a subject has a URL is node content (`has_url`), so Copy URL is offered from the model. 2 and 3 land as one PR; hover cards keep detail action indices until 4.
+   4. Hover cards ask the core for one entity's card (`wheelhouse_card_acquire`), whose actions are intents on its entity.
+   5. Diagnostics that build snapshots by hand build deltas; the sidebar stops acquiring snapshots. What native caches from rows keys on the count of deltas it has applied; managed content, records and the store syncs follow the times the core changed, shown or not; diagnostics and activation errors come from the model. Snapshots stay in native only as the model diagnostics' oracle.
 
 ## Decided
 
 With Robert, 26 October 2026: typed roles are in step 0; native's switch is step 0's last PR; delivery is pull; the web app lives in `web/` in this repo.
+
+With Robert, 27 October 2026: native moves wholly onto a model of its own built from deltas, rather than reading the stream for presented values beside the snapshot, so one sidebar has one model.

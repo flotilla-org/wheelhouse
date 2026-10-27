@@ -1,16 +1,16 @@
 // Native UI benchmark: real core, panel host, font metrics and precise events.
 // Measures UI construction/layout, excluding GPU submission and frame pacing.
-// Real-core scenario: failed dispatch still invalidates, and a refreshed
-// snapshot must never return text from its released predecessor.
+// Real-core scenario: a refused intent still invalidates, and a followed
+// view must never return text from the model text it replaced.
 internal B32
 uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
 {
   Temp scratch = scratch_begin(0, 0);
   B32 saved_uncached = uishell_sidebar_benchmark_uncached, ok = 1;
   uishell_sidebar_benchmark_uncached = 0;
-  U64 count = wheelhouse_snapshot_node_count(state->snapshot);
-  WheelhouseNode *nodes = push_array(scratch.arena, WheelhouseNode, count);
-  for(U64 i = 0; i < count; i++) { wheelhouse_snapshot_node(state->snapshot, i, &nodes[i]); }
+  U64 count = uishell_sidebar_node_count(state);
+  UIShell_SidebarNode *nodes = push_array(scratch.arena, UIShell_SidebarNode, count);
+  for(U64 i = 0; i < count; i++) { uishell_sidebar_node(state, i, &nodes[i]); }
   String8 identity = str8_lit("bench-project-0");
   String8 label = uishell_sidebar_context_label(state, nodes, count, identity);
   ok &= str8_match(label, str8_lit("Benchmark project 0"), 0);
@@ -18,8 +18,10 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
   uishell_sidebar_refresh(state);
   ok &= state->labels == labels; // Current revision retains the map.
   char *error = 0;
-  B32 dispatched = uishell_sidebar_dispatch(state, WHEELHOUSE_NONE, &error);
-  ok &= !dispatched && !state->labels && !state->labels_snapshot;
+  // An intent invalidates the labels, even one the core refuses.
+  UIShell_SidebarIntent unknown = {.some = 1, .kind = WHEELHOUSE_INTENT_ACTIVATE_PLACEMENT, .key = str8_lit("5:other1:x1:y1:z")};
+  B32 dispatched = uishell_sidebar_intend(state, unknown, &error);
+  ok &= !dispatched && !state->labels && !state->labels_view;
   wheelhouse_string_free(error);
   uishell_sidebar_context_label(state, nodes, count, identity);
   char *values[] = {"Replacement project", "Benchmark project 0"};
@@ -32,16 +34,16 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
     B32 applied = wheelhouse_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error);
     ok &= uishell_sidebar_result(state, applied, error);
     uishell_sidebar_refresh(state);
-    ok &= !state->labels && !state->labels_snapshot;
-    count = wheelhouse_snapshot_node_count(state->snapshot);
-    nodes = push_array(scratch.arena, WheelhouseNode, count);
-    for(U64 n = 0; n < count; n++) { wheelhouse_snapshot_node(state->snapshot, n, &nodes[n]); }
+    ok &= !state->labels && !state->labels_view;
+    count = uishell_sidebar_node_count(state);
+    nodes = push_array(scratch.arena, UIShell_SidebarNode, count);
+    for(U64 n = 0; n < count; n++) { uishell_sidebar_node(state, n, &nodes[n]); }
     ok &= str8_match(uishell_sidebar_context_label(state, nodes, count, identity), str8_cstring(values[i]), 0);
   }
   uishell_sidebar_labels_invalidate(state);
   uishell_sidebar_benchmark_uncached = saved_uncached;
   scratch_end(scratch);
-  if(!ok) { fprintf(stderr, "FAIL sidebar label snapshot lifecycle\n"); }
+  if(!ok) { fprintf(stderr, "FAIL sidebar label view lifecycle\n"); }
   return ok;
 }
 
@@ -215,7 +217,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
           merged ? "merged" : "four", scrolling ? "precise" : "idle", tree_body->view_off_target.y,
           attention_body->view_off_target.y, dim_2f32(tree_body->rect).y, dim_2f32(attention_body->rect).y);
         fprintf(stderr, "SIDEBAR_BENCH issues=%llu nodes=%llu panels=%s input=%s frames=%u frame_us=%.2f analysis_us=%.2f context_us=%.2f\n",
-          (unsigned long long)sizes[size_index], (unsigned long long)wheelhouse_snapshot_node_count(state.snapshot), merged ? "merged" : "four",
+          (unsigned long long)sizes[size_index], (unsigned long long)uishell_sidebar_node_count(&state), merged ? "merged" : "four",
           scrolling ? "precise" : "idle", frames-warmup, elapsed/(F64)(frames-warmup), analysis/(F64)(frames-warmup), context/(F64)(frames-warmup));
         ui_select_state(saved_ui); ui_state_release(test_ui);
       }
@@ -230,7 +232,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     rd_arrangement_set(old_layout);
     cfg_node_release(rd_state->cfg, cfg_node_child_from_string(window, str8_lit("sidebar_generation")));
     if(old_inventory != &cfg_nil_node) { cfg_node_insert_child(rd_state->cfg, window, window->last, old_inventory); }
-    // A real state owns core/snapshot, labels, cards and records resources.
+    // A real state owns core/model, labels, cards and records resources.
     // Teardown must clear every owned pointer so repeated release is safe.
     for(U64 i = 0; i < ArrayCount(state.cards); i++)
     { if(!state.cards[i].arena) { state.cards[i].arena = arena_alloc(); } }
@@ -240,9 +242,9 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
     uishell_sidebar_dashboard(&state);
     ok &= state.dashboard != 0;
     uishell_sidebar_release(&state);
-    B32 released = !state.core && !state.snapshot && !state.labels_arena &&
+    B32 released = !state.core && !state.model.arena && !state.subscribed && !state.labels_arena &&
       !state.records_arena && !state.records && !state.dashboard &&
-      !state.titles_arena && !state.titles_snapshot && !state.titles && !state.title_count && !state.sidebar_notes_arena;
+      !state.titles_arena && !state.titles_view && !state.titles && !state.title_count && !state.sidebar_notes_arena;
     for(U64 i = 0; i < ArrayCount(state.cards); i++) { released &= !state.cards[i].arena; }
     ok &= released;
     if(!released) { fprintf(stderr, "FAIL sidebar owned resources remain after release\n"); }

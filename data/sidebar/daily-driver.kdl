@@ -254,16 +254,16 @@ template "wheelhouse/entry" {
   use "wheelhouse/chip-presentation"
 }
 
-// Named prefixes carry native presentation values through ABI 2's text fields.
-// icon-override is local template policy; presentation.icon always wins.
+// Values native rows and chips present by meaning (presents=), not as
+// fields. icon-override is local template policy, a fallback: the first
+// icon with a value wins, so presentation.icon does.
 fragment "wheelhouse/chip-presentation" {
-  field "chip-fields" source="literal" value="1" prefix="chip-fields:"
-  field "medium" source="metadata-text" key="display.label.medium" prefix="chip-medium:"
-  field "short" source="metadata-text" key="display.label.short" prefix="chip-short:"
-  field "icon" key="presentation.icon" prefix="chip-icon:"
-  field "icon-override" source="literal" value="" prefix="chip-icon-override:"
-  field "attention" key="status.attention" prefix="chip-attention:"
-  field "activity" key="status.state" prefix="chip-status:"
+  field "medium" source="metadata-text" key="display.label.medium" presents="medium-label"
+  field "short" source="metadata-text" key="display.label.short" presents="short-label"
+  field "icon" key="presentation.icon" presents="icon"
+  field "icon-override" source="literal" value="" presents="icon"
+  field "attention" key="status.attention" presents="attention"
+  field "activity" key="status.state" presents="status"
 }
 
 // Context travels with detached Attention entries; the native renderer resolves

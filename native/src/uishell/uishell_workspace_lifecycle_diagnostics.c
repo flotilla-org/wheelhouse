@@ -6,11 +6,11 @@
 #define LifecycleCheck(cond, msg) do { if(!(cond)) { ok = 0; fprintf(stderr, "FAIL workspace lifecycle: %s\n", msg); } } while(0)
 
 internal B32
-uishell_workspace_lifecycle_find(UIShell_SidebarState *state, String8 entity_id, CFG_ID workspace_id, WheelhouseNode *out)
+uishell_workspace_lifecycle_find(UIShell_SidebarState *state, String8 entity_id, CFG_ID workspace_id, UIShell_SidebarNode *out)
 {
-  for(U64 i = 0; state->snapshot && i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+  for(U64 i = 0; uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
   {
-    WheelhouseNode node = {0}; wheelhouse_snapshot_node(state->snapshot, i, &node);
+    UIShell_SidebarNode node = {0}; uishell_sidebar_node(state, i, &node);
     if(node.is_section) { continue; }
     if((entity_id.size && str8_match(uishell_sidebar_string(node.entity.id), entity_id, 0)) ||
        (workspace_id && node.state == WHEELHOUSE_LIVE && uishell_sidebar_node_cfg(&node) == workspace_id))
@@ -97,11 +97,11 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   uishell_sidebar_refresh(state);
 
   //- Open the fixture subject workspace and give it a user layout change.
-  WheelhouseNode node = {0};
+  UIShell_SidebarNode node = {0};
   LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_lit("multi"), 0, &node), "fixture subject row");
   if(node.state != WHEELHOUSE_LIVE)
   {
-    LifecycleCheck(uishell_sidebar_dispatch(state, node.activate, 0), "open subject");
+    LifecycleCheck(uishell_sidebar_intend(state, uishell_sidebar_activate_intent(node), 0), "open subject");
     uishell_sidebar_effects(state, &split);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_observe(state, &split);
@@ -131,7 +131,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   LifecycleCheck(node.state == WHEELHOUSE_LATENT && node.openable, "detached subject row goes latent and stays openable");
 
   //- Reopening the row reattaches the same layout.
-  LifecycleCheck(uishell_sidebar_dispatch(state, node.activate, 0), "reopen subject");
+  LifecycleCheck(uishell_sidebar_intend(state, uishell_sidebar_activate_intent(node), 0), "reopen subject");
   uishell_sidebar_effects(state, &split);
   split = uishell_root_controlled_split_from_window(scratch.arena, window);
   LifecycleCheck(str8_match(subject->string, str8_lit("workspace"), 0) &&
@@ -147,7 +147,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   split = uishell_root_controlled_split_from_window(scratch.arena, window);
   uishell_sidebar_observe(state, &split);
   uishell_sidebar_refresh(state);
-  WheelhouseNode loose_node = {0};
+  UIShell_SidebarNode loose_node = {0};
   LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &loose_node) &&
                  uishell_sidebar_close_kind(loose_node, uishell_sidebar_node_status(state, loose_node)) == UIShell_SidebarCloseKind_Destroy,
                  "a subjectless workspace offers close");
@@ -166,9 +166,9 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     cfg_node_new(rd_state->cfg, home, str8_lit("p"));
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
-    WheelhouseNode homed = {0}, parent = {0};
+    UIShell_SidebarNode homed = {0}, parent = {0};
     B32 found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
-    if(found && homed.parent != WHEELHOUSE_NONE) { wheelhouse_snapshot_node(state->snapshot, homed.parent, &parent); }
+    if(found && homed.parent != WHEELHOUSE_NONE) { uishell_sidebar_node(state, homed.parent, &parent); }
     LifecycleCheck(found && str8_match(uishell_sidebar_string(parent.entity.kind), str8_lit("project"), 0) &&
                    str8_match(uishell_sidebar_string(parent.entity.id), str8_lit("p"), 0) &&
                    str8_match(uishell_sidebar_string(homed.entity.id), local_id, 0),
@@ -177,8 +177,8 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
     found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
-    WheelhouseNode section = {0};
-    if(found && homed.parent != WHEELHOUSE_NONE) { wheelhouse_snapshot_node(state->snapshot, homed.parent, &section); }
+    UIShell_SidebarNode section = {0};
+    if(found && homed.parent != WHEELHOUSE_NONE) { uishell_sidebar_node(state, homed.parent, &section); }
     LifecycleCheck(found && str8_match(uishell_sidebar_string(section.entity.kind), str8_lit(".group"), 0) &&
                    str8_match(uishell_sidebar_string(section.entity.id), uishell_sidebar_default_local_id, 0) &&
                    str8_match(uishell_sidebar_string(homed.entity.id), local_id, 0), "without its project it returns to the default Workspaces group");
@@ -186,7 +186,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
 
     //- Dragging it onto the project's group moves it there (Move, not ghost),
     //  as a row; dragging that row back to the Workspaces group moves it back.
-    WheelhouseNode project = {0};
+    UIShell_SidebarNode project = {0};
     LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_lit("p"), 0, &project), "fixture project row");
     String8 project_box = push_str8f(scratch.arena, "###project_%S", uishell_sidebar_string(project.key));
     String8 row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(homed.key));
@@ -201,9 +201,9 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     String8 homed_row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(homed.key));
     // Onto another workspace's row in the Workspaces group.
     String8 workspaces_row = str8_zero();
-    for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot); i++)
+    for(U64 i = 0; i < uishell_sidebar_node_count(state); i++)
     {
-      WheelhouseNode n = {0}; wheelhouse_snapshot_node(state->snapshot, i, &n);
+      UIShell_SidebarNode n = {0}; uishell_sidebar_node(state, i, &n);
       String8 k = uishell_sidebar_string(n.key);
       if(str8_match(uishell_sidebar_string(n.entity.kind), str8_lit(".workspace"), 0) && uishell_sidebar_node_cfg(&n) != loose_id &&
          str8_find_needle(k, 0, str8_lit(".section10:workspaces"), 0) < k.size)
@@ -229,7 +229,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
       uishell_sidebar_local_put_pin(state, &seed, builds_id, 0);
       uishell_sidebar_observe(state, &split);
       uishell_sidebar_refresh(state);
-      WheelhouseNode seed_node = {0}, row_node = {0};
+      UIShell_SidebarNode seed_node = {0}, row_node = {0};
       uishell_workspace_lifecycle_find(state, str8_lit("lifecycle-seed"), 0, &seed_node);
       uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &row_node);
       String8 seed_row = push_str8f(scratch.arena, "###entry_%S", uishell_sidebar_string(seed_node.key));
@@ -268,9 +268,9 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   // placement and use whichever renders as a row.
   String8 row_keys[8] = {push_str8_copy(scratch.arena, uishell_sidebar_string(loose_node.key))};
   U64 row_key_count = 1;
-  for(U64 i = 0; i < wheelhouse_snapshot_node_count(state->snapshot) && row_key_count < ArrayCount(row_keys); i++)
+  for(U64 i = 0; i < uishell_sidebar_node_count(state) && row_key_count < ArrayCount(row_keys); i++)
   {
-    WheelhouseNode n = {0}; wheelhouse_snapshot_node(state->snapshot, i, &n);
+    UIShell_SidebarNode n = {0}; uishell_sidebar_node(state, i, &n);
     if(!n.is_section && str8_match(uishell_sidebar_string(n.entity.id), str8_lit("multi"), 0))
     { row_keys[row_key_count++] = push_str8_copy(scratch.arena, uishell_sidebar_string(n.key)); }
   }
@@ -536,7 +536,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
-    WheelhouseNode gone = {0};
+    UIShell_SidebarNode gone = {0};
     WheelhouseEntity local = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit(".workspace"), local_id);
     LifecycleCheck(!uishell_workspace_lifecycle_find(state, local_id, 0, &gone) && uishell_sidebar_card_find(state, local, 0) == WHEELHOUSE_NONE,
                    "a destroyed local workspace's entity is retracted");
@@ -559,7 +559,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
     uishell_workspace_lifecycle_find(state, str8_lit("multi"), 0, &node);
-    LifecycleCheck(uishell_sidebar_dispatch(state, node.activate, 0), "reopen subject after name check");
+    LifecycleCheck(uishell_sidebar_intend(state, uishell_sidebar_activate_intent(node), 0), "reopen subject after name check");
     uishell_sidebar_effects(state, &split);
     LifecycleCheck(str8_match(subject->string, str8_lit("workspace"), 0), "subject reopened after name check");
   }
@@ -648,10 +648,10 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace, str8_lit("lives_in")), str8_lit("gone"));
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
-    WheelhouseNode row = {0};
+    UIShell_SidebarNode row = {0};
     B32 found = uishell_workspace_lifecycle_find(state, uishell_sidebar_local_entity(workspace), 0, &row);
-    WheelhouseNode parent = {0};
-    B32 placed = found && row.parent != WHEELHOUSE_NONE && wheelhouse_snapshot_node(state->snapshot, row.parent, &parent) &&
+    UIShell_SidebarNode parent = {0};
+    B32 placed = found && row.parent != WHEELHOUSE_NONE && uishell_sidebar_node(state, row.parent, &parent) &&
       str8_match(uishell_sidebar_string(parent.entity.id), str8_lit("home"), 0) &&
       str8_find_needle(uishell_sidebar_string(row.key), 0, str8_lit(".unplaced"), 0) == uishell_sidebar_string(row.key).size;
     LifecycleCheck(placed, "a workspace whose group is gone lives in the default group, whatever its id");
