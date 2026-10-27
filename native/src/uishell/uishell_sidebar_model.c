@@ -88,6 +88,10 @@ struct UIShell_SidebarModel
 // Garbage below this is never worth a copy; 0 compacts on every apply.
 global U64 uishell_sidebar_model_compact_floor = MB(1);
 
+// Arenas chain as the model grows, so a small reserve only bounds address
+// space; compaction holds two at once.
+global U64 uishell_sidebar_model_arena_reserve = MB(4);
+
 internal WheelhouseText
 uishell_sidebar_model_text(Arena *arena, WheelhouseText text)
 {
@@ -410,7 +414,7 @@ internal void
 uishell_sidebar_model_compact(UIShell_SidebarModel *model)
 {
   UIShell_SidebarModel old = *model;
-  model->arena = arena_alloc();
+  model->arena = arena_alloc(.reserve_size = uishell_sidebar_model_arena_reserve);
   model->live = model->garbage = 0;
   model->sections = 0; model->section_count = model->section_capacity = 0;
   model->order = push_array(model->arena, UIShell_SidebarModelSection *, Max(8, old.order_count));
@@ -465,7 +469,7 @@ uishell_sidebar_model_release(UIShell_SidebarModel *model)
 internal B32
 uishell_sidebar_model_apply(UIShell_SidebarModel *model, const WheelhouseDelta *delta)
 {
-  if(!model->arena) { model->arena = arena_alloc(); }
+  if(!model->arena) { model->arena = arena_alloc(.reserve_size = uishell_sidebar_model_arena_reserve); }
   model->generation = wheelhouse_delta_generation(delta);
   B32 ok = 1;
   for(U64 i = 0; ok && i < wheelhouse_delta_op_count(delta); i++)
