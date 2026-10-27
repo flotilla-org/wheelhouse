@@ -117,6 +117,8 @@ function Sidebar() {
 
 render(() => <Sidebar />, document.getElementById("root")!);
 
+// Recorded facts at time 0, and no tick: the page is static until a relay
+// gives it live facts and a clock to tick the core by.
 core.apply(0, PROVIDER, facts);
 follow();
 const frame = () => {
