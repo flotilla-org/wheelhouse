@@ -502,4 +502,4 @@ PTY's bracketed-paste bytes. Physical native acceptance is recorded separately
 using [the acceptance checklist](docs/shift-override-acceptance.md).
 
 `tools/run-sidebar-diagnostics.sh` is a Linux-only release-build runner requiring
-`prlimit` and a C compiler; use the platform CI diagnostics on macOS and Windows.
+a C compiler; use the platform CI diagnostics on macOS and Windows.
