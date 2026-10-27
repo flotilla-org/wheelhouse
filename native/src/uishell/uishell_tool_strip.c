@@ -116,9 +116,7 @@ uishell_tool_strip_entity(UIShell_SidebarState *state, Rng2F32 rect, WheelhouseE
     return;
   }
   uishell_sidebar_card_source(state, node, sig, str8_zero(), 0);
-  WheelhouseDetailAction primary = {0};
-  if(ui_clicked(sig) && wheelhouse_snapshot_detail_action(state->snapshot, index, 0, &primary))
-  { uishell_sidebar_card_queue_action(state, node, primary.action); }
+  if(ui_clicked(sig) && index != WHEELHOUSE_NONE) { uishell_sidebar_card_queue_action(state, node, 0); }
 }
 
 internal void

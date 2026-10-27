@@ -326,6 +326,8 @@
 // Items the subject links to, such as its change requests and issues.
 #define WHEELHOUSE_STRIP_LINKED 1
 
+typedef struct WheelhouseCard WheelhouseCard;
+
 // A sidebar: one presentation client's core. Calls on one are serialised
 // by the host.
 typedef struct WheelhouseCore WheelhouseCore;
@@ -546,6 +548,38 @@ typedef struct {
   uint32_t has_primary_target;
   WheelhouseText primary_target;
 } WheelhouseEffect;
+
+// A card's summary. Observations use host monotonic milliseconds, as a
+// snapshot detail's do.
+typedef struct {
+  WheelhouseEntity entity;
+  WheelhouseText label;
+  size_t field_count;
+  // Its subject has a URL: action 1 copies it.
+  uint32_t has_url;
+  uint64_t now_ms;
+  WheelhouseText error;
+  // The workspace live for the entity, if any.
+  uint32_t has_workspace;
+  WheelhouseWorkspaceId workspace_id;
+} WheelhouseCardInfo;
+
+// A card's action: an intent (`kind`, a WHEELHOUSE_INTENT_*) on `entity`.
+// `intent` names what it does, for a host to match a queued action
+// against a later card.
+typedef struct {
+  WheelhouseText intent;
+  WheelhouseText label;
+  uint32_t kind;
+  WheelhouseEntity entity;
+} WheelhouseCardAction;
+
+// A relation of a card's field: an entity and the text to show without
+// its own card (its ID).
+typedef struct {
+  WheelhouseEntity entity;
+  WheelhouseText display_text;
+} WheelhouseCardRelation;
 
 // A fact of a local entity: WHEELHOUSE_FACT_TEXT, _BOOL, _INTEGER or
 // _ENTITY (one entity reference, such as .section, .group or .target).
@@ -1173,6 +1207,40 @@ uint32_t wheelhouse_copy_subject_url(WheelhouseCore *h, WheelhouseEntity entity,
 void wheelhouse_snapshot_release(WheelhouseSnapshot *s);
 
 void wheelhouse_effects_release(WheelhouseEffects *e);
+
+// The card of `entity` as the core has it now: NULL without an error when
+// the catalog has no such entity. Release it with wheelhouse_card_release;
+// its text stays valid until then.
+WheelhouseCard *wheelhouse_card_acquire(WheelhouseCore *h,
+                                        WheelhouseEntity entity,
+                                        char **error_out);
+
+// 1 if the card is still the core's answer; 0 for a stale, NULL or other
+// core's card (no error), or an unusable core (error). Its currency is the
+// snapshot's: heartbeats and ticks keep it current.
+uint32_t wheelhouse_card_is_current(WheelhouseCore *h,
+                                    const WheelhouseCard *card,
+                                    char **error_out);
+
+uint32_t wheelhouse_card(const WheelhouseCard *c, WheelhouseCardInfo *out);
+
+// A card's action: index 0 is its primary action (intent open-url,
+// focus-workspace, materialize-workspace or inspect; kind ACTIVATE),
+// index 1 copies its URL (kind COPY_SUBJECT_URL; 0 when it has none).
+uint32_t wheelhouse_card_action(const WheelhouseCard *c, size_t index, WheelhouseCardAction *out);
+
+uint32_t wheelhouse_card_field(const WheelhouseCard *c, size_t field, WheelhouseDetailField *out);
+
+// A relation of a card's field. Pass the navigation path of entities: a
+// relation already on it returns 0.
+uint32_t wheelhouse_card_relation(const WheelhouseCard *c,
+                                  size_t field,
+                                  size_t relation,
+                                  const WheelhouseEntity *path,
+                                  size_t path_count,
+                                  WheelhouseCardRelation *out);
+
+void wheelhouse_card_release(WheelhouseCard *c);
 
 // The names of the records the core holds, one per line (no trailing
 // newline): "dashboard", then "workspace/<id>" for each registered

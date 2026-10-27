@@ -71,6 +71,30 @@ existing snapshot generation/client validation, including for these new actions.
 | `wheelhouse_snapshot_detail_relation` | Exact target identity, display label and detail index, filtered by navigation path |
 | `wheelhouse_snapshot_detail_action` | Semantic intent, label, stable target identity and dispatch action ID |
 
+### Cards by entity
+
+An interactive host that follows the change stream has no snapshot to ask, so
+it asks for a card by entity (docs/design/change-stream.md, PR 5.4):
+
+| Export | Result |
+| --- | --- |
+| `wheelhouse_card_acquire` | One exact entity's card as the core has it now; NULL, without an error, when the catalog has no such entity |
+| `wheelhouse_card_is_current` | Whether the card is still the core's answer: the snapshot's currency (revision and client) |
+| `wheelhouse_card` | Entity, label, field count, `has_url`, clock, error, optional Workspace ID |
+| `wheelhouse_card_field` | As `wheelhouse_snapshot_detail_field` |
+| `wheelhouse_card_relation` | Exact target identity and its ID as fallback text, filtered by navigation path; ask for the target's own card for its label |
+| `wheelhouse_card_action` | Semantic intent, label, target identity and the `WHEELHOUSE_INTENT_*` kind to apply: 0 is the primary action (`ACTIVATE`), 1 copies the URL (`COPY_SUBJECT_URL`, only with `has_url`) |
+| `wheelhouse_card_release` | Release it; its text is valid until then |
+
+A card's actions are intents on its entity, applied with
+`wheelhouse_apply_intent`, so there is no stale action index: a host that
+queues an action keeps its entity and intent name, and matches them against a
+current card when it acts. Native keeps the cards it asked for until the first,
+the oldest, is no longer current. The snapshot detail exports below remain
+until native stops acquiring snapshots (PR 5.5).
+
+### Snapshot details
+
 For interactive hosts, acquire a plain snapshot and call
 `wheelhouse_snapshot_detail_request(core, snapshot, entity, &error)` only for
 identities needed by cards. This includes hidden relation targets and retained

@@ -1,8 +1,17 @@
+// A card's Copy URL action (1), or NONE when it has no URL.
 internal size_t
 action_node_copy(UIShell_SidebarState *state, U64 index)
 {
-  WheelhouseDetail detail = {0};
-  return wheelhouse_snapshot_detail(state->snapshot, index, &detail) ? detail.copy_url : WHEELHOUSE_NONE;
+  WheelhouseCardAction action = {0};
+  return uishell_sidebar_card_action(state, index, 1, &action) ? 1 : WHEELHOUSE_NONE;
+}
+
+// The kind of the intent a queued card action resolves to, plus one; 0 for none.
+internal U32
+card_taken(UIShell_SidebarState *state)
+{
+  UIShell_SidebarIntent intent = uishell_sidebar_card_take_action(state);
+  return intent.some ? intent.kind+1 : 0;
 }
 
 // Whether the first row of entity `id` offers Copy URL: 0 or 1, or -1 with no row.
@@ -17,11 +26,12 @@ row_copies_url(UIShell_SidebarState *state, String8 id)
   return -1;
 }
 
+// A card's primary action (0), or NONE without a card.
 internal size_t
 action_node_activate(UIShell_SidebarState *state, U64 index)
 {
-  WheelhouseDetail detail = {0};
-  return wheelhouse_snapshot_detail(state->snapshot, index, &detail) ? detail.activate : WHEELHOUSE_NONE;
+  WheelhouseCardAction action = {0};
+  return uishell_sidebar_card_action(state, index, 0, &action) ? 0 : WHEELHOUSE_NONE;
 }
 
 // Commit through the same creation-drag routing and finish phases as a center
@@ -400,7 +410,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   }
   fprintf(stderr, "Hover card diagnostics: demand lifecycle\n");
   // Real host demand lifecycle: card identities survive a changed revision,
-  // while snapshot-owned output and action currency remain core-owned.
+  // while card output and its currency remain core-owned.
   UIShell_SidebarState demand = {0};
   demand.core = wheelhouse_create(0, 0, 0);
   WheelhouseEntity demand_entity = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("issue"), str8_lit("demand-only"));
@@ -409,10 +419,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   CardCheck(wheelhouse_apply_entity(demand.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
             "demand-only target is published");
   uishell_sidebar_refresh(&demand);
-  CardCheck(wheelhouse_snapshot_detail_count(demand.snapshot) == 0, "plain revision starts without details");
+  CardCheck(demand.catalog_count == 0, "plain revision starts without details");
   UIShell_SidebarNode demand_node = {0};
   U64 demand_index = uishell_sidebar_card_find(&demand, demand_entity, &demand_node);
-  size_t demand_activate = action_node_activate(&demand, demand_index);
   CardCheck(demand_index != WHEELHOUSE_NONE,
             "identity without placement can be demanded");
   // One held card, with no navigation: slot cards[0] and root path[0] are
@@ -424,10 +433,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   CardCheck(wheelhouse_apply_entity(demand.core, 1, uishell_sidebar_text(uishell_sidebar_host_provider), demand_entity.kind, demand_entity.id, uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
             "held target label changes");
   CardCheck(str8_match(uishell_sidebar_string(demand_node.label), str8_lit("Before"), 0) &&
-            !wheelhouse_dispatch(demand.core, demand.snapshot, demand_activate, 0),
-            "old output remains readable with stale actions rejected");
+            !wheelhouse_card_is_current(demand.core, demand.catalog[0].card, 0),
+            "old output remains readable, and its card is no longer current");
   uishell_sidebar_refresh(&demand);
-  CardCheck(wheelhouse_snapshot_detail_count(demand.snapshot) == 0 &&
+  CardCheck(demand.catalog_count == 0 &&
             uishell_sidebar_card_find(&demand, demand.cards[0].path[0], &demand_node) != WHEELHOUSE_NONE &&
             str8_match(uishell_sidebar_string(demand_node.label), str8_lit("After"), 0),
             "held exact identity demands current output after refresh");
@@ -435,7 +444,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   CardCheck(wheelhouse_apply_patch_json(demand.core, 2, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(demand_remove), 0), "held target is removed");
   uishell_sidebar_refresh(&demand);
   CardCheck(uishell_sidebar_card_find(&demand, demand.cards[0].path[0], 0) == WHEELHOUSE_NONE &&
-            wheelhouse_snapshot_detail_count(demand.snapshot) == 0,
+            demand.catalog_count == 0,
             "disappearing held identity is unavailable without eager details");
   uishell_sidebar_release(&demand);
 
@@ -455,14 +464,14 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                                       uishell_sidebar_text(str8_lit("demand")), &demand_fact, 1, 0),
                 "card-free fixture advances revision");
       uishell_sidebar_refresh(&missing);
-      CardCheck(wheelhouse_snapshot_detail_count(missing.snapshot) == 0,
+      CardCheck(missing.catalog_count == 0,
                 "card-free refresh stays plain across revisions");
       for(U64 repeat = 0; repeat < 3; repeat++)
       {
         CardCheck(uishell_sidebar_card_find(&missing, absent, 0) == WHEELHOUSE_NONE,
                   "never-existing host identity repeatedly returns NONE");
         CardCheck(missing.error[0] == 0, "never-existing host identity has no error");
-        CardCheck(wheelhouse_snapshot_detail_count(missing.snapshot) == 0,
+        CardCheck(missing.catalog_count == 0,
                   "never-existing host identity appends zero cards");
       }
     }
@@ -505,7 +514,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     }
     uishell_sidebar_refresh(&fixture);
     CardCheck(fixture.snapshot != 0, "render snapshot exists");
-    CardCheck(wheelhouse_snapshot_detail_count(fixture.snapshot) == 0,
+    CardCheck(fixture.catalog_count == 0,
               "refresh without live cards resolves no catalog details");
     U64 index = WHEELHOUSE_NONE; UIShell_SidebarNode live = {0};
     for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
@@ -518,11 +527,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     if(index != WHEELHOUSE_NONE)
     {
       index = uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(live), 0);
-      CardCheck(index != WHEELHOUSE_NONE && wheelhouse_snapshot_detail_count(fixture.snapshot) == 1,
+      CardCheck(index != WHEELHOUSE_NONE && fixture.catalog_count == 1,
                 "first card resolves only its exact identity");
       CardCheck(uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(live), 0) == index &&
-                wheelhouse_snapshot_detail_count(fixture.snapshot) == 1,
-                "repeated card lookup reuses snapshot-owned detail");
+                fixture.catalog_count == 1,
+                "repeated card lookup reuses the card it has");
       // A workspace this test makes up, read back through the index as 123456.
       UIShell_WorkspaceId previewed = uishell_workspace_id_make();
       uishell_workspace_index_insert(previewed, 123456);
@@ -823,8 +832,8 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(!fixture.card_has_action && !fixture.card_action_intent.size && !fixture.card_action_target.id.len,
                 "window-end card dispatch consumes late View intent before the arena advances");
       ui_end_build();
-      // A reveal/observe refresh can replace the snapshot after the card emits
-      // its intent but before sidebar dispatch. Never retain the old index.
+      // A reveal/observe refresh can replace the cards after one emits its
+      // intent but before sidebar dispatch. Never retain the old index.
       UIShell_SidebarNode action_node = {0};
       U64 action_index = uishell_sidebar_card_find(&fixture, card->path[0], &action_node);
       size_t copy_action = action_node_copy(&fixture, action_index);
@@ -838,12 +847,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_refresh(&fixture);
       action_index = uishell_sidebar_card_find(&fixture, fixture.card_action_target, &action_node);
       copy_action = action_node_copy(&fixture, action_index);
-      CardCheck(copy_action != WHEELHOUSE_NONE && uishell_sidebar_card_take_action(&fixture) == copy_action &&
-                !fixture.card_has_action && uishell_sidebar_card_take_action(&fixture) == WHEELHOUSE_NONE,
-                "Copy URL intent resolves against the refreshed snapshot exactly once");
+      CardCheck(copy_action != WHEELHOUSE_NONE && card_taken(&fixture) == WHEELHOUSE_INTENT_COPY_SUBJECT_URL+1 &&
+                !fixture.card_has_action && card_taken(&fixture) == 0,
+                "Copy URL intent resolves against the refreshed card exactly once");
       size_t open_action = action_node_activate(&fixture, action_index);
       uishell_sidebar_card_queue_action(&fixture, action_node, open_action);
-      CardCheck(open_action != WHEELHOUSE_NONE && uishell_sidebar_card_take_action(&fixture) == open_action,
+      CardCheck(open_action != WHEELHOUSE_NONE && card_taken(&fixture) == WHEELHOUSE_INTENT_ACTIVATE+1,
                 "Open intent remains distinct from Copy URL intent");
       uishell_sidebar_card_queue_action(&fixture, action_node, copy_action);
       CardCheck(row_copies_url(&fixture, str8_lit("pr-281")) == 1, "a subject's row with a URL offers Copy URL");
@@ -854,8 +863,19 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(action_index != WHEELHOUSE_NONE && action_node_copy(&fixture, action_index) == WHEELHOUSE_NONE,
                 "refresh keeps the entity but removes its Copy URL action");
       CardCheck(row_copies_url(&fixture, str8_lit("pr-281")) == 0, "a subject's row without a URL offers no Copy URL");
-      CardCheck(uishell_sidebar_card_take_action(&fixture) == WHEELHOUSE_NONE && !fixture.card_has_action,
-                "refresh drops a removed action rather than dispatching an old snapshot index");
+      CardCheck(card_taken(&fixture) == 0 && !fixture.card_has_action,
+                "refresh drops a removed action rather than dispatching it");
+      // Without a URL its primary action inspects it: applied as its intent,
+      // its effect reaches the sidebar.
+      WheelhouseCardAction primary = {0};
+      CardCheck(uishell_sidebar_card_action(&fixture, action_index, 0, &primary) &&
+                str8_match(uishell_sidebar_string(primary.intent), str8_lit("inspect"), 0), "a card without a URL inspects it");
+      uishell_sidebar_card_queue_action(&fixture, action_node, 0);
+      fixture.error[0] = fixture.inspection[0] = 0;
+      uishell_sidebar_cards_dispatch(ws);
+      CardCheck(!fixture.error[0] && str8_match(str8_cstring((char *)fixture.inspection), str8_lit("change_request: pr-281"), 0),
+                "a card's action is applied as its intent, and its effect runs");
+      fixture.inspection[0] = 0;
     }
   }
   if(fixture.core)
@@ -883,10 +903,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       { uishell_sidebar_card_content(&fixture, ws, card, 0, node, index, 400, 0); }
       ui_end_build();
       B32 title = 0, identity = 0, facts = 0, expected_facts = 0;
-      WheelhouseDetail d = {0}; wheelhouse_snapshot_detail(fixture.snapshot, index, &d);
+      WheelhouseCardInfo d = {0}; uishell_sidebar_card_info(&fixture, index, &d);
       for(U64 f = 0; f < d.field_count; f++)
       {
-        WheelhouseDetailField field = {0}; wheelhouse_snapshot_detail_field(fixture.snapshot, index, f, &field);
+        WheelhouseDetailField field = {0}; uishell_sidebar_card_field(&fixture, index, f, &field);
         expected_facts |= field.role == WHEELHOUSE_DETAIL_FACT && field.has_value;
       }
       for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
@@ -894,10 +914,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         String8 text = ui_box_display_string(box);
         title |= str8_match(text, str8_cstring(cards[i].title), 0);
         identity |= str8_match(text, str8_cstring(cards[i].id), 0);
-        WheelhouseDetail d = {0}; wheelhouse_snapshot_detail(fixture.snapshot, index, &d);
+        WheelhouseCardInfo d = {0}; uishell_sidebar_card_info(&fixture, index, &d);
         for(U64 f = 0; f < d.field_count; f++)
         {
-          WheelhouseDetailField field = {0}; wheelhouse_snapshot_detail_field(fixture.snapshot, index, f, &field);
+          WheelhouseDetailField field = {0}; uishell_sidebar_card_field(&fixture, index, f, &field);
           facts |= field.role == WHEELHOUSE_DETAIL_FACT && field.has_value && str8_match(text, uishell_sidebar_string(field.label), 0);
         }
         CardCheck(!str8_match(str8_prefix(text, 6), str8_lit("Title:"), 0), "typed headers do not display flat prefixes");

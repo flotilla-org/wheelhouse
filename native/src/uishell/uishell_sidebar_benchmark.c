@@ -18,7 +18,9 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
   uishell_sidebar_refresh(state);
   ok &= state->labels == labels; // Current revision retains the map.
   char *error = 0;
-  B32 dispatched = uishell_sidebar_dispatch(state, WHEELHOUSE_NONE, &error);
+  // An intent invalidates the labels, even one the core refuses.
+  UIShell_SidebarIntent unknown = {.some = 1, .kind = WHEELHOUSE_INTENT_ACTIVATE_PLACEMENT, .key = str8_lit("5:other1:x1:y1:z")};
+  B32 dispatched = uishell_sidebar_intend(state, unknown, &error);
   ok &= !dispatched && !state->labels && !state->labels_snapshot;
   wheelhouse_string_free(error);
   uishell_sidebar_context_label(state, nodes, count, identity);

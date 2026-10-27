@@ -721,3 +721,170 @@ fn a_host_following_the_stream_has_what_the_snapshot_presents() {
         wheelhouse_destroy(h);
     }
 }
+
+unsafe fn effect_kinds(h: *mut WheelhouseCore) -> Vec<(u32, String)> {
+    let effects = wheelhouse_effects_take(h, ptr::null_mut());
+    let kinds = (0..wheelhouse_effects_count(effects))
+        .map(|i| {
+            let mut e = MaybeUninit::uninit();
+            assert_eq!(wheelhouse_effects_get(effects, i, e.as_mut_ptr()), 1);
+            let e = e.assume_init();
+            (e.kind, e.entity.id.read().unwrap())
+        })
+        .collect();
+    wheelhouse_effects_release(effects);
+    kinds
+}
+
+/// A card asked for by entity answers what a snapshot's detail of that
+/// entity does, for every catalog entity, and its actions are intents that
+/// do what the detail's actions do.
+#[test]
+fn a_card_answers_what_the_snapshot_detail_does() {
+    unsafe {
+        let daily = include_str!("../../../data/sidebar/daily-driver.kdl");
+        let fixture = include_str!("../../../data/sidebar/fixture.jsonl");
+        // (config, facts, whether their provider has gone stale)
+        let setups = [(daily, fixture, false), ("", include_str!("../../../fixtures/typed-detail.jsonl"), false), (daily, fixture, true)];
+        let mut checked = 0;
+        for (config, facts, stale) in setups {
+            // Two cores with the same facts: one dispatches the detail's
+            // actions, the other applies the card's intents.
+            let cores = [create(config), create(config)];
+            for h in cores {
+                for line in facts.lines() {
+                    assert_eq!(wheelhouse_apply_patch_json(h, 5000, text(PROVIDER), text(line), ptr::null_mut()), 1);
+                }
+                assert_eq!(wheelhouse_provider_set_stale(h, text(PROVIDER), stale as u32, ptr::null_mut()), 1);
+            }
+            let [h, other] = cores;
+            let s = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
+            for index in 0..wheelhouse_snapshot_detail_count(s) {
+                let mut d = MaybeUninit::uninit();
+                assert_eq!(wheelhouse_snapshot_detail(s, index, d.as_mut_ptr()), 1);
+                let d = d.assume_init();
+                let entity = d.entity.read().unwrap();
+                let card = wheelhouse_card_acquire(h, d.entity, ptr::null_mut());
+                assert!(!card.is_null(), "{entity:?} has a card");
+                assert_eq!(wheelhouse_card_is_current(h, card, ptr::null_mut()), 1);
+                let mut c = MaybeUninit::uninit();
+                assert_eq!(wheelhouse_card(card, c.as_mut_ptr()), 1);
+                let c = c.assume_init();
+                assert_eq!(c.entity.read().unwrap(), entity);
+                assert_eq!(
+                    (c.label.read(), c.field_count, c.error.read(), c.has_workspace, c.workspace_id.bytes, c.now_ms),
+                    (d.label.read(), d.field_count, d.error.read(), d.has_workspace, d.workspace_id.bytes, d.now_ms)
+                );
+                assert_eq!(c.has_url, (d.copy_url != NONE) as u32);
+                for f in 0..d.field_count {
+                    let (mut df, mut cf) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+                    assert_eq!(wheelhouse_snapshot_detail_field(s, index, f, df.as_mut_ptr()), 1);
+                    assert_eq!(wheelhouse_card_field(card, f, cf.as_mut_ptr()), 1);
+                    let (df, cf) = (df.assume_init(), cf.assume_init());
+                    let view = |v: &DetailFieldView| {
+                        (
+                            (v.name.read(), v.section.read(), v.role, v.label.read(), v.has_value, v.text.read()),
+                            (v.source_key.read(), v.source_id.read(), v.has_observation, v.observed_at_ms, v.stale, v.relation_count),
+                        )
+                    };
+                    assert_eq!(view(&cf), view(&df));
+                    for r in 0..df.relation_count {
+                        let (mut dr, mut cr) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+                        assert_eq!(wheelhouse_snapshot_detail_relation(s, index, f, r, ptr::null(), 0, dr.as_mut_ptr()), 1);
+                        assert_eq!(wheelhouse_card_relation(card, f, r, ptr::null(), 0, cr.as_mut_ptr()), 1);
+                        let (dr, cr) = (dr.assume_init(), cr.assume_init());
+                        let target = cr.entity.read().unwrap();
+                        assert_eq!(target, dr.entity.read().unwrap());
+                        assert_eq!(cr.display_text.read().unwrap(), target.id);
+                        // A relation already on the path is left out.
+                        assert_eq!(wheelhouse_card_relation(card, f, r, &cr.entity, 1, cr_out()), 0);
+                    }
+                    assert_eq!(wheelhouse_card_relation(card, f, df.relation_count, ptr::null(), 0, cr_out()), 0);
+                }
+                assert_eq!(wheelhouse_card_field(card, d.field_count, MaybeUninit::uninit().as_mut_ptr()), 0);
+                for a in 0..3 {
+                    let (mut da, mut ca) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+                    let has = wheelhouse_snapshot_detail_action(s, index, a, da.as_mut_ptr());
+                    assert_eq!(wheelhouse_card_action(card, a, ca.as_mut_ptr()), has);
+                    if has == 0 {
+                        continue;
+                    }
+                    let (da, ca) = (da.assume_init(), ca.assume_init());
+                    assert_eq!((ca.intent.read(), ca.label.read()), (da.intent.read(), da.label.read()));
+                    assert_eq!(ca.entity.read().unwrap(), entity);
+                    assert_eq!(ca.kind, [WHEELHOUSE_INTENT_ACTIVATE, WHEELHOUSE_INTENT_COPY_SUBJECT_URL][a]);
+                    // The detail's action on one core, the card's intent on the
+                    // other. Earlier actions changed the core, so the detail's
+                    // comes from a fresh snapshot.
+                    let fresh = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
+                    let mut fa = MaybeUninit::uninit();
+                    let found = wheelhouse_snapshot_detail_find(fresh, d.entity);
+                    assert_eq!(wheelhouse_snapshot_detail_action(fresh, found, a, fa.as_mut_ptr()), 1);
+                    let mut error = ptr::null_mut();
+                    let dispatched = wheelhouse_dispatch(h, fresh, fa.assume_init().action, &mut error);
+                    wheelhouse_string_free(error);
+                    wheelhouse_snapshot_release(fresh);
+                    let intent =
+                        IntentView { kind: ca.kind, key: text(""), entity: ca.entity, name: text(""), has_value: 0, value: text("") };
+                    let mut error = ptr::null_mut();
+                    let applied = wheelhouse_apply_intent(other, &intent, ptr::null_mut(), &mut error);
+                    wheelhouse_string_free(error);
+                    assert_eq!(applied == WHEELHOUSE_INTENT_ACCEPTED, dispatched == 1, "{entity:?} action {a}");
+                    assert_eq!(effect_kinds(other), effect_kinds(h), "{entity:?} action {a}");
+                    checked += 1;
+                }
+                wheelhouse_card_release(card);
+            }
+            wheelhouse_snapshot_release(s);
+            // An entity the catalog doesn't have has no card, and no error.
+            let mut error = ptr::null_mut();
+            let missing = EntityView { provider: text(PROVIDER), kind: text("vessel"), id: text("nowhere") };
+            assert!(wheelhouse_card_acquire(h, missing, &mut error).is_null());
+            assert!(error.is_null());
+            wheelhouse_destroy(h);
+            wheelhouse_destroy(other);
+        }
+        assert!(checked > 10, "{checked} actions checked");
+    }
+}
+
+fn cr_out() -> *mut CardRelationView {
+    Box::leak(Box::new(CardRelationView { entity: EntityView::empty(), display_text: Text::borrowed("") }))
+}
+
+/// A card is current until what the core presents changes, and only for
+/// the core that gave it.
+#[test]
+fn a_card_is_current_until_the_core_changes() {
+    unsafe {
+        let config = include_str!("../../../data/sidebar/daily-driver.kdl");
+        // Two cores with the same facts, so at the same revision.
+        let (h, other) = (create(config), create(config));
+        for core in [h, other] {
+            for line in include_str!("../../../data/sidebar/fixture.jsonl").lines() {
+                assert_eq!(wheelhouse_apply_patch_json(core, 0, text(PROVIDER), text(line), ptr::null_mut()), 1);
+            }
+        }
+        let entity = EntityView { provider: text(PROVIDER), kind: text("vessel"), id: text("chip-v") };
+        let card = wheelhouse_card_acquire(h, entity, ptr::null_mut());
+        assert!(!card.is_null());
+        assert_eq!(wheelhouse_card_is_current(h, card, ptr::null_mut()), 1);
+        assert_eq!(wheelhouse_card_is_current(other, card, ptr::null_mut()), 0, "another core's card");
+        assert_eq!(wheelhouse_card_is_current(h, ptr::null(), ptr::null_mut()), 0);
+        let rename = r#"{"target":{"kind":"entity","value":{"kind":"vessel","id":"chip-v"}},"source_id":"fixture","set":{"display.label":{"value":{"type":"text","value":"Renamed"}}},"unset":[]}"#;
+        assert_eq!(wheelhouse_apply_patch_json(h, 1, text(PROVIDER), text(rename), ptr::null_mut()), 1);
+        assert_eq!(wheelhouse_card_is_current(h, card, ptr::null_mut()), 0);
+        // The old card stays readable; a new one has the change.
+        let mut c = MaybeUninit::uninit();
+        assert_eq!(wheelhouse_card(card, c.as_mut_ptr()), 1);
+        assert_eq!(c.assume_init().label.read().unwrap(), "Subject workspace");
+        let renamed = wheelhouse_card_acquire(h, entity, ptr::null_mut());
+        let mut c = MaybeUninit::uninit();
+        assert_eq!(wheelhouse_card(renamed, c.as_mut_ptr()), 1);
+        assert_eq!(c.assume_init().label.read().unwrap(), "Renamed");
+        wheelhouse_card_release(card);
+        wheelhouse_card_release(renamed);
+        wheelhouse_destroy(h);
+        wheelhouse_destroy(other);
+    }
+}

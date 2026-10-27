@@ -208,6 +208,13 @@ struct UIShell_SectionTitle
   B32 hidden;
 };
 typedef struct UIShell_StoreEntry UIShell_StoreEntry;
+// A catalog card the core gave, and its summary, whose text it owns.
+typedef struct UIShell_CatalogCard UIShell_CatalogCard;
+struct UIShell_CatalogCard
+{
+  WheelhouseCard *card;
+  WheelhouseCardInfo info;
+};
 
 struct UIShell_SidebarState
 {
@@ -329,12 +336,18 @@ struct UIShell_SidebarState
   WheelhouseEntity card_action_target;
   String8 card_action_intent;
   B32 card_has_action;
+  // Catalog cards asked for by entity (uishell_sidebar_card_find), each the
+  // core's answer at the revision it was asked at. They all go when the
+  // first, the oldest, is no longer current (uishell_sidebar_refresh).
+  Arena *catalog_arena;
+  UIShell_CatalogCard *catalog;
+  U64 catalog_count, catalog_capacity;
   WheelhouseCore *core;
   // The sidebar as its change stream gives it (uishell_sidebar_model.c):
   // what the rows draw, by preorder index (uishell_sidebar_node_at).
   // `view_count` counts the deltas applied, for what is cached from rows.
-  // The snapshot beside it, kept current with it, is for detail cards and
-  // diagnostics until they follow the stream too.
+  // The snapshot beside it, kept current with it, is for diagnostics and
+  // the store syncs until they follow the stream too.
   UIShell_SidebarModel model;
   U64 subscription;
   B32 subscribed;
@@ -520,12 +533,6 @@ uishell_sidebar_labels_invalidate(UIShell_SidebarState *state)
   if(state->labels_arena) { arena_clear(state->labels_arena); }
 }
 
-internal B32
-uishell_sidebar_dispatch(UIShell_SidebarState *state, size_t action, char **error)
-{
-  uishell_sidebar_labels_invalidate(state);
-  return wheelhouse_dispatch(state->core, state->snapshot, action, error);
-}
 
 // Identity alone is the existing display contract (not kind + identity).
 // Insert in snapshot order, retaining the first non-section placement, including
@@ -601,6 +608,9 @@ uishell_sidebar_store_frame_end(RD_WindowState *ws)
   if(cfg_change_gen() != gen || state->sidebar_generation != generation) { rd_request_frame(); }
 }
 
+internal void uishell_sidebar_catalog_follow(UIShell_SidebarState *state);
+internal void uishell_sidebar_catalog_clear(UIShell_SidebarState *state);
+
 internal void
 uishell_sidebar_release(UIShell_SidebarState *state)
 {
@@ -658,6 +668,8 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     }
     state->detached = state->drag_card = 0;
     wheelhouse_snapshot_release(state->snapshot);
+    uishell_sidebar_catalog_clear(state);
+    if(state->catalog_arena) { arena_release(state->catalog_arena); state->catalog_arena = 0; }
     uishell_sidebar_model_release(&state->model);
     state->subscribed = 0;
     wheelhouse_destroy(state->core);
@@ -776,6 +788,7 @@ internal void
 uishell_sidebar_refresh(UIShell_SidebarState *state)
 {
   uishell_sidebar_follow(state);
+  uishell_sidebar_catalog_follow(state);
   char *error = 0;
   B32 current = wheelhouse_snapshot_is_current(state->core, state->snapshot, &error);
   if(error != 0) { uishell_sidebar_result(state, 0, error); return; }

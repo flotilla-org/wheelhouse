@@ -49,60 +49,117 @@ uishell_sidebar_card_retain_label(UIShell_HoverCard *card, String8 label)
   card->retained_label = push_str8_copy(card->label_arena, label);
 }
 
-// A detail target need not have any placement. Adapt the catalog's preview
-// identity to the existing preview drawing path without looking for a tree row.
-// UI-thread only: a request mutates the snapshot by appending details. Borrowed
-// heap-backed strings remain valid across appends (the core ABI guarantee),
-// until snapshot release. Missing targets return error-free NONE and append
-// nothing. Core revision caching bounds repeat-miss cost; see
-// docs/sidebar-snapshot-performance.md (Demand-driven catalog details) for
-// BTreeMap lookup cost, the shared 64-identity bound and eviction policy.
-// Measure repeated misses before introducing frontend negative caching.
+// A card's target need not have any placement: the core gives any catalog
+// entity's card by identity, and the sidebar keeps the cards it was given
+// until the oldest goes stale. A card's index (into state->catalog) and its
+// borrowed text stay valid until then, so for the rest of a frame. Missing
+// targets return NONE and keep nothing; the core's revision cache bounds
+// repeat-miss cost (docs/sidebar-snapshot-performance.md, Demand-driven
+// catalog details). Lookup is linear: the cards one revision asks for are
+// the few on screen.
 internal U64
 uishell_sidebar_card_find(UIShell_SidebarState *state, WheelhouseEntity entity, UIShell_SidebarNode *out)
 {
-  U64 index = state->snapshot ? wheelhouse_snapshot_detail_find(state->snapshot, entity) : WHEELHOUSE_NONE;
+  U64 index = WHEELHOUSE_NONE;
+  for(U64 i = 0; i < state->catalog_count; i++)
+  { if(uishell_sidebar_card_entity_match(state->catalog[i].info.entity, entity)) { index = i; break; } }
   // Every card path funnels through exact identity lookup: current, outgoing,
-  // navigated, related, pinned/docked and detached targets all demand here.
-  if(index == WHEELHOUSE_NONE && state->snapshot && state->core)
+  // navigated, related, pinned/docked and detached targets all ask here.
+  if(index == WHEELHOUSE_NONE && state->core)
   {
     char *error = 0;
-    index = wheelhouse_snapshot_detail_request(state->core, state->snapshot, entity, &error);
+    WheelhouseCard *card = wheelhouse_card_acquire(state->core, entity, &error);
     if(error) { uishell_sidebar_result(state, 0, error); }
+    if(!card) { return WHEELHOUSE_NONE; }
+    if(state->catalog_count == state->catalog_capacity)
+    {
+      if(!state->catalog_arena) { state->catalog_arena = arena_alloc(.reserve_size = MB(1)); }
+      U64 capacity = Max(16, state->catalog_capacity*2);
+      UIShell_CatalogCard *grown = push_array(state->catalog_arena, UIShell_CatalogCard, capacity);
+      if(state->catalog_count) { MemoryCopy(grown, state->catalog, state->catalog_count*sizeof(*grown)); }
+      state->catalog = grown; state->catalog_capacity = capacity;
+    }
+    index = state->catalog_count++;
+    state->catalog[index].card = card;
+    wheelhouse_card(card, &state->catalog[index].info);
   }
-  WheelhouseDetail detail = {0};
   if(index == WHEELHOUSE_NONE) { return WHEELHOUSE_NONE; }
   if(out)
   {
-    if(!wheelhouse_snapshot_detail(state->snapshot, index, &detail)) { return WHEELHOUSE_NONE; }
-    *out = (UIShell_SidebarNode){.entity = detail.entity,
-      .label = detail.label, .detail_count = detail.field_count,
-      .state = detail.has_workspace ? WHEELHOUSE_LIVE : WHEELHOUSE_LATENT, .workspace_id = detail.workspace_id};
+    WheelhouseCardInfo info = state->catalog[index].info;
+    *out = (UIShell_SidebarNode){.entity = info.entity,
+      .label = info.label, .detail_count = info.field_count, .has_url = info.has_url,
+      .state = info.has_workspace ? WHEELHOUSE_LIVE : WHEELHOUSE_LATENT, .workspace_id = info.workspace_id};
   }
   return index;
 }
 
-// Resolve semantic intent only after sidebar reconciliation/reveal has replaced
-// snapshots. A disappearing or changed control cancels the pending action.
+// Release the catalog cards, as when the oldest is no longer current.
+internal void
+uishell_sidebar_catalog_clear(UIShell_SidebarState *state)
+{
+  for(U64 i = 0; i < state->catalog_count; i++) { wheelhouse_card_release(state->catalog[i].card); }
+  state->catalog = 0; state->catalog_count = state->catalog_capacity = 0;
+  if(state->catalog_arena) { arena_clear(state->catalog_arena); }
+}
+
+// Keep the catalog cards while they are the core's answer.
+internal void
+uishell_sidebar_catalog_follow(UIShell_SidebarState *state)
+{
+  if(!state->catalog_count) { return; }
+  char *error = 0;
+  B32 current = state->core && wheelhouse_card_is_current(state->core, state->catalog[0].card, &error);
+  if(error) { uishell_sidebar_result(state, 0, error); }
+  if(!current) { uishell_sidebar_catalog_clear(state); }
+}
+
+internal B32
+uishell_sidebar_card_info(UIShell_SidebarState *state, U64 index, WheelhouseCardInfo *out)
+{
+  if(index >= state->catalog_count) { MemoryZeroStruct(out); return 0; }
+  *out = state->catalog[index].info;
+  return 1;
+}
+
+internal B32
+uishell_sidebar_card_field(UIShell_SidebarState *state, U64 index, U64 field, WheelhouseDetailField *out)
+{
+  if(index >= state->catalog_count) { MemoryZeroStruct(out); return 0; }
+  return wheelhouse_card_field(state->catalog[index].card, field, out);
+}
+
+internal B32
+uishell_sidebar_card_relation(UIShell_SidebarState *state, U64 index, U64 field, U64 relation,
+                              WheelhouseEntity *path, U64 path_count, WheelhouseCardRelation *out)
+{
+  if(index >= state->catalog_count) { MemoryZeroStruct(out); return 0; }
+  return wheelhouse_card_relation(state->catalog[index].card, field, relation, path, path_count, out);
+}
+
+// A card's action `i`: 0 its primary action, 1 Copy URL when it has a URL.
+internal B32
+uishell_sidebar_card_action(UIShell_SidebarState *state, U64 index, U64 i, WheelhouseCardAction *out)
+{
+  if(index >= state->catalog_count) { MemoryZeroStruct(out); return 0; }
+  return wheelhouse_card_action(state->catalog[index].card, i, out);
+}
+
+// Resolve semantic intent only after sidebar reconciliation/reveal has
+// refreshed the cards: what is queued is the action's entity and what it
+// does, and a card whose action changed or went cancels it.
 internal void
 uishell_sidebar_card_queue_action(UIShell_SidebarState *state, UIShell_SidebarNode node, size_t action)
 {
   U64 index = uishell_sidebar_card_find(state, uishell_sidebar_card_entity(node), 0);
-  if(index == WHEELHOUSE_NONE) { return; }
-  for(U64 i = 0; i < UIShell_HoverCardActionCount; i++)
-  {
-    WheelhouseDetailAction control = {0};
-    if(wheelhouse_snapshot_detail_action(state->snapshot, index, i, &control) && control.action == action)
-    {
-      state->card_action_target = uishell_sidebar_card_entity_copy(ui_build_arena(), control.entity);
-      state->card_action_intent = push_str8_copy(ui_build_arena(), uishell_sidebar_string(control.intent));
-      state->card_has_action = 1;
-      break;
-    }
-  }
+  WheelhouseCardAction control = {0};
+  if(index == WHEELHOUSE_NONE || !uishell_sidebar_card_action(state, index, action, &control)) { return; }
+  state->card_action_target = uishell_sidebar_card_entity_copy(ui_build_arena(), control.entity);
+  state->card_action_intent = push_str8_copy(ui_build_arena(), uishell_sidebar_string(control.intent));
+  state->card_has_action = 1;
 }
 
-internal size_t
+internal UIShell_SidebarIntent
 uishell_sidebar_card_take_action(UIShell_SidebarState *state)
 {
   B32 pending = state->card_has_action;
@@ -112,14 +169,14 @@ uishell_sidebar_card_take_action(UIShell_SidebarState *state)
   state->card_action_target = (WheelhouseEntity){0};
   state->card_action_intent = str8_zero();
   U64 index = pending ? uishell_sidebar_card_find(state, target, 0) : WHEELHOUSE_NONE;
-  if(index == WHEELHOUSE_NONE) { return WHEELHOUSE_NONE; }
+  if(index == WHEELHOUSE_NONE) { return (UIShell_SidebarIntent){0}; }
   for(U64 i = 0; i < UIShell_HoverCardActionCount; i++)
   {
-    WheelhouseDetailAction control = {0};
-    if(wheelhouse_snapshot_detail_action(state->snapshot, index, i, &control) &&
-       str8_match(intent, uishell_sidebar_string(control.intent), 0)) { return control.action; }
+    WheelhouseCardAction control = {0};
+    if(uishell_sidebar_card_action(state, index, i, &control) && str8_match(intent, uishell_sidebar_string(control.intent), 0))
+    { return (UIShell_SidebarIntent){.some = 1, .kind = control.kind, .entity = control.entity}; }
   }
-  return WHEELHOUSE_NONE;
+  return (UIShell_SidebarIntent){0};
 }
 
 internal void
@@ -457,10 +514,10 @@ uishell_sidebar_card_age(U64 now, U64 observed)
 internal String8
 uishell_sidebar_card_role_text(UIShell_SidebarState *state, U64 index, U32 role)
 {
-  WheelhouseDetail detail = {0}; wheelhouse_snapshot_detail(state->snapshot, index, &detail);
+  WheelhouseCardInfo detail = {0}; uishell_sidebar_card_info(state, index, &detail);
   for(U64 f = 0; f < detail.field_count; f++)
   {
-    WheelhouseDetailField field = {0}; wheelhouse_snapshot_detail_field(state->snapshot, index, f, &field);
+    WheelhouseDetailField field = {0}; uishell_sidebar_card_field(state, index, f, &field);
     if(field.role == role && field.has_value && field.text.len) { return uishell_sidebar_string(field.text); }
   }
   return str8_zero();
@@ -473,7 +530,7 @@ internal void uishell_sidebar_ghost_set_expanded(CFG_Node *window, String8 ghost
 
 internal void
 uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card,
-                            U64 index, WheelhouseDetail detail, F32 width, B32 interactive)
+                            U64 index, WheelhouseCardInfo detail, F32 width, B32 interactive)
 {
   String8 identity = uishell_sidebar_card_role_text(state, index, WHEELHOUSE_DETAIL_IDENTITY);
   String8 title = uishell_sidebar_card_role_text(state, index, WHEELHOUSE_DETAIL_TITLE);
@@ -513,7 +570,7 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
 
 internal void
 uishell_sidebar_card_facts(UIShell_SidebarState *state, UIShell_HoverCard *card,
-                           U64 index, WheelhouseDetail detail, F32 width, B32 interactive)
+                           U64 index, WheelhouseCardInfo detail, F32 width, B32 interactive)
 {
   // Omit missing facts; known-empty facts keep a label and dash. Labels and
   // observation times come from the typed fields.
@@ -522,7 +579,7 @@ uishell_sidebar_card_facts(UIShell_SidebarState *state, UIShell_HoverCard *card,
   F32 cell_width = Max(0.f, (width-12)/2);
   for(U64 f = 0; f < detail.field_count; f++)
   {
-    WheelhouseDetailField field = {0}; wheelhouse_snapshot_detail_field(state->snapshot, index, f, &field);
+    WheelhouseDetailField field = {0}; uishell_sidebar_card_field(state, index, f, &field);
     if(field.role != WHEELHOUSE_DETAIL_FACT || !field.has_value) { continue; }
     if(fact_count%2 == 0)
     {
@@ -572,13 +629,13 @@ uishell_sidebar_card_facts(UIShell_SidebarState *state, UIShell_HoverCard *card,
 
 internal void
 uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *card,
-                             U64 slot, U64 index, WheelhouseDetail detail, F32 width, B32 interactive)
+                             U64 slot, U64 index, WheelhouseCardInfo detail, F32 width, B32 interactive)
 {
   B32 related_label = 0;
   U64 relation_capacity = 0;
   for(U64 f = 0; f < detail.field_count; f++)
   {
-    WheelhouseDetailField field = {0}; wheelhouse_snapshot_detail_field(state->snapshot, index, f, &field);
+    WheelhouseDetailField field = {0}; uishell_sidebar_card_field(state, index, f, &field);
     if(field.role == WHEELHOUSE_DETAIL_RELATION) { relation_capacity += field.relation_count; }
   }
   U64 table_capacity = 1;
@@ -587,12 +644,12 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
   B32 *occupied = push_array(ui_build_arena(), B32, table_capacity);
   for(U64 f = 0; f < detail.field_count; f++)
   {
-    WheelhouseDetailField field = {0}; wheelhouse_snapshot_detail_field(state->snapshot, index, f, &field);
+    WheelhouseDetailField field = {0}; uishell_sidebar_card_field(state, index, f, &field);
     if(field.role != WHEELHOUSE_DETAIL_RELATION) { continue; }
     for(U64 r = 0; r < field.relation_count; r++)
     {
-      WheelhouseDetailRelation relation = {0};
-      if(!wheelhouse_snapshot_detail_relation(state->snapshot, index, f, r, card->path, card->depth, &relation)) { continue; }
+      WheelhouseCardRelation relation = {0};
+      if(!uishell_sidebar_card_relation(state, index, f, r, card->path, card->depth, &relation)) { continue; }
       U64 hash = u64_hash_from_str8(uishell_sidebar_string(relation.entity.kind)) ^
         (u64_hash_from_str8(uishell_sidebar_string(relation.entity.id))*0x9e3779b97f4a7c15ull);
       U64 bucket = hash & (table_capacity-1);
@@ -606,10 +663,8 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
       B32 available = related_index != WHEELHOUSE_NONE;
       if(available)
       {
-        // Relation lookup preceded demand, so use the requested target's label
-        // and detail index rather than its unloaded ID/NONE fallback.
+        // The relation gives only its target's ID: show the target card's label.
         relation.display_text = related.label;
-        relation.detail = related_index;
       }
       UI_Row
       {
@@ -624,7 +679,7 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
           else { UI_TagF("weak") { ui_label(uishell_sidebar_string(relation.display_text)); } }
         }
         UI_PrefWidth(ui_px(badge_width, 1)) UI_TagF("weak")
-        { ui_label(available ? uishell_sidebar_card_role_text(state, relation.detail, WHEELHOUSE_DETAIL_STATE) : str8_lit("Unavailable")); }
+        { ui_label(available ? uishell_sidebar_card_role_text(state, related_index, WHEELHOUSE_DETAIL_STATE) : str8_lit("Unavailable")); }
         if(ui_clicked(link))
         {
           if(link.event_flags & (WM_Modifier_Super|WM_Modifier_Ctrl))
@@ -682,12 +737,13 @@ uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card
   }
   // Labels and enabled controls come from the core. The footer packs the
   // controls into one row; the text label remains the keyboard target.
-  WheelhouseDetailAction controls[UIShell_HoverCardActionCount] = {0};
+  WheelhouseCardAction controls[UIShell_HoverCardActionCount] = {0};
+  size_t control_index[UIShell_HoverCardActionCount] = {0};
   U64 control_count = 0;
   for(U64 i = 0; i < ArrayCount(controls); i++)
   {
-    WheelhouseDetailAction control = {0};
-    if(actions && wheelhouse_snapshot_detail_action(state->snapshot, index, i, &control)) { controls[control_count++] = control; }
+    WheelhouseCardAction control = {0};
+    if(actions && uishell_sidebar_card_action(state, index, i, &control)) { control_index[control_count] = i; controls[control_count++] = control; }
   }
   if(!control_count) { return action; }
   F32 button_width = control_count ? width/control_count : width;
@@ -695,7 +751,7 @@ uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card
   {
     for(U64 i = 0; i < control_count; i++)
     {
-      WheelhouseDetailAction control = controls[i];
+      WheelhouseCardAction control = controls[i];
       String8 intent = uishell_sidebar_string(control.intent);
       RD_IconKind icon = str8_match(intent, str8_lit("copy-url"), 0) ? RD_IconKind_FileOutline : RD_IconKind_Window;
       UI_PrefWidth(ui_px(button_width, 1)) UI_Row
@@ -704,7 +760,7 @@ uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card
         UI_PrefWidth(ui_px(Max(0.f, button_width-ui_top_font_size()*1.4f), 1))
         {
           if(ui_clicked(uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###card_action_%I64u_%S", uishell_sidebar_string(control.label), i, intent))))
-          { action = control.action; if(card->placement == UIShell_CardPlacement_Transient && !str8_match(intent, str8_lit("copy-url"), 0)) { uishell_sidebar_card_close(card); } }
+          { action = control_index[i]; if(card->placement == UIShell_CardPlacement_Transient && !str8_match(intent, str8_lit("copy-url"), 0)) { uishell_sidebar_card_close(card); } }
         }
       }
     }
@@ -716,8 +772,8 @@ internal size_t
 uishell_sidebar_card_content(UIShell_SidebarState *state, RD_WindowState *ws, UIShell_HoverCard *card,
                             U64 slot, UIShell_SidebarNode node, U64 index, F32 width, B32 interactive)
 {
-  WheelhouseDetail detail = {0};
-  if(!wheelhouse_snapshot_detail(state->snapshot, index, &detail)) { return WHEELHOUSE_NONE; }
+  WheelhouseCardInfo detail = {0};
+  if(!uishell_sidebar_card_info(state, index, &detail)) { return WHEELHOUSE_NONE; }
   uishell_sidebar_card_header(state, card, index, detail, width, interactive);
   uishell_sidebar_card_facts(state, card, index, detail, width, interactive);
   uishell_sidebar_card_related(state, card, slot, index, detail, width, interactive);
@@ -794,12 +850,13 @@ uishell_sidebar_card_cap(UIShell_SidebarState *state, UIShell_HoverCard *card, U
   // A pixel of overlap leaves no gap at the join.
   F32 y = card->cap_below ? rect.y1-1 : rect.y0-shown_height+1;
   card->cap.rect = r2f32p(rect.x0, y, rect.x1, y+shown_height);
-  WheelhouseDetailAction controls[UIShell_HoverCardActionCount] = {0};
+  WheelhouseCardAction controls[UIShell_HoverCardActionCount] = {0};
+  size_t control_index[UIShell_HoverCardActionCount] = {0};
   U64 control_count = 0;
   for(U64 i = 0; index != WHEELHOUSE_NONE && i < ArrayCount(controls); i++)
   {
-    WheelhouseDetailAction control = {0};
-    if(wheelhouse_snapshot_detail_action(state->snapshot, index, i, &control)) { controls[control_count++] = control; }
+    WheelhouseCardAction control = {0};
+    if(uishell_sidebar_card_action(state, index, i, &control)) { control_index[control_count] = i; controls[control_count++] = control; }
   }
   B32 pin = card->placement == UIShell_CardPlacement_Transient || card->placement == UIShell_CardPlacement_Float;
   B32 back = card->placement == UIShell_CardPlacement_Inline;
@@ -837,7 +894,7 @@ uishell_sidebar_card_cap(UIShell_SidebarState *state, UIShell_HoverCard *card, U
       String8 intent = uishell_sidebar_string(controls[i].intent);
       UI_Signal sig = uishell_sidebar_header_button(uishell_sidebar_card_action_glyph(intent),
         push_str8f(ui_build_arena(), "card_action_%I64u_%S", i, intent), 0, 1, uishell_sidebar_string(controls[i].label), str8_zero());
-      if(ui_clicked(sig)) { action = controls[i].action; }
+      if(ui_clicked(sig)) { action = control_index[i]; }
     }
     // The card's own menu, which keeps it open, exists only while some fold.
     card->menu = folded ? menu_key : ui_key_zero();
@@ -863,7 +920,7 @@ uishell_sidebar_card_cap(UIShell_SidebarState *state, UIShell_HoverCard *card, U
     {
       String8 intent = uishell_sidebar_string(controls[i].intent);
       if(ui_clicked(uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###card_more_%I64u_%S", uishell_sidebar_string(controls[i].label), i, intent))))
-      { action = controls[i].action; ui_ctx_menu_close(); }
+      { action = control_index[i]; ui_ctx_menu_close(); }
     }
   }
   // An action other than copying is done with a hover card, as a click is.
@@ -871,7 +928,7 @@ uishell_sidebar_card_cap(UIShell_SidebarState *state, UIShell_HoverCard *card, U
   {
     for(U64 i = 0; i < control_count; i++)
     {
-      if(controls[i].action == action && !str8_match(uishell_sidebar_string(controls[i].intent), str8_lit("copy-url"), 0))
+      if(control_index[i] == action && !str8_match(uishell_sidebar_string(controls[i].intent), str8_lit("copy-url"), 0))
       { uishell_sidebar_card_close(card); }
     }
   }
@@ -1244,7 +1301,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
 }
 
 // Call once after all window Views have built. Resolve semantic intent against
-// the reconciled snapshot while its retained identity still lives in this build.
+// the refreshed cards while its retained identity still lives in this build.
 internal void
 uishell_sidebar_cards_dispatch(RD_WindowState *ws)
 {
@@ -1252,13 +1309,13 @@ uishell_sidebar_cards_dispatch(RD_WindowState *ws)
   if(!state) { return; }
   uishell_sidebar_section_drop_apply(ws);
   uishell_sidebar_drag_finish(ws);
-  size_t pending = uishell_sidebar_card_take_action(state);
-  if(pending != WHEELHOUSE_NONE && state->core)
+  UIShell_SidebarIntent pending = uishell_sidebar_card_take_action(state);
+  if(pending.some && state->core)
   {
     Temp scratch = scratch_begin(0, 0);
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, cfg_node_from_id(ws->cfg_id));
     char *error = 0;
-    B32 ok = wheelhouse_dispatch(state->core, state->snapshot, pending, &error);
+    B32 ok = uishell_sidebar_intend(state, pending, &error);
     if(uishell_sidebar_result(state, ok, error))
     { uishell_sidebar_effects(state, &split); }
     uishell_sidebar_refresh(state); rd_request_frame(); scratch_end(scratch);

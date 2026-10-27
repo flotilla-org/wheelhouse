@@ -195,6 +195,13 @@ Peak RSS is 125,440/124,928 KiB (100), 153,724/153,660 KiB (300), and
 
 ## Demand-driven catalog details (Andamento #96)
 
+Since the change stream's PR 5.4, native asks for cards by entity
+(`wheelhouse_card_acquire`, docs/core/typed-detail-abi.md) at the same lookup
+seam, and keeps them until the oldest is no longer current, rather than
+appending details to a snapshot. Its lookup is linear over the cards one
+revision asked for, which are those on screen. The core's detail cache below is
+unchanged. What follows describes the snapshot path it replaced.
+
 Wheelhouse now acquires plain snapshots on stale revisions and requests structured
 cards at its shared exact-identity lookup. Current, outgoing cross-fade, navigated,
 related, pinned/docked and detached targets use that same seam. A card-free refresh

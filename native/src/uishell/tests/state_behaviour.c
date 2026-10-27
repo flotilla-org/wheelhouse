@@ -2512,8 +2512,8 @@ entry_point(CmdLine *cmdline)
       StateCheck(card->open && card->depth == 1 && uishell_sidebar_card_entity_match(card->path[0], fleet_beta));
       UIShell_SidebarNode found = {0};
       U64 index = card->open ? uishell_sidebar_card_find(ws->sidebar, card->path[0], &found) : WHEELHOUSE_NONE;
-      WheelhouseDetail detail = {0};
-      StateCheck(index != WHEELHOUSE_NONE && wheelhouse_snapshot_detail(ws->sidebar->snapshot, index, &detail));
+      WheelhouseCardInfo detail = {0};
+      StateCheck(index != WHEELHOUSE_NONE && uishell_sidebar_card_info(ws->sidebar, index, &detail));
       StateCheck(uishell_sidebar_card_entity_match(detail.entity, fleet_beta) && detail.field_count > 0 &&
                  str8_match(uishell_sidebar_string(detail.label), str8_lit("Fleet via beta"), 0));
       StateCheck(uishell_sidebar_card_find(ws->sidebar, uishell_sidebar_entity(uishell_sidebar_host_provider, project, fleet), 0) == WHEELHOUSE_NONE);

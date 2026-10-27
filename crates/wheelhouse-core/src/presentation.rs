@@ -562,6 +562,7 @@ fn order_run(data: Vec<Rc<PlacementNode>>, order: &[EntityRef]) -> Vec<Rc<Placem
     placed.into_iter().filter_map(|index| data[index].take()).collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_node(
     entity: &EvaluatedPlacement,
     variables: Option<&EffectiveNodeVariables>,

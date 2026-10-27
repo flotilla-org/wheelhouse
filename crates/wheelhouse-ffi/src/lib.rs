@@ -11,7 +11,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 use wheelhouse_core::{
-    detail::DetailCard,
+    detail::{DetailCard, DetailField},
     host::PaneObservation,
     presentation::{Content, PlacementNode, PresentationState},
     profile,
@@ -21,11 +21,13 @@ use wheelhouse_core::{
     WorkspaceId,
 };
 
+pub mod card;
 pub mod dashboard;
 pub mod documents;
 pub mod slots;
 pub mod stream;
 pub mod strip;
+pub use card::*;
 pub use dashboard::*;
 pub use documents::*;
 pub use slots::*;
@@ -817,7 +819,7 @@ impl WheelhouseSnapshot {
         }
         (start, content.fields.len(), controls, content.controls.len())
     }
-    fn node(&mut self, n: &PlacementNode, parent: usize, sidebar: &Sidebar) {
+    fn node(&mut self, n: &PlacementNode, parent: usize) {
         let (fields, field_count, controls, control_count) = self.content(&n.content);
         let (details, detail_count, _, _) = self.content(&n.detail);
         let activate = self.action(Action::ActivatePlacement { key: n.key.clone() });
@@ -856,7 +858,7 @@ impl WheelhouseSnapshot {
             toggle,
         });
         for child in &n.children {
-            self.node(child, index, sidebar);
+            self.node(child, index);
         }
     }
 }
@@ -944,7 +946,7 @@ unsafe fn acquire_snapshot(h: *mut WheelhouseCore, error_out: *mut *mut c_char, 
                 toggle: NONE,
             });
             for n in section.nodes {
-                out.node(&n, index, &h.sidebar);
+                out.node(&n, index);
             }
         }
         for control in &mut out.controls {
@@ -1135,23 +1137,29 @@ pub unsafe extern "C" fn wheelhouse_snapshot_detail_field(
     let Some(f) = d.card.fields.get(field) else {
         return 0;
     };
-    let role = f.role as u32;
-    let observed = f.observation.as_ref().map_or(0, |o| o.updated_at);
-    *out = DetailFieldView {
+    *out = detail_field_view(f, d.stale);
+    1
+}
+/// A card field's view; `stale` is whether its entity's provider was.
+pub(crate) fn detail_field_view(f: &DetailField, stale: bool) -> DetailFieldView {
+    DetailFieldView {
         name: Text::borrowed(&f.name),
         section: Text::borrowed(&f.section),
-        role,
+        role: f.role as u32,
         label: Text::borrowed(&f.label),
         has_value: f.text.is_some() as u32,
         text: Text::borrowed(f.text.as_deref().unwrap_or("")),
         source_key: Text::borrowed(&f.source_key),
         source_id: Text::borrowed(f.source_id.as_deref().unwrap_or("")),
         has_observation: f.observation.is_some() as u32,
-        observed_at_ms: observed,
-        stale: (f.observation.is_some() && d.stale) as u32,
+        observed_at_ms: f.observation.as_ref().map_or(0, |o| o.updated_at),
+        stale: (f.observation.is_some() && stale) as u32,
         relation_count: f.relations.len(),
-    };
-    1
+    }
+}
+/// Whether `entity` is on a navigation path (or the path can't be read).
+pub(crate) unsafe fn on_path(entity: &EntityRef, path: &[EntityView]) -> bool {
+    path.iter().any(|item| item.read().map_or(true, |item| item == *entity))
 }
 /// A relation of a detail's field: an entity, its detail (or
 /// WHEELHOUSE_NONE) and the text to show. Pass the navigation path of
@@ -1172,12 +1180,8 @@ pub unsafe extern "C" fn wheelhouse_snapshot_detail_relation(
     let Some(entity) = s.details.get(detail).and_then(|d| d.card.fields.get(field)).and_then(|f| f.relations.get(relation)) else {
         return 0;
     };
-    for item in path {
-        match item.read() {
-            Ok(item) if item == *entity => return 0,
-            Ok(_) => {}
-            Err(_) => return 0,
-        }
+    if on_path(entity, path) {
+        return 0;
     }
     let target = s.detail_index.get(entity).copied();
     *out = DetailRelationView {

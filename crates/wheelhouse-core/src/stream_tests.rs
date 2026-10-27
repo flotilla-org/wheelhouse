@@ -492,5 +492,5 @@ fn a_url_that_arrives_later_reaches_the_stream() {
     let delta = sidebar.poll(id).expect("the forge gave subjects URLs");
     followed.apply(&delta).unwrap();
     assert!(with_url(&followed) > 0);
-    assert_eq!(followed, StreamView::of(&sidebar.snapshot_shared()));
+    assert_eq!(followed, StreamView::of(sidebar.snapshot_shared()));
 }
