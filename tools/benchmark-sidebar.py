@@ -1,19 +1,64 @@
 #!/usr/bin/env python3
-"""Run native sidebar timings with an 8 GiB process cap and RSS regression gate.
+"""Run native sidebar timings with an RSS ceiling and RSS regression gate.
 
 On Linux, limit application worker/stripe sizing to one CPU, independently of
 host size, and use one llvmpipe worker. This measures UI builds, not GPU draws.
+
+Resident memory is what is budgeted: a watchdog ends a run whose process group
+goes over the ceiling, and GNU time's peak is checked after it. Address space
+is not capped; reserving it costs nothing until pages are touched.
 """
 import argparse
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 
 ROOT = Path(__file__).resolve().parents[1]
+PAGE_KIB = os.sysconf('SC_PAGE_SIZE') // 1024
+
+
+def group_rss_kib(group):
+    """Resident KiB of every process in `group`, read from /proc.
+
+    Pages shared between processes (libc, Mesa) count once per process, so
+    this errs high, which is the safe side for a ceiling.
+    """
+    total = 0
+    for entry in os.scandir('/proc'):
+        if not entry.name.isdigit():
+            continue
+        try:
+            # Fields after the parenthesised command name: state, ppid, pgrp, ...
+            fields = Path(entry.path, 'stat').read_text().rsplit(')', 1)[1].split()
+            if int(fields[2]) == group:
+                total += int(Path(entry.path, 'statm').read_text().split()[1]) * PAGE_KIB
+        except (OSError, IndexError, ValueError):
+            pass # The process exited while being read.
+    return total
+
+
+def watch_rss(group, ceiling_kib, stop, over):
+    """Kill `group` once its resident memory exceeds the ceiling."""
+    while not stop.wait(0.25):
+        rss = group_rss_kib(group)
+        if rss > ceiling_kib:
+            over.append(rss)
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            return
+
+
+def peak_rss_kib(output):
+    peak = re.search(r'Maximum resident set size \(kbytes\): (\d+)', output)
+    if not peak:
+        raise ValueError('missing GNU time peak RSS')
+    return int(peak.group(1))
 
 
 def validate_memory(output):
@@ -77,12 +122,15 @@ def main():
     parser.add_argument('--time', default='/usr/bin/time', help='GNU time executable')
     parser.add_argument('--timeout', type=float, default=600, help='seconds allowed per 5,000-frame native run')
     parser.add_argument('--sizes', type=int, nargs='+', default=[100, 300, 1000])
+    parser.add_argument('--rss-ceiling-mib', type=int, default=1024, help='resident memory allowed per native run')
     parser.add_argument('--output', type=Path, default=ROOT / 'build/sidebar-benchmark')
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error('timeout must be positive')
-    if not shutil.which('prlimit'):
-        parser.error('Linux prlimit is required; every native run must be capped')
+    if args.rss_ceiling_mib <= 0:
+        parser.error('RSS ceiling must be positive')
+    if not Path('/proc/self/statm').exists():
+        parser.error('Linux /proc is required to watch resident memory')
     if args.sizes != sorted(args.sizes) or not args.sizes or args.sizes[0] > 100 or any(n < 0 or n > 1000 for n in args.sizes):
         parser.error('start at 100 issues or fewer, then increase; maximum 1000')
     if 1000 in args.sizes and 300 not in args.sizes:
@@ -102,7 +150,7 @@ def main():
             for uncached in (True, False):
                 mode = 'linear' if uncached else 'lookup'
                 identity = f'{size}-{mode}'
-                command = [args.time, '-v', 'prlimit', '--as=8589934592', '--', str(args.binary.resolve()),
+                command = [args.time, '-v', str(args.binary.resolve()),
                            '--async_thread_count:1', f'--user:{task / (identity + "-user")}',
                            f'--project:{task / (identity + "-project")}', '--sidebar_benchmark',
                            f'--sidebar_benchmark_issues:{size}']
@@ -111,10 +159,13 @@ def main():
                 with subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.PIPE,
                                       stderr=subprocess.STDOUT, text=True, start_new_session=True) as process:
                     timed_out = False
+                    stop, over = threading.Event(), []
+                    watchdog = threading.Thread(target=watch_rss, args=(process.pid, args.rss_ceiling_mib * 1024, stop, over), daemon=True)
+                    watchdog.start()
                     try:
                         output, _ = process.communicate(timeout=args.timeout)
                     except subprocess.TimeoutExpired:
-                        # GNU time/prlimit wrap the native process: terminate the
+                        # GNU time wraps the native process: terminate the
                         # whole group so a timeout cannot leave a benchmark running.
                         timed_out = True
                         try:
@@ -122,16 +173,23 @@ def main():
                         except ProcessLookupError:
                             pass # The group exited between timeout and termination.
                         output, _ = process.communicate()
+                    stop.set()
+                    watchdog.join()
                     log = args.output / (identity + '.log')
                     log.write_text(output)
                     print(output, end='', flush=True)
+                    if over:
+                        raise SystemExit(f'{identity}: resident memory reached {over[0]} KiB, over the {args.rss_ceiling_mib} MiB ceiling; partial log: {log}')
                     if timed_out:
                         raise SystemExit(f'{identity}: timed out after {args.timeout:g}s; partial log: {log}')
                     if process.returncode:
                         raise SystemExit(f'{identity}: native benchmark failed ({process.returncode}); stop before increasing catalog size')
                 try:
                     step, slope, tail_slope = validate_memory(output)
-                    print(f'SIDEBAR_GATE run={identity} scope=process excluded_step_kib={step} residual_kib_per_frame={slope:.6f} tail_kib_per_frame={tail_slope:.6f}', flush=True)
+                    peak = peak_rss_kib(output)
+                    if peak > args.rss_ceiling_mib * 1024:
+                        raise ValueError(f'peak RSS {peak} KiB exceeds the {args.rss_ceiling_mib} MiB ceiling')
+                    print(f'SIDEBAR_GATE run={identity} scope=process peak_rss_kib={peak} excluded_step_kib={step} residual_kib_per_frame={slope:.6f} tail_kib_per_frame={tail_slope:.6f}', flush=True)
                 except ValueError as error:
                     raise SystemExit(f'{identity}: {error}; stop before increasing catalog size')
 

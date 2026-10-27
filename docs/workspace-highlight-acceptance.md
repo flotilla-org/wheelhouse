@@ -24,8 +24,8 @@ This proves that inventory IDs have a LIVE snapshot entry, including retained
 ended subjects; it does not prove current visibility or navigation reachability.
 The separate selection matrix checks visible selection and collapsed outlines.
 
-`tools/run-sidebar-diagnostics.sh` is Linux-only: it requires `prlimit` and
-a C compiler for the CPU adapter.
+`tools/run-sidebar-diagnostics.sh` is Linux-only: it requires a C compiler for
+the CPU adapter.
 
 The shipped-template ABI suite covers ended subjects with Show finished off,
 producer removal, expired facts before observation, fresh-core restart without
@@ -70,9 +70,9 @@ Run the native diagnostics with a display (Xvfb is sufficient):
 WHEELHOUSE_CLEAT_FEATURES=none tools/run-sidebar-diagnostics.sh
 ```
 
-The runner builds release mode because the debug arena table alone reserves
-256 GiB. Like the sidebar benchmark runner, it bounds process-level CPU discovery
-so cache stripe and worker reservations fit under `prlimit --as=8589934592 --`.
+The runner builds release mode. Like the sidebar benchmark runner, it bounds
+process-level CPU discovery so worker and cache stripe sizing doesn't depend on
+the host.
 
 ![Open ended subject remains visible with Show finished off](screenshots/workspace-highlight/ended-open.png)
 
