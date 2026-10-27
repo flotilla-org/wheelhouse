@@ -160,6 +160,7 @@ impl Presented {
     }
 
     /// The first field presenting a value fills it; later ones are fallbacks.
+    /// Attention is any field's: it is set when one presenting it is `true`.
     fn fill(&mut self, presents: Presents, value: String) {
         let slot = match presents {
             Presents::Status => &mut self.status,
