@@ -974,6 +974,12 @@ typedef struct {
   // WHEELHOUSE_STRIP_*.
   uint32_t section;
   WheelhouseEntity entity;
+  // What a chip of the entity presents, whether or not the sidebar shows
+  // one: its status, attention and icon (a symbolic name or a glyph), as
+  // a stream node's are; absent ones are empty.
+  WheelhouseText status;
+  uint32_t attention;
+  WheelhouseText icon;
 } WheelhouseStripEntry;
 
 // A subject's strip, in section order, then in the order its loops list

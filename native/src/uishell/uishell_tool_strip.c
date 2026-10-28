@@ -62,14 +62,16 @@ uishell_tool_strip_view_icon(UIShell_StripView *view)
 }
 
 // One item: a flat button at `rect` (relative to its section), with `text`
-// in the icon font or, for a layout's glyph, the main font. It hovers as the
-// title bar's buttons do. A `marked` item (the chosen layout, the focused
-// View) has a faint wash, one hover step over the strip; a `weak` one (not
-// shown, not open, not found) is dimmed.
+// in the icon font or, for a layout's glyph or a literal icon, the main
+// font. It hovers as the title bar's buttons do. A `marked` item (the chosen
+// layout, the focused View) has a faint wash, one hover step over the strip;
+// a `weak` one (not shown, not open, not found) is dimmed. A `tone`, when
+// given, colours its text.
 internal UI_Signal
-uishell_tool_strip_item(Rng2F32 rect, String8 text, B32 icon_font, B32 marked, B32 weak, UI_Key key)
+uishell_tool_strip_item(Rng2F32 rect, String8 text, B32 icon_font, B32 marked, B32 weak, Vec4F32 *tone, UI_Key key)
 {
   UI_Signal sig = {0};
+  if(tone) { ui_set_next_text_color(*tone); }
   if(marked)
   {
     Vec4F32 wash = ui_color_from_name(str8_lit("hover"));
@@ -98,18 +100,46 @@ uishell_tool_strip_tooltip(UI_Signal sig, String8 text)
   }
 }
 
+// How an entry's item looks: as a chip of its entity, by what the core says
+// that chip presents, so the same for an entity the sidebar has no node for.
+// Its icon is the chip's (uishell_sidebar_icon); a subject's, or an ended
+// entity's, is coloured as its chip is (`toned`), and any other's keeps the
+// strip's colour, weak or not.
+typedef struct UIShell_StripLook UIShell_StripLook;
+struct UIShell_StripLook
+{
+  String8 glyph;
+  B32 icon_font;
+  B32 toned;
+  Vec4F32 tone;
+};
+
+internal UIShell_StripLook
+uishell_tool_strip_look(UIShell_StripEntry entry)
+{
+  UIShell_StripLook look = {0};
+  String8 kind = uishell_sidebar_string(entry.entity.kind);
+  look.glyph = uishell_sidebar_icon(entry.icon, kind, &look.icon_font);
+  look.toned = uishell_sidebar_kind_is_subject(kind) || str8_match(entry.status, str8_lit("ended"), 0);
+  look.tone = uishell_sidebar_chip_text_color(kind, entry.status);
+  return look;
+}
+
 // An entity's item: its hover card opens beside the strip, and a click runs
 // its primary action (opening its URL, or opening or showing its workspace).
 internal void
-uishell_tool_strip_entity(UIShell_SidebarState *state, Rng2F32 rect, WheelhouseEntity entity, UI_Key key)
+uishell_tool_strip_entity(UIShell_SidebarState *state, Rng2F32 rect, UIShell_StripEntry entry, UI_Key key)
 {
+  WheelhouseEntity entity = entry.entity;
   UIShell_SidebarNode node = {0};
   U64 index = uishell_sidebar_card_find(state, entity, &node);
   B32 found = index != WHEELHOUSE_NONE;
-  RD_IconKind icon = uishell_sidebar_card_icon(entity.kind);
-  // A workspace not open yet is weak, as its row is.
-  B32 unopened = node.state == WHEELHOUSE_LATENT || node.state == WHEELHOUSE_OPENING;
-  UI_Signal sig = uishell_tool_strip_item(rect, rd_icon_kind_text_table[icon], 1, 0, !found || unopened, key);
+  UIShell_StripLook look = uishell_tool_strip_look(entry);
+  // A workspace not open yet (or not in the catalog) is weak, as its row
+  // is. A subject's chip isn't a workspace's, and isn't dimmed.
+  B32 unopened = !found || node.state == WHEELHOUSE_LATENT || node.state == WHEELHOUSE_OPENING;
+  B32 weak = unopened && !uishell_sidebar_kind_is_subject(uishell_sidebar_string(entity.kind));
+  UI_Signal sig = uishell_tool_strip_item(rect, look.glyph, look.icon_font, 0, weak, look.toned ? &look.tone : 0, key);
   if(!found)
   {
     uishell_tool_strip_tooltip(sig, uishell_sidebar_string(entity.id));
@@ -276,7 +306,7 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
           {
             UIShell_SidebarNode node = {0};
             U64 index = uishell_sidebar_card_find(state, subject, &node);
-            UI_Signal sig = uishell_tool_strip_item(r, rd_icon_kind_text_table[uishell_sidebar_card_icon(subject.kind)], 1, 0, 0, key);
+            UI_Signal sig = uishell_tool_strip_item(r, rd_icon_kind_text_table[uishell_sidebar_card_icon(subject.kind)], 1, 0, 0, 0, key);
             if(index != WHEELHOUSE_NONE) { uishell_sidebar_card_source(state, node, sig, str8_zero(), 1); }
             // Its row in the sidebar, which opens to show it.
             if(ui_clicked(sig))
@@ -293,7 +323,7 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
             String8 name = layouts.names[i], glyph = layouts.glyphs[i];
             if(!glyph.size && name.size) { glyph = str8_prefix(name, utf8_decode(name.str, name.size).inc); }
             if(!glyph.size) { glyph = str8_lit("?"); }
-            UI_Signal sig = uishell_tool_strip_item(r, glyph, 0, i == layouts.current, 0, key);
+            UI_Signal sig = uishell_tool_strip_item(r, glyph, 0, i == layouts.current, 0, 0, key);
             String8 tip = i == layouts.fallback ? push_str8f(scratch.arena, "%S (default)", name) : name;
             if(i == layouts.current && layouts.adjusted) { tip = push_str8f(scratch.arena, layouts.owned ? "%S, rearranged" : "%S, resized", tip); }
             uishell_tool_strip_tooltip(sig, tip);
@@ -316,7 +346,7 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
             // Weak when not shown, plain when shown, marked when its tab has the focus.
             B32 focused = placed && rd_view_is_selected(address) &&
               rd_panel_address_match(rd_panel_from_view(address), ws->active_panel);
-            UI_Signal sig = uishell_tool_strip_item(r, uishell_tool_strip_view_icon(view), 1, focused, !placed, key);
+            UI_Signal sig = uishell_tool_strip_item(r, uishell_tool_strip_view_icon(view), 1, focused, !placed, 0, key);
             String8 title = uishell_store_slot_title(view->key);
             uishell_tool_strip_tooltip(sig, placed ? title : push_str8f(scratch.arena, "%S (not shown: click to show)", title));
             if(ui_clicked(sig))
@@ -329,8 +359,8 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
               else { uishell_store_show_slot(owner, 0, view->key); }
             }
           }break;
-          case UIShell_StripSection_Related: { uishell_tool_strip_entity(state, r, related[i].entity, key); }break;
-          case UIShell_StripSection_Linked: { uishell_tool_strip_entity(state, r, linked[i].entity, key); }break;
+          case UIShell_StripSection_Related: { uishell_tool_strip_entity(state, r, related[i], key); }break;
+          case UIShell_StripSection_Linked: { uishell_tool_strip_entity(state, r, linked[i], key); }break;
           default:{}break;
         }
       }

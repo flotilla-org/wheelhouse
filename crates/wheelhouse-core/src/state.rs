@@ -2073,12 +2073,41 @@ impl ControllerState {
                 let mut reads = LoopReads::default();
                 for position in self.placement_matches(definition, &catalog.entities, &index, &scope, &mut reads) {
                     if listed.insert(position) {
-                        entries.push(crate::tool_strip::StripEntry { section, entity: catalog.entities[position].entity.clone() });
+                        let entity = &catalog.entities[position];
+                        entries.push(crate::tool_strip::StripEntry {
+                            section,
+                            entity: entity.entity.clone(),
+                            presented: self.chip_presented(entity),
+                        });
                     }
                 }
             }
         }
         entries
+    }
+
+    /// What a chip of `entity` presents wherever the sidebar would place it:
+    /// what the `presents` fields of the template the sidebar applies to its
+    /// kind give for its facts, else those of its kind's compact template.
+    fn chip_presented(&self, entity: &CatalogEntity) -> crate::presentation::Presented {
+        let facts = entity_facts(&entity.entity, &entity.facts);
+        let applied = self.template_catalog.as_ref().and_then(|catalog| {
+            let name = catalog.applied_template_for_kind(&entity.entity.kind, &facts)?;
+            self.applied_template(catalog, &name, &facts)
+        });
+        let slot = applied.or_else(|| self.resolve_template_slot(TemplateConfigSlot::Compact, TemplateConfigNodeKind::Entity, &facts));
+        let Some(ready) = slot.as_ref().and_then(|slot| slot.render_ready.as_ref()) else {
+            return Default::default();
+        };
+        let context = TemplateConfigMatchContext {
+            slot: TemplateConfigSlot::Compact,
+            node_kind: TemplateConfigNodeKind::Entity,
+            metadata: &facts,
+            collapsed: false,
+            collapsible: false,
+            active_tab_name: None,
+        };
+        crate::presentation::Presented::by(ready, context)
     }
 
     /// The placement index, brought up to `entities` (the catalog list of

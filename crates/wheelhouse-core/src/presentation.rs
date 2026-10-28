@@ -11,7 +11,8 @@ use crate::state::variables_census;
 use crate::state::{ControllerTab, EvaluatedPlacement, EvaluatedSection, NodeVariables};
 use crate::template_config::{
     AbbreviationTier, ChromeSpec, Presents, SurfaceRegionDefinition, TemplateConfigFieldClass, TemplateConfigMatchContext,
-    TemplateConfigNodeKind, TemplateConfigRenderedField, TemplateConfigSlot, TemplateControlSpec, TemplateVariableDefinition,
+    TemplateConfigNodeKind, TemplateConfigRenderReady, TemplateConfigRenderedField, TemplateConfigSlot, TemplateControlSpec,
+    TemplateVariableDefinition,
 };
 use crate::{
     ControllerViewModel, DisplayVariableValue, EffectiveKdl, EffectiveNodeVariables, EntityRef, FactMap, MetadataValue, NodeKey,
@@ -161,6 +162,15 @@ pub struct Presented {
 impl Presented {
     pub fn is_empty(&self) -> bool {
         self == &Self::default()
+    }
+
+    /// What `ready`'s `presents` fields give in `context`.
+    pub(crate) fn by(ready: &TemplateConfigRenderReady, context: TemplateConfigMatchContext<'_>) -> Self {
+        let mut presented = Self::default();
+        for (presents, value) in ready.fields.iter().filter_map(|spec| spec.render_presents(context)) {
+            presented.fill(presents, value);
+        }
+        presented
     }
 
     /// The first field presenting a value fills it; later ones are fallbacks.
@@ -635,9 +645,7 @@ fn resolve_content(
             collapsible,
             active_tab_name: None,
         };
-        for (presents, value) in ready.fields.iter().filter_map(|spec| spec.render_presents(context)) {
-            presented.fill(presents, value);
-        }
+        presented = Presented::by(ready, context);
         ready
             .fields
             .iter()

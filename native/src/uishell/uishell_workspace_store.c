@@ -2279,6 +2279,8 @@ uishell_store_strip_entries(Arena *arena, CFG_Node *owner)
     {
       result.v[i].section = strip->entries[i].section;
       result.v[i].entity = uishell_sidebar_card_entity_copy(arena, strip->entries[i].entity);
+      result.v[i].icon = push_str8_copy(arena, uishell_sidebar_string(strip->entries[i].icon));
+      result.v[i].status = push_str8_copy(arena, uishell_sidebar_string(strip->entries[i].status));
     }
   }
   wheelhouse_strip_free(strip);

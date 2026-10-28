@@ -123,14 +123,17 @@ struct UIShell_StripViews
 internal UIShell_StripViews uishell_store_strip_views(Arena *arena, CFG_Node *owner);
 
 // The tool strip's related workspaces and linked items: what the subject
-// kind's `strip` lists, in order (docs/core/sidebar-design/tool-strip.md).
-// Entities are copied into `arena`.
+// kind's `strip` lists, in order (docs/core/sidebar-design/tool-strip.md),
+// each with the icon and status a chip of it presents, whether or not the
+// sidebar shows one. Entities and text are copied into `arena`.
 typedef struct UIShell_StripEntry UIShell_StripEntry;
 struct UIShell_StripEntry
 {
   WheelhouseEntity entity;
   // WHEELHOUSE_STRIP_*.
   U32 section;
+  String8 icon;
+  String8 status;
 };
 
 typedef struct UIShell_StripEntries UIShell_StripEntries;

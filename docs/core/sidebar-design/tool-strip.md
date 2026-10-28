@@ -9,7 +9,7 @@ The design was settled for wheelhouse#122; the strip as a whole is described
 in Wheelhouse's `docs/design/subject-workspaces.md`.
 
 Status: implemented in the core (`tool_strip.rs`, `state.rs`) and the C
-interface (ABI 11).
+interface (ABI 12).
 
 ## In short
 
@@ -19,8 +19,10 @@ interface (ABI 11).
   the subject's own references forwards (`in=… of="convoy"`) or match the
   entities that point back at it (`match … of="convoy"`).
 - The host reads a subject's strip as a list of entities, each with its
-  section. Everything it shows about one (label, state, hover card, actions,
-  whether it has a live workspace) comes from that entity's detail.
+  section and what a chip of it presents (its icon, status and attention), so
+  it draws an entry as its chip without finding the entity in the sidebar.
+  The rest (label, hover card, actions, whether it has a live workspace)
+  comes from that entity's detail.
 
 ## Declaring a strip
 
@@ -73,13 +75,36 @@ An ended subject whose workspace is still open keeps its strip: the facts its
 loops read are among those its workspace's record keeps, so the strip is the
 same after a restart.
 
+## How an entry presents
+
+The sidebar may never place an entity its strip lists: a convoy's vessels
+under a collapsed row, a PR it shows only as a count, a kind it hides. So
+the core gives each entry what a chip of the entity would present, by the
+same rules and template as the chip:
+
+- **The template** is the one the sidebar gives the entity's kind: the one
+  the first loop over that kind (`kind=` with `apply-template`) applies, in
+  the placements, then in the templates, depth first. A kind no loop
+  applies one to takes its compact template (`<kind>/compact`), as an entity
+  placed without one does.
+- **What it presents** is what that template's `presents` fields give for
+  the entity's facts: its icon (the producer's `presentation.icon`, else
+  the template's `icon-override`, else none), its status (`status.state` in
+  the shipped chip templates; a change request's readiness and an issue's
+  state for theirs) and its attention (`status.attention`).
+
+A state-specific icon (a draft or merged PR, a closed issue) is the
+provider publishing another `presentation.icon`; a new symbolic name is one
+entry in the host's list. The strip has no icon or tone settings of its own.
+
 ## Host interface
 
 - `wheelhouse_strip_get(h, subject)` returns an `WheelhouseStrip`: an array of
   `WheelhouseStripEntry`, each with its section (`WHEELHOUSE_STRIP_RELATED` or
-  `_LINKED`) and entity. Free it with `wheelhouse_strip_free`. A subject not in
+  `_LINKED`), entity, and presented `status`, `attention` and `icon` (empty
+  when absent). Free it with `wheelhouse_strip_free`. A subject not in
   the catalog, or a kind without a strip, gives an empty list.
-- For an entry's label, state and hover card, ask for its card
+- For an entry's label and hover card, ask for its card
   (`wheelhouse_card_acquire`). Its primary action is the card's: open its
   URL, focus its workspace or open one.
 

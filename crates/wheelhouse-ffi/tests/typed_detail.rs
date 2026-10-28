@@ -45,7 +45,7 @@ fn six_kind_native_detail_contract() {
         assert_eq!(wheelhouse_snapshot_detail_find(legacy, entity(text("worktree"), text("worktree:identity / #"))), usize::MAX);
         wheelhouse_snapshot_release(legacy);
         let s = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
-        assert_eq!(wheelhouse_abi_version(), 11);
+        assert_eq!(wheelhouse_abi_version(), 12);
         assert_eq!(wheelhouse_snapshot_detail_count(s), 6);
         for kind in ["change_request", "issue", "convoy", "role", "project", "worktree"] {
             let card = wheelhouse_snapshot_detail_find(s, entity(text(kind), text(&format!("{kind}:identity / #"))));

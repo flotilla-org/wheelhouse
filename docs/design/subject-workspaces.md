@@ -211,7 +211,9 @@ Settled for #122 on 2026-10-23 (`native/src/uishell/uishell_tool_strip.c`):
 
   The linked items are a convoy's PRs, then its issues. A vessel links none
   until its convoy's PRs and issues reach it: they aren't its own facts, and a
-  strip loop can't follow the convoy to them. A project links none yet. A
+  strip loop can't follow the convoy to them. A project links none yet. Each
+  item looks like its entity's sidebar chip, whether or not the sidebar shows
+  one: the chip's icon, and a subject coloured by its status (#447). A
   workspace not open yet is drawn weak. A click runs the item's primary
   action, which opens a workspace or switches to it, or opens a URL. Its hover
   card has the other actions. Whether ancestors and children need telling

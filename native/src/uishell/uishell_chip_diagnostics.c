@@ -1,3 +1,87 @@
+// The tool strip draws each entry as a chip of its entity (#447): with the
+// glyph and colour its chip has, from what the core says that chip presents,
+// so the same for an entity the sidebar has no node for. Convoy `build`'s
+// strip lists its vessels, change requests and issue; change request
+// `no-forge` (in no Attention row) presents a producer's literal glyph. Each
+// entry with a node is drawn as that node's chip is; then, with a sidebar
+// that places no change request under a convoy, `no-forge` has no node and
+// is drawn the same. Call within a UI build, so colours resolve.
+internal B32
+uishell_tool_strip_chip_diagnostics(UIShell_SidebarState *fixture, String8 config)
+{
+  Temp scratch = scratch_begin(0, 0);
+  B32 ok = 1;
+  WheelhouseText provider = uishell_sidebar_text(uishell_sidebar_host_provider);
+  String8 glyph_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"no-forge\"}},\"source_id\":\"fixture\","
+    "\"set\":{\"presentation.icon\":{\"value\":{\"type\":\"text\",\"value\":\"\xe2\x98\x85\"}}},\"unset\":[]}");
+  ok = wheelhouse_apply_patch_json(fixture->core, 0, provider, uishell_sidebar_text(glyph_patch), 0) && ok;
+  uishell_sidebar_refresh(fixture);
+  String8 loop = str8_lit("for \"change_request\" kind=\"change_request\" visibility=\"wheelhouse/activity\" tier=\"medium\" layout=\"inline\"");
+  U64 loop_at = str8_find_needle(config, 0, loop, 0);
+  ok = loop_at < config.size && ok;
+  WheelhouseEntity convoy = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("convoy"), str8_lit("build"));
+  Vec4F32 subject_tone = uishell_sidebar_subject_color(str8_lit("awaiting_review_response"));
+  for(U64 phase = 0; phase < 2; phase++)
+  {
+    WheelhouseStrip *strip = wheelhouse_strip_get(fixture->core, convoy, 0);
+    U64 count = strip ? strip->count : 0, compared = 0;
+    B32 subject_compared = 0, glyph_drawn = 0, unplaced = 0;
+    for(U64 i = 0; i < count; i++)
+    {
+      WheelhouseStripEntry *e = &strip->entries[i];
+      UIShell_StripEntry entry = {.entity = e->entity, .section = e->section,
+        .icon = uishell_sidebar_string(e->icon), .status = uishell_sidebar_string(e->status)};
+      UIShell_StripLook look = uishell_tool_strip_look(entry);
+      String8 kind = uishell_sidebar_string(e->entity.kind), id = uishell_sidebar_string(e->entity.id);
+      // Its node in the sidebar, if it places it (not its catalog card).
+      UIShell_SidebarNode node = {0};
+      B32 found = 0;
+      for(U64 n = 0; !found && n < uishell_sidebar_node_count(fixture); n++)
+      {
+        uishell_sidebar_node(fixture, n, &node);
+        found = !node.is_section && uishell_sidebar_card_entity_match(uishell_sidebar_card_entity(node), e->entity);
+      }
+      if(str8_match(id, str8_lit("no-forge"), 0))
+      {
+        glyph_drawn = str8_match(look.glyph, str8_lit("\xe2\x98\x85"), 0) && !look.icon_font && look.toned &&
+          MemoryMatchStruct(&look.tone, &subject_tone);
+        unplaced = !found;
+      }
+      if(found)
+      {
+        B32 icon_font = 0;
+        String8 chip = uishell_sidebar_node_icon(fixture, node, &icon_font);
+        Vec4F32 tone = uishell_sidebar_chip_text_color(kind, uishell_sidebar_chip_status(fixture, node));
+        B32 same = str8_match(chip, look.glyph, 0) && icon_font == look.icon_font && (!look.toned || MemoryMatchStruct(&tone, &look.tone));
+        if(!same) { fprintf(stderr, "FAIL tool strip entry %.*s/%.*s: not drawn as its chip\n", str8_varg(kind), str8_varg(id)); }
+        ok = same && ok;
+        compared += 1;
+        subject_compared |= uishell_sidebar_kind_is_subject(kind);
+      }
+    }
+    wheelhouse_strip_free(strip);
+    B32 shown = glyph_drawn && (phase == 0 ? subject_compared && compared > 1 : unplaced);
+    if(!shown)
+    { fprintf(stderr, "FAIL tool strip chips phase %llu: %llu entries, %llu compared, no-forge glyph %d unplaced %d\n",
+        (unsigned long long)phase, (unsigned long long)count, (unsigned long long)compared, glyph_drawn, unplaced); }
+    ok = shown && ok;
+    if(phase == 0 && loop_at < config.size)
+    {
+      String8 unplaced_config = push_str8f(scratch.arena, "%Sfor \"change_request\" kind=\"unplaced\"%S",
+        str8_prefix(config, loop_at), str8_skip(config, loop_at+str8_lit("for \"change_request\" kind=\"change_request\"").size));
+      ok = wheelhouse_configure(fixture->core, uishell_sidebar_text(unplaced_config), 0) && ok;
+      uishell_sidebar_refresh(fixture);
+    }
+  }
+  String8 restore = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"no-forge\"}},\"source_id\":\"fixture\","
+    "\"set\":{},\"unset\":[\"presentation.icon\"]}");
+  ok = wheelhouse_apply_patch_json(fixture->core, 0, provider, uishell_sidebar_text(restore), 0) && ok;
+  ok = wheelhouse_configure(fixture->core, uishell_sidebar_text(config), 0) && ok;
+  uishell_sidebar_refresh(fixture);
+  scratch_end(scratch);
+  return ok;
+}
+
 // Exercise real row geometry, rather than relying only on measured fold plans.
 internal B32
 uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *split)
@@ -117,6 +201,13 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   }
   ws->sidebar = &fixture;
   ui_select_state(test);
+  {
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ok = uishell_tool_strip_chip_diagnostics(&fixture, config) && ok;
+    ui_end_build();
+  }
   // A convoy switches between a compact row of workspace actions and child
   // rows. It starts collapsed; exercise the actual collapse action and
   // renderer in both directions.
@@ -440,6 +531,6 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   ui_select_state(saved_ui); ui_state_release(test);
   uishell_sidebar_release(&fixture);
   scratch_end(scratch);
-  fprintf(stderr, "Chip sidebar diagnostics: %s (convoy expansion, 90/140/240/320/600px, Tab reveal, precise horizontal scroll, latent/pending/removed, fixed status, ended precedence)\n", ok ? "passed" : "FAILED");
+  fprintf(stderr, "Chip sidebar diagnostics: %s (tool strip as chips, convoy expansion, 90/140/240/320/600px, Tab reveal, precise horizontal scroll, latent/pending/removed, fixed status, ended precedence)\n", ok ? "passed" : "FAILED");
   return ok;
 }
