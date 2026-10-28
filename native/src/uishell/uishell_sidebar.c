@@ -105,6 +105,7 @@ struct UIShell_SidebarSection
   F32 footer_extra;
   // The row holding keyboard focus last frame, by its key's hash: it is
   // built wherever it is, and a row newly focused out of view scrolls in.
+  // A hash collision costs at most one extra built row or a missed scroll-in.
   U64 nav_row;
 };
 
