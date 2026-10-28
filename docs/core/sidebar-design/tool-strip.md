@@ -83,8 +83,11 @@ the core gives each entry what a chip of the entity would present, by the
 same rules and template as the chip:
 
 - **The template** is the one the sidebar gives the entity's kind: the one
-  the first loop over that kind (`kind=` with `apply-template`) applies, in
-  the placements, then in the templates, depth first. A kind no loop
+  the first loop over that kind (`kind=` with `apply-template`) whose
+  constant matches (`match … value=`) the entity's facts meet applies, in
+  the placements, then in the templates, depth first. Matches on an
+  enclosing loop's binding (`of=`) are left out: they depend on where the
+  entity is placed. A kind no loop
   applies one to takes its compact template (`<kind>/compact`), as an entity
   placed without one does.
 - **What it presents** is what that template's `presents` fields give for

@@ -235,8 +235,9 @@ fn a_removed_subject_keeps_its_strip_in_its_workspace_and_across_a_restart() {
 }
 
 /// A sidebar placing convoys, their vessels and their change requests, each
-/// kind by its own template; issues it never places, so they take their
-/// kind's compact template. A convoy's strip lists all three.
+/// kind by its own template (a lead vessel by another, which ours isn't);
+/// issues it never places, so they take their kind's compact template. A
+/// convoy's strip lists all three.
 const CHIPS: &str = r#"
 region "tree" root-template="title" form="compact" placement="tree"
 template "title" slot="compact" node-kind="entity" { field "label" source="literal" value="Tree"; }
@@ -245,6 +246,7 @@ placement "tree" {
 }
 template "convoy/row" {
   field "label" key="display.label"
+  for "lead" kind="vessel" { match "flotilla.convoy" of="convoy"; match "test.lead" value="true"; apply-template "lead/row"; }
   for "vessel" kind="vessel" { match "flotilla.convoy" of="convoy"; apply-template "vessel/row"; }
   for "change_request" kind="change_request" { match "flotilla.subject_of" of="convoy"; apply-template "subject/row"; }
 }
@@ -257,6 +259,10 @@ template "vessel/row" {
   field "label" key="display.label"
   use "chip"
   field "icon-override" source="literal" value="terminal" presents="icon"
+}
+template "lead/row" {
+  field "label" key="display.label"
+  field "icon-override" source="literal" value="gear" presents="icon"
 }
 template "subject/row" {
   field "label" key="display.label"
@@ -285,7 +291,8 @@ workspace kind="convoy" {
 // entity, the entry agrees with its node; where it never does, the entry
 // still has its kind's template's presentation.
 //
-// The generator draws, for a vessel (template with an override), a change
+// The generator draws, for a vessel (template with an override, after a
+// loop over lead vessels only, which it isn't), a change
 // request (template without one) and an issue (never placed; its kind's
 // compact template, with an override), each of: no icon, a symbolic one or
 // a literal glyph; no status or one of two; attention unset, false or true.

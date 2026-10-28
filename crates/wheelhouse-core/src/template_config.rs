@@ -791,23 +791,35 @@ impl TemplateConfigCatalog {
         self.placement_template_address(name, metadata).map(|address| self.template_at(address))
     }
 
-    /// The template the sidebar gives an entity of `kind` wherever it places
-    /// one: the one the first loop over that kind applies (`kind=` and
-    /// `apply-template`), in the placements, then in the templates of the
-    /// layers that apply to `facts`, each depth first. None when no loop
-    /// applies one.
+    /// The template the sidebar gives an entity of `kind` with `facts`
+    /// wherever it places one: the one the first loop over that kind
+    /// (`kind=` and `apply-template`) whose constant matches the facts also
+    /// meet applies, in the placements, then in the templates of the layers
+    /// that apply to `facts`, each depth first. Matches on an enclosing
+    /// loop's binding (`of=`) are left out, as they depend on where the
+    /// entity is placed. None when no loop applies one.
     pub(crate) fn applied_template_for_kind(&self, kind: &str, facts: &FactMap) -> Option<String> {
-        fn first(loops: &[PlacementLoop], kind: &str) -> Option<String> {
-            loops.iter().find_map(|item| {
-                let of_kind = item.predicates.iter().any(|p| p.key == "entity.kind" && p.of.is_none() && p.value.as_deref() == Some(kind));
-                match &item.apply_template {
-                    Some(name) if of_kind => Some(if name.is_empty() { format!("{kind}/line") } else { name.clone() }),
-                    _ => first(&item.loops, kind),
-                }
-            })
-        }
-        self.placements.iter().find_map(|placement| first(&placement.loops, kind)).or_else(|| {
-            self.layer_stack(facts).iter().flat_map(|layer| &layer.config.templates).find_map(|template| first(&template.loops, kind))
+        let meets = |p: &PlacementPredicate| match (&p.value, &p.of) {
+            (Some(value), None) => facts.get(p.key.as_str()).and_then(placement_index_text).as_deref() == Some(value.as_str()),
+            _ => true,
+        };
+        let first = |loops: &[PlacementLoop]| -> Option<String> {
+            fn walk(loops: &[PlacementLoop], kind: &str, meets: &dyn Fn(&PlacementPredicate) -> bool) -> Option<String> {
+                loops.iter().find_map(|item| {
+                    let of_kind =
+                        item.predicates.iter().any(|p| p.key == "entity.kind" && p.of.is_none() && p.value.as_deref() == Some(kind));
+                    match &item.apply_template {
+                        Some(name) if of_kind && item.predicates.iter().all(meets) => {
+                            Some(if name.is_empty() { format!("{kind}/line") } else { name.clone() })
+                        }
+                        _ => walk(&item.loops, kind, meets),
+                    }
+                })
+            }
+            walk(loops, kind, &meets)
+        };
+        self.placements.iter().find_map(|placement| first(&placement.loops)).or_else(|| {
+            self.layer_stack(facts).iter().flat_map(|layer| &layer.config.templates).find_map(|template| first(&template.loops))
         })
     }
 
