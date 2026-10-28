@@ -66,6 +66,16 @@ global B32 uishell_sidebar_benchmark_active;
 global B32 uishell_sidebar_benchmark_uncached;
 global U64 uishell_sidebar_analysis_us, uishell_sidebar_context_us;
 global U64 uishell_sidebar_benchmark_issues = 100;
+// Rows out of view are spacers, not built (#500); diagnostics turn it off to
+// compare, and count the rows built.
+global B32 uishell_sidebar_cull_rows = 1;
+global U64 uishell_sidebar_rows_built;
+// Set by a diagnostic: each row built, by its key's hash, with its slot (whose
+// rect is its layout once the build ends).
+typedef struct UIShell_SidebarBuiltRow UIShell_SidebarBuiltRow;
+struct UIShell_SidebarBuiltRow { UIShell_SidebarBuiltRow *next; U64 key; UI_Box *slot; };
+global Arena *uishell_sidebar_row_log_arena;
+global UIShell_SidebarBuiltRow *uishell_sidebar_row_log;
 // Optional fixture-only hit rectangles for the external mouse/clipboard test.
 global String8 uishell_sidebar_subject_geometry_path;
 global String8List uishell_sidebar_subject_geometry;
@@ -93,6 +103,9 @@ struct UIShell_SidebarSection
   B32 collapsed;
   // Its make footers' height last frame (they open on hover and push rows down).
   F32 footer_extra;
+  // The row holding keyboard focus last frame, by its key's hash: it is
+  // built wherever it is, and a row newly focused out of view scrolls in.
+  U64 nav_row;
 };
 
 // The local sections, groups and pins the core keeps, as its Dashboard
@@ -4039,6 +4052,19 @@ uishell_sidebar_perform(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
   rd_request_frame();
 }
 
+// The rows a node's controls take below it: one for each that acts.
+internal U64
+uishell_sidebar_control_rows(UIShell_SidebarState *state, UIShell_SidebarNode node)
+{
+  U64 rows = 0;
+  for(U64 c = 0; c < node.control_count; c++)
+  {
+    WheelhouseControl control = uishell_sidebar_node_control(state, node, c);
+    rows += uishell_sidebar_control_intent(control).some != 0;
+  }
+  return rows;
+}
+
 internal void
 uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_SidebarRenderParams params)
 {
@@ -4102,6 +4128,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   if(ui_key_match(ui_state->default_nav_root_key, root->key) &&
      !ui_key_match(root->default_nav_focus_hot_key, state->revealed_chip))
   { state->revealed_chip = ui_key_zero(); }
+  // What holds keyboard focus, as last frame built it.
+  UI_Box *nav_hot = ui_box_from_key(root->default_nav_focus_hot_key);
   U64 analysis_start = uishell_sidebar_benchmark_active ? now_time_us() : 0;
   U64 count = uishell_sidebar_viewing(state) ? uishell_sidebar_node_count(state) : 0;
   UIShell_SidebarNode *nodes = push_array(scratch.arena, UIShell_SidebarNode, count);
@@ -4266,11 +4294,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
       F32 card_height = 0;
       if(ghost && uishell_sidebar_pin_expanded(ghost))
       { card_height = uishell_sidebar_ghost_extent(uishell_sidebar_saved_card(ws, ghost), ghost, em); node_rows = 0; rows[n]++; }
-      for(U64 c = 0; !nodes[i].is_section && c < nodes[i].control_count; c++)
-      {
-        WheelhouseControl control = {0};
-        if(((control = uishell_sidebar_node_control(state, nodes[i], c)), 1) && uishell_sidebar_control_intent(control).some) { node_rows++; }
-      }
+      if(!nodes[i].is_section) { node_rows += uishell_sidebar_control_rows(state, nodes[i]); }
       rows[n] += node_rows;
       F32 node_height = node_rows*row_height+card_height;
       node_height += uishell_sidebar_inline_height(state, uishell_sidebar_string(nodes[i].key));
@@ -4602,6 +4626,18 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             row_y += row_height;
           }
         }
+        // A row wholly outside the view is a spacer of its height (#500).
+        // The view is where the body is and where it is scrolling to, and a
+        // row more, for rounding at its edges. While anything may hold on to
+        // a row out of view (a drag, a reveal, a held control, a menu), all
+        // rows are built.
+        F32 cull_margin = row_height;
+        F32 view_lo = Min(body->view_off.y, body->view_off_target.y)-cull_margin;
+        F32 view_hi = Max(body->view_off.y, body->view_off_target.y)+heights[n]+cull_margin;
+        B32 cull = uishell_sidebar_cull_rows && !sidebar_dragging && !rd_drag_is_active() &&
+          reveal_section != sections[n] && !state->pin_reveal && ui_key_match(state->hold_key, ui_key_zero()) &&
+          !ui_any_ctx_menu_is_open();
+        U64 nav_row = 0;
         // One step past the section's last row closes its last card.
         for(U64 i = sections[n]; i <= end; i++)
         {
@@ -4653,6 +4689,27 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           UIShell_SidebarNode node = nodes[i];
           B32 children = row_children[i] || (project_owner[i] == i && inline_count[i]);
           String8 node_key = uishell_sidebar_string(node.key);
+          // Only a plain row is a spacer: a card's height is its content's,
+          // and the focused row is built wherever it is.
+          if(cull && !node.is_section && project_owner[i] != i && u64_hash_from_str8(node_key) != states[n]->nav_row &&
+             !uishell_sidebar_inline_height(state, node_key))
+          {
+            UIShell_LocalPin *ghost = uishell_sidebar_tree_ghost(split->owner_cfg, node);
+            // The height the sizing pass gave it.
+            F32 extent = row_height*(1+uishell_sidebar_control_rows(state, node));
+            if(!(ghost && uishell_sidebar_pin_expanded(ghost)) && (row_y+extent < view_lo || row_y > view_hi))
+            {
+              ui_spacer(ui_px(extent, 1));
+              // For the make footers, a last row out of view ends at the
+              // view's edge: above it, everything shown is below the row.
+              F32 edge = row_y > view_hi ? section_body_rect.y1 : section_body_rect.y0;
+              Rng2F32 edge_row = r2f32p(section_body_rect.x0, edge, section_body_rect.x1, edge+1.f);
+              if(project_box && owner == project_index) { card_last_row = edge_row; }
+              else { body_last_row = edge_row; }
+              row_y += extent;
+              continue;
+            }
+          }
           B32 drag_sibling = row_dragging && !node.is_section &&
             str8_match(uishell_sidebar_loop_key(state, i), state->row_drag_loop, 0);
           B32 drag_source = drag_sibling && str8_match(node_key, state->row_drag_key, 0);
@@ -4845,7 +4902,27 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             // The dragged row dims in place until the drop lands it.
             if(drag_source) { ui_push_transparency(0.6f); }
             uishell_sidebar_row_begin(state, &r);
+            uishell_sidebar_rows_built++;
             UI_Box *slot = r.slot;
+            if(uishell_sidebar_row_log_arena)
+            {
+              UIShell_SidebarBuiltRow *logged = push_array(uishell_sidebar_row_log_arena, UIShell_SidebarBuiltRow, 1);
+              logged->key = u64_hash_from_str8(node_key); logged->slot = slot;
+              SLLStackPush(uishell_sidebar_row_log, logged);
+            }
+            // A row that has just taken keyboard focus out of view scrolls in.
+            for(UI_Box *b = nav_hot; !ui_box_is_nil(b); b = b->parent)
+            {
+              if(b != slot) { continue; }
+              nav_row = u64_hash_from_str8(node_key);
+              F32 top = body->view_off_target.y;
+              if(nav_row != states[n]->nav_row && (slot_y < top || slot_y+row_height > top+heights[n]))
+              {
+                body->view_off_target.y = Clamp(0.f, slot_y < top ? slot_y : slot_y+row_height-heights[n], (F32)axes[Axis2_Y].range.max);
+                rd_request_frame();
+              }
+              break;
+            }
             if(project_box && owner == project_index) { card_last_row = slot->rect; }
             else { body_last_row = slot->rect; }
             if(sidebar_dragging && node.parent != WHEELHOUSE_NONE &&
@@ -5020,6 +5097,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
           footer_extra += uishell_sidebar_make_footer(state, split->owner_cfg, make_key, makes, ArrayCount(makes), engaged, row_height, 4.f+em*0.7f);
         }
         states[n]->footer_extra = footer_extra;
+        states[n]->nav_row = nav_row;
       }
       // Children get first refusal; the viewport consumes the remaining wheel
       // input. Header and sibling viewport geometry are outside this box.
