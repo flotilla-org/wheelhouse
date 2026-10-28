@@ -55,6 +55,11 @@ pub struct DetailCard {
     pub primary_label: String,
     pub primary_intent: DetailIntent,
     pub error: Option<String>,
+    /// What a chip of the entity presents, as a tool strip entry of it does
+    /// (`StripEntry::presented`), so a card draws the entity's chip icon.
+    pub presented: crate::presentation::Presented,
+    /// Its workspace is being opened: asked for, and not live yet.
+    pub opening: bool,
 }
 
 /// Resolve semantic content directly from typed sources. Prefix/suffix remain

@@ -89,7 +89,8 @@ uishell_sidebar_card_find(UIShell_SidebarState *state, WheelhouseEntity entity, 
     WheelhouseCardInfo info = state->catalog[index].info;
     *out = (UIShell_SidebarNode){.entity = info.entity,
       .label = info.label, .detail_count = info.field_count, .has_url = info.has_url,
-      .state = info.has_workspace ? WHEELHOUSE_LIVE : WHEELHOUSE_LATENT, .workspace_id = info.workspace_id};
+      .state = info.has_workspace ? WHEELHOUSE_LIVE : info.opening ? WHEELHOUSE_OPENING : WHEELHOUSE_LATENT,
+      .workspace_id = info.workspace_id, .status = info.status, .attention = info.attention, .icon = info.icon};
   }
   return index;
 }
@@ -441,15 +442,16 @@ uishell_sidebar_card_navigate(UIShell_HoverCard *card, WheelhouseEntity key, U64
   card->scroll = 0;
 }
 
-internal RD_IconKind
-uishell_sidebar_card_icon(WheelhouseText kind)
+internal String8 uishell_sidebar_icon(String8 icon, String8 kind, B32 *icon_font);
+
+// A card's icon: its entity's chip icon (uishell_sidebar_icon of what the
+// core says its chip presents, `icon`), in the font it needs.
+internal void
+uishell_sidebar_card_icon_label(WheelhouseText icon, WheelhouseText kind)
 {
-  String8 text = uishell_sidebar_string(kind);
-  if(str8_match(text, str8_lit("project"), 0)) { return RD_IconKind_FolderClosedOutline; }
-  if(str8_match(text, str8_lit("convoy"), 0) || str8_match(text, str8_lit("role"), 0)) { return RD_IconKind_Threads; }
-  if(str8_match(text, str8_lit("change_request"), 0)) { return RD_IconKind_Glasses; }
-  if(str8_match(text, str8_lit("worktree"), 0)) { return RD_IconKind_Module; }
-  return RD_IconKind_FileOutline;
+  B32 icon_font = 0;
+  String8 glyph = uishell_sidebar_icon(uishell_sidebar_string(icon), uishell_sidebar_string(kind), &icon_font);
+  RD_Font(icon_font ? RD_FontSlot_Icons : RD_FontSlot_Main) { ui_label(glyph); }
 }
 
 // Match declared source keys, not rendered labels. Custom facts get an info
@@ -548,8 +550,8 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
   {
     if(collapsible && ui_clicked(uishell_sidebar_disclosure(1, str8_lit("###card_collapse"))))
     { uishell_sidebar_ghost_set_expanded(cfg_node_from_id(rd_window_state_from_os_handle(ui_state->window)->cfg_id), str8(card->pin, card->pin_size), 0); }
-    UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak") RD_Font(RD_FontSlot_Icons)
-    { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_icon(detail.entity.kind)]); }
+    UI_PrefWidth(ui_em(1.4f, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
+    { uishell_sidebar_card_icon_label(detail.icon, detail.entity.kind); }
     UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.4f-badge_width-collapse_width), 1)) UI_TagF("weak")
     { if(interactive) { uishell_sidebar_card_title_handle(card, identity); } else { ui_label(identity); } }
     if(badge.size)
@@ -668,8 +670,9 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
       }
       UI_Row
       {
-        UI_PrefWidth(ui_em(1.5f, 1)) RD_Font(RD_FontSlot_Icons)
-        { ui_label(rd_icon_kind_text_table[uishell_sidebar_card_icon(relation.entity.kind)]); }
+        // Its target's card's icon, else its kind's.
+        UI_PrefWidth(ui_em(1.5f, 1))
+        { uishell_sidebar_card_icon_label(available ? related.icon : (WheelhouseText){0}, relation.entity.kind); }
         F32 badge_width = Min(width*0.3f, ui_top_font_size()*10);
         UI_Signal link = {0};
         UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.5f-badge_width), 1))

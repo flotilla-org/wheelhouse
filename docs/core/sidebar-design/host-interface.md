@@ -164,8 +164,11 @@ Committing an arrangement never changes the snapshot's revision.
 
 ABI 12 gives each `WheelhouseStripEntry` what a chip of its entity presents,
 whether or not the sidebar shows one: `status`, `attention` and `icon`, as a
-`WheelhouseStreamNode` carries them (wheelhouse#447). The struct changes
-layout, so a host built against ABI 11 must be rebuilt.
+`WheelhouseStreamNode` carries them (wheelhouse#447). A card
+(`WheelhouseCardInfo`) carries the same for its entity, so a hover card or a
+strip's own subject draws its chip icon, and `opening` while its workspace is
+being opened. Both structs change layout, so a host built against ABI 11 must
+be rebuilt.
 
 ## From ABI 10
 

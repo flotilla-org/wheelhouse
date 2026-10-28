@@ -3410,6 +3410,18 @@ uishell_sidebar_chip_icon(UIShell_SidebarState *state, UIShell_SidebarNode node,
   return icon;
 }
 
+// What a chip draws for its entity's icon (`icon`, as uishell_sidebar_icon
+// gives it): a workspace's status mark while it is ended or opening, in the
+// main font, else the icon. The tool strip draws its items by it too.
+internal String8
+uishell_sidebar_chip_glyph(String8 icon, B32 *icon_font, String8 kind, String8 status, uint32_t state)
+{
+  if(uishell_sidebar_kind_is_subject(kind) || !(str8_match(status, str8_lit("ended"), 0) || state == WHEELHOUSE_OPENING))
+  { return icon; }
+  *icon_font = 0;
+  return uishell_sidebar_status_mark((UIShell_SidebarNode){.state = state}, status);
+}
+
 internal String8
 uishell_sidebar_chip_label(UIShell_SidebarState *state, UIShell_SidebarNode node)
 {
@@ -3463,8 +3475,10 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size();
   B32 subject = uishell_sidebar_is_subject(node), icon_font = 0;
-  String8 label = subject ? uishell_sidebar_chip_label(state, node) : uishell_sidebar_chip_icon(state, node, &icon_font);
   String8 status = uishell_sidebar_chip_status(state, node);
+  String8 label = subject ? uishell_sidebar_chip_label(state, node) :
+    uishell_sidebar_chip_glyph(uishell_sidebar_chip_icon(state, node, &icon_font), &icon_font,
+                               uishell_sidebar_string(node.entity.kind), status, node.state);
   Vec4F32 border = subject ? uishell_sidebar_subject_color(status) : uishell_sidebar_action_border();
   Vec4F32 fill = node.selected ? uishell_sidebar_selection_fill(1) :
     mix_4f32(ui_color_from_name(str8_lit("background")), border, node.state == WHEELHOUSE_LIVE ? 0.23f : 0.06f);
@@ -3483,8 +3497,6 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
     UI_Parent(box) UI_PrefHeight(ui_pct(1, 1)) UI_PrefWidth(ui_pct(1, 0))
     {
       if(menu) { ui_label(uishell_sidebar_chip_label(state, node)); }
-      else if(!subject && (str8_match(status, str8_lit("ended"), 0) || node.state == WHEELHOUSE_OPENING))
-      { ui_label(uishell_sidebar_status_mark(node, status)); }
       else if(icon_font) RD_Font(RD_FontSlot_Icons) { ui_label(label); }
       else { ui_label(label); }
     }

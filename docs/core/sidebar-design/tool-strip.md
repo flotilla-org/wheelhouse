@@ -109,7 +109,10 @@ entry in the host's list. The strip has no icon or tone settings of its own.
   the catalog, or a kind without a strip, gives an empty list.
 - For an entry's label and hover card, ask for its card
   (`wheelhouse_card_acquire`). Its primary action is the card's: open its
-  URL, focus its workspace or open one.
+  URL, focus its workspace or open one. The card says whether its workspace
+  is live (`has_workspace`) or being opened (`opening`), and presents the
+  same `status`, `attention` and `icon` as the entry, so the subject's own
+  item and the hover card draw the same icon as the chip.
 
 The other sections of the strip come from the workspace:
 

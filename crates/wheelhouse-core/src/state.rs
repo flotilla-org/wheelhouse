@@ -2041,6 +2041,11 @@ impl ControllerState {
                     primary_intent,
                     fields,
                     error: slot.and_then(|slot| slot.resolve_error.clone()),
+                    presented: self.chip_presented(entity),
+                    // As a node's presentation state is Opening.
+                    opening: workspace_id.is_none()
+                        && !evaluation.live_targets.contains(&action_target)
+                        && self.pending_latent_materializations.contains_key(&action_target),
                 }
             })
             .collect();

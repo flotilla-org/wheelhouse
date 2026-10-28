@@ -318,6 +318,18 @@ template "issue/compact" slot="compact" node-kind="entity" {
                 (WHEELHOUSE_STRIP_LINKED, "issue/i2".into(), String::new(), String::new(), 0)
             ]
         );
+        // Each entity's card presents what its entry does.
+        for entry in slice((*strip).entries, (*strip).count).unwrap() {
+            let card = wheelhouse_card_acquire(h, entry.entity, &mut error);
+            let mut c = MaybeUninit::uninit();
+            assert_eq!(wheelhouse_card(card, c.as_mut_ptr()), 1);
+            let c = c.assume_init();
+            assert_eq!(
+                (c.icon.read().unwrap(), c.status.read().unwrap(), c.attention),
+                (entry.icon.read().unwrap(), entry.status.read().unwrap(), entry.attention)
+            );
+            wheelhouse_card_release(card);
+        }
         wheelhouse_strip_free(strip);
         let missing = EntityView { provider: text(PROVIDER), kind: text("vessel"), id: text("nobody") };
         let strip = wheelhouse_strip_get(h, missing, &mut error);

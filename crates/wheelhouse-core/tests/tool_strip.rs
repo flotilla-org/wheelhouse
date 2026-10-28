@@ -289,7 +289,7 @@ workspace kind="convoy" {
 // `presentation.icon`, else the template's `icon-override`, else none; and
 // its `status.state` and `status.attention`. Where the sidebar places the
 // entity, the entry agrees with its node; where it never does, the entry
-// still has its kind's template's presentation.
+// still has its kind's template's presentation. Its card presents the same.
 //
 // The generator draws, for a vessel (template with an override, after a
 // loop over lead vessels only, which it isn't), a change
@@ -338,5 +338,9 @@ fn a_strip_entry_presents_its_entity_as_its_chip_does(tc: hegel::TestCase) {
             "issue" => assert!(node.is_none(), "the sidebar never places an issue"),
             _ => assert_eq!(Some(&entry.presented), node.map(|node| &node.content.presented), "{} as its chip", entry.entity.kind),
         }
+        // Its card presents the same, for the hover card and the strip's
+        // own subject item, which draw the entity's icon from it.
+        let card = sidebar.detail_card(&entry.entity).expect("a listed entity has a card");
+        assert_eq!(card.presented, entry.presented, "{}'s card as its entry", entry.entity.kind);
     }
 }

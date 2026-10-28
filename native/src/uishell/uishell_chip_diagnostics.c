@@ -1,83 +1,191 @@
-// The tool strip draws each entry as a chip of its entity (#447): with the
-// glyph and colour its chip has, from what the core says that chip presents,
-// so the same for an entity the sidebar has no node for. Convoy `build`'s
-// strip lists its vessels, change requests and issue; change request
-// `no-forge` (in no Attention row) presents a producer's literal glyph. Each
-// entry with a node is drawn as that node's chip is; then, with a sidebar
-// that places no change request under a convoy, `no-forge` has no node and
-// is drawn the same. Call within a UI build, so colours resolve.
+// What a box draws: its text, its font and its text's colour.
 internal B32
-uishell_tool_strip_chip_diagnostics(UIShell_SidebarState *fixture, String8 config)
+uishell_tool_strip_drawn_same(UI_Box *a, UI_Box *b)
+{
+  return !ui_box_is_nil(a) && !ui_box_is_nil(b) && str8_match(ui_box_display_string(a), ui_box_display_string(b), 0) &&
+    MemoryMatchStruct(&a->font, &b->font) && MemoryMatchStruct(&a->text_color, &b->text_color);
+}
+
+// Build `node`'s chip, as the sidebar builds it, and return what draws its
+// text. A `weak` one is built as a weak strip item's colour resolves.
+internal UI_Box *
+uishell_tool_strip_drawn_chip(RD_WindowState *ws, UIShell_SidebarState *fixture, UIShell_SidebarNode node, U64 index, B32 weak)
+{
+  UI_TagF(weak ? "weak" : "") { uishell_sidebar_inline_action(fixture, ws, node, index, str8_zero(), 20.f, 0); }
+  UI_Box *chip = ui_top_parent()->last;
+  return ui_box_is_nil(chip) ? chip : chip->first;
+}
+
+// The tool strip draws each entry as a chip of its entity (#447): what its
+// chip draws (its icon, or a workspace's mark while it is ended or opening)
+// in the chip's colour, from what the core says that chip presents and its
+// card's state, so the same for an entity the sidebar has no node for; and
+// the subject's own item as the subject's chip. Convoy `build`'s strip lists
+// its vessel `chip-v` (presenting an icon its kind wouldn't give it), change
+// requests and issue; change request `no-forge` (in no Attention row)
+// presents a producer's literal glyph. Each entry with
+// a chip is built beside that chip and what they draw compared, as is the
+// item of vessel chip-v's own strip: while chip-v is latent, opening and
+// ended. A not-open workspace's item is weak, as its row is, so it's compared
+// with its chip built weak; a change request's chip draws its label, and a
+// project's its overview, so their items' glyphs are compared with their
+// rows' icons. Then, with a sidebar that
+// places no change request under a convoy, `no-forge` has no node and is
+// drawn the same. Call within a UI build, as the sidebar's window.
+internal B32
+uishell_tool_strip_chip_diagnostics(RD_WindowState *ws, UIShell_SidebarState *fixture, String8 config)
 {
   Temp scratch = scratch_begin(0, 0);
   B32 ok = 1;
+  // Nothing is hovered, so no hover card opens.
+  ui_state->mouse = v2f32(-100, -100);
   WheelhouseText provider = uishell_sidebar_text(uishell_sidebar_host_provider);
   String8 glyph_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"no-forge\"}},\"source_id\":\"fixture\","
     "\"set\":{\"presentation.icon\":{\"value\":{\"type\":\"text\",\"value\":\"\xe2\x98\x85\"}}},\"unset\":[]}");
   ok = wheelhouse_apply_patch_json(fixture->core, 0, provider, uishell_sidebar_text(glyph_patch), 0) && ok;
+  // chip-v presents an icon its kind wouldn't give it.
+  String8 code_patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"chip-v\"}},\"source_id\":\"fixture\","
+    "\"set\":{\"presentation.icon\":{\"value\":{\"type\":\"text\",\"value\":\"code\"}}},\"unset\":[]}");
+  ok = wheelhouse_apply_patch_json(fixture->core, 0, provider, uishell_sidebar_text(code_patch), 0) && ok;
   uishell_sidebar_refresh(fixture);
   String8 loop = str8_lit("for \"change_request\" kind=\"change_request\" visibility=\"wheelhouse/activity\" tier=\"medium\" layout=\"inline\"");
   U64 loop_at = str8_find_needle(config, 0, loop, 0);
   ok = loop_at < config.size && ok;
   WheelhouseEntity convoy = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("convoy"), str8_lit("build"));
+  WheelhouseEntity vessel = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("vessel"), str8_lit("chip-v"));
   Vec4F32 subject_tone = uishell_sidebar_subject_color(str8_lit("awaiting_review_response"));
-  for(U64 phase = 0; phase < 2; phase++)
+  // chip-v's glyph in each phase: its icon, then its marks.
+  String8 vessel_marks[] = {str8_zero(), str8_lit("…"), str8_lit("×"), str8_zero()};
+  U64 request = 0;
+  FNT_Tag main_font = rd_font_from_slot(RD_FontSlot_Main), icon_font = rd_font_from_slot(RD_FontSlot_Icons);
+  UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+  for(U64 phase = 0; phase < 4; phase++)
   {
-    WheelhouseStrip *strip = wheelhouse_strip_get(fixture->core, convoy, 0);
-    U64 count = strip ? strip->count : 0, compared = 0;
-    B32 subject_compared = 0, glyph_drawn = 0, unplaced = 0;
-    for(U64 i = 0; i < count; i++)
+    // Phase 1: chip-v is opening. Phase 2: that's cancelled, and it's ended.
+    // Phase 3: no change request is placed.
+    if(phase == 1 || phase == 2)
     {
-      WheelhouseStripEntry *e = &strip->entries[i];
-      UIShell_StripEntry entry = {.entity = e->entity, .section = e->section,
-        .icon = uishell_sidebar_string(e->icon), .status = uishell_sidebar_string(e->status)};
-      UIShell_StripLook look = uishell_tool_strip_look(entry);
-      String8 kind = uishell_sidebar_string(e->entity.kind), id = uishell_sidebar_string(e->entity.id);
-      // Its node in the sidebar, if it places it (not its catalog card).
-      UIShell_SidebarNode node = {0};
-      B32 found = 0;
-      for(U64 n = 0; !found && n < uishell_sidebar_node_count(fixture); n++)
+      for(U64 n = 0; phase == 1 && n < uishell_sidebar_node_count(fixture); n++)
       {
-        uishell_sidebar_node(fixture, n, &node);
-        found = !node.is_section && uishell_sidebar_card_entity_match(uishell_sidebar_card_entity(node), e->entity);
+        UIShell_SidebarNode node = {0}; uishell_sidebar_node(fixture, n, &node);
+        if(!node.is_section && uishell_sidebar_card_entity_match(uishell_sidebar_card_entity(node), vessel))
+        { ok = uishell_sidebar_intend(fixture, uishell_sidebar_activate_intent(node), 0) && ok; break; }
       }
-      if(str8_match(id, str8_lit("no-forge"), 0))
+      WheelhouseEffects *effects = wheelhouse_effects_take(fixture->core, 0);
+      WheelhouseEffect effect = {0};
+      if(phase == 1 && effects && wheelhouse_effects_get(effects, 0, &effect) && effect.kind == WHEELHOUSE_EFFECT_MATERIALIZE)
+      { request = effect.request_id; }
+      if(effects) { wheelhouse_effects_release(effects); }
+      if(phase == 2)
       {
-        glyph_drawn = str8_match(look.glyph, str8_lit("\xe2\x98\x85"), 0) && !look.icon_font && look.toned &&
-          MemoryMatchStruct(&look.tone, &subject_tone);
-        unplaced = !found;
+        ok = wheelhouse_complete(fixture->core, request, WHEELHOUSE_COMPLETE_ERROR, (WheelhouseWorkspaceId){0}, uishell_sidebar_text(str8_zero()), 0) && ok;
+        String8 ended = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"chip-v\"}},\"source_id\":\"fixture\","
+          "\"set\":{\"status.state\":{\"value\":{\"type\":\"text\",\"value\":\"ended\"}}},\"unset\":[]}");
+        ok = wheelhouse_apply_patch_json(fixture->core, 0, provider, uishell_sidebar_text(ended), 0) && ok;
       }
-      if(found)
-      {
-        B32 icon_font = 0;
-        String8 chip = uishell_sidebar_node_icon(fixture, node, &icon_font);
-        Vec4F32 tone = uishell_sidebar_chip_text_color(kind, uishell_sidebar_chip_status(fixture, node));
-        B32 same = str8_match(chip, look.glyph, 0) && icon_font == look.icon_font && (!look.toned || MemoryMatchStruct(&tone, &look.tone));
-        if(!same) { fprintf(stderr, "FAIL tool strip entry %.*s/%.*s: not drawn as its chip\n", str8_varg(kind), str8_varg(id)); }
-        ok = same && ok;
-        compared += 1;
-        subject_compared |= uishell_sidebar_kind_is_subject(kind);
-      }
+      uishell_sidebar_refresh(fixture);
     }
-    wheelhouse_strip_free(strip);
-    B32 shown = glyph_drawn && (phase == 0 ? subject_compared && compared > 1 : unplaced);
-    if(!shown)
-    { fprintf(stderr, "FAIL tool strip chips phase %llu: %llu entries, %llu compared, no-forge glyph %d unplaced %d\n",
-        (unsigned long long)phase, (unsigned long long)count, (unsigned long long)compared, glyph_drawn, unplaced); }
-    ok = shown && ok;
-    if(phase == 0 && loop_at < config.size)
+    if(phase == 3 && loop_at < config.size)
     {
       String8 unplaced_config = push_str8f(scratch.arena, "%Sfor \"change_request\" kind=\"unplaced\"%S",
         str8_prefix(config, loop_at), str8_skip(config, loop_at+str8_lit("for \"change_request\" kind=\"change_request\"").size));
       ok = wheelhouse_configure(fixture->core, uishell_sidebar_text(unplaced_config), 0) && ok;
       uishell_sidebar_refresh(fixture);
     }
+    UI_Box *pair = ui_build_box_from_stringf(0, "###tool_strip_chips_%I64u", phase);
+    WheelhouseStrip *strip = wheelhouse_strip_get(fixture->core, convoy, 0);
+    U64 count = strip ? strip->count : 0, compared = 0;
+    B32 subject_compared = 0, vessel_marked = 0, glyph_drawn = 0, unplaced = 0, own_compared = phase == 1;
+    UI_Parent(pair) for(U64 i = 0; i < count; i++)
+    {
+      WheelhouseStripEntry *e = &strip->entries[i];
+      UIShell_StripEntry entry = {.entity = e->entity, .section = e->section,
+        .icon = uishell_sidebar_string(e->icon), .status = uishell_sidebar_string(e->status)};
+      String8 kind = uishell_sidebar_string(e->entity.kind), id = uishell_sidebar_string(e->entity.id);
+      // Its node in the sidebar, if it places it (not its catalog card).
+      UIShell_SidebarNode node = {0};
+      U64 index = 0;
+      B32 found = 0;
+      for(; !found && index < uishell_sidebar_node_count(fixture); index++)
+      {
+        uishell_sidebar_node(fixture, index, &node);
+        found = !node.is_section && uishell_sidebar_card_entity_match(uishell_sidebar_card_entity(node), e->entity);
+      }
+      index -= found;
+      // The item as the strip builds it.
+      UI_Key key = ui_key_from_stringf(pair->key, "item_%I64u", i);
+      uishell_tool_strip_entity(fixture, r2f32p(0, 0, 20, 20), entry, key);
+      UI_Box *item = ui_box_from_key(key);
+      if(str8_match(id, str8_lit("no-forge"), 0))
+      {
+        glyph_drawn = str8_match(ui_box_display_string(item), str8_lit("\xe2\x98\x85"), 0) &&
+          MemoryMatchStruct(&item->font, &main_font) && MemoryMatchStruct(&item->text_color, &subject_tone);
+        unplaced = !found;
+      }
+      if(!found) { continue; }
+      B32 subject = uishell_sidebar_kind_is_subject(kind);
+      B32 weak = !subject && node.state == WHEELHOUSE_LATENT;
+      UI_Box *chip = uishell_tool_strip_drawn_chip(ws, fixture, node, index, weak);
+      B32 same = 0;
+      // A subject's chip draws its label, and a project's own chip opens its
+      // overview (uishell_sidebar_chip_icon): their items draw the icon their
+      // rows do, in their chips' colour.
+      if(subject || str8_match(kind, str8_lit("project"), 0))
+      {
+        B32 in_icons = 0;
+        String8 icon = uishell_sidebar_node_icon(fixture, node, &in_icons);
+        same = str8_match(ui_box_display_string(item), icon, 0) &&
+          MemoryMatchStruct(&item->font, in_icons ? &icon_font : &main_font) &&
+          MemoryMatchStruct(&item->text_color, &chip->text_color);
+      }
+      else { same = uishell_tool_strip_drawn_same(item, chip); }
+      if(!same)
+      {
+        String8 drawn = ui_box_display_string(item), chip_drawn = ui_box_is_nil(chip) ? str8_zero() : ui_box_display_string(chip);
+        fprintf(stderr, "FAIL tool strip phase %llu entry %.*s/%.*s: drawn %.*s, its chip %.*s\n", (unsigned long long)phase,
+          str8_varg(kind), str8_varg(id), str8_varg(drawn), str8_varg(chip_drawn));
+      }
+      ok = same && ok;
+      compared += 1;
+      subject_compared |= subject;
+      if(str8_match(id, str8_lit("chip-v"), 0))
+      {
+        String8 mark = vessel_marks[phase];
+        vessel_marked = str8_match(ui_box_display_string(item), mark.size ? mark : rd_icon_kind_text_table[RD_IconKind_Module], 0);
+        // chip-v's own strip's subject item, as its chip. Its workspace is
+        // the one shown, so never opening.
+        if(phase != 1)
+        {
+          UIShell_StripLook look = uishell_tool_strip_subject_look(fixture, vessel);
+          UI_Key own_key = ui_key_from_stringf(pair->key, "subject");
+          uishell_tool_strip_item(r2f32p(0, 0, 20, 20), look.glyph, look.icon_font, 0, look.weak, &look.tone, own_key);
+          // Its chip again, not weak: built under a box of its own, so its
+          // key isn't the first one's.
+          UI_Box *own = ui_box_from_key(own_key), *live_chip = &ui_nil_box;
+          UI_Parent(ui_build_box_from_stringf(0, "###own_chip")) { live_chip = uishell_tool_strip_drawn_chip(ws, fixture, node, index, 0); }
+          own_compared = uishell_tool_strip_drawn_same(own, live_chip);
+          if(!own_compared) { fprintf(stderr, "FAIL tool strip phase %llu: chip-v's subject item not drawn as its chip\n", (unsigned long long)phase); }
+        }
+      }
+    }
+    wheelhouse_strip_free(strip);
+    B32 shown = glyph_drawn && own_compared && (phase == 3 ? unplaced : vessel_marked && subject_compared && compared > 1);
+    if(!shown)
+    { fprintf(stderr, "FAIL tool strip chips phase %llu: %llu entries, %llu compared, chip-v %d, own %d, no-forge glyph %d unplaced %d\n",
+        (unsigned long long)phase, (unsigned long long)count, (unsigned long long)compared, vessel_marked, own_compared, glyph_drawn, unplaced); }
+    ok = shown && ok;
   }
   String8 restore = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"change_request\",\"id\":\"no-forge\"}},\"source_id\":\"fixture\","
     "\"set\":{},\"unset\":[\"presentation.icon\"]}");
   ok = wheelhouse_apply_patch_json(fixture->core, 0, provider, uishell_sidebar_text(restore), 0) && ok;
+  String8 active = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"vessel\",\"id\":\"chip-v\"}},\"source_id\":\"fixture\","
+    "\"set\":{\"status.state\":{\"value\":{\"type\":\"text\",\"value\":\"active\"}},"
+    "\"presentation.icon\":{\"value\":{\"type\":\"text\",\"value\":\"terminal\"}}},\"unset\":[]}");
+  ok = wheelhouse_apply_patch_json(fixture->core, 0, provider, uishell_sidebar_text(active), 0) && ok;
   ok = wheelhouse_configure(fixture->core, uishell_sidebar_text(config), 0) && ok;
   uishell_sidebar_refresh(fixture);
+  // Building items and chips starts nothing the later diagnostics would see.
+  if(rd_drag_is_active()) { fprintf(stderr, "FAIL tool strip chips: a drag was left active\n"); ok = 0; }
   scratch_end(scratch);
   return ok;
 }
@@ -205,7 +313,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     UI_IconInfo icons = ws->ui->icon_info;
     UI_AnimationInfo animation = {0}; UI_EventList events = {0};
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-    ok = uishell_tool_strip_chip_diagnostics(&fixture, config) && ok;
+    ok = uishell_tool_strip_chip_diagnostics(ws, &fixture, config) && ok;
     ui_end_build();
   }
   // A convoy switches between a compact row of workspace actions and child

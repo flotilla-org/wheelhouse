@@ -562,6 +562,13 @@ typedef struct {
   // The workspace live for the entity, if any.
   uint32_t has_workspace;
   WheelhouseWorkspaceId workspace_id;
+  // Its workspace is being opened (none is live yet).
+  uint32_t opening;
+  // What a chip of the entity presents, as a WheelhouseStripEntry's:
+  // its status, attention and icon; absent ones are empty.
+  WheelhouseText status;
+  uint32_t attention;
+  WheelhouseText icon;
 } WheelhouseCardInfo;
 
 // A card's action: an intent (`kind`, a WHEELHOUSE_INTENT_*) on `entity`.

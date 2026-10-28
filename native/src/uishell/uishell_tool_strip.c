@@ -100,29 +100,43 @@ uishell_tool_strip_tooltip(UI_Signal sig, String8 text)
   }
 }
 
-// How an entry's item looks: as a chip of its entity, by what the core says
-// that chip presents, so the same for an entity the sidebar has no node for.
-// Its icon is the chip's (uishell_sidebar_icon); a subject's, or an ended
-// entity's, is coloured as its chip is (`toned`), and any other's keeps the
-// strip's colour, weak or not.
+// How an entry's item looks: as a chip of its entity draws it, by what the
+// core says that chip presents and its workspace's `state`, so the same for
+// an entity the sidebar has no node for: the chip's glyph
+// (uishell_sidebar_chip_glyph: its icon, or a workspace's mark while it is
+// ended or opening) in the chip's text colour. A workspace not open (latent,
+// or not in the catalog) is weak, as its row is, and its colour dimmed; a
+// subject's chip isn't a workspace's, and isn't.
 typedef struct UIShell_StripLook UIShell_StripLook;
 struct UIShell_StripLook
 {
   String8 glyph;
   B32 icon_font;
-  B32 toned;
+  B32 weak;
   Vec4F32 tone;
 };
 
 internal UIShell_StripLook
-uishell_tool_strip_look(UIShell_StripEntry entry)
+uishell_tool_strip_look(UIShell_StripEntry entry, uint32_t state)
 {
   UIShell_StripLook look = {0};
   String8 kind = uishell_sidebar_string(entry.entity.kind);
-  look.glyph = uishell_sidebar_icon(entry.icon, kind, &look.icon_font);
-  look.toned = uishell_sidebar_kind_is_subject(kind) || str8_match(entry.status, str8_lit("ended"), 0);
-  look.tone = uishell_sidebar_chip_text_color(kind, entry.status);
+  String8 icon = uishell_sidebar_icon(entry.icon, kind, &look.icon_font);
+  look.glyph = uishell_sidebar_chip_glyph(icon, &look.icon_font, kind, entry.status, state);
+  look.weak = state == WHEELHOUSE_LATENT && !uishell_sidebar_kind_is_subject(kind);
+  UI_TagF(look.weak ? "weak" : "") { look.tone = uishell_sidebar_chip_text_color(kind, entry.status); }
   return look;
+}
+
+// The subject's own item, drawn as its chip by what its card presents. Its
+// workspace is the one the strip is in, so live.
+internal UIShell_StripLook
+uishell_tool_strip_subject_look(UIShell_SidebarState *state, WheelhouseEntity subject)
+{
+  UIShell_SidebarNode node = {0};
+  uishell_sidebar_card_find(state, subject, &node);
+  UIShell_StripEntry entry = {.entity = subject, .icon = uishell_sidebar_string(node.icon), .status = uishell_sidebar_string(node.status)};
+  return uishell_tool_strip_look(entry, WHEELHOUSE_LIVE);
 }
 
 // An entity's item: its hover card opens beside the strip, and a click runs
@@ -134,19 +148,15 @@ uishell_tool_strip_entity(UIShell_SidebarState *state, Rng2F32 rect, UIShell_Str
   UIShell_SidebarNode node = {0};
   U64 index = uishell_sidebar_card_find(state, entity, &node);
   B32 found = index != WHEELHOUSE_NONE;
-  UIShell_StripLook look = uishell_tool_strip_look(entry);
-  // A workspace not open yet (or not in the catalog) is weak, as its row
-  // is. A subject's chip isn't a workspace's, and isn't dimmed.
-  B32 unopened = !found || node.state == WHEELHOUSE_LATENT || node.state == WHEELHOUSE_OPENING;
-  B32 weak = unopened && !uishell_sidebar_kind_is_subject(uishell_sidebar_string(entity.kind));
-  UI_Signal sig = uishell_tool_strip_item(rect, look.glyph, look.icon_font, 0, weak, look.toned ? &look.tone : 0, key);
+  UIShell_StripLook look = uishell_tool_strip_look(entry, found ? node.state : WHEELHOUSE_LATENT);
+  UI_Signal sig = uishell_tool_strip_item(rect, look.glyph, look.icon_font, 0, look.weak, &look.tone, key);
   if(!found)
   {
     uishell_tool_strip_tooltip(sig, uishell_sidebar_string(entity.id));
     return;
   }
   uishell_sidebar_card_source(state, node, sig, str8_zero(), 0);
-  if(ui_clicked(sig) && index != WHEELHOUSE_NONE) { uishell_sidebar_card_queue_action(state, node, 0); }
+  if(ui_clicked(sig)) { uishell_sidebar_card_queue_action(state, node, 0); }
 }
 
 internal void
@@ -306,7 +316,8 @@ uishell_tool_strip_ui(RD_WindowState *ws, Rng2F32 rect, UIShell_ControlledSplit 
           {
             UIShell_SidebarNode node = {0};
             U64 index = uishell_sidebar_card_find(state, subject, &node);
-            UI_Signal sig = uishell_tool_strip_item(r, rd_icon_kind_text_table[uishell_sidebar_card_icon(subject.kind)], 1, 0, 0, 0, key);
+            UIShell_StripLook look = uishell_tool_strip_subject_look(state, subject);
+            UI_Signal sig = uishell_tool_strip_item(r, look.glyph, look.icon_font, 0, look.weak, &look.tone, key);
             if(index != WHEELHOUSE_NONE) { uishell_sidebar_card_source(state, node, sig, str8_zero(), 1); }
             // Its row in the sidebar, which opens to show it.
             if(ui_clicked(sig))
