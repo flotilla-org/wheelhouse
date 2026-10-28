@@ -1125,26 +1125,13 @@ entry_point(CmdLine *cmdline)
       shell_view = state_slot_view(chip, str8_lit("t:shell"));
       StateCheck(rd_panel_address_match(rd_panel_from_cfg(shell_view), agents_panel));
 
-      // A Slot whose home panel is gone (the person closed the empty files
-      // panel) is shown in the first tabs panel.
-      uishell_cmd("close_panel", .window = window->id, .panel = files_panel);
-      state_frame(ws);
-      state_frame(ws);
-      StateCheck(rd_arrangement_panel_from_id(rd_arrangement_live(uishell_store_owner(chip)), files_panel.id) == &rd_nil_arrangement_panel);
-      uishell_store_remove(shell_view);
-      state_frame(ws);
-      state_frame(ws);
-      StateCheck(state_slot_view(chip, str8_lit("t:shell")) == &cfg_nil_node && uishell_store_unplaced(scratch.arena, chip).count == 1);
-      uishell_store_show_slot(chip, 0, str8_lit("t:shell"));
-      state_frame(ws);
-      state_frame(ws);
-      shell_view = state_slot_view(chip, str8_lit("t:shell"));
-      StateCheck(shell_view != &cfg_nil_node && rd_panel_address_match(rd_panel_from_cfg(shell_view), agents_panel));
-      StateCheck(uishell_store_unplaced(scratch.arena, chip).count == 0);
-
-      // A panel added: the shell splits out into a panel of its own.
-      uishell_cmd("split_panel", .window = window->id, .panel = agents_panel, .view = rd_view_address_from_cfg(shell_view),
+      // A panel added: the primary terminal splits out into a panel of its
+      // own, and the person closes the empty files panel, the shell's home.
+      uishell_cmd("split_panel", .window = window->id, .panel = agents_panel, .view = rd_view_address_from_cfg(primary),
                   .dst_panel = agents_panel, .dir2 = Dir2_Down);
+      state_frame(ws);
+      state_frame(ws);
+      uishell_cmd("close_panel", .window = window->id, .panel = files_panel);
       state_frame(ws);
       state_frame(ws);
       stored = wheelhouse_arrangement_get(state->core, chip_id, 0);
@@ -1152,8 +1139,38 @@ entry_point(CmdLine *cmdline)
       wheelhouse_arrangement_free(stored);
       layouts = uishell_store_layouts(scratch.arena, chip);
       StateCheck(layouts.owned && layouts.adjusted);
+      StateCheck(rd_arrangement_panel_from_id(rd_arrangement_live(uishell_store_owner(chip)), files_panel.id) == &rd_nil_arrangement_panel);
+      primary = state_slot_view(chip, str8_lit("primary"));
+      RD_PanelAddress extra_panel = rd_panel_from_cfg(primary);
+      StateCheck(!rd_panel_address_match(extra_panel, agents_panel));
+
+      // A Slot whose home panel is gone is shown in the first tabs panel,
+      // though another remains: the agents' panel (the shell leaves it empty)
+      // is first, the primary's the last.
       shell_view = state_slot_view(chip, str8_lit("t:shell"));
-      StateCheck(!rd_panel_address_match(rd_panel_from_cfg(shell_view), agents_panel));
+      StateCheck(rd_panel_address_match(rd_panel_from_cfg(shell_view), agents_panel));
+      uishell_store_remove(shell_view);
+      state_frame(ws);
+      state_frame(ws);
+      StateCheck(state_slot_view(chip, str8_lit("t:shell")) == &cfg_nil_node && uishell_store_unplaced(scratch.arena, chip).count == 1);
+      {
+        RD_Arrangement *two = rd_arrangement_live(uishell_store_owner(chip));
+        U64 leaves = 0;
+        RD_PanelID first_leaf = 0;
+        for(RD_ArrangementPanel *p = two->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(two->root, p))
+        {
+          if(p->child_count != 0) { continue; }
+          first_leaf = first_leaf ? first_leaf : p->id;
+          leaves += 1;
+        }
+        StateCheck(leaves == 2 && first_leaf == agents_panel.id && rd_arrangement_panel_from_id(two, extra_panel.id)->tab_count == 1);
+      }
+      uishell_store_show_slot(chip, 0, str8_lit("t:shell"));
+      state_frame(ws);
+      state_frame(ws);
+      shell_view = state_slot_view(chip, str8_lit("t:shell"));
+      StateCheck(shell_view != &cfg_nil_node && rd_panel_address_match(rd_panel_from_cfg(shell_view), agents_panel));
+      StateCheck(uishell_store_unplaced(scratch.arena, chip).count == 0);
 
       // Reset restores the declared arrangement: two panels, the shell
       // unplaced again, the files panel empty as the layout first made it.
