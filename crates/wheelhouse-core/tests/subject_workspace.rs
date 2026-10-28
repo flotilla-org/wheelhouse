@@ -38,7 +38,8 @@ fn session(subjects: &[EntityRef]) -> Sidebar {
 
 fn focus(sidebar: &mut Sidebar, entity: &EntityRef) -> WorkspaceId {
     let effects = sidebar.dispatch(Action::Activate { entity: entity.clone() }).unwrap();
-    let [HostEffect::Focus { workspace_id, .. }] = effects[..] else { panic!("expected focus: {effects:?}") };
+    let [HostEffect::Focus { request_id, workspace_id }] = effects[..] else { panic!("expected focus: {effects:?}") };
+    sidebar.complete(request_id, Ok(None));
     workspace_id
 }
 
@@ -78,4 +79,18 @@ fn a_subject_without_a_workspace_falls_back_to_target() {
     sidebar.feed(200, [facts(&a, Some(SHARED)), facts(&b, Some(SHARED))]);
     assert_eq!(sidebar.detail_card(&b).unwrap().workspace_id, Some(ws(1)));
     assert_eq!(focus(&mut sidebar, &b), ws(1));
+}
+
+#[test]
+fn a_subject_open_in_two_workspaces_prefers_the_selected_one() {
+    let a = entity("vessel", "a");
+    let mut sidebar = session(&[a.clone()]);
+    let record = sidebar.export_record(&format!("workspace/{}", ws(1))).unwrap();
+    sidebar.import_record(&format!("workspace/{}", ws(2)), &record).unwrap();
+    for selected in [2, 1] {
+        let open = (1..=2).map(|n| Workspace { id: ws(n), position: n as usize, name: "a".into(), selected: n == selected }).collect();
+        sidebar.observe(open, vec![]);
+        assert_eq!(sidebar.detail_card(&a).unwrap().workspace_id, Some(ws(selected)));
+        assert_eq!(focus(&mut sidebar, &a), ws(selected));
+    }
 }
