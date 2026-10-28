@@ -129,7 +129,8 @@ uishell_tool_strip_look(UIShell_StripEntry entry, uint32_t state)
 }
 
 // The subject's own item, drawn as its chip by what its card presents. Its
-// workspace is the one the strip is in, so live.
+// workspace is the one the strip is in, so live. A subject not in the catalog
+// has no card: it takes its kind's icon, in the text colour.
 internal UIShell_StripLook
 uishell_tool_strip_subject_look(UIShell_SidebarState *state, WheelhouseEntity subject)
 {
