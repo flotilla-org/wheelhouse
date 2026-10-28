@@ -48,6 +48,178 @@ uishell_sidebar_benchmark_label_lifecycle(UIShell_SidebarState *state)
 }
 
 internal B32
+uishell_sidebar_benchmark_within(UI_Box *box, UI_Box *ancestor)
+{
+  for(UI_Box *b = box; !ui_box_is_nil(b); b = b->parent) { if(b == ancestor) { return 1; } }
+  return 0;
+}
+
+internal UI_Box *
+uishell_sidebar_benchmark_clickable(UI_Box *box)
+{
+  if(box->flags & UI_BoxFlag_Clickable) { return box; }
+  for(UI_Box *child = box->first; !ui_box_is_nil(child); child = child->next)
+  {
+    UI_Box *found = uishell_sidebar_benchmark_clickable(child);
+    if(!ui_box_is_nil(found)) { return found; }
+  }
+  return &ui_nil_box;
+}
+
+// One idle synthetic build, as the benchmark's frames are.
+internal void
+uishell_sidebar_benchmark_build(RD_WindowState *ws, CFG_Node *window, UIShell_ControlledSplit *split)
+{
+  Temp shell_frame = temp_begin(rd_frame_arena());
+  dr_begin_frame(rd_font_from_slot(RD_FontSlot_Icons));
+  fnt_frame();
+  UI_IconInfo icons = ws->ui->icon_info;
+  UI_AnimationInfo animation = {0}; animation.scroll_animation_rate = .5f;
+  UI_EventList events = {0};
+  ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+  ui_state->mouse = v2f32(-100, -100);
+  UIShell_RegsScope(.window = window->id)
+  UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+  { uishell_control_surface_ui(r2f32p(0, 0, 400, 800), split); }
+  ui_end_build();
+  temp_end(shell_frame);
+}
+
+// Rows out of view are spacers (#500): at the top, middle and end of the
+// Projects body, every row a full build shows is built where it was, and
+// far fewer rows are built. A row given keyboard focus out of view scrolls
+// in, and stays built when the view scrolls away from it.
+internal B32
+uishell_sidebar_benchmark_culling(RD_WindowState *ws, CFG_Node *window, UIShell_ControlledSplit *split)
+{
+  Temp scratch = scratch_begin(0, 0);
+  B32 ok = 1;
+  UI_State *saved_ui = ui_state;
+  UI_State *test_ui = ui_state_alloc();
+  ui_select_state(test_ui);
+  UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "wheelhouse_section_%S", str8_lit("tree"));
+  UI_Key body_key = ui_key_from_stringf(root_key, "section_body_%S", str8_lit("tree"));
+  // Its own arena: the render's scratch reuses the benchmark's.
+  uishell_sidebar_row_log_arena = arena_alloc();
+  uishell_sidebar_benchmark_build(ws, window, split);
+  uishell_sidebar_benchmark_build(ws, window, split);
+  UI_Box *body = ui_box_from_key(body_key);
+  UIShell_SidebarSection *section = ws->sidebar->sections;
+  while(section && !str8_match(section->key, str8_lit("tree"), 0)) { section = section->next; }
+  F32 range = section ? Max(0.f, section->content_height-dim_2f32(body->rect).y) : 0.f;
+  if(ui_box_is_nil(body) || range < 1000.f) { ok = 0; fprintf(stderr, "FAIL sidebar culling: Projects doesn't scroll (%g)\n", range); }
+  F32 offsets[] = {0.f, floor_f32(range*0.5f), range};
+  for(U64 o = 0; ok && o < ArrayCount(offsets); o++)
+  {
+    U64 built[2] = {0};
+    U64 *keys = 0; Rng2F32 *rects = 0; U64 shown = 0;
+    for(U64 cull = 0; cull < 2; cull++)
+    {
+      uishell_sidebar_cull_rows = (B32)cull;
+      body = ui_box_from_key(body_key);
+      body->view_off.y = body->view_off_target.y = offsets[o];
+      uishell_sidebar_benchmark_build(ws, window, split);
+      body = ui_box_from_key(body_key);
+      body->view_off.y = body->view_off_target.y = offsets[o];
+      uishell_sidebar_row_log = 0;
+      uishell_sidebar_rows_built = 0;
+      uishell_sidebar_benchmark_build(ws, window, split);
+      built[cull] = uishell_sidebar_rows_built;
+      body = ui_box_from_key(body_key);
+      U64 count = 0;
+      for(UIShell_SidebarBuiltRow *r = uishell_sidebar_row_log; r; r = r->next) { count++; }
+      if(!cull)
+      {
+        keys = push_array(scratch.arena, U64, count); rects = push_array(scratch.arena, Rng2F32, count);
+        for(UIShell_SidebarBuiltRow *r = uishell_sidebar_row_log; r; r = r->next)
+        {
+          if(!uishell_sidebar_benchmark_within(r->slot, body) || r->slot->rect.y1 <= body->rect.y0 || r->slot->rect.y0 >= body->rect.y1) { continue; }
+          keys[shown] = r->key; rects[shown] = r->slot->rect; shown++;
+        }
+        continue;
+      }
+      for(U64 k = 0; k < shown; k++)
+      {
+        UIShell_SidebarBuiltRow *r = uishell_sidebar_row_log;
+        while(r && r->key != keys[k]) { r = r->next; }
+        if(!r || abs_f32(r->slot->rect.y0-rects[k].y0) > 0.5f || abs_f32(r->slot->rect.y1-rects[k].y1) > 0.5f ||
+           abs_f32(r->slot->rect.x0-rects[k].x0) > 0.5f || abs_f32(r->slot->rect.x1-rects[k].x1) > 0.5f)
+        {
+          ok = 0;
+          fprintf(stderr, "FAIL sidebar culling at %g: a shown row (%g..%g) is %s\n", offsets[o], rects[k].y0, rects[k].y1,
+            r ? "built elsewhere" : "not built");
+          break;
+        }
+      }
+    }
+    if(!shown || built[1]*4 > built[0])
+    { ok = 0; fprintf(stderr, "FAIL sidebar culling at %g: %llu rows shown, %llu built of %llu\n", offsets[o], (unsigned long long)shown, (unsigned long long)built[1], (unsigned long long)built[0]); }
+    fprintf(stderr, "SIDEBAR_CULL offset=%g shown=%llu built=%llu full=%llu\n", offsets[o], (unsigned long long)shown, (unsigned long long)built[1], (unsigned long long)built[0]);
+  }
+  // Focus a row built below the view, in the margin: the view scrolls to it,
+  // and the row after it is built, for the next arrow key to reach.
+  uishell_sidebar_cull_rows = 1;
+  body = ui_box_from_key(body_key);
+  body->view_off.y = body->view_off_target.y = 0;
+  uishell_sidebar_row_log = 0;
+  uishell_sidebar_benchmark_build(ws, window, split);
+  body = ui_box_from_key(body_key);
+  // The nearest: project headers are built wherever they are.
+  UIShell_SidebarBuiltRow *below = 0;
+  for(UIShell_SidebarBuiltRow *r = uishell_sidebar_row_log; r; r = r->next)
+  {
+    if(!uishell_sidebar_benchmark_within(r->slot, body) || r->slot->rect.y0 < body->rect.y1) { continue; }
+    if(!below || r->slot->rect.y0 < below->slot->rect.y0) { below = r; }
+  }
+  UI_Box *root = ui_box_from_key(root_key);
+  UI_Box *target = below ? uishell_sidebar_benchmark_clickable(below->slot) : &ui_nil_box;
+  if(ok && (ui_box_is_nil(target) || ui_box_is_nil(root))) { ok = 0; fprintf(stderr, "FAIL sidebar culling: no row built below the view\n"); }
+  if(ok)
+  {
+    U64 focused = below->key;
+    UI_Key focus_key = target->key;
+    root->default_nav_focus_hot_key = root->default_nav_focus_next_hot_key = focus_key;
+    uishell_sidebar_benchmark_build(ws, window, split);
+    body = ui_box_from_key(body_key);
+    if(body->view_off_target.y <= 0) { ok = 0; fprintf(stderr, "FAIL sidebar culling: a row focused below the view didn't scroll in\n"); }
+    // Where it scrolled to, settled.
+    F32 scrolled = body->view_off_target.y;
+    body->view_off.y = scrolled;
+    uishell_sidebar_row_log = 0;
+    uishell_sidebar_benchmark_build(ws, window, split);
+    UIShell_SidebarBuiltRow *row = uishell_sidebar_row_log;
+    while(row && row->key != focused) { row = row->next; }
+    B32 next_built = 0;
+    for(UIShell_SidebarBuiltRow *r = uishell_sidebar_row_log; row && r; r = r->next)
+    { next_built |= abs_f32(r->slot->rect.y0-row->slot->rect.y1) < 0.5f; }
+    if(!next_built) { ok = 0; fprintf(stderr, "FAIL sidebar culling: the row after the focused one isn't built\n"); }
+    // Scrolled away to the end, the focused row stays built, and the view
+    // stays where it was put.
+    body->view_off.y = body->view_off_target.y = range;
+    uishell_sidebar_benchmark_build(ws, window, split);
+    body = ui_box_from_key(body_key);
+    body->view_off.y = body->view_off_target.y = range;
+    uishell_sidebar_row_log = 0;
+    uishell_sidebar_benchmark_build(ws, window, split);
+    body = ui_box_from_key(body_key);
+    UIShell_SidebarBuiltRow *r = uishell_sidebar_row_log;
+    while(r && r->key != focused) { r = r->next; }
+    if(!r) { ok = 0; fprintf(stderr, "FAIL sidebar culling: the focused row wasn't built out of view\n"); }
+    root = ui_box_from_key(root_key);
+    if(!ui_key_match(root->default_nav_focus_hot_key, focus_key)) { ok = 0; fprintf(stderr, "FAIL sidebar culling: the row lost focus\n"); }
+    if(body->view_off_target.y < range-1.f) { ok = 0; fprintf(stderr, "FAIL sidebar culling: the view went back to the focused row (%g of %g)\n", body->view_off_target.y, range); }
+  }
+  arena_release(uishell_sidebar_row_log_arena);
+  uishell_sidebar_row_log_arena = 0;
+  uishell_sidebar_row_log = 0;
+  uishell_sidebar_cull_rows = 1;
+  ui_select_state(saved_ui);
+  ui_state_release(test_ui);
+  scratch_end(scratch);
+  return ok;
+}
+
+internal B32
 uishell_sidebar_benchmark(RD_WindowState *ws)
 {
   Temp scratch = scratch_begin(0, 0);
@@ -121,6 +293,7 @@ uishell_sidebar_benchmark(RD_WindowState *ws)
       if(uishell_sidebar_region_view(window, measured[i]) == &cfg_nil_node)
       { ok = 0; fprintf(stderr, "FAIL sidebar benchmark: no %.*s section\n", str8_varg(measured[i])); }
     }
+    ok &= uishell_sidebar_benchmark_culling(ws, window, &split);
     for(U64 merged = 0; merged < layouts; merged++)
     {
       if(merged)
