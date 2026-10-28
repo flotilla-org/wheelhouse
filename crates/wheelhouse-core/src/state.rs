@@ -1911,6 +1911,15 @@ impl ControllerState {
         model
     }
 
+    /// The workspace bound to `entity` as its subject, preferring the selected
+    /// one, else the first in inventory order.
+    fn subject_workspace(&self, subjects: &BTreeMap<WorkspaceId, EntityRef>, entity: &EntityRef) -> Option<WorkspaceId> {
+        let bound = |tab: &&ControllerTab| subjects.get(&tab.tab_id) == Some(entity);
+        let mut tabs = self.tabs.iter().filter(bound);
+        let first = tabs.next()?;
+        Some(if first.active { first } else { tabs.find(|tab| tab.active).unwrap_or(first) }.tab_id)
+    }
+
     fn alias_presentation_state(
         state: &PresentationState,
         subjects: &BTreeMap<WorkspaceId, EntityRef>,
@@ -1977,6 +1986,7 @@ impl ControllerState {
         let _phase = profile::span("detail-generation");
         let catalog = &evaluation.catalog;
         let live = &evaluation.live;
+        let subjects = self.workspace_subjects();
         let entities: Vec<_> = match target {
             Some(target) => catalog.entity(target).into_iter().collect(),
             None => catalog.entities.iter().collect(),
@@ -2014,10 +2024,12 @@ impl ControllerState {
                 let action_target = metadata_entry_text(&entity.facts, KEY_ACTION_TARGET)
                     .map(str::to_owned)
                     .unwrap_or_else(|| entity.entity.action_target());
-                let workspace_id = match live.get(&action_target) {
+                // A workspace subject finds its workspace by the binding; only
+                // other entities (or subjects with none) go by action target.
+                let workspace_id = self.subject_workspace(&subjects, &entity.entity).or_else(|| match live.get(&action_target) {
                     Some(PresentationState::Live { workspace_id, .. }) => Some(*workspace_id),
                     _ => None,
-                };
+                });
                 use crate::detail::DetailIntent;
                 let primary_intent = if self.subject_url(&entity.entity).is_some() {
                     DetailIntent::OpenUrl
@@ -3666,7 +3678,9 @@ impl ControllerState {
         let entity = entities.iter().find(|entity| &entity.entity == subject)?;
         let action_target =
             metadata_entry_text(&entity.facts, KEY_ACTION_TARGET).map(str::to_owned).unwrap_or_else(|| entity.entity.action_target());
-        if let Some(position) = self.materialized_tab_position_for_action_target(&action_target) {
+        let bound =
+            self.subject_workspace(&self.workspace_subjects(), subject).and_then(|id| self.tabs.iter().find(|tab| tab.tab_id == id));
+        if let Some(position) = bound.map(|tab| tab.position).or_else(|| self.materialized_tab_position_for_action_target(&action_target)) {
             return Some(EntityActivation::FocusTab { position });
         }
         self.latent_tabs()
