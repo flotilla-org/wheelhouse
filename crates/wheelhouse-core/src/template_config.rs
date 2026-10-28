@@ -801,6 +801,8 @@ impl TemplateConfigCatalog {
     pub(crate) fn applied_template_for_kind(&self, kind: &str, facts: &FactMap) -> Option<String> {
         let meets = |p: &PlacementPredicate| match (&p.value, &p.of) {
             (Some(value), None) => facts.get(p.key.as_str()).and_then(placement_index_text).as_deref() == Some(value.as_str()),
+            // Only an `of=` match: the parser refuses existence tests and
+            // matches without `value=` or `of=`.
             _ => true,
         };
         let first = |loops: &[PlacementLoop]| -> Option<String> {
