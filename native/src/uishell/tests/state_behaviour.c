@@ -1089,11 +1089,12 @@ entry_point(CmdLine *cmdline)
       resized[2].weight = 1.0;
       WheelhouseArrangementDoc resized_doc = {resized, 3};
       char *resize_error = 0;
-      WheelhouseWorkspaceArrangement *committed = wheelhouse_arrangement_commit(state->core, chip_id, &resized_doc, declared->generation, &resize_error);
+      WheelhouseWorkspaceArrangement *committed = wheelhouse_arrangement_commit(state->core, chip_id, &resized_doc, declared ? declared->generation : 0, &resize_error);
       StateCheck(committed && committed->status == WHEELHOUSE_COMMITTED && !committed->owned &&
                  (committed->flags & WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED));
       wheelhouse_string_free(resize_error);
       wheelhouse_arrangement_free(committed);
+      // The menu offers Reset for a resize alone (#485): `adjusted` without `owned`.
       layouts = uishell_store_layouts(scratch.arena, chip);
       StateCheck(layouts.adjusted && !layouts.owned);
       uishell_store_reset_layout(chip);
@@ -1190,6 +1191,8 @@ entry_point(CmdLine *cmdline)
     state_check_committed(ws);
     // Chosen by name, then the empty name for the default, directly as the
     // layouts menu calls it.
+    // (current == 1 fails if the name is ignored; current == 0 below, if the
+    // empty name doesn't select the default.)
     uishell_store_choose_layout(convoy, str8_lit("live-only"));
     state_frame(ws);
     state_frame(ws);
