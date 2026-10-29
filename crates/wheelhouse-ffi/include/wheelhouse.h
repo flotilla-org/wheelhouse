@@ -374,6 +374,21 @@ typedef struct BinnacleGrid BinnacleGrid;
 // The layout a workspace shows now.
 #define WHEELHOUSE_LAYOUT_CURRENT 2
 
+// The overview's mode: the current workspace is open.
+#define WHEELHOUSE_OVERVIEW_WORKSPACE 0
+
+// The overview's mode: the camera shows the overview.
+#define WHEELHOUSE_OVERVIEW_OVERVIEW 1
+
+// The overview's mode: the camera fits one group (the frame's `group`).
+#define WHEELHOUSE_OVERVIEW_GROUP 2
+
+// A view mode: a sliding row per group.
+#define WHEELHOUSE_OVERVIEW_ROWS 0
+
+// A view mode: groups as blocks of a grid.
+#define WHEELHOUSE_OVERVIEW_GRID 1
+
 // A View Spec's content: a local command (argv when argc is nonzero, else
 // the shell line in command; optional cwd).
 #define WHEELHOUSE_SLOT_COMMAND 0
@@ -1094,6 +1109,83 @@ typedef struct {
   const WheelhouseNote *notes;
   size_t note_count;
 } WheelhouseSidebarArrangement;
+
+// A rectangle of the scene.
+typedef struct {
+  double x0;
+  double y0;
+  double x1;
+  double y1;
+} WheelhouseOverviewRect;
+
+// A workspace's tile.
+typedef struct {
+  WheelhouseWorkspaceId workspace_id;
+  // Indexes into the frame's groups, and the group's clusters.
+  size_t group;
+  size_t cluster;
+  WheelhouseOverviewRect rect;
+  // Where its title goes, under it.
+  WheelhouseOverviewRect label;
+  WheelhouseText title;
+  // The kind of what it is the workspace of; empty for a plain one.
+  WheelhouseText kind;
+  // What its sidebar row presents: status, attention and icon, as a
+  // stream node's are; absent ones are empty.
+  WheelhouseText status;
+  uint32_t attention;
+  WheelhouseText icon;
+  // The window's current workspace.
+  uint32_t current;
+} WheelhouseOverviewTile;
+
+typedef struct {
+  WheelhouseText heading;
+  // Where the heading goes; clicking it fits the group.
+  WheelhouseOverviewRect heading_rect;
+  WheelhouseOverviewRect bounds;
+  // Rows: how far the row is slid (0 to slide_min, which is negative or
+  // 0 when the row fits).
+  double slide;
+  double slide_min;
+} WheelhouseOverviewGroup;
+
+// What a cluster (a convoy and its vessels, say) covers: one rectangle
+// in rows, one per cell in the grid.
+typedef struct {
+  size_t group;
+  size_t cluster;
+  WheelhouseOverviewRect rect;
+} WheelhouseOverviewRegion;
+
+// What the region shows at one moment.
+typedef struct {
+  // WHEELHOUSE_OVERVIEW_WORKSPACE, _OVERVIEW or _GROUP.
+  uint32_t mode;
+  // The fitted group's index, for WHEELHOUSE_OVERVIEW_GROUP; else
+  // WHEELHOUSE_NONE.
+  size_t group;
+  // WHEELHOUSE_OVERVIEW_ROWS or _GRID.
+  uint32_t view_mode;
+  // The camera is moving: draw again next frame.
+  uint32_t flying;
+  // The current workspace is open and still: draw it as itself, not
+  // through the scene.
+  uint32_t settled;
+  // Whether there is a camera yet (there is none until there is a current
+  // workspace or something to show); without one, draw the workspace as
+  // itself.
+  uint32_t has_view;
+  // The part of the scene the region shows.
+  WheelhouseOverviewRect view;
+  WheelhouseOverviewRect bounds;
+  const WheelhouseOverviewTile *tiles;
+  size_t tile_count;
+  const WheelhouseOverviewGroup *groups;
+  size_t group_count;
+  const WheelhouseOverviewRegion *regions;
+  size_t region_count;
+} WheelhouseOverviewFrame;
 
 // A View Spec, or a resolution's recipe (whose presentation and role are
 // unset).
@@ -1822,6 +1914,69 @@ uint64_t wheelhouse_sidebar_arrangement_generation(WheelhouseCore *h, char **err
 // resolutions, and arrangements. Poll it to learn when to read them again;
 // it is separate from the snapshot's.
 uint64_t wheelhouse_workspace_content_revision(WheelhouseCore *h, char **error_out);
+
+// Each frame, before reading it: the window's current workspace (zeroes for
+// none), its workspace region's width over height, the time, and whether
+// the camera moves (0 for a setting or the system's reduce motion: every
+// move is then a cut). A new current workspace opens with a flight from
+// wherever the camera is. It reads the sidebar's live workspaces when they
+// change.
+uint32_t wheelhouse_overview_update(WheelhouseCore *h,
+                                    WheelhouseWorkspaceId current_workspace,
+                                    double aspect,
+                                    double now_ms,
+                                    uint32_t motion,
+                                    char **error_out);
+
+// Show the overview, with the current workspace's row slid into view.
+uint32_t wheelhouse_overview_open(WheelhouseCore *h, double now_ms, char **error_out);
+
+// Open the current workspace from wherever the camera is.
+uint32_t wheelhouse_overview_close(WheelhouseCore *h, double now_ms, char **error_out);
+
+// Go back one level (Escape): from a group to the overview, from the
+// overview to the current workspace. 0 when the workspace was already open,
+// and on an error.
+uint32_t wheelhouse_overview_back(WheelhouseCore *h, double now_ms, char **error_out);
+
+// Fit group `group` (an index into the frame's groups).
+uint32_t wheelhouse_overview_zoom_group(WheelhouseCore *h,
+                                        size_t group,
+                                        double now_ms,
+                                        char **error_out);
+
+// Open a tile's workspace: the camera flies into it. The host also makes it
+// the window's current workspace, which the next update confirms.
+uint32_t wheelhouse_overview_pick(WheelhouseCore *h,
+                                  WheelhouseWorkspaceId workspace,
+                                  double now_ms,
+                                  char **error_out);
+
+// Rows: slide group `group`'s row by `by` scene units (negative shows what
+// is further right), within its range.
+uint32_t wheelhouse_overview_slide(WheelhouseCore *h, size_t group, double by, char **error_out);
+
+// Scroll the overview down (or up) by `by` scene units.
+uint32_t wheelhouse_overview_pan(WheelhouseCore *h, double by, char **error_out);
+
+// Collapse or expand a cluster (indexes into the frame's groups and the
+// group's clusters).
+uint32_t wheelhouse_overview_toggle_cluster(WheelhouseCore *h,
+                                            size_t group,
+                                            size_t cluster,
+                                            char **error_out);
+
+// WHEELHOUSE_OVERVIEW_ROWS or _GRID; the camera cuts to the same place.
+uint32_t wheelhouse_overview_set_view_mode(WheelhouseCore *h, uint32_t view_mode, char **error_out);
+
+// The region at `now_ms`. Its text is borrowed from the overview: free
+// it with wheelhouse_overview_frame_free before the next call that changes
+// the overview.
+WheelhouseOverviewFrame *wheelhouse_overview_frame(WheelhouseCore *h,
+                                                   double now_ms,
+                                                   char **error_out);
+
+void wheelhouse_overview_frame_free(WheelhouseOverviewFrame *frame);
 
 // A registered workspace's slots. Free them with wheelhouse_slots_free.
 WheelhouseSlots *wheelhouse_slots_get(WheelhouseCore *h,

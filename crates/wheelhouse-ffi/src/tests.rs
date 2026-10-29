@@ -1301,3 +1301,75 @@ mod arrangement_abi {
         }
     }
 }
+
+// A window's overview through C: the workspaces the sidebar shows live are
+// its tiles; a new current workspace is a flight the host draws through the
+// scene until it settles, and without motion a cut; the overview opens and
+// goes back a level at a time; bad input is an error.
+#[test]
+fn the_overview_reaches_c_and_flies_between_workspaces() {
+    unsafe {
+        let mut error = ptr::null_mut();
+        let h = create("");
+        let (first, second) = (WorkspaceId::from_bytes([1; 16]), WorkspaceId::from_bytes([2; 16]));
+        let workspaces = [
+            WorkspaceInput { id: first.into(), position: 0, name: text("one"), selected: 1 },
+            WorkspaceInput { id: second.into(), position: 1, name: text("two"), selected: 0 },
+        ];
+        assert_eq!(wheelhouse_observe(h, workspaces.as_ptr(), 2, ptr::null(), 0, &mut error), 1);
+        let frame = |now: f64| {
+            let frame = wheelhouse_overview_frame(h, now, &mut ptr::null_mut());
+            let f = &*frame;
+            let tiles: Vec<(String, u32)> =
+                slice(f.tiles, f.tile_count).unwrap().iter().map(|t| (t.title.read().unwrap(), t.current)).collect();
+            let rect = slice(f.tiles, f.tile_count).unwrap().iter().find(|t| t.current == 1).map(|t| t.rect);
+            let fits = rect.is_some_and(|r| (r.x0 - f.view.x0).abs() < 1e-9 && (r.y1 - f.view.y1).abs() < 1e-9);
+            let headings: Vec<String> = slice(f.groups, f.group_count).unwrap().iter().map(|g| g.heading.read().unwrap()).collect();
+            let summary = (f.mode, f.flying, f.settled, f.has_view, fits, tiles, headings);
+            wheelhouse_overview_frame_free(frame);
+            summary
+        };
+        let two = |current: u32| vec![("one".to_owned(), 1 - current), ("two".to_owned(), current)];
+        let other = vec![wheelhouse_core::overview::OTHER_WORKSPACES.to_owned()];
+        // Before any update there is no camera: draw the workspace as itself.
+        assert_eq!(frame(0.0), (WHEELHOUSE_OVERVIEW_WORKSPACE, 0, 0, 0, false, vec![], vec![]));
+        assert_eq!(wheelhouse_overview_update(h, first.into(), 1.6, 0.0, 1, &mut error), 1);
+        assert_eq!(frame(0.0), (WHEELHOUSE_OVERVIEW_WORKSPACE, 0, 1, 1, true, two(0), other.clone()));
+        // Switching flies, then settles on the new workspace.
+        assert_eq!(wheelhouse_overview_update(h, second.into(), 1.6, 1000.0, 1, &mut error), 1);
+        assert_eq!(frame(1000.0), (WHEELHOUSE_OVERVIEW_WORKSPACE, 1, 0, 1, false, two(1), other.clone()));
+        assert_eq!(frame(2000.0), (WHEELHOUSE_OVERVIEW_WORKSPACE, 0, 1, 1, true, two(1), other.clone()));
+        // Without motion a switch is a cut.
+        assert_eq!(wheelhouse_overview_update(h, first.into(), 1.6, 3000.0, 0, &mut error), 1);
+        assert_eq!(frame(3000.0), (WHEELHOUSE_OVERVIEW_WORKSPACE, 0, 1, 1, true, two(0), other.clone()));
+        // Opening the overview, then going back a level at a time.
+        assert_eq!(wheelhouse_overview_update(h, first.into(), 1.6, 4000.0, 1, &mut error), 1);
+        assert_eq!(wheelhouse_overview_open(h, 4000.0, &mut error), 1);
+        let opened = frame(4000.0);
+        assert_eq!((opened.0, opened.1, opened.2), (WHEELHOUSE_OVERVIEW_OVERVIEW, 1, 0));
+        assert_eq!(wheelhouse_overview_zoom_group(h, 0, 5000.0, &mut error), 1);
+        assert_eq!(frame(6000.0).0, WHEELHOUSE_OVERVIEW_GROUP);
+        assert_eq!(wheelhouse_overview_back(h, 6000.0, &mut error), 1);
+        assert_eq!(frame(7000.0).0, WHEELHOUSE_OVERVIEW_OVERVIEW);
+        // Picking a tile flies into it; the host's next update confirms it.
+        assert_eq!(wheelhouse_overview_pick(h, second.into(), 7000.0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_update(h, second.into(), 1.6, 7016.0, 1, &mut error), 1);
+        assert_eq!(frame(7016.0), (WHEELHOUSE_OVERVIEW_WORKSPACE, 1, 0, 1, false, two(1), other.clone()));
+        assert_eq!(frame(9000.0), (WHEELHOUSE_OVERVIEW_WORKSPACE, 0, 1, 1, true, two(1), other.clone()));
+        assert_eq!(wheelhouse_overview_back(h, 9000.0, &mut error), 0);
+        assert!(error.is_null());
+        // A workspace leaving the sidebar leaves the scene.
+        assert_eq!(wheelhouse_observe(h, workspaces.as_ptr(), 1, ptr::null(), 0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_update(h, first.into(), 1.6, 9500.0, 0, &mut error), 1);
+        assert_eq!(frame(9500.0).5, vec![("one".to_owned(), 1)]);
+        assert_eq!(wheelhouse_overview_set_view_mode(h, WHEELHOUSE_OVERVIEW_GRID, &mut error), 1);
+        assert_eq!(wheelhouse_overview_set_view_mode(h, 7, &mut error), 0);
+        assert!(!error.is_null());
+        wheelhouse_string_free(error);
+        error = ptr::null_mut();
+        assert!(wheelhouse_overview_frame(ptr::null_mut(), 0.0, &mut error).is_null());
+        assert!(!error.is_null());
+        wheelhouse_string_free(error);
+        wheelhouse_destroy(h);
+    }
+}

@@ -11,10 +11,12 @@
 mod camera;
 mod logical;
 mod scene;
+mod window;
 
 pub use camera::{ease_out, Camera, CameraRig, Flight, FlightTiming, ZoomPath};
 pub use logical::{entries, logical_layout, Cluster, Group, GroupKey, LogicalLayout, OverviewEntry, Tile, OTHER_WORKSPACES};
 pub use scene::{scene, Scene, SceneGroup, SceneOptions, SceneRect, SceneTile, ViewMode};
+pub use window::{OverviewMode, OverviewWindow};
 
 #[cfg(test)]
 mod tests;

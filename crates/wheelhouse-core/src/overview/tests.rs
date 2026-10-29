@@ -565,3 +565,144 @@ fn cameras_show_what_they_are_for(tc: TestCase) {
     let group = tc.draw(gs::integers::<usize>().max_value(scene.groups.len() - 1));
     assert!(scene.group_camera(group).unwrap().view(options.aspect).contains(&scene.groups[group].bounds));
 }
+
+// ---------- a window's overview ----------
+
+fn near(a: Camera, b: Camera) -> bool {
+    let tolerance = 1e-6 * a.w.max(b.w);
+    (a.cx - b.cx).abs() <= tolerance && (a.cy - b.cy).abs() <= tolerance && (a.w - b.w).abs() <= tolerance
+}
+
+/// Switching workspaces flies the camera from the old workspace's tile to
+/// the new one's, and without motion it cuts.
+#[test]
+fn switching_flies_between_tiles_unless_motion_is_off() {
+    let entries = vec![
+        entry("tree", vec![segment("project", entity("project", 0))], 1),
+        entry("tree", vec![segment("project", entity("project", 0)), segment("convoy", entity("convoy", 0))], 2),
+    ];
+    for motion in [true, false] {
+        let mut window = OverviewWindow::default();
+        window.set_motion(motion);
+        window.update(entries.clone(), Some(tab_workspace_id(1)), 1.6, 0.0);
+        let first = window.scene().rest_camera(tab_workspace_id(1)).unwrap();
+        assert_eq!(window.camera(0.0), Some(first));
+        assert!(window.settled(0.0));
+        window.update(entries.clone(), Some(tab_workspace_id(2)), 1.6, 1000.0);
+        let second = window.scene().rest_camera(tab_workspace_id(2)).unwrap();
+        assert_eq!(window.flying(1000.0), motion);
+        assert_eq!(window.camera(1000.0), Some(if motion { first } else { second }));
+        assert_eq!(window.settled(1000.0), !motion);
+        assert_eq!(window.camera(2000.0), Some(second));
+        assert!(window.settled(2000.0));
+    }
+}
+
+/// Whatever the host and the user do, in any order and at any time:
+/// - the camera is always somewhere finite once there is anything to show;
+/// - flying moves (a switch, opening, going back, a group, a pick) never
+///   jump it, while motion is on;
+/// - at rest it is where the mode says, and the host draws the workspace as
+///   itself exactly when it is open and still;
+/// - every flight ends within the longest flight's time;
+/// - going back from the overview opens the current workspace, and back
+///   from an open workspace does nothing.
+#[hegel::test(test_cases = 300)]
+fn a_windows_camera_follows_its_mode(tc: TestCase) {
+    let mut entries = draw_entries(&tc);
+    let mut window = OverviewWindow::default();
+    let mut now = 0.0;
+    let mut aspect = 1.6;
+    let mut motion = true;
+    let pick = |tc: &TestCase, window: &OverviewWindow| {
+        let tiles = &window.scene().tiles;
+        (!tiles.is_empty()).then(|| tiles[tc.draw(gs::integers::<usize>().max_value(tiles.len() - 1))].workspace_id)
+    };
+    for _ in 0..tc.draw(gs::integers::<usize>().max_value(25)) {
+        now += tc.draw(gs::sampled_from(&[0.0, 16.0, 100.0, 300.0, 1000.0][..]));
+        let before = window.camera(now);
+        let flies = match tc.draw(gs::integers::<u8>().max_value(10)) {
+            0 => {
+                let current = pick(&tc, &window).or_else(|| entries.first().map(|e| e.workspace_id));
+                let switched = current != window.current();
+                window.update(entries.clone(), current, aspect, now);
+                switched
+            }
+            1 => {
+                entries = draw_entries(&tc);
+                let current = window.current().filter(|c| entries.iter().any(|e| e.workspace_id == *c));
+                window.update(entries.clone(), current, aspect, now);
+                false
+            }
+            2 => {
+                window.open(now);
+                true
+            }
+            3 => {
+                let mode = window.mode().clone();
+                let handled = window.back(now);
+                assert_eq!(handled, mode != OverviewMode::Workspace);
+                if mode == OverviewMode::Overview {
+                    assert_eq!(window.mode(), &OverviewMode::Workspace);
+                }
+                true
+            }
+            4 if !window.scene().groups.is_empty() => {
+                window.zoom_group(tc.draw(gs::integers::<usize>().max_value(window.scene().groups.len() - 1)), now);
+                true
+            }
+            5 => {
+                if let Some(id) = pick(&tc, &window) {
+                    window.pick(id, now);
+                    assert_eq!(window.current(), Some(id));
+                }
+                true
+            }
+            6 if !window.scene().groups.is_empty() => {
+                let group = tc.draw(gs::integers::<usize>().max_value(window.scene().groups.len() - 1));
+                window.slide(group, tc.draw(gs::floats::<f64>().min_value(-20.0).max_value(20.0).allow_nan(false).allow_infinity(false)));
+                false
+            }
+            7 => {
+                window.pan(tc.draw(gs::floats::<f64>().min_value(-10.0).max_value(10.0).allow_nan(false).allow_infinity(false)));
+                false
+            }
+            8 if !window.layout().groups.is_empty() => {
+                let group = tc.draw(gs::integers::<usize>().max_value(window.layout().groups.len() - 1));
+                let clusters = window.layout().groups[group].clusters.len();
+                window.toggle_cluster(group, tc.draw(gs::integers::<usize>().max_value(clusters - 1)));
+                false
+            }
+            9 if tc.draw(gs::booleans()) => {
+                window.close(now);
+                assert_eq!(window.mode(), &OverviewMode::Workspace);
+                true
+            }
+            9 => {
+                aspect = tc.draw(gs::floats::<f64>().min_value(0.5).max_value(3.5).allow_nan(false).allow_infinity(false));
+                window.update(entries.clone(), window.current(), aspect, now);
+                false
+            }
+            _ => {
+                motion = !motion;
+                window.set_motion(motion);
+                false
+            }
+        };
+        let camera = window.camera(now);
+        if let Some(camera) = camera {
+            assert!(camera.cx.is_finite() && camera.cy.is_finite() && camera.w.is_finite() && camera.w > 0.0, "{camera:?}");
+        }
+        if let (true, true, Some(before), Some(after)) = (flies, motion, before, camera) {
+            assert!(near(before, after), "a flying move jumped the camera from {before:?} to {after:?}");
+        }
+        if !window.flying(now) {
+            if let (Some(camera), Some(target)) = (camera, window.target()) {
+                assert!(near(camera, target), "at rest at {camera:?}, not {target:?}");
+            }
+        }
+        let open = *window.mode() == OverviewMode::Workspace && window.current().is_some_and(|id| window.scene().tile(id).is_some());
+        assert_eq!(window.settled(now), open && !window.flying(now));
+        assert!(!window.flying(now + FlightTiming::default().max_ms));
+    }
+}
