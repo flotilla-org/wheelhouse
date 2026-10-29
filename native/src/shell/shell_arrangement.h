@@ -4,12 +4,17 @@
 // relative split weights. The root's axis is the document's; each level
 // below alternates.
 //
-// The shell keeps the live copy of each owner's arrangement, which the
-// renderer reads and commands replace with an edited copy
-// (rd_arrangement_set, shell_core.c "Live arrangements"); docking previews
-// edit a copy they discard. A workspace's and the sidebar's are committed to
-// the core whole, at the end of a gesture, and follow what the core makes
-// of them (uishell_workspace_store.c, uishell_sidebar_store.c).
+// The document's type and the rules that edit it, and its validity, are the
+// core's (crates/wheelhouse-core/src/arrangement.rs, #516): each operation
+// below sends this arrangement to the core as its edit document, applies one
+// rule there and takes the result back, keeping the nodes of the panels that
+// stay. What the shell keeps is the live copy of each owner's arrangement,
+// which the renderer reads (rd_arrangement_set, shell_core.c "Live
+// arrangements"), the read-only queries and the geometry. Commands and
+// gestures change a live arrangement by intent (rd_arrangement_apply_intent);
+// docking previews edit a copy they discard. A workspace's and the sidebar's
+// are committed to the core whole, at the end of a gesture, and follow what
+// the core makes of them (uishell_workspace_store.c, uishell_sidebar_store.c).
 #ifndef SHELL_ARRANGEMENT_H
 #define SHELL_ARRANGEMENT_H
 

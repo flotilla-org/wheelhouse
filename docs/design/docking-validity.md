@@ -1,7 +1,12 @@
 # Declared docking validity
 
-`native/src/shell/shell_docking.h` declares View registrations, their traits and
-three host kinds. `rd_dock_check` returns a named rule: host acceptance,
+The rule is the core's (`crates/wheelhouse-core/src/dock.rs`, #516), reached
+through the C ABI (`wheelhouse_dock_check`, `_placement`, `_creation`,
+`_closure`, `_restore`) and wasm. Each frontend supplies its own View
+registrations (Wheelhouse's are its Renderers, `native/src/uishell/
+uishell_renderers.h`, read by `native/src/shell/shell_docking.h`), their
+traits and two host kinds, and measures hosts in its own pixels and
+configuration. `dock::check` (natively `rd_dock_check`) returns a named rule: host acceptance,
 Workspace Subject, minimum width, singleton, one Control Surface per
 Controlled Split, exclusion of a selector from its selected Workspace Region,
 refusal to close the workspace-selecting View, or a different owning Controlled
@@ -51,7 +56,8 @@ another Controlled Split are refused because they would remove one split's
 only Control Surface and add a second to the other. Nested Controlled Splits
 will supply their own binding identities in #164.
 
-Restore checks a window's typed arrangements (`rd_dock_restore`): its
+Restore checks a window's typed arrangements (`rd_dock_restore`, the core's
+`dock::restore`): its
 sidebar's, its own panels', and each Workspace's. At frame
 boundaries and immediately after loading, a change to any arrangement triggers
 repair of the window's layouts; mount getters never mutate or set arrangements.
