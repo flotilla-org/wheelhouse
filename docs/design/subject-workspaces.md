@@ -242,22 +242,11 @@ especially with one View).
 ## Switching workspaces
 
 Switching straight from one workspace to another is disorienting, so a switch
-gets a short transition (#450), built on the overview's existing workspace
-zoom:
-
-- **To a child** (project to convoy, convoy to vessel): zoom into where the
-  child sits, with the current workspace fading underneath.
-- **To a parent**: zoom out, the reverse.
-- **To a sibling or anything further away**: a quick zoom out of the current
-  workspace, then into the new one.
+gets a short transition (#450). It is a camera flight through the overview's
+scene, which follows the sidebar's hierarchy:
+[overview-scene.md](overview-scene.md) has the design.
 
 Transitions are optional, and off under reduced motion.
-
-This ties into the overview (#190). Today it lays workspaces out in creation
-order. By default it should follow the same hierarchy as the sidebar, with
-each workspace showing a sensible amount of information about its subject:
-the card profiles in #270. Once the overview has that layout, the zoom out
-and in can pass through each workspace's real position in it.
 
 ## Cases to work out
 
