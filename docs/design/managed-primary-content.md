@@ -26,8 +26,11 @@ user-replaced view are not overwritten. Daemon-backed replacements are rejected
 in this slice because that backend needs separate preparation/lifetime coverage.
 
 A view-state teardown callback releases terminal attachments and render caches
-on view-state retirement or replacement. Shared daemon providers remain open;
-only the per-view session handle is detached. The explicit replacement path is
+on view-state retirement or replacement. Shared daemon connections stay open,
+lingering briefly once nothing uses them, and a directly attached session's
+attachment stays while another View holds it, closing at the end of the frame
+otherwise (docs/design/remote-terminals.md); only the View's own session handle
+or Cleat view is released. The explicit replacement path is
 serialized with metadata publication on the UI thread. Reconciliation scans are
 gated by metadata/configuration changes rather than performed every frame.
 

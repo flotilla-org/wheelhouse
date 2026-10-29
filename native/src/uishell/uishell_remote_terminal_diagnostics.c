@@ -1,7 +1,8 @@
 // Remote terminal diagnostics (#104): a Terminal View attaches to a Cleat
-// endpoint over its ssh bridge, round-trips input and resize, keeps the
-// admission warning out of the content, shows a dead bridge as disconnected
-// with a reconnect, and reconnects to the same live session.
+// endpoint over its connection's ssh bridge, round-trips input and resize,
+// keeps the admission warning out of the content, re-attaches to the same
+// live session when a bridge that streamed dies, reconnects when asked, and
+// shows a bridge that never streams as disconnected with a reconnect.
 //
 // It needs a running endpoint and a host ssh reaches, named by environment
 // (tools/test-remote-terminal.sh sets them up, with a PATH `ssh` shim when no
@@ -30,8 +31,8 @@ uishell_remote_diag_run(Arena *arena, char *fmt, ...)
   return str8_list_join(arena, &out, 0);
 }
 
-// Builds `view` once at `size`, as the canvas would; returns the connection
-// pill's text, empty when none was built.
+// Builds `view` once at `size`, as the canvas would, and ends the frame;
+// returns the connection pill's text, empty when none was built.
 internal String8
 uishell_remote_diag_build(Arena *arena, RD_WindowState *ws, CFG_Node *view, Vec2F32 size)
 {
@@ -47,6 +48,8 @@ uishell_remote_diag_build(Arena *arena, RD_WindowState *ws, CFG_Node *view, Vec2
   UI_Box *pill = ui_box_from_key(ui_key_from_string(root_key, str8_lit("terminal_connection_status")));
   if(!ui_box_is_nil(pill) && pill->last_touched_build_index == ui_state->build_index) { pill_text = push_str8_copy(arena, pill->string); }
   ui_end_build();
+  // The frame ends, as uishell's does: connections watch their transports.
+  uishell_cleat_attachments_end_frame();
   return pill_text;
 }
 
@@ -88,26 +91,27 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
     for(;;)
     {
       pill = uishell_remote_diag_build(scratch.arena, ws, view, size);
-      if(tv->session && cleat_session_connection_state(tv->session) == CLEAT_SESSION_STREAMING &&
-         cleat_session_role(tv->session) == CLEAT_ROLE_CONTROLLER) { break; }
+      if(uishell_terminal_connection_state(tv) == CLEAT_SESSION_STREAMING &&
+         uishell_terminal_role(tv) == CLEAT_ROLE_CONTROLLER) { break; }
       if(now_time_us() > deadline) { break; }
       sleep_ms(20);
     }
-    RemoteCheck(tv->remote_backend && tv->session && cleat_session_connection_state(tv->session) == CLEAT_SESSION_STREAMING,
+    RemoteCheck(tv->remote_backend && tv->shared && uishell_terminal_connection_state(tv) == CLEAT_SESSION_STREAMING,
                 "attaches over the ssh bridge");
     RemoteCheck(pill.size == 0, "a streaming controller shows no pill");
     cleat_str hosting = {0};
-    RemoteCheck(tv->session && cleat_session_hosting(tv->session, &hosting) &&
+    RemoteCheck(uishell_terminal_session(tv) && cleat_session_hosting(uishell_terminal_session(tv), &hosting) &&
                 str8_match(str8((U8 *)hosting.ptr, hosting.len), str8_lit("remote:command"), 0), "hosting is remote:command");
     UIShell_RuntimeSetting setting = uishell_runtime_setting(scratch.arena, view, str8_lit("terminal_hosting"));
     RemoteCheck(setting.command.size == 0, "remote hosting offers no move");
-    UIShell_CleatTransportState transport = uishell_cleat_transport_state(scratch.arena, tv->provider);
+    UIShell_CleatConnection *connection = tv->shared ? tv->shared->attachment->connection : 0;
+    UIShell_CleatTransportState transport = uishell_cleat_transport_state(scratch.arena, connection ? connection->provider : 0);
     RemoteCheck(str8_find_needle(transport.warning, 0, str8_lit("cycle protection"), 0) < transport.warning.size,
                 "admission warning reaches the transport diagnostics");
 
     // Input and resize reach the remote PTY.
     String8 input = str8_lit("echo WH-REMOTE-$((6*7))\r");
-    if(tv->session) { cleat_session_write_bytes(tv->session, input.str, input.size); }
+    if(uishell_terminal_cleat_view(tv)) { cleat_view_write_bytes(uishell_terminal_cleat_view(tv), input.str, input.size); }
     String8 capture = str8_zero();
     deadline = now_time_us()+10*Million(1);
     for(;;)
@@ -134,40 +138,37 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
     RemoteCheck(tv->cols != cols_before && str8_find_needle(inspect, 0, push_str8f(scratch.arena, "\"cols\": %u", tv->cols), 0) < inspect.size,
                 "resize reaches the remote PTY");
 
-    // A dead bridge: disconnected with a reconnect, the session still alive.
-    // Both patterns name this run's runtime root, so no other ssh session to
-    // the host is touched.
+    // A dead bridge that streamed: its connection reopens by itself and
+    // re-attaches the same live session. Both patterns name this run's
+    // runtime root, so no other ssh session to the host is touched.
+    U64 opens = connection ? connection->opens : 0;
     uishell_remote_diag_run(scratch.arena, "pkill -f 'proxy --runtime-root=%S' ; pkill -f 'BatchMode=yes -- %S .*--runtime-root=%S' ; true", root, host, root);
-    U64 killed = now_time_us();
-    deadline = killed+10*Million(1);
-    for(;;)
-    {
-      pill = uishell_remote_diag_build(scratch.arena, ws, view, size);
-      if(str8_find_needle(pill, 0, str8_lit("click to reconnect"), 0) < pill.size || now_time_us() > deadline) { break; }
-      sleep_ms(20);
-    }
-    RemoteCheck(str8_find_needle(pill, 0, str8_lit("click to reconnect"), 0) < pill.size, "a dead bridge offers reconnect");
-    RemoteCheck(now_time_us()-killed < 3*Million(1), "the disconnect shows within 3 s");
-    RemoteCheck(tv->session && cleat_session_connection_state(tv->session) == CLEAT_SESSION_DISCONNECTED, "the session reads disconnected, not exited");
-    String8 list = uishell_remote_diag_run(scratch.arena, "'%S' --runtime-root '%S' list 2>&1", cleat, root);
-    RemoteCheck(str8_find_needle(list, 0, session, 0) < list.size, "the remote session keeps running");
-    sleep_ms(300);
-    pill = uishell_remote_diag_build(scratch.arena, ws, view, size);
-    RemoteCheck(str8_find_needle(pill, 0, str8_lit("click to reconnect"), 0) < pill.size, "nothing reconnects until asked");
-
-    // Reconnect: a fresh bridge to the same live session.
-    tv->remote_reconnect = 1;
     deadline = now_time_us()+15*Million(1);
     for(;;)
     {
       pill = uishell_remote_diag_build(scratch.arena, ws, view, size);
-      tv = rd_view_state(UIShell_TerminalViewState);
-      if((tv->session && cleat_session_connection_state(tv->session) == CLEAT_SESSION_STREAMING) || now_time_us() > deadline) { break; }
+      if((connection && connection->opens > opens && uishell_terminal_connection_state(tv) == CLEAT_SESSION_STREAMING) || now_time_us() > deadline) { break; }
       sleep_ms(20);
     }
-    RemoteCheck(!tv->remote_reconnect && tv->session && cleat_session_connection_state(tv->session) == CLEAT_SESSION_STREAMING, "reconnect restores streaming");
+    RemoteCheck(connection && connection->opens == opens+1 && uishell_terminal_connection_state(tv) == CLEAT_SESSION_STREAMING,
+                "a dead bridge reopens and re-attaches by itself");
+    String8 list = uishell_remote_diag_run(scratch.arena, "'%S' --runtime-root '%S' list 2>&1", cleat, root);
+    RemoteCheck(str8_find_needle(list, 0, session, 0) < list.size, "the remote session keeps running");
+
+    // Reconnect when asked: a fresh bridge to the same live session.
+    opens = connection ? connection->opens : 0;
+    uishell_cleat_connection_reconnect(connection);
+    deadline = now_time_us()+15*Million(1);
+    for(;;)
+    {
+      pill = uishell_remote_diag_build(scratch.arena, ws, view, size);
+      if((connection && connection->opens > opens && uishell_terminal_connection_state(tv) == CLEAT_SESSION_STREAMING) || now_time_us() > deadline) { break; }
+      sleep_ms(20);
+    }
+    RemoteCheck(connection && connection->opens == opens+1 && uishell_terminal_connection_state(tv) == CLEAT_SESSION_STREAMING &&
+                pill.size == 0, "reconnect restores streaming");
     input = str8_lit("echo WH-AGAIN-$((6*8))\r");
-    if(tv->session) { cleat_session_write_bytes(tv->session, input.str, input.size); }
+    if(uishell_terminal_cleat_view(tv)) { cleat_view_write_bytes(uishell_terminal_cleat_view(tv), input.str, input.size); }
     deadline = now_time_us()+10*Million(1);
     for(;;)
     {
@@ -222,7 +223,7 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
     UIShell_TerminalViewState *tv = rd_view_state(UIShell_TerminalViewState);
     String8 pill = str8_zero();
     for(U64 i = 0; i < 25; i++) { pill = uishell_remote_diag_build(scratch.arena, ws, typo, v2f32(640, 480)); sleep_ms(20); }
-    RemoteCheck(tv->provider == 0 && tv->session == 0 && str8_find_needle(pill, 0, str8_lit("click to reconnect"), 0) < pill.size,
+    RemoteCheck(tv->provider == 0 && tv->session == 0 && tv->shared == 0 && str8_find_needle(pill, 0, str8_lit("click to reconnect"), 0) < pill.size,
                 "an unknown transport attaches nothing and offers reconnect");
     uishell_terminal_runtime_release(tv);
   }
@@ -242,12 +243,12 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
     for(;;)
     {
       uishell_remote_diag_build(scratch.arena, ws, local, v2f32(640, 480));
-      if((tv->session && cleat_session_connection_state(tv->session) == CLEAT_SESSION_STREAMING) || now_time_us() > deadline) { break; }
+      if(uishell_terminal_connection_state(tv) == CLEAT_SESSION_STREAMING || now_time_us() > deadline) { break; }
       sleep_ms(20);
     }
     cleat_str hosting = {0};
-    RemoteCheck(!tv->remote_backend && tv->session && cleat_session_connection_state(tv->session) == CLEAT_SESSION_STREAMING &&
-                cleat_session_hosting(tv->session, &hosting) && str8_match(str8_prefix(str8((U8 *)hosting.ptr, hosting.len), 7), str8_lit("daemon:"), 0),
+    RemoteCheck(!tv->remote_backend && tv->shared && uishell_terminal_connection_state(tv) == CLEAT_SESSION_STREAMING &&
+                cleat_session_hosting(uishell_terminal_session(tv), &hosting) && str8_match(str8_prefix(str8((U8 *)hosting.ptr, hosting.len), 7), str8_lit("daemon:"), 0),
                 "a local endpoint attaches through its daemon");
     uishell_terminal_runtime_release(tv);
   }

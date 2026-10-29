@@ -105,6 +105,7 @@
 # include "third_party/stb/stb_image.h"
 #endif
 #include "uishell/uishell_terminal_glyph.c"
+#include "uishell/uishell_cleat_attachments.c"
 #include "uishell/uishell_views.c"
 #include "uishell/uishell_table.c"
 #include "uishell/uishell_jackstay.c"
@@ -130,6 +131,7 @@
 #include "uishell/uishell_panel_diagnostics.c"
 #include "uishell/uishell_hosting_diagnostics.c"
 #include "uishell/uishell_remote_terminal_diagnostics.c"
+#include "uishell/uishell_shared_terminal_diagnostics.c"
 #include "uishell/uishell_shared_ui_diagnostics.c"
 #include "uishell/uishell_managed_content_diagnostics.c"
 #include "uishell/uishell_workspace_lifecycle_diagnostics.c"
@@ -173,6 +175,7 @@ frame(void)
     uishell_terminal_retire_gestures(0);
     rd_frame();
     uishell_terminal_retire_gestures(1);
+    uishell_cleat_attachments_end_frame();
     uishell_overview_benchmark_end();
   }
   uishell_jackstay_tick(0,rd_state->quit);
@@ -305,6 +308,8 @@ entry_point(CmdLine *cmd_line)
       { rd_state->frame_diagnostic = uishell_hosting_diagnostics; }
       if(cmd_line_has_flag(cmd_line, str8_lit("remote_terminal_diagnostics")))
       { rd_state->frame_diagnostic = uishell_remote_terminal_diagnostics; }
+      if(cmd_line_has_flag(cmd_line, str8_lit("shared_terminal_diagnostics")))
+      { rd_state->frame_diagnostic = uishell_shared_terminal_diagnostics; }
 #if defined(WHEELHOUSE_JACKSTAY)
       if(cmd_line_has_flag(cmd_line, str8_lit("jackstay_input_diagnostics")))
       { rd_state->frame_diagnostic = uishell_jackstay_input_diagnostics; }

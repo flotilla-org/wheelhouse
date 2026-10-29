@@ -91,21 +91,21 @@ internal void
 uishell_terminal_clipboard_drain(UIShell_TerminalViewState *tv, UIShell_TerminalClipboardOps *ops,
                                  UIShell_TerminalClipboardContext context, cleat_clipboard_event const *first_event)
 {
-  if(!tv->session) { return; }
-  if(tv->clipboard_session != tv->session)
+  if(!uishell_terminal_session(tv)) { return; }
+  if(tv->clipboard_session != uishell_terminal_session(tv))
   {
-    tv->clipboard_session = tv->session;
+    tv->clipboard_session = uishell_terminal_session(tv);
     tv->clipboard_identity_valid = 0;
     tv->clipboard_provider_dropped = 0;
   }
-  U64 dropped = ops->dropped(ops->user, tv->session);
+  U64 dropped = ops->dropped(ops->user, uishell_terminal_session(tv));
   if(dropped > tv->clipboard_provider_dropped)
   {
     uishell_terminal_clipboard_reject(tv, "provider loss", dropped-tv->clipboard_provider_dropped);
   }
   tv->clipboard_provider_dropped = dropped;
   U64 events = 0, bytes = 0;
-  for(cleat_clipboard_event const *event = first_event; event != 0; event = ops->acquire(ops->user, tv->session))
+  for(cleat_clipboard_event const *event = first_event; event != 0; event = ops->acquire(ops->user, uishell_terminal_session(tv)))
   {
     B32 fresh = 1;
     // Cleat guarantees ordered effects and resets its receipt queue on recipient
@@ -162,15 +162,15 @@ uishell_terminal_clipboard_dispatch_with_ops(UIShell_TerminalClipboardOps *ops)
   // queue/watermark. Idle handles never build the host configuration context.
   for(UIShell_TerminalViewState *tv = uishell_terminal_clipboard_views; tv; tv = tv->clipboard_next)
   {
-    if(!tv->session) { continue; }
+    if(!uishell_terminal_session(tv)) { continue; }
     // Pointer bits distribute buckets only; full pointer equality defines identity.
-    U64 slot = ((U64)(uintptr_t)tv->session >> 4)%slots_count;
+    U64 slot = ((U64)(uintptr_t)uishell_terminal_session(tv) >> 4)%slots_count;
     ClipboardHandle *handle = slots[slot];
-    for(; handle && handle->session != tv->session; handle = handle->next) {}
+    for(; handle && handle->session != uishell_terminal_session(tv); handle = handle->next) {}
     if(!handle)
     {
       handle = push_array(scratch.arena, ClipboardHandle, 1);
-      handle->session = tv->session;
+      handle->session = uishell_terminal_session(tv);
       handle->next = slots[slot]; slots[slot] = handle;
     }
     ClipboardReference *reference = push_array(scratch.arena, ClipboardReference, 1);
@@ -181,7 +181,7 @@ uishell_terminal_clipboard_dispatch_with_ops(UIShell_TerminalClipboardOps *ops)
   for(ClipboardHandle *handle = slots[slot]; handle; handle = handle->next)
   {
     UIShell_TerminalViewState *tv = handle->first->view;
-    cleat_clipboard_event const *first_event = ops->acquire(ops->user, tv->session);
+    cleat_clipboard_event const *first_event = ops->acquire(ops->user, uishell_terminal_session(tv));
     UIShell_TerminalClipboardContext context = {0};
     if(first_event)
     {
@@ -254,7 +254,7 @@ uishell_terminal_clipboard_context(void *user, UIShell_TerminalViewState *tv)
   (void)user;
   RD_WindowState *ws = rd_window_state_from_cfg__existing(cfg_node_from_id(tv->clipboard_window_id));
   return uishell_terminal_clipboard_host_context(tv, ws != &rd_nil_window_state && wm_window_is_focused(ws->os),
-    cleat_session_role(tv->session) == CLEAT_ROLE_CONTROLLER, cleat_session_clipboard_supported(tv->session));
+    uishell_terminal_role(tv) == CLEAT_ROLE_CONTROLLER, cleat_session_clipboard_supported(uishell_terminal_session(tv)));
 }
 
 internal cleat_clipboard_event const *

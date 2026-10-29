@@ -170,7 +170,7 @@ uishell_overview_benchmark_feed(CFG_Node *view, UIShell_TerminalCellCache *cache
     update.ops=ops; update.op_count=op_count;
   }
   uishell_terminal_cell_cache_apply_render_update(cache, &update);
-  uishell_terminal_image_cache_apply_render_update(images, 0, &update);
+  uishell_terminal_image_cache_apply_render_update(images, 0, 0, &update);
   b->terminal_metrics.updates++;
   scratch_end(scratch);
 }

@@ -5705,6 +5705,13 @@ uishell_terminal_image_lookup(void *context, cleat_image_resource const *meta, U
                                                uishell_terminal_image_resource_data_copy, bytes);
 }
 
+internal B32
+uishell_terminal_image_lookup_view(void *context, cleat_image_resource const *meta, UIShell_TerminalImageBytes *bytes)
+{
+  return cleat_view_with_image_resource_data((cleat_view *)context, meta->image_id, meta->generation,
+                                            uishell_terminal_image_resource_data_copy, bytes);
+}
+
 internal R_Handle
 uishell_terminal_image_upload(void *context, U32 width, U32 height, U8 *rgba)
 {
@@ -5906,9 +5913,11 @@ uishell_terminal_image_cache_apply_with_ops(UIShell_TerminalImageCache *cache, c
 }
 
 internal void
-uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cache, cleat_session *session, cleat_render_update const *update)
+uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cache, cleat_session *session, cleat_view *view, cleat_render_update const *update)
 {
-  UIShell_TerminalImageOps ops = {session, session ? uishell_terminal_image_lookup : 0,
+  // A View of a shared attachment reads image data through its own Cleat view.
+  UIShell_TerminalImageOps ops = {view ? (void *)view : (void *)session,
+    view ? uishell_terminal_image_lookup_view : session ? uishell_terminal_image_lookup : 0,
     uishell_terminal_image_upload, uishell_terminal_image_release, MB(320)};
   uishell_terminal_image_cache_apply_with_ops(cache, update, &ops);
 }

@@ -9,6 +9,12 @@
 # error "Wheelhouse requires Cleat provider ABI 11 (packet protocol 12)"
 #endif
 
+// Views within an attachment (cleat#399, packet protocol 16): one attachment
+// per session, a Cleat view per Wheelhouse View (uishell_cleat_attachments.c).
+#if !defined(CLEAT_ROLE_NO_VIEW)
+# error "Wheelhouse requires Cleat views (cleat#399): cleat_session_open_view and CLEAT_ROLE_NO_VIEW"
+#endif
+
 #if !defined(CLEAT_CELL_FLAG_BOLD)
 # define CLEAT_CELL_FLAG_BOLD (1u << 0)
 # define CLEAT_CELL_FLAG_ITALIC (1u << 1)

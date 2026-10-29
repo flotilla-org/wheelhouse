@@ -51,15 +51,23 @@ struct UIShell_TerminalViewState
   B32 (*input_sink)(void *user, cleat_input_event const *input, cleat_input_result *result);
   void *input_sink_user;
   void (*input_state_sink)(void *user, U32 *connection, U32 *role);
-  // daemon-backed session: provider is shared per-daemon (never closed by the
-  // view) and the session survives uishell; connection state is surfaced
+  // daemon-backed session: the session survives uishell; connection state is
+  // surfaced. Its own session handle holds a use of the daemon's shared
+  // connection (daemon_connection), released with it.
   B32 daemon_backend;
-  // A remote Cleat endpoint (cleat_transport "ssh"): the session is the
-  // remote daemon's, but the provider and its ssh bridge are this View's
-  // own, closed with it. A bridge that gives up stays down until the user
-  // reconnects (remote_reconnect), which reopens both on the next frame.
+  UIShell_CleatConnection *daemon_connection;
+  // A Cleat endpoint (`cleat_session`, #104), attached directly: the View
+  // holds a reference to the session's shared attachment and shows it with
+  // its own Cleat view (uishell_cleat_attachments.c); session and provider
+  // stay 0. Its connection owns reconnecting.
+  UIShell_CleatViewRef *shared;
+  // A remote Cleat endpoint (cleat_transport "ssh", or one this build
+  // doesn't know). One with no connection (an unknown transport) re-reads its
+  // settings when asked (remote_reconnect).
   B32 remote_backend;
   B32 remote_reconnect;
+  // The connection open (UIShell_CleatConnection.opens) these were logged for.
+  U64 remote_logged_opens;
   // The bridge's admission warning went to the log for this connection.
   B32 remote_warning_logged;
   // This give-up's reason went to the log, whether or not the bridge ever
@@ -124,6 +132,55 @@ internal void uishell_terminal_clipboard_unregister(UIShell_TerminalViewState *t
 internal void uishell_terminal_clipboard_register(UIShell_TerminalViewState *tv, RD_ViewAddress view, CFG_ID window);
 internal void uishell_terminal_clipboard_dispatch(void);
 
+// The session handle a View's calls go to: the shared attachment's for a
+// directly attached View, else its own.
+internal cleat_session *
+uishell_terminal_session(UIShell_TerminalViewState *tv)
+{
+  return tv->shared != 0 ? tv->shared->attachment->session : tv->session;
+}
+
+// The View's own Cleat view on a shared attachment, 0 otherwise (and while
+// its attachment is down).
+internal cleat_view *
+uishell_terminal_cleat_view(UIShell_TerminalViewState *tv)
+{
+  return tv->shared != 0 ? tv->shared->view : 0;
+}
+
+internal U32
+uishell_terminal_connection_state(UIShell_TerminalViewState *tv)
+{
+  if(tv->shared != 0) { return tv->shared->view ? cleat_view_connection_state(tv->shared->view) : CLEAT_SESSION_CLOSED; }
+  return tv->session ? cleat_session_connection_state(tv->session) : CLEAT_SESSION_CLOSED;
+}
+
+internal U32
+uishell_terminal_role(UIShell_TerminalViewState *tv)
+{
+  if(tv->shared != 0) { return tv->shared->view ? cleat_view_role(tv->shared->view) : CLEAT_ROLE_UNKNOWN; }
+  return tv->session ? cleat_session_role(tv->session) : CLEAT_ROLE_UNKNOWN;
+}
+
+// A shared View the policy just gave control to drives before Cleat's grant
+// arrives: the role request precedes its input on the connection. Past this,
+// a View still watching was refused (another client holds control).
+#define UISHELL_TERMINAL_ROLE_GRANT_US (500*1000)
+
+internal B32
+uishell_terminal_role_pending(UIShell_TerminalViewState *tv)
+{
+  return tv->shared != 0 && uishell_cleat_view_policy_controller(tv->shared) &&
+    now_time_us() < tv->shared->role_requested_us + UISHELL_TERMINAL_ROLE_GRANT_US;
+}
+
+// Focus moved into the View, or the user typed or clicked in it.
+internal void
+uishell_terminal_touch(UIShell_TerminalViewState *tv)
+{
+  if(tv->shared != 0) { uishell_cleat_view_touch(tv->shared); }
+}
+
 internal void
 uishell_terminal_clear_selection(UIShell_TerminalViewState *tv)
 {
@@ -144,8 +201,12 @@ uishell_terminal_input_available(UIShell_TerminalViewState *tv)
   U32 connection = CLEAT_SESSION_CLOSED, role = CLEAT_ROLE_UNKNOWN;
   if(tv->input_state_sink) { tv->input_state_sink(tv->input_sink_user, &connection, &role); }
   else if(tv->input_sink) { connection = CLEAT_SESSION_STREAMING; role = CLEAT_ROLE_CONTROLLER; }
-  else if(tv->session)
-  { connection = cleat_session_connection_state(tv->session); role = cleat_session_role(tv->session); }
+  else if(uishell_terminal_session(tv))
+  {
+    connection = uishell_terminal_connection_state(tv);
+    role = uishell_terminal_role(tv);
+    if(uishell_terminal_role_pending(tv)) { role = CLEAT_ROLE_CONTROLLER; }
+  }
   return connection == CLEAT_SESSION_STREAMING && role == CLEAT_ROLE_CONTROLLER;
 }
 
@@ -197,7 +258,7 @@ uishell_terminal_apply_update(UIShell_TerminalViewState *tv, cleat_render_update
   next.arena = 0;
   uishell_terminal_cell_cache_apply_render_update(&next, update);
   B32 invalid = old.cols != next.cols || old.rows != next.rows ||
-    tv->selection_session != tv->session ||
+    tv->selection_session != uishell_terminal_session(tv) ||
     tv->selection_viewport_kind != update->viewport_kind ||
     tv->selection_scrollback_offset != update->scrollback_offset_rows ||
     tv->selection_alternate_screen != update->terminal_modes.active_alternate_screen ||
@@ -238,7 +299,7 @@ uishell_terminal_apply_update(UIShell_TerminalViewState *tv, cleat_render_update
   if(next.cells == old.cells) { next.arena = old.arena; }
   else if(old.arena) { arena_release(old.arena); }
   tv->cell_cache = next;
-  tv->selection_session = tv->session;
+  tv->selection_session = uishell_terminal_session(tv);
   tv->selection_viewport_kind = update->viewport_kind;
   tv->selection_scrollback_offset = update->scrollback_offset_rows;
   tv->selection_alternate_screen = update->terminal_modes.active_alternate_screen;
@@ -266,6 +327,7 @@ uishell_terminal_send_input(UIShell_TerminalViewState *tv, cleat_input_event con
   if(!uishell_terminal_input_available(tv)) { return 0; }
   cleat_input_result result = {0};
   B32 accepted = tv->input_sink ? tv->input_sink(tv->input_sink_user, input, &result) :
+    uishell_terminal_cleat_view(tv) ? cleat_view_send_input_ex(uishell_terminal_cleat_view(tv), input, &result) :
     (tv->session && cleat_session_send_input_ex(tv->session, input, &result));
   uishell_terminal_input_result(tv, input, accepted, result.count);
   return accepted && result.count != 0;
@@ -280,6 +342,7 @@ uishell_terminal_scroll_rows(UIShell_TerminalViewState *tv, S64 rows)
   cleat_viewport_command command = {.kind = CLEAT_VIEWPORT_COMMAND_DELTA_ROWS, .delta_rows = rows};
   cleat_viewport_command_result result = {0};
   if(tv->viewport_sink) { tv->viewport_sink(tv->viewport_sink_user, &command, &result); }
+  else if(uishell_terminal_cleat_view(tv)) { cleat_view_scroll_viewport(uishell_terminal_cleat_view(tv), &command, &result); }
   else if(tv->session) { cleat_session_scroll_viewport(tv->session, &command, &result); }
   if(result.outcome == CLEAT_VIEWPORT_OUTCOME_MOVED) { uishell_terminal_clear_selection(tv); }
   // Do not accumulate an overscroll debt at either bound or without history.
@@ -372,7 +435,7 @@ uishell_terminal_edit_dispatch(void *user, String8 command, String8 paste)
     tv->has_selection = 1;
     tv->selecting = 0;
     tv->selection_rectangular = 0;
-    tv->selection_session = tv->session;
+    tv->selection_session = uishell_terminal_session(tv);
   }
   else if(str8_match(command, str8_lit("paste"), 0) && paste.size)
   {
@@ -455,7 +518,9 @@ internal void uishell_terminal_cancel_gesture(UIShell_TerminalViewState *tv);
 internal void uishell_terminal_cancel_buttons(UIShell_TerminalViewState *tv);
 
 // Release only resources owned by this view. Daemon providers are shared;
-// destroying their session handle detaches this view without killing the session.
+// destroying their session handle detaches this view without killing the
+// session, and a shared attachment closes at the end of the frame if no
+// other View holds it.
 internal void
 uishell_terminal_runtime_release(void *data)
 {
@@ -472,11 +537,13 @@ uishell_terminal_runtime_release(void *data)
   }
   uishell_terminal_preview_dequeue(&uishell_terminal_preview_starts, &tv->preview_start);
   uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update);
-  B32 owns_provider = !tv->daemon_backend || tv->remote_backend;
+  B32 owns_provider = !tv->daemon_backend;
   if(tv->provider && owns_provider) { cleat_provider_set_wake_callback(tv->provider, 0, 0); }
   uishell_terminal_cancel_buttons(tv);
   if(tv->session) { cleat_session_destroy(tv->session); }
   if(tv->provider && owns_provider) { cleat_provider_close(tv->provider); }
+  uishell_cleat_view_release(tv->shared);
+  uishell_cleat_connection_release(tv->daemon_connection);
   for(UIShell_TerminalImageResource *r = tv->image_cache.first_resource; r; r = r->next)
   { if(r->valid) { r_tex2d_release(r->texture); } }
   Arena *arenas[] = {tv->retained_bucket_arena, tv->glyph_cache.arena, tv->cell_cache.arena,
@@ -2658,8 +2725,6 @@ WH_VIEW_UI_FUNCTION_DEF(watch)
   scratch_end(scratch);
 }
 
-internal cleat_provider *uishell_cleat_daemon_provider_from_name(String8 daemon_name);
-
 ////////////////////////////////
 //~ uishell: Sessions View
 //
@@ -3694,154 +3759,6 @@ uishell_terminal_cleat_modifiers_from_wm(WM_Modifiers modifiers)
   return result;
 }
 
-internal void
-uishell_terminal_provider_wake(void *user_data)
-{
-  (void)user_data;
-  wm_send_wakeup_event();
-}
-
-////////////////////////////////
-//~ uishell: shared cleat daemon providers
-//
-// One provider per named daemon (and runtime root, empty for the one Cleat
-// discovers), shared by every daemon-backed Terminal View and by Control
-// Surfaces reading the directory subscription. The provider owns one
-// multiplexed packet connection (channel 0 directory + per-session
-// channels), so per-view providers would mean per-view connections.
-
-typedef struct UIShell_CleatDaemonProviderNode UIShell_CleatDaemonProviderNode;
-struct UIShell_CleatDaemonProviderNode
-{
-  UIShell_CleatDaemonProviderNode *next;
-  String8 runtime_root;
-  String8 daemon_name;
-  cleat_provider *provider;
-};
-
-global Arena *uishell_cleat_daemon_provider_arena = 0;
-global UIShell_CleatDaemonProviderNode *uishell_cleat_daemon_provider_list = 0;
-
-internal cleat_provider *
-uishell_cleat_daemon_provider_from_root_name(String8 runtime_root, String8 daemon_name)
-{
-  cleat_provider *result = 0;
-  for(UIShell_CleatDaemonProviderNode *n = uishell_cleat_daemon_provider_list; n != 0; n = n->next)
-  {
-    if(str8_match(n->runtime_root, runtime_root, 0) && str8_match(n->daemon_name, daemon_name, 0))
-    {
-      result = n->provider;
-      break;
-    }
-  }
-  if(result == 0)
-  {
-    cleat_provider_desc provider_desc =
-    {
-      .abi_version = CLEAT_PROVIDER_ABI_VERSION,
-      .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
-      .backend = CLEAT_PROVIDER_BACKEND_DAEMON,
-      .runtime_root = (runtime_root.size != 0 ? runtime_root.str : 0),
-      .runtime_root_len = runtime_root.size,
-      .daemon_name = (daemon_name.size != 0 ? daemon_name.str : 0),
-      .daemon_name_len = daemon_name.size,
-    };
-    result = cleat_provider_open(&provider_desc);
-    if(result != 0)
-    {
-      cleat_provider_set_wake_callback(result, uishell_terminal_provider_wake, 0);
-      if(uishell_cleat_daemon_provider_arena == 0)
-      {
-        uishell_cleat_daemon_provider_arena = arena_alloc();
-      }
-      UIShell_CleatDaemonProviderNode *n = push_array(uishell_cleat_daemon_provider_arena, UIShell_CleatDaemonProviderNode, 1);
-      n->runtime_root = push_str8_copy(uishell_cleat_daemon_provider_arena, runtime_root);
-      n->daemon_name = push_str8_copy(uishell_cleat_daemon_provider_arena, daemon_name);
-      n->provider = result;
-      n->next = uishell_cleat_daemon_provider_list;
-      uishell_cleat_daemon_provider_list = n;
-    }
-  }
-  return result;
-}
-
-internal cleat_provider *
-uishell_cleat_daemon_provider_from_name(String8 daemon_name)
-{
-  return uishell_cleat_daemon_provider_from_root_name(str8_zero(), daemon_name);
-}
-
-////////////////////////////////
-//~ uishell: remote cleat endpoints
-//
-// A Cleat endpoint on another host (#104): a Terminal View's
-// `cleat_transport "ssh"`, with `cleat_host` (the ssh destination),
-// `cleat_runtime_root` and `cleat_daemon` naming the daemon there and
-// `cleat_session` its session. The View's provider reaches it through
-// `ssh <host> cleat proxy` (`cleat_command` names another Cleat there, for
-// one not on the remote PATH), whose stdio carries the packet stream; the
-// user's ssh configuration is the authentication, and Wheelhouse stores no
-// credentials. Each View has its own bridge (docs/design/remote-terminals.md).
-
-// The argv of the command a View's provider reaches `host`'s daemon through:
-// Wheelhouse's own route, ssh, around the `cleat proxy` command line Cleat
-// quotes for the far shell (cleat_proxy_command). BatchMode makes ssh fail
-// with a reason instead of prompting: there is no terminal for it to ask on.
-// 0 when Cleat refuses the target (a NUL no shell word can carry).
-internal U64
-uishell_cleat_remote_argv(Arena *arena, String8 host, String8 cleat, String8 runtime_root, String8 daemon, String8 *argv, U64 cap)
-{
-  cleat_proxy_target target =
-  {
-    .size = sizeof(target),
-    .cleat = {cleat.str, cleat.size},
-    .daemon = {daemon.str, daemon.size},
-    .runtime_root = {runtime_root.str, runtime_root.size},
-  };
-  size_t len = 0;
-  if(!cleat_proxy_command(&target, 0, 0, &len)) { return 0; }
-  U8 *command = push_array_no_zero(arena, U8, len);
-  if(!cleat_proxy_command(&target, command, len, &len)) { return 0; }
-  String8 words[] = {str8_lit("ssh"), str8_lit("-T"), str8_lit("-o"), str8_lit("BatchMode=yes"), str8_lit("--"), host, str8(command, len)};
-  Assert(cap >= ArrayCount(words));
-  U64 count = Min(cap, ArrayCount(words));
-  for(U64 i = 0; i < count; i++) { argv[i] = words[i]; }
-  return count;
-}
-
-internal cleat_provider *
-uishell_cleat_remote_provider_open(String8 host, String8 cleat, String8 runtime_root, String8 daemon)
-{
-  Temp scratch = scratch_begin(0, 0);
-  String8 argv[8];
-  U64 argc = uishell_cleat_remote_argv(scratch.arena, host, cleat, runtime_root, daemon, argv, ArrayCount(argv));
-  if(argc == 0)
-  {
-    log_user_errorf("Remote terminal: Cleat refused the endpoint for %S", host);
-    scratch_end(scratch);
-    return 0;
-  }
-  cleat_str args[8];
-  for(U64 i = 0; i < argc; i++) { args[i] = (cleat_str){argv[i].str, argv[i].size}; }
-  cleat_provider_desc desc =
-  {
-    .abi_version = CLEAT_PROVIDER_ABI_VERSION,
-    .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
-    .backend = CLEAT_PROVIDER_BACKEND_DAEMON,
-  };
-  cleat_provider_transport transport = {.size = sizeof(transport), .kind = CLEAT_TRANSPORT_COMMAND, .argv = args, .argc = argc};
-  cleat_provider *provider = cleat_provider_open_transport(&desc, &transport);
-  if(provider == 0)
-  {
-    StringJoin join = {.sep = str8_lit(" ")};
-    String8List list = {0};
-    for(U64 i = 0; i < argc; i++) { str8_list_push(scratch.arena, &list, argv[i]); }
-    log_user_errorf("Remote terminal: could not start %S", str8_list_join(scratch.arena, &list, &join));
-  }
-  scratch_end(scratch);
-  return provider;
-}
-
 // The provider's transport diagnostics (cleat_provider_transport_state):
 // whether it is retrying, and its last error and admission warning.
 typedef struct UIShell_CleatTransportState UIShell_CleatTransportState;
@@ -4216,9 +4133,12 @@ uishell_runtime_setting(Arena *arena, CFG_Node *cfg, String8 name)
     RD_ViewState *state = rd_view_state_from_view(rd_view_address_from_cfg(cfg), 0);
     UIShell_TerminalViewState *tv = state != 0 && state != &rd_nil_view_state ? state->user_data : 0;
     cleat_str hosting = {0};
-    if(tv != 0 && tv->session != 0 && cleat_session_hosting(tv->session, &hosting) && hosting.len != 0)
+    cleat_session *session = tv != 0 ? uishell_terminal_session(tv) : 0;
+    if(session != 0 && cleat_session_hosting(session, &hosting) && hosting.len != 0)
     {
       result = uishell_terminal_hosting_setting(arena, str8((U8 *)hosting.ptr, hosting.len));
+      // A shared attachment is other Views' too: it moves nowhere from one.
+      if(tv->shared != 0) { result.action = str8_lit("Attached directly"); result.command = str8_zero(); }
     }
   }
   return result;
@@ -4327,32 +4247,6 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     B32 daemon_backend = (attach_session_id.size != 0 || wh_view_setting_b32(ctx, str8_lit("daemon")));
     tv->daemon_backend = daemon_backend;
     tv->remote_backend = remote_backend;
-    if(endpoint_unknown) {}
-    else if(remote_backend)
-    {
-      tv->provider = uishell_cleat_remote_provider_open(wh_view_setting(ctx, str8_lit("cleat_host")), wh_view_setting(ctx, str8_lit("cleat_command")),
-                                                        endpoint_root, daemon_name);
-      if(tv->provider != 0) { cleat_provider_set_wake_callback(tv->provider, uishell_terminal_provider_wake, tv); }
-    }
-    else if(endpoint_session.size != 0)
-    {
-      tv->provider = uishell_cleat_daemon_provider_from_root_name(endpoint_root, daemon_name);
-    }
-    else if(daemon_backend)
-    {
-      tv->provider = uishell_cleat_daemon_provider_from_name(daemon_name);
-    }
-    else
-    {
-      cleat_provider_desc provider_desc =
-      {
-        .abi_version = CLEAT_PROVIDER_ABI_VERSION,
-        .requested_features = CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE,
-        .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS,
-      };
-      tv->provider = cleat_provider_open(&provider_desc);
-      cleat_provider_set_wake_callback(tv->provider, uishell_terminal_provider_wake, tv);
-    }
     cleat_session_colors session_colors =
     {
       .size = sizeof(session_colors),
@@ -4364,6 +4258,39 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
       .cursor = uishell_terminal_rgb_from_linear_rgba(terminal_cursor_color),
     };
     tv->session_colors = session_colors;
+    if(endpoint_unknown) {}
+    // An endpoint is attached directly: one attachment per session and one
+    // connection per daemon route, shared with every other View of them.
+    else if(endpoint_session.size != 0)
+    {
+      UIShell_CleatRoute route =
+      {
+        .ssh = remote_backend,
+        .host = remote_backend ? wh_view_setting(ctx, str8_lit("cleat_host")) : str8_zero(),
+        .command = remote_backend ? wh_view_setting(ctx, str8_lit("cleat_command")) : str8_zero(),
+        .runtime_root = endpoint_root,
+        .daemon = daemon_name,
+      };
+      tv->shared = uishell_cleat_view_acquire(route, endpoint_session, session_colors, cols, rows, cell_width_px, cell_height_px);
+      tv->cols = cols;
+      tv->rows = rows;
+    }
+    else if(daemon_backend)
+    {
+      tv->daemon_connection = uishell_cleat_connection_acquire((UIShell_CleatRoute){.daemon = daemon_name});
+      tv->provider = tv->daemon_connection->provider;
+    }
+    else
+    {
+      cleat_provider_desc provider_desc =
+      {
+        .abi_version = CLEAT_PROVIDER_ABI_VERSION,
+        .requested_features = UISHELL_CLEAT_PROVIDER_FEATURES,
+        .backend = CLEAT_PROVIDER_BACKEND_IN_PROCESS,
+      };
+      tv->provider = cleat_provider_open(&provider_desc);
+      cleat_provider_set_wake_callback(tv->provider, uishell_terminal_provider_wake, tv);
+    }
     // the terminal view's expression is the command its session runs (empty ->
     // the default shell), which makes commands part of the workspace config:
     // reproducible layouts (e.g. perf workloads) & a step toward recreation
@@ -4382,7 +4309,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
       .cwd_len = session_cwd.size,
       .colors = &session_colors,
     };
-    if(tv->provider != 0 && attach_session_id.size != 0)
+    if(tv->provider != 0 && attach_session_id.size != 0 && endpoint_session.size == 0)
     {
       session_desc.id = attach_session_id.str;
       session_desc.id_len = attach_session_id.size;
@@ -4405,21 +4332,26 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     }
     if(metrics != 0) { metrics->provider_start_us += now_time_us()-provider_start_us; }
   }
-  B32 session_ready = (!fixture_mode && tv->provider != 0 && tv->session != 0);
+  // A shared View is ready while it has its Cleat view: not while its
+  // connection hasn't started or its attach failed.
+  cleat_view *shared_view = uishell_terminal_cleat_view(tv);
+  UIShell_CleatConnection *shared_connection = tv->shared != 0 ? tv->shared->attachment->connection : 0;
+  B32 session_ready = !fixture_mode && (tv->shared != 0 ? shared_view != 0 : (tv->provider != 0 && tv->session != 0));
   if(session_ready) { uishell_terminal_clipboard_register(tv, uishell_regs()->view, uishell_regs()->window); }
   cleat_str hosting = {0};
-  B32 has_hosting = session_ready && cleat_session_hosting(tv->session, &hosting);
+  B32 has_hosting = session_ready && cleat_session_hosting(uishell_terminal_session(tv), &hosting);
   B32 daemon_hosted = has_hosting && uishell_terminal_hosting_is_daemon(str8((U8 *)hosting.ptr, hosting.len));
   B32 remote_hosted = has_hosting && uishell_terminal_hosting_is_remote(str8((U8 *)hosting.ptr, hosting.len));
   for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
   {
     // A remote session's hosting is its daemon's, there: it moves nowhere.
-    B32 movable = session_ready && !remote_hosted;
+    // Nor does a shared attachment, which other Views show too.
+    B32 movable = session_ready && !remote_hosted && tv->shared == 0;
     if(str8_match(cmd->name, str8_lit("terminal_transfer"), 0)) { if(movable) { uishell_terminal_move(tv, 0); } }
     else if(str8_match(cmd->name, str8_lit("terminal_adopt"), 0)) { if(movable) { uishell_terminal_move(tv, 1); } }
     else if(session_ready) { uishell_terminal_page_command(tv, cmd->name, rows); }
   }
-  if(session_ready && (tv->cols != cols || tv->rows != rows))
+  if((session_ready || tv->shared != 0) && (tv->cols != cols || tv->rows != rows))
   {
     uishell_terminal_clear_selection(tv);
     tv->cols = cols;
@@ -4427,7 +4359,8 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     U64 resize_begin_us = metrics != 0 ? now_time_us() : 0;
     if(metrics != 0 && (view_dim.x <= 0 || view_dim.y <= 0))
     { metrics->empty_layout_resizes++; }
-    cleat_session_resize(tv->session, cols, rows);
+    if(tv->shared != 0) { uishell_cleat_view_resize(tv->shared, cols, rows); }
+    else { cleat_session_resize(tv->session, cols, rows); }
     if(metrics != 0) { metrics->provider_resize_us += now_time_us()-resize_begin_us; }
   }
   UI_Box *terminal_root_box = &ui_nil_box;
@@ -4439,7 +4372,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
 
   if(session_ready && hosting.len != 0 && wh_view_setting_b32(ctx, str8_lit("show_hosting_overlay")))
   {
-    String8 title = remote_hosted ? push_str8_copy(scratch.arena, str8((U8 *)hosting.ptr, hosting.len)) :
+    String8 title = remote_hosted || tv->shared != 0 ? push_str8_copy(scratch.arena, str8((U8 *)hosting.ptr, hosting.len)) :
                     push_str8f(scratch.arena, "%S · %s", str8((U8 *)hosting.ptr, hosting.len),
                                daemon_hosted ? "Adopt" : "Hand to daemon");
     F32 height = floor_f32(ui_bottom_font_size()*1.8f);
@@ -4454,7 +4387,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
                                              UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
                                              str8_lit("terminal_hosting"));
       ui_box_equip_display_string(box, title);
-      if(ui_clicked(ui_signal_from_box(box)) && !remote_hosted) { uishell_terminal_move(tv, daemon_hosted); }
+      if(ui_clicked(ui_signal_from_box(box)) && !remote_hosted && tv->shared == 0) { uishell_terminal_move(tv, daemon_hosted); }
     }
   }
 
@@ -4462,22 +4395,32 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
   // is an earlier sibling and draws on top. Streaming-as-controller is the
   // silent common case; connecting/disconnected/closed are status cues (the
   // connection heals itself), and streaming-as-watcher offers take-control.
-  // A remote endpoint's bridge doesn't heal: once it gives up, the pill says
-  // why and reconnects on a click, keeping the last frame until then.
-  // A View whose bridge never started has no session to show; it offers the
-  // same reconnect.
+  // A shared View its policy has watching shows nothing: touching it takes
+  // over. A remote connection that gave up doesn't heal: the pill says why
+  // and reconnects it on a click, keeping the last frame until then.
+  // A View whose connection never started, or whose attach failed, has no
+  // session to show; it offers the same reconnect.
   B32 remote_unstarted = tv->remote_backend && tv->initialized && !session_ready && !fixture_mode;
-  if(daemon_hosted || remote_hosted || remote_unstarted)
+  if(tv->shared != 0 || daemon_hosted || remote_hosted || remote_unstarted)
   {
-    U32 connection_state = remote_unstarted ? CLEAT_SESSION_DISCONNECTED : cleat_session_connection_state(tv->session);
-    U32 role = remote_unstarted ? CLEAT_ROLE_WATCHER : cleat_session_role(tv->session);
-    B32 watching = (connection_state == CLEAT_SESSION_STREAMING && role == CLEAT_ROLE_WATCHER);
+    U32 connection_state = remote_unstarted ? CLEAT_SESSION_DISCONNECTED : uishell_terminal_connection_state(tv);
+    U32 role = remote_unstarted ? CLEAT_ROLE_WATCHER : uishell_terminal_role(tv);
+    B32 role_pending = uishell_terminal_role_pending(tv);
+    B32 watching = (connection_state == CLEAT_SESSION_STREAMING && role == CLEAT_ROLE_WATCHER &&
+                    (tv->shared == 0 || (uishell_cleat_view_policy_controller(tv->shared) && !role_pending)));
+    cleat_provider *transport_provider = shared_connection != 0 ? shared_connection->provider : tv->provider;
+    if(shared_connection != 0 && tv->remote_logged_opens != shared_connection->opens)
+    {
+      // A reopened connection logs its own warning and give-up.
+      tv->remote_logged_opens = shared_connection->opens;
+      tv->remote_warning_logged = tv->remote_disconnect_logged = 0;
+    }
     // The transport state is read only while it can change what's shown or
     // logged: until a connection's warning is logged, and while disconnected.
     UIShell_CleatTransportState transport = {1};
     if(tv->remote_backend && ((connection_state == CLEAT_SESSION_STREAMING && !tv->remote_warning_logged) || connection_state == CLEAT_SESSION_DISCONNECTED))
     {
-      transport = uishell_cleat_transport_state(scratch.arena, tv->provider);
+      transport = uishell_cleat_transport_state(scratch.arena, transport_provider);
     }
     if(tv->remote_backend && connection_state == CLEAT_SESSION_STREAMING && !tv->remote_warning_logged)
     {
@@ -4485,20 +4428,32 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
       if(transport.warning.size != 0) { log_infof("Remote terminal %S: %S\n", wh_view_setting(ctx, str8_lit("cleat_host")), transport.warning); }
       tv->remote_warning_logged = 1;
     }
-    B32 given_up = tv->remote_backend && (remote_unstarted || (connection_state == CLEAT_SESSION_DISCONNECTED && !transport.retrying));
+    // A shared connection decides when its transport has given up: one that
+    // streamed reopens by itself (uishell_cleat_connection_watch).
+    B32 given_up = tv->remote_backend && (remote_unstarted || (shared_connection != 0 ? shared_connection->given_up :
+                                                               (connection_state == CLEAT_SESSION_DISCONNECTED && !transport.retrying)));
     if(given_up && !tv->remote_disconnect_logged)
     {
       log_infof("Remote terminal %S disconnected: %S\n", wh_view_setting(ctx, str8_lit("cleat_host")), transport.error);
       tv->remote_disconnect_logged = 1;
     }
-    if(connection_state != CLEAT_SESSION_STREAMING || watching)
+    // Waiting on a role grant, or on the connection to decide.
+    if(role_pending || (tv->remote_backend && connection_state == CLEAT_SESSION_DISCONNECTED && !given_up)) { rd_request_frame(); }
+    if((connection_state != CLEAT_SESSION_STREAMING && (tv->shared == 0 || session_ready || given_up)) || watching)
     {
       String8 status_text = str8_lit("connecting…");
       switch(connection_state)
       {
         default:{}break;
         case CLEAT_SESSION_DISCONNECTED:{status_text = str8_lit("reconnecting…");}break;
-        case CLEAT_SESSION_CLOSED:      {status_text = str8_lit("session closed");}break;
+        case CLEAT_SESSION_CLOSED:
+        {
+          // A daemon that predates views closes an attachment without one.
+          cleat_str reason = {0};
+          status_text = shared_view != 0 && cleat_view_close_reason(shared_view, &reason) && reason.len != 0 ?
+            push_str8f(scratch.arena, "session closed: %S", uishell_cleat_transport_text(scratch.arena, (U8 *)reason.ptr, reason.len)) :
+            str8_lit("session closed");
+        }break;
       }
       if(given_up)
       {
@@ -4526,15 +4481,19 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
         ui_box_equip_display_string(status_box, status_text);
         if(watching && ui_clicked(ui_signal_from_box(status_box)))
         {
-          cleat_session_take_control(tv->session);
+          if(tv->shared != 0) { uishell_cleat_view_take_control(tv->shared); }
+          else { cleat_session_take_control(tv->session); }
         }
         else if(given_up && ui_clicked(ui_signal_from_box(status_box)))
         {
-          tv->remote_reconnect = 1;
+          // A shared connection reopens for all its Views; a View that has
+          // none (an unknown transport) re-reads its settings.
+          if(shared_connection != 0) { uishell_cleat_connection_reconnect(shared_connection); }
+          else { tv->remote_reconnect = 1; }
           rd_request_frame();
         }
       }
-      // A bridge that gave up is stable until the user acts.
+      // A connection that gave up is stable until the user acts.
       if(!watching && !given_up)
       {
         // transient transport states animate toward resolution; watching is
@@ -4587,7 +4546,8 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
       .content_width_px = canvas_dim.x,
       .content_height_px = canvas_dim.y,
     };
-    cleat_session_update_geometry(tv->session, &geometry);
+    if(tv->shared != 0) { uishell_cleat_view_update_geometry(tv->shared, &geometry); }
+    else { cleat_session_update_geometry(tv->session, &geometry); }
     if(tv->selecting && (tv->cell_width_px != cell_width_px || tv->cell_height_px != cell_height_px))
     { uishell_terminal_clear_selection(tv); }
     tv->cell_width_px = cell_width_px;
@@ -4603,6 +4563,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
         if(session_ready) { uishell_terminal_wheel_event(tv, evt, canvas_box->rect); rd_request_frame(); }
         continue;
       }
+      if(evt->kind == UI_EventKind_Press) { uishell_terminal_touch(tv); }
       if(evt->key == WM_Key_LeftMouseButton && evt->kind == UI_EventKind_Press) { uishell_cmd("focus_panel"); }
       UIShell_TerminalMouseResult result = uishell_terminal_mouse_event(tv, evt, canvas_box->rect, cell_width_px, cell_height_px);
       if(result.paste_selection) { uishell_terminal_paste_selection(tv, wm_get_selection_text(scratch.arena)); }
@@ -4625,6 +4586,9 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
   {
     B32 focus_active = ui_is_focus_active() && !ui_state->hover_card_focus && !ui_text_field_focus();
     if(tv->focus_active && !focus_active) { uishell_terminal_cancel_buttons(tv); }
+    // Focus moving into a View touches it, so its role is asked for before
+    // the focus report below goes out.
+    if(!tv->focus_active && focus_active) { uishell_terminal_touch(tv); }
     if(session_ready && tv->focus_active != focus_active)
     {
       tv->focus_active = focus_active;
@@ -4643,6 +4607,10 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     {
       for(UI_Event *evt = 0; ui_next_event(&evt);)
       {
+        // Typing in a View touches it.
+        if(evt->kind == UI_EventKind_Text || evt->kind == UI_EventKind_Edit || evt->kind == UI_EventKind_Navigate ||
+           evt->kind == UI_EventKind_Press)
+        { uishell_terminal_touch(tv); }
         B32 taken = session_ready && uishell_terminal_page_event(tv, evt);
         if(!taken && (session_ready || (evt->flags & UI_EventFlag_Copy)) &&
            (evt->kind == UI_EventKind_Edit ||
@@ -4732,13 +4700,22 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     else if(!session_ready && !benchmark_mode)
     {
       UI_TextColor(v4f32(0.74f, 0.82f, 0.75f, 1.f))
-      { ui_label(defer_terminal_start ? str8_lit("Starting terminal…") : str8_lit("terminal provider unavailable")); }
+      {
+        // A shared View has no Cleat view while its connection is down, or
+        // when Cleat refused the attach (a daemon that predates views).
+        String8 label = defer_terminal_start ? str8_lit("Starting terminal…") :
+                        tv->shared != 0 && tv->shared->attachment->connection->provider != 0 && !tv->remote_backend ?
+                        str8_lit("Cleat could not attach this session (its daemon may predate views)") :
+                        str8_lit("terminal provider unavailable");
+        ui_label(label);
+      }
     }
     else
     {
       if(benchmark_mode) { uishell_overview_benchmark_feed(view_cfg, &tv->cell_cache, &tv->image_cache, cols, rows); }
       U64 update_begin_us = metrics != 0 ? now_time_us() : 0;
-      cleat_dirty_state dirty = benchmark_mode ? CLEAT_DIRTY_CLEAN : cleat_session_poll(tv->session);
+      // All views of an attachment share its wake: each polls its own.
+      cleat_dirty_state dirty = benchmark_mode ? CLEAT_DIRTY_CLEAN : shared_view != 0 ? cleat_view_poll(shared_view) : cleat_session_poll(tv->session);
       B32 needs_update = !benchmark_mode && (dirty != CLEAT_DIRTY_CLEAN || tv->cell_cache.cells == 0);
       if(!background_preview || !needs_update) { uishell_terminal_preview_dequeue(&uishell_terminal_preview_updates, &tv->preview_update); }
       B32 admit_update = needs_update && uishell_terminal_preview_admit_update(tv, background_preview);
@@ -4746,7 +4723,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
       if(admit_update)
       {
         cleat_render_update update = {0};
-        if(cleat_session_render_update(tv->session, &update))
+        if(shared_view != 0 ? cleat_view_render_update(shared_view, &update) : cleat_session_render_update(tv->session, &update))
         {
           if(metrics != 0)
           {
@@ -4754,9 +4731,14 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
             metrics->background_updates += background_preview;
           }
           uishell_terminal_apply_update(tv, &update);
-          uishell_terminal_image_cache_apply_render_update(&tv->image_cache, tv->session, &update);
-          cleat_session_mark_observed(tv->session, update.render_generation);
-          cleat_session_release_render_update(tv->session, &update);
+          uishell_terminal_image_cache_apply_render_update(&tv->image_cache, tv->session, shared_view, &update);
+          // A daemon render is observed by consuming it, as a view's is.
+          if(shared_view != 0) { cleat_view_release_render_update(shared_view, &update); }
+          else
+          {
+            cleat_session_mark_observed(tv->session, update.render_generation);
+            cleat_session_release_render_update(tv->session, &update);
+          }
         }
       }
       if(metrics != 0) { metrics->provider_update_us += now_time_us()-update_begin_us; }
