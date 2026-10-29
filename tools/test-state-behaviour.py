@@ -61,13 +61,15 @@ source = BUILD / 'state_behaviour.c'
 source.write_text(prefix + '\n#include "uishell/tests/state_behaviour.c"\n')
 binary = BUILD / 'state_behaviour'
 andamento, cleat = args.core_lib.resolve(), args.cleat_lib.resolve()
+# binnacle.h, for the table View (#506).
+BINNACLE_INCLUDE = subprocess.check_output([sys.executable, str(ROOT/'tools/binnacle-include.py')], text=True).strip()
 compiler = shlex.split(os.environ.get('CC', 'clang'))
 command = compiler + [
     '-g', '-O0', '-D_GNU_SOURCE', '-DBUILD_DEBUG=1', '-DNO_ASYNC=1',
     '-DWM_STUB=1', '-DR_BACKEND=0', '-DFP_BACKEND=0', '-ffunction-sections', '-fdata-sections',
     '-Wno-initializer-overrides', '-Wno-unused-value',
     '-Wno-incompatible-pointer-types-discards-qualifiers',
-    '-I'+str(ROOT/'native/src'), '-I'+str(args.core_include.resolve()), '-I'+str(ROOT/'crates/wheelhouse-ingress/include'),
+    '-I'+str(ROOT/'native/src'), '-I'+str(args.core_include.resolve()), '-I'+str(ROOT/'crates/wheelhouse-ingress/include'), '-I'+BINNACLE_INCLUDE,
     '-I'+str(args.cleat_include.resolve()), str(source), str(shell_embed_object(compiler)),
     '-L'+str(andamento), '-lwheelhouse_ffi', '-lwheelhouse_ingress', '-Wl,-rpath,'+str(andamento),
     '-L'+str(cleat), '-lcleat', '-Wl,-rpath,'+str(cleat), '-lpthread', '-lm', '-ldl',

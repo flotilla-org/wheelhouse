@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "aho-corasick"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "ansi_term"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -67,6 +76,38 @@ dependencies = [
  "sync_wrapper",
  "tower-layer",
  "tower-service",
+]
+
+[[package]]
+name = "binnacle-core"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=4897a5818fe947b530a9005abe3ee1e60037a48b#4897a5818fe947b530a9005abe3ee1e60037a48b"
+
+[[package]]
+name = "binnacle-ffi"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=4897a5818fe947b530a9005abe3ee1e60037a48b#4897a5818fe947b530a9005abe3ee1e60037a48b"
+dependencies = [
+ "binnacle-core",
+ "binnacle-group",
+]
+
+[[package]]
+name = "binnacle-group"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=4897a5818fe947b530a9005abe3ee1e60037a48b#4897a5818fe947b530a9005abe3ee1e60037a48b"
+dependencies = [
+ "binnacle-core",
+ "binnacle-memory",
+]
+
+[[package]]
+name = "binnacle-memory"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=4897a5818fe947b530a9005abe3ee1e60037a48b#4897a5818fe947b530a9005abe3ee1e60037a48b"
+dependencies = [
+ "binnacle-core",
+ "regex",
 ]
 
 [[package]]
@@ -588,6 +629,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
+name = "regex-automata"
+version = "0.4.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-syntax",
+]
+
+[[package]]
+name = "regex-syntax"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
 name = "rustix"
 version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1030,8 +1100,11 @@ dependencies = [
 name = "wheelhouse-ffi"
 version = "0.1.0"
 dependencies = [
+ "binnacle-core",
+ "binnacle-ffi",
  "serde_json",
  "wheelhouse-core",
+ "wheelhouse-tables",
 ]
 
 [[package]]
@@ -1061,6 +1134,15 @@ dependencies = [
  "serde_json",
  "tokio",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "wheelhouse-tables"
+version = "0.1.0"
+dependencies = [
+ "binnacle-core",
+ "binnacle-memory",
+ "hegeltest",
 ]
 
 [[package]]

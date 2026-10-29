@@ -106,7 +106,9 @@ if "%wheelhouse%"=="1" (
   set core_lib_dir=!core_target_dir!\!core_target!\!cargo_profile!
   rem DAILY_DRIVER_WATCHER: daily-driver.py relies on this build including the native git watcher.
   cargo build --manifest-path "%root%Cargo.toml" -p wheelhouse-ffi -p wheelhouse-ingress -p wheelhouse-git-watcher --locked --target !core_target! --target-dir "!core_target_dir!" !cargo_profile_flags! || exit /b 1
-  set auto_compile_flags=!auto_compile_flags! -I"%root%crates\wheelhouse-ffi\include" -I"%root%crates\wheelhouse-ingress\include"
+  rem binnacle.h comes with the binnacle-ffi the core links (#506).
+  for /f "delims=" %%i in ('python "%root%tools\binnacle-include.py"') do set binnacle_include=%%i
+  set auto_compile_flags=!auto_compile_flags! -I"%root%crates\wheelhouse-ffi\include" -I"%root%crates\wheelhouse-ingress\include" -I"!binnacle_include!"
   set core_link="!core_lib_dir!\wheelhouse_ffi.dll.lib" "!core_lib_dir!\wheelhouse_ingress.dll.lib"
   python tools\embed-sidebar-fixture.py || exit /b 1
 )

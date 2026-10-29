@@ -106,6 +106,7 @@
 #endif
 #include "uishell/uishell_terminal_glyph.c"
 #include "uishell/uishell_views.c"
+#include "uishell/uishell_table.c"
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
 #include "uishell/uishell_jackstay_diagnostics.c"
@@ -134,6 +135,7 @@
 #include "uishell/uishell_workspace_lifecycle_diagnostics.c"
 #include "uishell/uishell_local_groups_diagnostics.c"
 #include "uishell/uishell_overview_benchmark.c"
+#include "uishell/uishell_table_diagnostics.c"
 
 ////////////////////////////////
 //~ rjf: Top-Level Execution Types
@@ -311,6 +313,10 @@ entry_point(CmdLine *cmd_line)
       { rd_state->frame_diagnostic = uishell_panel_diagnostics; }
       if(cmd_line_has_flag(cmd_line, str8_lit("preview_diagnostics")))
       { rd_state->frame_diagnostic = uishell_preview_diagnostics; }
+      if(cmd_line_has_flag(cmd_line, str8_lit("table_diagnostics")))
+      { rd_state->frame_diagnostic = uishell_table_diagnostics; }
+      uishell_table_screenshot_path = cmd_line_string(cmd_line, str8_lit("table_screenshot"));
+      if(uishell_table_screenshot_path.size != 0) { uishell_table_screenshot_hook = uishell_table_screenshot; }
       B32 run_scroll_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("scroll_region_diagnostics"));
       if(cmd_line_has_flag(cmd_line, str8_lit("tooltip_diagnostics")))
       { rd_state->frame_diagnostic = uishell_tooltip_and_card_diagnostics; }
@@ -431,6 +437,7 @@ entry_point(CmdLine *cmd_line)
                                     "Add a Flotilla subscription for this daemon (default: Flotilla's own) to the Dashboard unless it has one; "
                                     "connectors run this Flotilla (default: $FLOTILLA_BIN, else flotilla).\n\n"
                                     "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
+                                    "--table[:<name>]\nOpen a table tab over a canned table: records, huge or live.\n\n"
                                     "--managed_content_diagnostics\nRun managed terminal reconciliation checks and exit (Unix).\n\n"
                                     "--shared_ui_diagnostics --shared_ui_fixture_dir:DIR\nRun config, file-picker and Metal blur regressions using an empty temporary directory.\n\n"
                                     "--panel_diagnostics\nRun panel drop and layout checks and exit.\n\n"
@@ -440,6 +447,8 @@ entry_point(CmdLine *cmd_line)
                                     "--jackstay_input_diagnostics\nCheck web address focus and global shortcut routing and exit.\n\n"
                                     "--scroll_region_diagnostics\nRun scroll layout and interaction checks and exit.\n\n"
                                     "--preview_diagnostics\nCheck workspace preview isolation and dimming and exit.\n\n"
+                                    "--table_diagnostics\nCheck the table View over the canned tables, print TABLE_BENCH frame costs, and exit.\n\n"
+                                    "--table:<name> --table_screenshot:PATH\nWrite the window to a PPM once the table has painted, and exit (macOS).\n\n"
                                     "--overview_benchmark:DIR --overview_benchmark_count:1|16|48\nRun isolated macOS overview replay (use tools/benchmark-overview.py).\n\n"
                                     "--no_preview_render_budget\nDisable background provider and workspace render admission limits.\n\n"
                                     "--no_preview_surface_budget\nDisable demand-sized workspace preview surfaces.\n\n"

@@ -12072,6 +12072,10 @@ rd_init(CmdLine *cmdln)
     {
       uishell_cmd("scroll_region_fixture");
     }
+    if(cmd_line_has_flag(cmdln, str8_lit("table")))
+    {
+      uishell_cmd("open_table", .expr = cmd_line_string(cmdln, str8_lit("table")));
+    }
     if(initial_open_file_path.size != 0)
     {
       uishell_cmd("open", .file_path = initial_open_file_path);

@@ -74,7 +74,9 @@ if [ -n "${wheelhouse+x}" ]; then
   # DAILY_DRIVER_WATCHER: daily-driver.py relies on this build including the native git watcher.
   cargo build --manifest-path "$repo_root/Cargo.toml" -p wheelhouse-ffi -p wheelhouse-ingress -p wheelhouse-git-watcher --locked --target "$core_target" --target-dir "$core_target_dir" $cargo_profile_flags
   core_lib_dir="$core_target_dir/$core_target/$cargo_profile"
-  auto_compile_flags="$auto_compile_flags -I$repo_root/crates/wheelhouse-ffi/include -I$repo_root/crates/wheelhouse-ingress/include"
+  # binnacle.h comes with the binnacle-ffi the core links (#506).
+  binnacle_include=$(python3 "$repo_root/tools/binnacle-include.py")
+  auto_compile_flags="$auto_compile_flags -I$repo_root/crates/wheelhouse-ffi/include -I$repo_root/crates/wheelhouse-ingress/include -I$binnacle_include"
   core_link="-L$core_lib_dir -lwheelhouse_ffi -lwheelhouse_ingress -Wl,-rpath,$core_lib_dir"
   python3 tools/embed-sidebar-fixture.py
 fi

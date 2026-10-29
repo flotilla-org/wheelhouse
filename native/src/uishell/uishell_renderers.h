@@ -61,6 +61,7 @@ enum
   "}"
 #define UISHELL_TERMINAL_FIXTURE_SETTINGS "@inherit(terminal) x:{}"
 #define UISHELL_SCROLL_REGION_FIXTURE_SETTINGS "@inherit(tab) x:{}"
+#define UISHELL_TABLE_SETTINGS "@inherit(tab) x:{}"
 #define UISHELL_NO_SETTINGS ""
 
 // Column helpers, so an entry can say it has none.
@@ -106,6 +107,9 @@ enum
   X(scroll_region_fixture, scroll_region_fixture, WH_STATE(UIShell_ScrollRegionFixtureState), WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_Listed, \
     128, WorkspaceRegion, WH_NO_EXPAND, UISHELL_SCROLL_REGION_FIXTURE_SETTINGS, WH_NO_PLACEHOLDER) \
+  X(table, table, WH_STATE(UIShell_TableState), WH_Content_Page, \
+    RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_Listed, \
+    128, WorkspaceRegion, WH_NO_EXPAND, UISHELL_TABLE_SETTINGS, WH_NO_PLACEHOLDER) \
   X(jackstay, jackstay, WH_NO_STATE, WH_Content_Jackstay|WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_VersionedSurface, \
     0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \

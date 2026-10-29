@@ -27,6 +27,9 @@
 // An index that names nothing.
 #define WHEELHOUSE_NONE SIZE_MAX
 
+// binnacle's Grid (binnacle.h), which this library includes and exports.
+typedef struct BinnacleGrid BinnacleGrid;
+
 // A compare-and-set's result: rejected with an error, and nothing changed.
 #define WHEELHOUSE_INVALID 0
 
@@ -326,6 +329,15 @@
 // Items the subject links to, such as its change requests and issues.
 #define WHEELHOUSE_STRIP_LINKED 1
 
+// A cell's text sits at its leading edge.
+#define WHEELHOUSE_TABLE_ALIGN_LEFT 0
+
+// A cell's text sits at its trailing edge.
+#define WHEELHOUSE_TABLE_ALIGN_RIGHT 1
+
+// wheelhouse_table_frame's answer when the table never changes by itself.
+#define WHEELHOUSE_TABLE_NEVER UINT64_MAX
+
 typedef struct WheelhouseCard WheelhouseCard;
 
 // A sidebar: one presentation client's core. Calls on one are serialised
@@ -340,6 +352,9 @@ typedef struct WheelhouseDelta WheelhouseDelta;
 typedef struct WheelhouseEffects WheelhouseEffects;
 
 typedef struct WheelhouseSnapshot WheelhouseSnapshot;
+
+// A table and the Grid over it.
+typedef struct WheelhouseTable WheelhouseTable;
 
 // UTF-8 text, length-delimited (it may contain NUL). Input text is
 // borrowed for the call only; output text is borrowed from the object that
@@ -1615,6 +1630,46 @@ WheelhouseStrip *wheelhouse_strip_get(WheelhouseCore *h,
                                       char **error_out);
 
 void wheelhouse_strip_free(WheelhouseStrip *strip);
+
+// How many canned tables there are.
+size_t wheelhouse_table_count(void);
+
+// The name of canned table index, a static string, or an empty one past
+// the count.
+WheelhouseText wheelhouse_table_name(size_t index);
+
+// Opens the canned table named name, sized for text line pixels high
+// whose digits are digit pixels wide, or returns NULL for an unknown name.
+// Free it with wheelhouse_table_free.
+WheelhouseTable *wheelhouse_table_open(WheelhouseText name, float line, float digit);
+
+// The table's Grid, for binnacle.h's calls, live until wheelhouse_table_free.
+// Don't free it with binnacle_grid_free.
+BinnacleGrid *wheelhouse_table_grid(WheelhouseTable *table);
+
+// Starts a frame of width by height pixels at now_us on the host's
+// monotonic clock: answers the Effects the table's source answers, passing
+// the others on to binnacle_grid_poll_effect, advances a live table, then
+// begins the Grid's frame and fills its Windows. Take the Snapshot with
+// binnacle_grid_snapshot after it. Returns the microseconds until the
+// table changes by itself, or WHEELHOUSE_TABLE_NEVER.
+uint64_t wheelhouse_table_frame(WheelhouseTable *table, float width, float height, uint64_t now_us);
+
+// The text of the cell at the row and column Keys, valid until the next
+// call on table, and its WHEELHOUSE_TABLE_ALIGN_* in align_out (if not NULL).
+WheelhouseText wheelhouse_table_cell(WheelhouseTable *table,
+                                     uint64_t row,
+                                     uint64_t col,
+                                     uint32_t *align_out);
+
+// The header text of the item with key at position on axis (binnacle's
+// BINNACLE_ROWS or BINNACLE_COLS), valid until the next call on table.
+WheelhouseText wheelhouse_table_header(WheelhouseTable *table,
+                                       uint32_t axis,
+                                       uint64_t key,
+                                       uint64_t position);
+
+void wheelhouse_table_free(WheelhouseTable *table);
 
 #ifdef __cplusplus
 }  // extern "C"

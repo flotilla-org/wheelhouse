@@ -30,7 +30,10 @@ header = """/*
 after_includes = """
 
 // An index that names nothing.
-#define WHEELHOUSE_NONE SIZE_MAX"""
+#define WHEELHOUSE_NONE SIZE_MAX
+
+// binnacle's Grid (binnacle.h), which this library includes and exports.
+typedef struct BinnacleGrid BinnacleGrid;"""
 
 [export.rename]
 "Text" = "WheelhouseText"

@@ -500,6 +500,13 @@ uishell_dispatch_viewer_command(String8 name)
     }
     scratch_end(scratch);
   }
+  else if(str8_match(name, str8_lit("open_table"), 0))
+  {
+    UIShell_RegsScope(.string = str8_lit("table"), .expr = uishell_regs()->expr)
+    {
+      uishell_push_cmd_current(str8_lit("build_tab"));
+    }
+  }
   else if(str8_match(name, str8_lit("scroll_region_fixture"), 0))
   {
     UIShell_RegsScope(.string = str8_lit("scroll_region_fixture"), .expr = str8_zero())
