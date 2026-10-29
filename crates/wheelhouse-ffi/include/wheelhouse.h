@@ -125,6 +125,150 @@ typedef struct BinnacleGrid BinnacleGrid;
 // Copy the URL in recipe; needs no completion.
 #define WHEELHOUSE_EFFECT_COPY_URL 4
 
+// The size of a tab: the host's View Address, copied whole.
+#define WHEELHOUSE_TAB_BYTES 40
+
+// A side, for a split or a drop that splits.
+#define WHEELHOUSE_DIR_LEFT 0
+
+#define WHEELHOUSE_DIR_UP 1
+
+#define WHEELHOUSE_DIR_RIGHT 2
+
+#define WHEELHOUSE_DIR_DOWN 3
+
+// No side: a drop into the panel, or a settle after a move.
+#define WHEELHOUSE_DIR_NONE UINT32_MAX
+
+// Edits, one per rule (core: arrangement::Edit). Each names the fields it
+// reads; the rest are ignored.
+// One empty root replaces every panel: `panel` in the outcome.
+#define WHEELHOUSE_EDIT_CLEAR 0
+
+// Every panel and tab goes.
+#define WHEELHOUSE_EDIT_DISCARD 1
+
+// Splits `panel` towards `dir`: the new panel in the outcome.
+#define WHEELHOUSE_EDIT_SPLIT 2
+
+// Adds a child to `panel` (0 with no panels: the root first) at `weight`,
+// or an equal share for 0: the new panel in the outcome.
+#define WHEELHOUSE_EDIT_ADD 3
+
+// Removes `panel` as the sidebar's reconciliation does.
+#define WHEELHOUSE_EDIT_REMOVE 4
+
+// Closes `panel`: its heir in the outcome.
+#define WHEELHOUSE_EDIT_CLOSE 5
+
+// Moves `tab` into `panel` after `after` (if `has_after`), selecting it
+// there when `select`.
+#define WHEELHOUSE_EDIT_INSERT_TAB 6
+
+// Takes `tab` out, keeping its View.
+#define WHEELHOUSE_EDIT_DETACH_TAB 7
+
+// Removes `tab`; its View goes when the arrangement is set.
+#define WHEELHOUSE_EDIT_REMOVE_TAB 8
+
+// Drops `tab` (if `has_tab`; none only splits) into `panel`, or a split
+// of it towards `dir`, after `after`; settles the panel it left.
+#define WHEELHOUSE_EDIT_DROP 9
+
+// Settles `panel` after a drop (`dir` the drop's), closing it when
+// `may_close` and the rule says so.
+#define WHEELHOUSE_EDIT_SETTLE 10
+
+// Selects `tab` (if `has_tab`; else none) in `panel`.
+#define WHEELHOUSE_EDIT_SELECT 11
+
+// Moves `panel` among its siblings to after `after_panel` (0: first).
+#define WHEELHOUSE_EDIT_REORDER 12
+
+// Moves the boundary after `panel` by `delta`, keeping both sides `floor`.
+#define WHEELHOUSE_EDIT_RESIZE 13
+
+// Evens the boundary after `panel`.
+#define WHEELHOUSE_EDIT_EQUALIZE 14
+
+// Every tab of `tab` becomes `to`.
+#define WHEELHOUSE_EDIT_READDRESS 15
+
+// Arrangement intents (core: arrangement::Intent), by their names for the
+// Automation Endpoint (wheelhouse_arrangement_intent_name).
+// Selects `tab` (if `has_tab`; else none) in `panel`.
+#define WHEELHOUSE_INTENT_SELECT_TAB 0
+
+// Moves `tab` into `panel` after `after` (if `has_after`), selected.
+#define WHEELHOUSE_INTENT_MOVE_TAB 1
+
+// Removes `tab`, closing its panel when that leaves it empty and unnamed;
+// the heir in the outcome.
+#define WHEELHOUSE_INTENT_CLOSE_TAB 2
+
+// A tab drag's drop of `tab` into `panel`, or a split of it towards `dir`,
+// after `after`. The panel it left is settled where it is: in a source
+// document passed with the intent when that arrangement is another's.
+#define WHEELHOUSE_INTENT_DROP_TAB 3
+
+// Splits `panel` towards `dir`.
+#define WHEELHOUSE_INTENT_SPLIT_PANEL 4
+
+// Closes `panel`; the heir in the outcome.
+#define WHEELHOUSE_INTENT_CLOSE_PANEL 5
+
+// Moves `panel` after `after_panel` (0: first) among its siblings.
+#define WHEELHOUSE_INTENT_REORDER_PANEL 6
+
+// A boundary drag's release: the boundary after `panel` moves by `delta`,
+// keeping both sides `floor`.
+#define WHEELHOUSE_INTENT_RESIZE_PANEL 7
+
+// A boundary double-click: the boundary after `panel` evens.
+#define WHEELHOUSE_INTENT_EQUALIZE_PANEL 8
+
+// A Workspace's arrangement.
+#define WHEELHOUSE_OWNER_WORKSPACE 0
+
+// A window's sidebar dock.
+#define WHEELHOUSE_OWNER_SIDEBAR 1
+
+// The sidebar's dock: it accepts sections.
+#define WHEELHOUSE_DOCK_HOST_SIDEBAR 0
+
+// A workspace's panels: they accept content.
+#define WHEELHOUSE_DOCK_HOST_WORKSPACE_REGION 1
+
+// No host (no such panel): any other value is the same.
+#define WHEELHOUSE_DOCK_HOST_NONE 2
+
+// Verdicts (core: dock::Rule), in this order.
+#define WHEELHOUSE_DOCK_VALID 0
+
+#define WHEELHOUSE_DOCK_REGISTERED_VIEW 1
+
+#define WHEELHOUSE_DOCK_HOST_ACCEPTANCE 2
+
+#define WHEELHOUSE_DOCK_WORKSPACE_SUBJECT 3
+
+#define WHEELHOUSE_DOCK_MINIMUM_WIDTH 4
+
+#define WHEELHOUSE_DOCK_SINGLETON 5
+
+#define WHEELHOUSE_DOCK_ONE_CONTROL_SURFACE 6
+
+#define WHEELHOUSE_DOCK_SELECTOR_OUTSIDE_SELECTED_REGION 7
+
+#define WHEELHOUSE_DOCK_SELECTOR_CANNOT_CLOSE 8
+
+#define WHEELHOUSE_DOCK_CONTROL_SPLIT_LEVEL 9
+
+// How a host shows a panel's Views.
+#define WHEELHOUSE_DOCK_PRESENTATION_TABS 0
+
+// A sidebar section's header holds all its panel's Views.
+#define WHEELHOUSE_DOCK_PRESENTATION_SECTION_HEADER 1
+
 // A split panel: its children are the panels that name it as their parent,
 // in array order, laid out along its axis.
 #define WHEELHOUSE_PANEL_SPLIT 0
@@ -517,6 +661,125 @@ typedef struct {
   WheelhouseText primary_target;
 } WheelhouseEffect;
 
+// A tab: bytes the core compares, never reads.
+typedef struct {
+  uint8_t bytes[WHEELHOUSE_TAB_BYTES];
+} WheelhouseTab;
+
+// A panel of an edit document.
+typedef struct {
+  // The index of an earlier panel, or WHEELHOUSE_NONE for the root.
+  size_t parent;
+  // Nonzero.
+  uint64_t id;
+  // Relative to its siblings, as an edit wrote it or the host loaded it.
+  float weight;
+  // Nonzero once a dock restore took a sidebar section out of it.
+  uint32_t restore_emptied;
+  // The panel whose Presentation State it takes when the host next sets
+  // the arrangement, or 0.
+  uint64_t options_from;
+  // The ID a provider's document gave it; empty for none. A named panel
+  // stays when its last tab goes.
+  WheelhouseText named;
+  // Its tabs, in order. Edits give tabs only to leaves.
+  const WheelhouseTab *tabs;
+  size_t tab_count;
+  // Nonzero when it has a Selected View, `selected`.
+  uint32_t has_selected;
+  WheelhouseTab selected;
+} WheelhouseEditPanel;
+
+// An arrangement as a host edits it: at most one root, first.
+typedef struct {
+  // Panels, each after its parent; at most one root.
+  const WheelhouseEditPanel *panels;
+  size_t panel_count;
+  // The root's WHEELHOUSE_AXIS_*, kept while the root is a leaf.
+  uint32_t root_axis;
+  // The next panel's ID: above every panel's.
+  uint64_t next_id;
+  // Tabs removed since the host last set it, oldest first, whose Views
+  // go when it is set unless an arrangement has them again.
+  const WheelhouseTab *removed;
+  size_t removed_count;
+} WheelhouseEditDoc;
+
+// What an edit or intent did (core: arrangement::Outcome).
+typedef struct {
+  // Nonzero if it was applied. A refused edit changed nothing, but for a
+  // drop's split made before its tab was refused.
+  uint32_t applied;
+  // The panel made (split, add, clear) or landed in (drop), or 0.
+  uint64_t panel;
+  // The panel a drop's tab left, when this arrangement had it, or 0.
+  uint64_t source;
+  // The leaf that takes focus after a close, if the closed panel had it,
+  // or 0.
+  uint64_t heir;
+  // Tabs this edit removed (now at the end of the document's).
+  const WheelhouseTab *removed;
+  size_t removed_count;
+} WheelhouseEditOutcome;
+
+// The edited document and what the edit did.
+typedef struct {
+  WheelhouseEditDoc doc;
+  WheelhouseEditOutcome outcome;
+  // For an intent whose dropped tab was in another arrangement: nonzero,
+  // with that arrangement edited and its outcome.
+  uint32_t has_source;
+  WheelhouseEditDoc source_doc;
+  WheelhouseEditOutcome source_outcome;
+} WheelhouseEditResult;
+
+// One edit: `kind` and the fields it reads.
+typedef struct {
+  // WHEELHOUSE_EDIT_*.
+  uint32_t kind;
+  // WHEELHOUSE_DIR_*.
+  uint32_t dir;
+  // The panel edited, split, added to or dropped into.
+  uint64_t panel;
+  // A reorder's: the sibling it goes after, or 0 for first.
+  uint64_t after_panel;
+  uint32_t has_tab;
+  WheelhouseTab tab;
+  uint32_t has_after;
+  WheelhouseTab after;
+  // A readdress's new address.
+  WheelhouseTab to;
+  float weight;
+  float delta;
+  float floor;
+  uint32_t select;
+  uint32_t may_close;
+} WheelhouseEdit;
+
+// Which tabs a settle passes over (the native shell's: Views the current
+// project doesn't show): nonzero to hide `tab`. NULL hides none.
+typedef uint32_t (*WheelhouseTabRule)(void *context, const WheelhouseTab *tab);
+
+// One intent: `kind`, its owner, and the fields it reads.
+typedef struct {
+  // WHEELHOUSE_INTENT_*.
+  uint32_t kind;
+  // WHEELHOUSE_OWNER_*, and the owner's Workspace ID (the sidebar's:
+  // its window's Window ID).
+  uint32_t owner_kind;
+  WheelhouseWorkspaceId owner;
+  // WHEELHOUSE_DIR_*.
+  uint32_t dir;
+  uint64_t panel;
+  uint64_t after_panel;
+  uint32_t has_tab;
+  WheelhouseTab tab;
+  uint32_t has_after;
+  WheelhouseTab after;
+  float delta;
+  float floor;
+} WheelhouseArrangementIntent;
+
 // A card's summary. now_ms is the core's clock when the card was taken, in
 // host monotonic milliseconds, as its fields' observations are.
 typedef struct {
@@ -611,6 +874,80 @@ typedef struct {
   const WheelhouseSiblingOrder *orders;
   size_t order_count;
 } WheelhouseDashboard;
+
+// A View kind as the host's Renderers declare it.
+typedef struct {
+  WheelhouseText name;
+  // WHEELHOUSE_VIEW_TRAIT_* bits.
+  uint32_t traits;
+  // The narrowest host it docks in (0: any).
+  float minimum_width;
+  // WHEELHOUSE_DOCK_HOST_SIDEBAR or _WORKSPACE_REGION.
+  uint32_t default_host;
+} WheelhouseViewRegistration;
+
+// A host as the host measures it.
+typedef struct {
+  // WHEELHOUSE_DOCK_HOST_*.
+  uint32_t kind;
+  uint32_t has_workspace_subject;
+  uint64_t controlled_split;
+  uint64_t workspace_region;
+  // Its layout owner.
+  uint64_t level;
+  float available_width;
+} WheelhouseDockHost;
+
+// A placement, creation or close as the rule judges it: counts describe
+// the result.
+typedef struct {
+  WheelhouseDockHost host;
+  uint64_t selected_workspace_region;
+  // The View's own level.
+  uint64_t view_level;
+  uint32_t instances_after;
+  uint32_t control_surfaces_after;
+  uint32_t closing;
+} WheelhouseDockProposal;
+
+// A View as docking checks it.
+typedef struct {
+  // Nonzero if there is such a View.
+  uint32_t exists;
+  // NULL for saved content that isn't a registered View.
+  const WheelhouseViewRegistration *registration;
+  // The host it is in, and the level it belongs to.
+  WheelhouseDockHost source;
+  uint64_t level;
+} WheelhouseDockView;
+
+// How many Views of the checked View's kind a Controlled Split has. NULL
+// when the host doesn't count them.
+typedef uint32_t (*WheelhouseDockInstances)(void *context, uint64_t controlled_split);
+
+// A window's documents after restore.
+typedef struct {
+  // Each document, edited or as it was, in the order given.
+  const WheelhouseEditDoc *docs;
+  // Nonzero for each document restore edited.
+  const uint32_t *dirty;
+  size_t doc_count;
+  // The sidebar sections it moved, which the sidebar places by their
+  // hints once committed.
+  const WheelhouseTab *moved;
+  size_t moved_count;
+} WheelhouseDockRestore;
+
+// A document restore checks and may edit.
+typedef struct {
+  WheelhouseEditDoc doc;
+  // The host its panels are in.
+  WheelhouseDockHost host;
+  // Each tab's registration, an index into the registrations, or
+  // WHEELHOUSE_NONE for content that isn't a registered View: one per
+  // tab, panel by panel in document order.
+  const size_t *tab_registrations;
+} WheelhouseDockDocument;
 
 // A panel of an arrangement document.
 typedef struct {
@@ -1160,6 +1497,40 @@ void wheelhouse_snapshot_release(WheelhouseSnapshot *s);
 
 void wheelhouse_effects_release(WheelhouseEffects *e);
 
+// Applies `edit` to `doc` by the core's rules, with `hidden` (and its
+// `context`) saying which tabs a settle passes over. Returns the edited
+// document and what the edit did, or NULL with an error for a malformed
+// document or edit. A refused edit is not an error: its outcome isn't
+// applied.
+WheelhouseEditResult *wheelhouse_arrangement_apply(const WheelhouseEditDoc *doc,
+                                                   const WheelhouseEdit *edit,
+                                                   WheelhouseTabRule hidden,
+                                                   void *context,
+                                                   char **error_out);
+
+// The document's first broken invariant, or 0 with *problem_out NULL. The
+// problem is owned: free it with wheelhouse_string_free.
+uint32_t wheelhouse_arrangement_problem(const WheelhouseEditDoc *doc,
+                                        char **problem_out,
+                                        char **error_out);
+
+void wheelhouse_edit_result_free(WheelhouseEditResult *result);
+
+// Applies `intent` to `doc`, its owner's arrangement. For a drop whose tab
+// is in another owner's arrangement, `source` is that one (else NULL),
+// and the result has it edited too. As wheelhouse_arrangement_apply
+// otherwise.
+WheelhouseEditResult *wheelhouse_arrangement_apply_intent(const WheelhouseEditDoc *doc,
+                                                          const WheelhouseArrangementIntent *intent,
+                                                          const WheelhouseEditDoc *source,
+                                                          WheelhouseTabRule hidden,
+                                                          void *context,
+                                                          char **error_out);
+
+// An intent's stable name for the Automation Endpoint ("select-tab"),
+// static; empty for an unknown kind.
+WheelhouseText wheelhouse_arrangement_intent_name(uint32_t kind);
+
 // The card of `entity` as the core has it now: NULL without an error when
 // the catalog has no such entity. Release it with wheelhouse_card_release;
 // its text stays valid until then.
@@ -1260,6 +1631,61 @@ uint32_t wheelhouse_local_remove(WheelhouseCore *h,
 WheelhouseDashboard *wheelhouse_dashboard_get(WheelhouseCore *h, char **error_out);
 
 void wheelhouse_dashboard_free(WheelhouseDashboard *dashboard);
+
+// The rule's verdict (WHEELHOUSE_DOCK_*) for a proposal; `view` NULL is
+// unregistered content. A malformed registration is RegisteredView with
+// an error.
+uint32_t wheelhouse_dock_check(const WheelhouseViewRegistration *view,
+                               const WheelhouseDockProposal *proposal,
+                               char **error_out);
+
+// Moving `view` into a panel of `destination`. `instances` (and its
+// context) counts the destination's Views of its kind, for a singleton.
+uint32_t wheelhouse_dock_placement(const WheelhouseDockView *view,
+                                   const WheelhouseDockHost *destination,
+                                   WheelhouseDockInstances instances,
+                                   void *context,
+                                   char **error_out);
+
+// Making a View of `registration` (NULL: no such kind) in `destination`.
+uint32_t wheelhouse_dock_creation(const WheelhouseViewRegistration *registration,
+                                  const WheelhouseDockHost *destination,
+                                  WheelhouseDockInstances instances,
+                                  void *context,
+                                  char **error_out);
+
+// Closing `view`.
+uint32_t wheelhouse_dock_closure(const WheelhouseDockView *view, char **error_out);
+
+// The level a View of `registration` (NULL: unregistered) in `host`
+// belongs to.
+uint64_t wheelhouse_dock_view_level(const WheelhouseViewRegistration *registration,
+                                    const WheelhouseDockHost *h);
+
+// How a host of `kind` (WHEELHOUSE_DOCK_HOST_*) shows a panel of
+// `tab_count` Views: WHEELHOUSE_DOCK_PRESENTATION_*.
+uint32_t wheelhouse_dock_presentation(uint32_t kind, size_t tab_count);
+
+// The kind of host a panel owner's panels are in (WHEELHOUSE_OWNER_*):
+// WHEELHOUSE_DOCK_HOST_*.
+uint32_t wheelhouse_dock_host_kind_from_owner(uint32_t owner_kind);
+
+// What a refusal tells the user, static; empty for an unknown verdict.
+WheelhouseText wheelhouse_dock_rule_message(uint32_t verdict);
+
+// Repairs a window's documents: one copy of each singleton, and each View
+// its host refuses moved to the end of its default host's first leaf
+// (`sidebar` or `workspace`, document indices or WHEELHOUSE_NONE),
+// keeping its address. Free the result with wheelhouse_dock_restore_free.
+WheelhouseDockRestore *wheelhouse_dock_restore(const WheelhouseDockDocument *documents,
+                                               size_t count,
+                                               size_t sidebar,
+                                               size_t workspace,
+                                               const WheelhouseViewRegistration *registrations,
+                                               size_t registration_count,
+                                               char **error_out);
+
+void wheelhouse_dock_restore_free(WheelhouseDockRestore *restore);
 
 // A workspace's arrangement. Free it with wheelhouse_arrangement_free.
 WheelhouseWorkspaceArrangement *wheelhouse_arrangement_get(WheelhouseCore *h,

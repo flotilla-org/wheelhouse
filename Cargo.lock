@@ -1133,6 +1133,7 @@ version = "0.1.0"
 dependencies = [
  "binnacle-core",
  "binnacle-ffi",
+ "hegeltest",
  "serde_json",
  "wheelhouse-core",
  "wheelhouse-tables",

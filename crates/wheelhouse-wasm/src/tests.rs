@@ -175,3 +175,99 @@ fn intents_with_bad_keys_are_rejected() {
     let unknown = Intent::TogglePlacement { key: "1:a1:b1:c1:d".into() }.read().unwrap();
     assert!(matches!(sidebar.apply_intent(unknown), IntentReceipt::Refused { .. }));
 }
+
+/// An arrangement edit through the page's binding (#516): the document and
+/// edit cross as JSON, as a page's objects do, and the result is the
+/// core's own `apply`.
+#[hegel::test(test_cases = 200)]
+fn an_arrangement_edit_through_the_binding_is_the_cores(tc: TestCase) {
+    use crate::arrangement::{apply_edit, ArrangementEdit, EditDoc, EditOutcome};
+    use wheelhouse_core::arrangement::generate::{build, edit_step, Step};
+    use wheelhouse_core::arrangement::{apply, Arrangement, Edit, Panel};
+
+    fn named(p: &Panel<u64>) -> Panel<String> {
+        Panel {
+            id: p.id,
+            weight: p.weight,
+            children: p.children.iter().map(named).collect(),
+            tabs: p.tabs.iter().map(|t| format!("view-{t}")).collect(),
+            selected: p.selected.map(|t| format!("view-{t}")),
+            named: p.named.clone(),
+            options_from: p.options_from,
+            restore_emptied: p.restore_emptied,
+        }
+    }
+    let s = |t: &u64| format!("view-{t}");
+    let (a, _, next_tab) = build(&tc, 20);
+    let Step::Edit { edit, hidden } = edit_step(&tc, &a, next_tab + 1) else { unreachable!("edit steps are edits") };
+    let mut a = Arrangement {
+        root: a.root.as_ref().map(named),
+        root_axis: a.root_axis,
+        next_id: a.next_id,
+        removed: a.removed.iter().map(s).collect(),
+    };
+    let edit: Edit<String> = match edit {
+        Edit::InsertTab { tab, to, after, select } => Edit::InsertTab { tab: s(&tab), to, after: after.as_ref().map(s), select },
+        Edit::DetachTab { tab } => Edit::DetachTab { tab: s(&tab) },
+        Edit::RemoveTab { tab } => Edit::RemoveTab { tab: s(&tab) },
+        Edit::Drop { tab, to, dir, after } => Edit::Drop { tab: tab.as_ref().map(s), to, dir, after: after.as_ref().map(s) },
+        Edit::Select { panel, tab } => Edit::Select { panel, tab: tab.as_ref().map(s) },
+        Edit::Readdress { from, to } => Edit::Readdress { from: s(&from), to: s(&to) },
+        Edit::Clear => Edit::Clear,
+        Edit::Discard => Edit::Discard,
+        Edit::Split { panel, dir } => Edit::Split { panel, dir },
+        Edit::Add { parent, weight } => Edit::Add { parent, weight },
+        Edit::Remove { panel } => Edit::Remove { panel },
+        Edit::Close { panel } => Edit::Close { panel },
+        Edit::Settle { panel, dir, may_close } => Edit::Settle { panel, dir, may_close },
+        Edit::Reorder { panel, after } => Edit::Reorder { panel, after },
+        Edit::Resize { panel, delta, floor } => Edit::Resize { panel, delta, floor },
+        Edit::Equalize { panel } => Edit::Equalize { panel },
+    };
+    let hidden: Vec<String> = hidden.iter().map(s).collect();
+    // The page's edit, written as the page writes it: the generated type's
+    // JSON. Its every field must come back as the core's edit.
+    let page_edit: ArrangementEdit = serde_json::from_value(edit_json(&edit)).expect("a page's edit");
+    assert_eq!(Edit::from(&page_edit), edit);
+    let doc: EditDoc = serde_json::from_str(&serde_json::to_string(&EditDoc::from(&a)).unwrap()).unwrap();
+    let result = apply_edit(&doc, &page_edit, &hidden);
+    let out = apply(&mut a, &edit, &|t| hidden.contains(t));
+    assert_eq!(result.doc, EditDoc::from(&a));
+    assert_eq!(
+        result.outcome,
+        EditOutcome {
+            applied: out.applied,
+            panel: out.panel.map(|p| p.0),
+            source: out.source.map(|p| p.0),
+            heir: out.heir.map(|p| p.0),
+            removed: out.removed
+        }
+    );
+}
+
+/// An edit as a page writes it.
+fn edit_json(edit: &wheelhouse_core::arrangement::Edit<String>) -> serde_json::Value {
+    use serde_json::json;
+    use wheelhouse_core::arrangement::{Dir, Edit};
+    let dir = |d: &Option<Dir>| d.map(|d| format!("{d:?}").to_lowercase());
+    match edit {
+        Edit::Clear => json!({"edit": "clear"}),
+        Edit::Discard => json!({"edit": "discard"}),
+        Edit::Split { panel, dir: d } => json!({"edit": "split", "panel": panel.0, "dir": format!("{d:?}").to_lowercase()}),
+        Edit::Add { parent, weight } => json!({"edit": "add", "parent": parent.map(|p| p.0), "weight": weight}),
+        Edit::Remove { panel } => json!({"edit": "remove", "panel": panel.0}),
+        Edit::Close { panel } => json!({"edit": "close", "panel": panel.0}),
+        Edit::InsertTab { tab, to, after, select } => {
+            json!({"edit": "insert-tab", "tab": tab, "to": to.0, "after": after, "select": select})
+        }
+        Edit::DetachTab { tab } => json!({"edit": "detach-tab", "tab": tab}),
+        Edit::RemoveTab { tab } => json!({"edit": "remove-tab", "tab": tab}),
+        Edit::Drop { tab, to, dir: d, after } => json!({"edit": "drop", "tab": tab, "to": to.0, "dir": dir(d), "after": after}),
+        Edit::Settle { panel, dir: d, may_close } => json!({"edit": "settle", "panel": panel.0, "dir": dir(d), "mayClose": may_close}),
+        Edit::Select { panel, tab } => json!({"edit": "select", "panel": panel.0, "tab": tab}),
+        Edit::Reorder { panel, after } => json!({"edit": "reorder", "panel": panel.0, "after": after.map(|p| p.0)}),
+        Edit::Resize { panel, delta, floor } => json!({"edit": "resize", "panel": panel.0, "delta": delta, "floor": floor}),
+        Edit::Equalize { panel } => json!({"edit": "equalize", "panel": panel.0}),
+        Edit::Readdress { from, to } => json!({"edit": "readdress", "from": from, "to": to}),
+    }
+}

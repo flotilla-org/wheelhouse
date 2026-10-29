@@ -6,6 +6,7 @@ use tsify::{Ts, Tsify};
 use wasm_bindgen::prelude::*;
 use wheelhouse_core::{stream::SubscriptionId, MetadataPatch, Sidebar, WorkspaceId};
 
+pub mod arrangement;
 pub mod types;
 use types::{Delta, Intent, Receipt, View};
 
@@ -96,4 +97,16 @@ impl Core {
     pub fn view(&self) -> Result<Ts<View>, JsError> {
         Ok(View::from(&wheelhouse_core::stream::StreamView::of(self.sidebar.snapshot_shared())).into_ts()?)
     }
+}
+
+/// Applies an arrangement edit to a document by the core's rules (#516):
+/// the edited document and what the edit did. `hidden` are the tabs a
+/// settle passes over.
+#[wasm_bindgen(js_name = applyArrangementEdit)]
+pub fn apply_arrangement_edit(
+    doc: Ts<arrangement::EditDoc>,
+    edit: Ts<arrangement::ArrangementEdit>,
+    hidden: Vec<String>,
+) -> Result<Ts<arrangement::EditResult>, JsError> {
+    Ok(arrangement::apply_edit(&doc.to_rust()?, &edit.to_rust()?, &hidden).into_ts()?)
 }

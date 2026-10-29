@@ -778,6 +778,137 @@ pub fn drop_across<T: Clone + PartialEq>(
     (out, settled)
 }
 
+/// Whose arrangement: a Workspace's, or a window's sidebar dock. A Panel ID
+/// is unique only within its owner's arrangement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OwnerKind {
+    /// A Workspace's panels (a window's own panels are a Workspace too).
+    Workspace,
+    /// The sidebar's dock, as one window shows it.
+    Sidebar,
+}
+
+/// An arrangement's owner: its kind and ID (a Workspace ID; for the
+/// sidebar, its window's Window ID).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Owner {
+    pub kind: OwnerKind,
+    pub id: crate::WorkspaceId,
+}
+
+/// A change to an arrangement as a frontend's commands and gestures ask
+/// for it, and as the Automation Endpoint (ADR 0014) names it. Each is one
+/// or two edits of `owner`'s arrangement; a frontend applies it to its live
+/// copy ([`apply_intent`]) and sets the result.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Intent<T> {
+    /// Selects `tab`, one of `panel`'s (none selects none).
+    SelectTab { owner: Owner, panel: PanelId, tab: Option<T> },
+    /// Moves `tab` into `to` after `after` (none: first), selected there.
+    MoveTab { owner: Owner, tab: T, to: PanelId, after: Option<T> },
+    /// Removes `tab`, and closes its panel when that leaves it empty and
+    /// unnamed; reports the heir.
+    CloseTab { owner: Owner, tab: T },
+    /// A tab drag's drop: into `to`, or into the panel a split of `to`
+    /// towards `dir` makes. The panel the tab left is settled in the same
+    /// edit, in the arrangement it is in.
+    DropTab { owner: Owner, tab: T, to: PanelId, dir: Option<Dir>, after: Option<T> },
+    /// Splits `panel` towards `dir`: a new empty panel there.
+    SplitPanel { owner: Owner, panel: PanelId, dir: Dir },
+    /// Closes `panel` and its tabs; reports the heir.
+    ClosePanel { owner: Owner, panel: PanelId },
+    /// Moves `panel` among its siblings to after `after` (none: first).
+    ReorderPanel { owner: Owner, panel: PanelId, after: Option<PanelId> },
+    /// A boundary drag, once, at release: the boundary after `panel` moves
+    /// by `delta` of its parent, keeping both sides `floor` where they can.
+    ResizePanel { owner: Owner, panel: PanelId, delta: f32, floor: f32 },
+    /// A boundary double-click: both sides of the boundary after `panel`
+    /// become equal.
+    EqualizePanel { owner: Owner, panel: PanelId },
+}
+
+impl<T> Intent<T> {
+    /// Its stable name, as the Automation Endpoint invokes it.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Intent::SelectTab { .. } => "select-tab",
+            Intent::MoveTab { .. } => "move-tab",
+            Intent::CloseTab { .. } => "close-tab",
+            Intent::DropTab { .. } => "drop-tab",
+            Intent::SplitPanel { .. } => "split-panel",
+            Intent::ClosePanel { .. } => "close-panel",
+            Intent::ReorderPanel { .. } => "reorder-panel",
+            Intent::ResizePanel { .. } => "resize-panel",
+            Intent::EqualizePanel { .. } => "equalize-panel",
+        }
+    }
+
+    /// The arrangement it edits.
+    pub fn owner(&self) -> Owner {
+        match self {
+            Intent::SelectTab { owner, .. }
+            | Intent::MoveTab { owner, .. }
+            | Intent::CloseTab { owner, .. }
+            | Intent::DropTab { owner, .. }
+            | Intent::SplitPanel { owner, .. }
+            | Intent::ClosePanel { owner, .. }
+            | Intent::ReorderPanel { owner, .. }
+            | Intent::ResizePanel { owner, .. }
+            | Intent::EqualizePanel { owner, .. } => *owner,
+        }
+    }
+}
+
+/// What an intent did: to its owner's arrangement, and to the one a dropped
+/// tab came from when that is another's.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IntentOutcome<T> {
+    pub outcome: Outcome<T>,
+    pub source: Option<Outcome<T>>,
+}
+
+/// Applies `intent` to `a`, its owner's arrangement. For a drop whose tab
+/// is in another arrangement (the sidebar's, into a workspace), `source` is
+/// that arrangement, which the same intent settles.
+pub fn apply_intent<T: Clone + PartialEq>(
+    a: &mut Arrangement<T>,
+    intent: &Intent<T>,
+    source: Option<&mut Arrangement<T>>,
+    hidden: &dyn Fn(&T) -> bool,
+) -> IntentOutcome<T> {
+    let edit = match intent {
+        Intent::SelectTab { panel, tab, .. } => Edit::Select { panel: *panel, tab: tab.clone() },
+        Intent::MoveTab { tab, to, after, .. } => Edit::InsertTab { tab: tab.clone(), to: *to, after: after.clone(), select: true },
+        Intent::CloseTab { tab, .. } => {
+            let panel = a.panel_with(tab).map(|p| p.id);
+            let mut out = apply(a, &Edit::RemoveTab { tab: tab.clone() }, hidden);
+            // A panel left with no tabs goes, and its siblings grow into its
+            // space (#358); a root panel, or one a layout planned, stays.
+            if let Some(panel) = panel.filter(|_| out.applied) {
+                if a.panel(panel).is_some_and(|p| p.tabs.is_empty() && p.closes_when_emptied()) {
+                    let closed = apply(a, &Edit::Close { panel }, hidden);
+                    out.heir = closed.heir;
+                    out.removed.extend(closed.removed);
+                }
+            }
+            return IntentOutcome { outcome: out, source: None };
+        }
+        Intent::DropTab { tab, to, dir, after, .. } => {
+            if let Some(source) = source {
+                let (outcome, settled) = drop_across(a, source, tab, *to, *dir, after.clone(), hidden);
+                return IntentOutcome { outcome, source: Some(settled) };
+            }
+            Edit::Drop { tab: Some(tab.clone()), to: *to, dir: *dir, after: after.clone() }
+        }
+        Intent::SplitPanel { panel, dir, .. } => Edit::Split { panel: *panel, dir: *dir },
+        Intent::ClosePanel { panel, .. } => Edit::Close { panel: *panel },
+        Intent::ReorderPanel { panel, after, .. } => Edit::Reorder { panel: *panel, after: *after },
+        Intent::ResizePanel { panel, delta, floor, .. } => Edit::Resize { panel: *panel, delta: *delta, floor: *floor },
+        Intent::EqualizePanel { panel, .. } => Edit::Equalize { panel: *panel },
+    };
+    IntentOutcome { outcome: apply(a, &edit, hidden), source: None }
+}
+
 /// The first broken invariant, or none. Edits keep a valid arrangement
 /// valid.
 pub fn problem<T: Clone + PartialEq>(a: &Arrangement<T>) -> Option<String> {

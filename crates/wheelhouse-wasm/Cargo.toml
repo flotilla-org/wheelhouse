@@ -17,3 +17,4 @@ wheelhouse-core.workspace = true
 
 [dev-dependencies]
 hegeltest = "0.49.2"
+wheelhouse-core = { workspace = true, features = ["test-support"] }
