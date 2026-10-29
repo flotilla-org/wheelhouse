@@ -3,7 +3,7 @@
 // key and its child lists by parent key ("" for the section's own). Each
 // delta is applied whole, inside one store update, so nothing renders a
 // half-applied change.
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, reconcile } from "solid-js/store";
 import type { ActivationError, Delta, ListOp, Node, Section, Variable, View } from "./core/wheelhouse_wasm";
 
 export interface SectionModel {
@@ -83,9 +83,17 @@ export function applyDelta(model: Model, delta: Delta) {
   model.generation = delta.generation;
 }
 
+const empty = (): Model => ({ generation: 0, order: [], sections: {}, variables: [], diagnostics: [], errors: [] });
+
+/// The model, a delta's whole application to it, and its reset to the
+/// initial model, to follow again from a new subscription's first delta.
 export function createModel() {
-  const [model, setModel] = createStore<Model>({ generation: 0, order: [], sections: {}, variables: [], diagnostics: [], errors: [] });
-  return { model, apply: (delta: Delta) => setModel(produce((m) => applyDelta(m, delta))) };
+  const [model, setModel] = createStore<Model>(empty());
+  return {
+    model,
+    apply: (delta: Delta) => setModel(produce((m) => applyDelta(m, delta))),
+    reset: () => setModel(reconcile(empty())),
+  };
 }
 
 /// The model in the shape of the core's View, to compare with a fresh one.

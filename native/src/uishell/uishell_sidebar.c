@@ -782,7 +782,9 @@ uishell_sidebar_restart(UIShell_SidebarState *state)
 }
 
 // Apply what the change stream has. A delta that doesn't fit the model
-// (which would be a core bug) starts it again from a new subscription.
+// (which would be a core bug), or an error from following (the core no
+// longer knows the subscription), starts it again from a new subscription.
+// A poisoned handle fails that subscribe, and its error shows.
 internal void
 uishell_sidebar_follow(UIShell_SidebarState *state)
 {
@@ -794,11 +796,23 @@ uishell_sidebar_follow(UIShell_SidebarState *state)
       if(!uishell_sidebar_result(state, wheelhouse_subscribe(state->core, &state->subscription, &error), error)) { return; }
       state->subscribed = 1;
     }
-    if(!wheelhouse_changed_since(state->core, state->subscription, &error)) { uishell_sidebar_result(state, !error, error); return; }
+    if(!wheelhouse_changed_since(state->core, state->subscription, &error))
+    {
+      if(!error) { return; }
+      uishell_sidebar_result(state, 0, error);
+      uishell_sidebar_restart(state);
+      continue;
+    }
     state->revision_count++;
     state->managed_dirty = 1;
     WheelhouseDelta *delta = wheelhouse_poll(state->core, state->subscription, &error);
-    if(!delta) { uishell_sidebar_result(state, !error, error); return; }
+    if(!delta)
+    {
+      if(!error) { return; }
+      uishell_sidebar_result(state, 0, error);
+      uishell_sidebar_restart(state);
+      continue;
+    }
     B32 applied = uishell_sidebar_model_apply(&state->model, delta);
     wheelhouse_delta_release(delta);
     // What is cached from rows borrows the model's text. Labels go now, so
@@ -1985,10 +1999,10 @@ uishell_sidebar_init(RD_WindowState *ws)
     state->initialized = 1;
     char *error = 0;
     // A host requires exactly the ABI it was built against.
-    if(wheelhouse_abi_version() != 13)
+    if(wheelhouse_abi_version() != 14)
     {
       Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 13 is required; this library has ABI %u",
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 14 is required; this library has ABI %u",
         (U32)wheelhouse_abi_version()));
       scratch_end(scratch);
       return state;
@@ -6044,6 +6058,38 @@ uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
 #include "uishell/uishell_sidebar_reorder_diagnostics.c"
 #include "uishell/uishell_sidebar_model_diagnostics.c"
 
+// A subscription the core no longer knows (here unsubscribed behind the
+// sidebar's back) is an error from following. The sidebar reports it and
+// follows again from a new subscription, whose first delta rebuilds the view.
+internal B32
+uishell_sidebar_lost_subscription_diagnostics(UIShell_SidebarState *state)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 lost = state->subscription;
+  state->error[0] = 0;
+  wheelhouse_unsubscribe(state->core, lost, 0);
+  WheelhouseFact fact = {0};
+  fact.key = uishell_sidebar_text(str8_lit("wheelhouse.diagnostics.lost-subscription"));
+  fact.kind = WHEELHOUSE_FACT_TEXT;
+  fact.text = uishell_sidebar_text(str8_lit("applied"));
+  char *error = 0;
+  B32 ok = uishell_sidebar_result(state, wheelhouse_apply_entity(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider),
+    uishell_sidebar_text(str8_lit("vessel")), uishell_sidebar_text(str8_lit("v")), uishell_sidebar_text(str8_lit("fixture")), &fact, 1, &error), error);
+  uishell_sidebar_follow(state);
+  B32 reported = state->error[0] != 0;
+  String8 mismatch = uishell_sidebar_model_mismatch(scratch.arena, &state->model, state->core);
+  ok = ok && reported && state->subscribed && state->subscription != lost && uishell_sidebar_viewing(state) && mismatch.size == 0;
+  if(!ok)
+  {
+    fprintf(stderr, "FAIL sidebar lost subscription: reported %d, subscribed %d (%llu, was %llu), viewing %d, mismatch %.*s\n",
+      reported, state->subscribed, (unsigned long long)state->subscription, (unsigned long long)lost,
+      uishell_sidebar_viewing(state), str8_varg(mismatch));
+  }
+  state->error[0] = 0;
+  scratch_end(scratch);
+  return ok;
+}
+
 internal B32
 uishell_sidebar_diagnostics(CFG_Node *window)
 {
@@ -6056,6 +6102,11 @@ uishell_sidebar_diagnostics(CFG_Node *window)
   if(state->core == 0 || !uishell_sidebar_viewing(state))
   {
     fprintf(stderr, "Sidebar host diagnostics: FAILED (initialization: %s)\n", state->error);
+    scratch_end(scratch);
+    return 0;
+  }
+  if(!uishell_sidebar_lost_subscription_diagnostics(state))
+  {
     scratch_end(scratch);
     return 0;
   }

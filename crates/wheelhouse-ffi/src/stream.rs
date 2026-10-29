@@ -2,7 +2,9 @@
 //! A host subscribes, then polls when wheelhouse_changed_since says to: the
 //! first poll's delta holds everything, each later one what changed since the
 //! one before. Apply each delta whole to the host's own model of sections,
-//! nodes and child lists. Logical state changes by intent.
+//! nodes and child lists. Logical state changes by intent. A subscription
+//! the sidebar doesn't know (never given, or unsubscribed) is an error from
+//! both calls; a host that gets one follows again from a new subscription.
 use super::*;
 use wheelhouse_core::{
     presentation::{Content, Presented},
@@ -73,22 +75,25 @@ pub unsafe extern "C" fn wheelhouse_unsubscribe(h: *mut WheelhouseCore, subscrip
 
 /// 1 if a poll may have something to deliver. It builds nothing: check after
 /// draining a batch, and poll only when it is 1. A change that turns out to
-/// present nothing new makes it 1 once.
+/// present nothing new makes it 1 once. 0 with no error when there is nothing
+/// to deliver; 0 with an error for an unknown subscription (never given, or
+/// unsubscribed: subscribe again) or on failure.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_changed_since(h: *mut WheelhouseCore, subscription: u64, error_out: *mut *mut c_char) -> u32 {
-    run(h, error_out, |h| Ok(h.sidebar.changed_since(SubscriptionId(subscription)))).unwrap_or(false) as u32
+    run(h, error_out, |h| h.sidebar.changed_since(SubscriptionId(subscription)).map_err(|e| e.to_string())).unwrap_or(false) as u32
 }
 
 /// What changed since this subscription's last delta (everything, for its
 /// first), with the intents accepted since. NULL with no error when there is
-/// nothing to deliver or the subscription doesn't exist; NULL with an error
-/// on failure. The delta owns its text and survives the sidebar; release it
-/// with wheelhouse_delta_release.
+/// nothing to deliver; NULL with an error for an unknown subscription (never
+/// given, or unsubscribed: subscribe again) or on failure. The delta owns its
+/// text and survives the sidebar; release it with wheelhouse_delta_release.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_poll(h: *mut WheelhouseCore, subscription: u64, error_out: *mut *mut c_char) -> *mut WheelhouseDelta {
     run(h, error_out, |h| {
         let _phase = profile::span("abi-poll");
-        Ok(h.sidebar.poll(SubscriptionId(subscription)).map(|delta| Box::into_raw(Box::new(WheelhouseDelta::of(delta)))))
+        let delta = h.sidebar.poll(SubscriptionId(subscription)).map_err(|e| e.to_string())?;
+        Ok(delta.map(|delta| Box::into_raw(Box::new(WheelhouseDelta::of(delta)))))
     })
     .flatten()
     .unwrap_or(ptr::null_mut())

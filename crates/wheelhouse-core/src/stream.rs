@@ -12,6 +12,7 @@
 //! the same entity by the same loops (regions sharing a placement), and a
 //! node's key, its path from its section, names it only within that.
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt;
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -25,6 +26,18 @@ use crate::{DisplayVariableValue, EntityRef, PlacementKey, PlacementLoopKey};
 /// A subscription to the sidebar's changes; see [`Sidebar::subscribe`](crate::sidebar::Sidebar::subscribe).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SubscriptionId(pub u64);
+
+/// A subscription this sidebar never gave, or one since unsubscribed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnknownSubscription(pub SubscriptionId);
+
+impl fmt::Display for UnknownSubscription {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown subscription {}: it was never given or was unsubscribed; subscribe again", self.0 .0)
+    }
+}
+
+impl std::error::Error for UnknownSubscription {}
 
 /// What a frontend has of the sidebar: everything a delta can change.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

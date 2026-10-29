@@ -1491,14 +1491,16 @@ uint32_t wheelhouse_unsubscribe(WheelhouseCore *h, uint64_t subscription, char *
 
 // 1 if a poll may have something to deliver. It builds nothing: check after
 // draining a batch, and poll only when it is 1. A change that turns out to
-// present nothing new makes it 1 once.
+// present nothing new makes it 1 once. 0 with no error when there is nothing
+// to deliver; 0 with an error for an unknown subscription (never given, or
+// unsubscribed: subscribe again) or on failure.
 uint32_t wheelhouse_changed_since(WheelhouseCore *h, uint64_t subscription, char **error_out);
 
 // What changed since this subscription's last delta (everything, for its
 // first), with the intents accepted since. NULL with no error when there is
-// nothing to deliver or the subscription doesn't exist; NULL with an error
-// on failure. The delta owns its text and survives the sidebar; release it
-// with wheelhouse_delta_release.
+// nothing to deliver; NULL with an error for an unknown subscription (never
+// given, or unsubscribed: subscribe again) or on failure. The delta owns its
+// text and survives the sidebar; release it with wheelhouse_delta_release.
 WheelhouseDelta *wheelhouse_poll(WheelhouseCore *h, uint64_t subscription, char **error_out);
 
 // The generation the host's model is at once the delta is applied.
