@@ -35,6 +35,8 @@ const LISTING: u32 = 8;
 const LISTED: usize = 240;
 const TICKER_HEADERS: [&str; 3] = ["ticker", "price", "load"];
 const TICK: Duration = Duration::from_millis(250);
+/// The most missed ticks [`Table::tick`] replays at once.
+const CATCH_UP: u32 = 4;
 
 const NAMES_: [&str; 8] = ["anchor", "bosun", "capstan", "davit", "ensign", "fathom", "galley", "hawser"];
 const PORTS: [&str; 9] = ["Aberdeen", "Bergen", "Cádiz", "Dunedin", "Esbjerg", "Funchal", "Gdańsk", "Halifax", "Île d'Yeu"];
@@ -265,7 +267,10 @@ impl Table {
         let Kind::Live(live) = &mut self.kind else {
             return None;
         };
-        if live.next.is_zero() {
+        // A first call, or one after a long gap (a hidden tab, a sleep),
+        // starts the clock again rather than replaying every missed tick:
+        // the values are random, so nothing shown depends on them.
+        if live.next.is_zero() || now.saturating_sub(live.next) > CATCH_UP * TICK {
             live.next = now + TICK;
         }
         while live.next <= now {

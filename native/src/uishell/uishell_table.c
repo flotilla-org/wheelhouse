@@ -20,6 +20,9 @@ struct UIShell_TableState
   // The pointer's last position sent to the Grid, viewport-relative.
   Vec2F32 last_pointer;
   B32 pointer_inside;
+  // The name a failed open was tried with, so it isn't retried each frame.
+  U8 failed[32];
+  U64 failed_size;
 };
 
 // Cells painted, counted by the table diagnostics.
@@ -256,6 +259,8 @@ uishell_table_key(BinnacleGrid *grid, UI_Event *evt)
     {
       default:{}break;
       case UI_EventDeltaUnit_Page:{ by = BINNACLE_FOCUS_PAGE; }break;
+      // Home and End (a line's ends) go to the row's first or last column,
+      // Ctrl+Home and Ctrl+End (Whole) to the table's first or last row.
       case UI_EventDeltaUnit_Line:
       case UI_EventDeltaUnit_Whole:{ by = BINNACLE_FOCUS_EDGE; }break;
     }
@@ -294,7 +299,9 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   {
     uishell_table_release(state);
   }
-  if(!state->table && name.size != 0 && name.size <= sizeof(state->name))
+  rd_view_state_from_view(ctx->settings.view, 0)->release_user_data = uishell_table_release;
+  if(!state->table && name.size != 0 && name.size <= sizeof(state->name) &&
+     !str8_match(name, str8(state->failed, state->failed_size), 0))
   {
     state->abi_mismatch = binnacle_abi_version() != BINNACLE_ABI_VERSION;
     if(!state->abi_mismatch)
@@ -302,7 +309,11 @@ WH_VIEW_UI_FUNCTION_DEF(table)
       state->table = wheelhouse_table_open((WheelhouseText){name.str, name.size}, line, digit);
       MemoryCopy(state->name, name.str, name.size);
       state->name_size = name.size;
-      rd_view_state_from_view(ctx->settings.view, 0)->release_user_data = uishell_table_release;
+    }
+    if(!state->table)
+    {
+      MemoryCopy(state->failed, name.str, name.size);
+      state->failed_size = name.size;
     }
   }
 
@@ -361,6 +372,13 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   else if(inside && (!state->pointer_inside || mouse.x != state->last_pointer.x || mouse.y != state->last_pointer.y))
   {
     BinnaclePointerEvent e = {BINNACLE_POINTER_MOVE, mouse.x, mouse.y, BINNACLE_BUTTON_PRIMARY, mods, 0};
+    binnacle_grid_pointer(grid, e);
+  }
+  else if(!inside && state->pointer_inside)
+  {
+    // The pointer left: binnacle has no leave event, so a move outside the
+    // viewport clears what it was hovering.
+    BinnaclePointerEvent e = {BINNACLE_POINTER_MOVE, -1.f, -1.f, BINNACLE_BUTTON_PRIMARY, mods, 0};
     binnacle_grid_pointer(grid, e);
   }
   if(ui_released(sig))
