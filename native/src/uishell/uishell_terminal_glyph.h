@@ -175,7 +175,7 @@ internal UIShell_TerminalCursorArray uishell_terminal_fixture_cursor_array(Arena
 internal UIShell_TerminalCellFeed uishell_terminal_cell_feed_from_cleat_snapshot(cleat_snapshot const *snapshot);
 internal UIShell_TerminalCellFeed uishell_terminal_cell_feed_from_cache(UIShell_TerminalCellCache *cache);
 internal void uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache, cleat_render_update const *update);
-internal void uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cache, cleat_session *session, cleat_render_update const *update);
+internal void uishell_terminal_image_cache_apply_render_update(UIShell_TerminalImageCache *cache, cleat_session *session, cleat_view *view, cleat_render_update const *update);
 internal B32 uishell_terminal_write_fixture_ppm(String8 path, FNT_Tag primary_font, FNT_Tag main_fallback_font, F32 font_size, FNT_RasterFlags raster_flags, String8 **embedded_color_emoji_data, U64 embedded_color_emoji_count, String8 **embedded_fallback_data, U64 embedded_fallback_count);
 internal B32 uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_font, F32 font_size, FNT_RasterFlags raster_flags, String8 **embedded_color_emoji_data, U64 embedded_color_emoji_count, String8 **embedded_fallback_data, U64 embedded_fallback_count);
 internal void uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, UIShell_TerminalCellFeed const *feed, UIShell_TerminalCursorArray cursors);

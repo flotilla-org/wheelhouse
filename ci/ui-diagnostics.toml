@@ -41,12 +41,16 @@ flag = "hosting"
 prefix = "hosting"
 os = ["linux", "macos"]
 
-# The remote-terminal check and managed_content stay macOS-only: they run real
-# terminal sessions, which ask Cleat for its Ghostty VT engine, and the Linux
-# job builds Cleat without one (vt: none). Running them there needs a
-# ghostty-vt build.
+# The remote-terminal and shared-terminal checks and managed_content stay
+# macOS-only: they run real terminal sessions, which ask Cleat for its Ghostty
+# VT engine, and the Linux job builds Cleat without one (vt: none). Running
+# them there needs a ghostty-vt build.
 [[diagnostic]]
 command = "bash tools/test-remote-terminal.sh ./build/wheelhouse ../cleat/target/debug/cleat"
+os = ["macos"]
+
+[[diagnostic]]
+command = "bash tools/test-shared-terminals.sh ./build/wheelhouse ../cleat/target/debug/cleat"
 os = ["macos"]
 
 [[diagnostic]]
@@ -113,7 +117,8 @@ flag = "table"
 prefix = "table"
 os = ["linux", "macos"]
 
-# See the remote-terminal check above for why this is macOS-only.
+# See the remote-terminal and shared-terminal checks above for why this is
+# macOS-only.
 [[diagnostic]]
 flag = "managed_content"
 prefix = "managed"

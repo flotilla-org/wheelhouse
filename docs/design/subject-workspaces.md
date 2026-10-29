@@ -60,14 +60,25 @@ supplying a placeholder that says something about their own content.
 
 ### One Cleat client per session
 
-Wheelhouse is one Cleat client for a session, however many Views show it. The
-grid takes the size of the View last interacted with, and the other Views draw
-the same local screen state, letterboxed. They are not extra Cleat watchers.
+Wheelhouse is one Cleat client for a session, however many Views show it
+(#417). With Direct Cleat Attach, a session has one **Attachment**: Wheelhouse's
+subscription to it, one update stream, over a **Connection** to its daemon (the
+local socket, or one ssh bridge per host, runtime root and daemon). Each View
+showing the session opens its own Cleat view on that attachment, with its own
+role, size and history position (Cleat's ADR 0009), and keeps its selection to
+itself. The attachment closes at the end of the frame its last View lets go, and
+the connection lingers about 30 seconds after its last attachment
+(`native/src/uishell/uishell_cleat_attachments.c`).
 
-Today each View probably makes its own attachment: a vessel terminal's recipe is
-a `flotilla attach --host … <session>` command, so each View runs its own ssh
-connection and Cleat attach. Doing this properly depends on remote Cleat
-connections (#104).
+The grid takes the size of the View last interacted with: a role policy makes
+the last-touched View (focus moved into it, or typed or clicked in) the only
+controller and the others watchers, which letterbox or clip. When the controller
+View goes, the most recently touched remaining View takes over. Which Views a
+user may make drive, and defaults for crew vessels, belong in that policy.
+
+Views in open but non-current workspaces keep their attachment; previews and the
+overview redraw those Views and hold none of their own. The `flotilla attach`
+recipe path, and Direct Cleat Attach turned off, keep one process per View.
 
 ### Layouts
 
@@ -327,7 +338,8 @@ It is for prototyping, not yet decided.
 3. **Layout templates and selection rules** in the core, with Flotilla
    publishing content and hints (flotilla#3012 reworked).
 4. **Tool strip, first cut** (#122 reworked), then layout switching.
-5. **One Cleat client per session**, with remote Cleat (#104).
+5. **One Cleat client per session**, with remote Cleat (#104): shared
+   attachments (#417).
 6. **Switching transitions** (#450), on the overview's current layout, then
    through each workspace's real position once the overview follows the
    sidebar's hierarchy (#190).
