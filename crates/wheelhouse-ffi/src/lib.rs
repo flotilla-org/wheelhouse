@@ -27,6 +27,7 @@ pub mod documents;
 pub mod slots;
 pub mod stream;
 pub mod strip;
+pub mod tables;
 pub use card::*;
 pub use dashboard::*;
 pub use documents::*;

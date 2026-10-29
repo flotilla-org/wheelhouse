@@ -100,6 +100,7 @@ read_only global UIShell_CmdInfo uishell_app_viewer_cmd_info_table[] =
   UISHELL_CMD("terminal_adopt", "Adopt Terminal", Machine, "Moves this live terminal into Wheelhouse without replacing its view.", "terminal,adopt,hosting", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("terminal_fixture", "Terminal Fixture", Machine, "Opens a deterministic terminal glyph fixture tab.", "tab,terminal,glyph,fixture", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("scroll_region_fixture", "Scroll Region Fixture", Grid, "Opens a two-axis scroll region fixture.", "tab,scroll,fixture", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
+  UISHELL_CMD("open_table", "Open Table", Grid, "Opens a table tab over one of the canned tables.", "tab,table,grid,binnacle", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("binary", "Binary", Grid, "Opens a Binary tab.", "tab,file,hex", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
 };
 

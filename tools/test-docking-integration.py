@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 
 from shell_embed import shell_embed_object
 
@@ -46,6 +47,8 @@ internal Rng2F32 integration_client_rect(WM_Window window);
 ''')
 source = BUILD / 'docking_integration.c'
 source.write_text(prefix + '\n#include "shell/tests/docking_integration.c"\n')
+# binnacle.h, for the table View (#506).
+BINNACLE_INCLUDE = subprocess.check_output([sys.executable, str(ROOT/'tools/binnacle-include.py')], text=True).strip()
 compiler = shlex.split(os.environ.get('CC', 'clang'))
 command = compiler + [
     # Keep debug assertions; the generated prefix excludes arena inspection only.
@@ -53,7 +56,7 @@ command = compiler + [
     '-DWM_STUB=1', '-DR_BACKEND=0', '-DFP_BACKEND=0', '-ffunction-sections', '-fdata-sections',
     '-Wno-initializer-overrides', '-Wno-unused-value',
     '-Wno-incompatible-pointer-types-discards-qualifiers',
-    '-I'+str(ROOT/'native/src'), '-I'+str(args.core_include.resolve()), '-I'+str(ROOT/'crates/wheelhouse-ingress/include'),
+    '-I'+str(ROOT/'native/src'), '-I'+str(args.core_include.resolve()), '-I'+str(ROOT/'crates/wheelhouse-ingress/include'), '-I'+BINNACLE_INCLUDE,
     '-I'+str(args.cleat_include.resolve()), str(source), str(shell_embed_object(compiler)),
     '-L'+str(andamento), '-lwheelhouse_ffi', '-lwheelhouse_ingress', '-Wl,-rpath,'+str(andamento),
     '-L'+str(cleat), '-lcleat', '-Wl,-rpath,'+str(cleat), '-lpthread', '-lm', '-ldl',

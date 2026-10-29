@@ -7,6 +7,7 @@ members = [
     "crates/wheelhouse-terminal",
     "crates/wheelhouse-tui",
     "crates/wheelhouse-ingress",
+    "crates/wheelhouse-tables",
     "crates/wheelhouse-wasm",
 ]
 # tools/scenario is a workspace of its own: it pins Flotilla's crates by git
@@ -19,6 +20,10 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
+# binnacle draws the tables (#505). Pinned by revision: the repos move together.
+binnacle-core = { git = "https://github.com/flotilla-org/binnacle.git", rev = "7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8" }
+binnacle-ffi = { git = "https://github.com/flotilla-org/binnacle.git", rev = "7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8" }
+binnacle-memory = { git = "https://github.com/flotilla-org/binnacle.git", rev = "7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8" }
 ansi_term = "0.12"
 crossterm = "0.28.1"
 insta = "1"
@@ -29,5 +34,6 @@ serde_json = "1"
 unicode-width = "0.1.14"
 
 wheelhouse-core = { path = "crates/wheelhouse-core" }
+wheelhouse-tables = { path = "crates/wheelhouse-tables" }
 wheelhouse-terminal = { path = "crates/wheelhouse-terminal" }
 wheelhouse-tui = { path = "crates/wheelhouse-tui" }

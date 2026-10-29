@@ -172,6 +172,7 @@ jobs:
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
           timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/hosting-user" --project:"$task_dir/hosting-project" --hosting_diagnostics
+          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/table-user" --project:"$task_dir/table-project" --table_diagnostics
       - name: Terminal launch environment
         shell: bash
         run: python tools/test-terminal-environment.py
@@ -205,6 +206,7 @@ jobs:
           ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
           ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
           ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
+          ./build/wheelhouse --user:"$task_dir/table-user" --project:"$task_dir/table-project" --table_diagnostics
           ./build/wheelhouse --user:"$task_dir/managed-user" --project:"$task_dir/managed-project" --managed_content_diagnostics
           ./build/wheelhouse --user:"$task_dir/glyph-user" --project:"$task_dir/glyph-project" --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$task_dir/terminal.ppm"
           python3 tools/validate-terminal-fixture-ppm.py "$task_dir/terminal.ppm"
