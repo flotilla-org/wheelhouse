@@ -370,6 +370,8 @@ fn valid_where_it_is(registration: Option<&Registration>, host: &Host) -> bool {
 /// hints once committed; the panel such a section leaves is marked
 /// `restore_emptied`, to go with it then. `registration` names a tab's kind
 /// among `registrations`; content that isn't a registered View stays.
+/// `documents.sidebar` and `documents.workspace` must index
+/// `documents.documents`, or it panics.
 // Views are indexed: each step reads one and writes the documents.
 #[allow(clippy::needless_range_loop)]
 pub fn restore<T: Clone + PartialEq>(

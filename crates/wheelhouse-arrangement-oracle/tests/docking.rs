@@ -7,12 +7,12 @@
 #![cfg(oracle)]
 use hegel::generators as gs;
 use hegel::TestCase;
-use wheelhouse_arrangement_oracle::{Docking, Oracle};
+use wheelhouse_arrangement_oracle::{rule_message, weight_bits, Docking, Oracle};
 use wheelhouse_core::arrangement::generate::{build_step, tabs, Tab};
 use wheelhouse_core::arrangement::Arrangement;
 use wheelhouse_core::dock::{
     check, closure, creation, placement, registration, restore, traits, view_level, Document, Documents, Host, HostKind, Proposal,
-    Registration, View, SIDEBAR_SECTION,
+    Registration, Rule, View, SIDEBAR_SECTION,
 };
 
 /// The traits the rule reads, in every combination.
@@ -164,7 +164,17 @@ fn restore_matches_the_c(tc: TestCase) {
     let pending = restore(&mut rust, &registrations, &|tab| kinds.iter().find(|(t, _)| t == tab).and_then(|(_, r)| *r));
     assert_eq!(pending, c_pending, "moved sections");
     for (i, document) in rust.documents.iter().enumerate() {
-        assert_eq!(document.arrangement, c.dump(&oracles[i]), "document {i}");
+        let dumped = c.dump(&oracles[i]);
+        assert_eq!(document.arrangement, dumped, "document {i}");
+        assert_eq!(weight_bits(&document.arrangement), weight_bits(&dumped), "document {i}'s weights in their bits");
         assert_eq!(document.dirty, c_dirty[i], "document {i}'s dirty mark");
+    }
+}
+
+/// Every rule's words for the user are the C's.
+#[test]
+fn rule_messages_are_the_cs() {
+    for rule in Rule::ALL {
+        assert_eq!(rule.message(), rule_message(rule), "{rule:?}");
     }
 }

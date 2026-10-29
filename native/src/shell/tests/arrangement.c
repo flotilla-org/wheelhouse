@@ -224,6 +224,26 @@ entry_point(CmdLine *cmdline)
     check_layout(arena, arrangement);
   }
 
+  // A tab the edit keeps is the node it was too, so a pointer to it still
+  // names its View: across a select, a readdress (under the new address),
+  // a removal of the tab before it, and a move to another panel.
+  {
+    RD_Arrangement *arrangement = build(arena, "split_x panels:{0.5:{text:{selected} terminal jackstay} 0.5:{markdown}}");
+    RD_ArrangementPanel *left = arrangement->root->first, *right = arrangement->root->last;
+    RD_ArrangementTab *first = left->first_tab, *second = first->next, *third = second->next, *other = right->first_tab;
+    RD_ViewAddress text = first->view, terminal = second->view, jackstay = third->view, markdown = other->view;
+    Check(rd_arrangement_select(arrangement, left->id, terminal));
+    Check(rd_view_address_match(first->view, text) && rd_view_address_match(second->view, terminal) && rd_view_address_match(third->view, jackstay));
+    RD_ViewAddress moved = new_view("output");
+    Check(rd_arrangement_readdress(arrangement, terminal, moved));
+    Check(rd_view_address_match(second->view, moved) && second->next == third && rd_view_address_match(first->view, text));
+    Check(rd_arrangement_remove_tab(arrangement, text));
+    Check(left->first_tab == second && rd_view_address_match(third->view, jackstay) && rd_view_address_match(other->view, markdown));
+    Check(rd_view_address_match(first->view, text) && arrangement->first_removed == first);
+    Check(rd_arrangement_move_tab(arrangement, jackstay, right->id, markdown));
+    Check(right->last_tab == third && rd_view_address_match(third->view, jackstay) && rd_view_address_match(second->view, moved));
+  }
+
   // Two arrangements are one document when their panels, IDs, weights,
   // tabs and Selected Views are.
   {
