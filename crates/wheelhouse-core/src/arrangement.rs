@@ -21,6 +21,22 @@ use crate::suggested_layout::Axis;
 mod weight;
 pub use weight::quantize;
 
+fn children_weights<T>(children: &[Panel<T>]) -> Vec<f32> {
+    children.iter().map(|c| c.weight).collect()
+}
+
+/// The sibling the boundary after child `i` of a split pairs it with, given
+/// the children's weights: the next one with space (a weight above zero).
+/// A child with no space has no boundary, and neither has the last one
+/// with space. The one place this rule lives: resize and equalize use it,
+/// and the native shell asks it to draw the splitters.
+pub fn boundary_partner(weights: &[f32], i: usize) -> Option<usize> {
+    if !weights.get(i)?.gt(&0.0) {
+        return None;
+    }
+    weights[i + 1..].iter().position(|w| *w > 0.0).map(|p| i + 1 + p)
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod generate;
 
@@ -198,12 +214,14 @@ pub enum Edit<T> {
     /// Moves `panel` among its siblings to after `after` (none: first),
     /// with its weight.
     Reorder { panel: PanelId, after: Option<PanelId> },
-    /// Moves the boundary after `panel` by `delta` of its parent, keeping
-    /// both sides at least `floor` where they can be. Siblings whose
+    /// Moves the boundary after `panel` (between it and the next sibling
+    /// with space, see [`boundary_partner`]) by `delta` of its parent,
+    /// keeping both sides at least `floor` where they can be. Siblings whose
     /// weights drifted from summing to one are rescaled first.
     Resize { panel: PanelId, delta: f32, floor: f32 },
     /// Gives the two sides of the boundary after `panel` equal shares of
-    /// their space, rescaling drifted siblings as resizing does.
+    /// their space, leaving panels between them at zero, rescaling
+    /// drifted siblings as resizing does.
     Equalize { panel: PanelId },
     /// Every tab of `from`, a Selected View and a removed tab included,
     /// becomes `to`: its View moved to another owner, or its key changed.
@@ -617,10 +635,8 @@ impl<T: Clone + PartialEq> Arrangement<T> {
         let Some(path) = self.path(id) else { return false };
         let Some((&i, parent_path)) = path.split_last() else { return false };
         let parent = self.at_mut(parent_path);
-        if i + 1 >= parent.children.len() {
-            return false;
-        }
-        let (mut min, mut max) = (parent.children[i].weight, parent.children[i + 1].weight);
+        let Some(j) = boundary_partner(&children_weights(&parent.children), i) else { return false };
+        let (mut min, mut max) = (parent.children[i].weight, parent.children[j].weight);
         let total = parent.children.iter().fold(0.0f32, |total, child| total + c_max(0.0, child.weight));
         if total > 0.0 && (total - 1.0).abs() > 0.0001 {
             min /= total;
@@ -643,7 +659,7 @@ impl<T: Clone + PartialEq> Arrangement<T> {
             };
         }
         parent.children[i].weight = quantize(min + delta);
-        parent.children[i + 1].weight = quantize(max - delta);
+        parent.children[j].weight = quantize(max - delta);
         true
     }
 
@@ -651,7 +667,11 @@ impl<T: Clone + PartialEq> Arrangement<T> {
         let applied = self.resize(id, 0.0, 0.0);
         let Some(path) = self.path(id) else { return false };
         let weight = self.at(&path).weight;
-        let next = path.split_last().and_then(|(&i, parent)| self.at(parent).children.get(i + 1)).map_or(0.0, |next| next.weight);
+        let next = path.split_last().and_then(|(&i, parent)| {
+            let children = &self.at(parent).children;
+            boundary_partner(&children_weights(children), i).map(|j| children[j].weight)
+        });
+        let next = next.unwrap_or(0.0);
         self.resize(id, (next - weight) / 2.0, 0.0) || applied
     }
 

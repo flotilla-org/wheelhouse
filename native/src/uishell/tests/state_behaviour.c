@@ -1471,7 +1471,7 @@ entry_point(CmdLine *cmdline)
     RD_PanelAddress first_panel = first->address;
     F32 weight_before = state_weight(first_panel);
     U64 calls = state->store_calls, commits = state->store_commits;
-    rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_drag")), &mount, first);
+    rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_drag")), &mount, first, first->next);
     for(U32 step = 1; step <= 4; step++)
     {
       rd_state->frame_index += 1;
@@ -1488,6 +1488,45 @@ entry_point(CmdLine *cmdline)
     state_check_committed(ws);
   }
 
+  //- A layout's empty middle panel (#486) gets no boundary of its own, and
+  // the panels either side of it share one: the core pairs each with the
+  // next panel that has space, and dragging it moves weight between those two
+  // only. The arrangement is set directly and put back before a frame.
+  {
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    CFG_Node *workspace = state_workspace_labelled(window, str8_lit("Workspace 1"));
+    RD_PanelOwner owner = rd_panel_owner_from_host(RD_PanelOwnerKind_Workspace, workspace);
+    RD_Arrangement *original = rd_arrangement_from_panel_owner(scratch.arena, owner);
+    RD_Arrangement *three = rd_arrangement_from_panel_owner(scratch.arena, owner);
+    RD_PanelID left = three->root->first->id, right = three->root->last->id;
+    StateCheck(three->root->child_count == 2);
+    RD_PanelID middle = rd_arrangement_add(three, three->root->id, 0.1f);
+    rd_arrangement_reorder(three, middle, left);
+    rd_arrangement_panel_from_id(three, left)->weight = 0.5f;
+    rd_arrangement_panel_from_id(three, middle)->weight = 0.f;
+    rd_arrangement_panel_from_id(three, right)->weight = 0.5f;
+    rd_arrangement_set(three);
+    UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, workspace);
+    RD_PanelNode *root = mount.panel_tree.root;
+    RD_PanelNode *first = root->first, *empty = first->next, *last = root->last;
+    StateCheck(root->child_count == 3 && first->address.id == left && empty->address.id == middle && last->address.id == right);
+    // One boundary, between the outer two; none beside the empty panel.
+    StateCheck(rd_panel_node_boundary_partner(root, first) == last);
+    StateCheck(rd_panel_node_boundary_partner(root, empty) == &rd_nil_panel_node);
+    StateCheck(rd_panel_node_boundary_partner(root, last) == &rd_nil_panel_node);
+    rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_empty_middle_drag")), &mount, first, last);
+    rd_state->frame_index += 1;
+    rd_boundary_resize_move(0.2f, 0.05f, 1);
+    rd_state->frame_index += 1;
+    rd_boundary_resize_commit();
+    RD_PanelAddress left_panel = {owner, left}, middle_panel = {owner, middle}, right_panel = {owner, right};
+    StateCheck(abs_f32(state_weight(left_panel) - 0.7f) < 0.0001f);
+    StateCheck(abs_f32(state_weight(right_panel) - 0.3f) < 0.0001f);
+    StateCheck(state_weight(middle_panel) == 0.f);
+    rd_arrangement_set(original);
+  }
+
   //- A sidebar divider drag reaches the core once, when it ends, sizes
   // and all: releasing it opts into sizes set by hand, as the boundary does.
   {
@@ -1500,7 +1539,7 @@ entry_point(CmdLine *cmdline)
     RD_PanelAddress first_panel = first->address;
     F32 weight_before = state_weight(first_panel);
     U64 calls = state->store_calls, commits = state->sidebar_commits;
-    rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_sidebar_drag")), &mount, first);
+    rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_sidebar_drag")), &mount, first, first->next);
     for(U32 step = 1; step <= 4; step++)
     {
       rd_state->frame_index += 1;
@@ -2084,7 +2123,7 @@ entry_point(CmdLine *cmdline)
     WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(reviewer));
     UIShell_WorkspaceMount mount = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, reviewer);
     RD_PanelNode *first = mount.panel_tree.root->first;
-    rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_soft_drag")), &mount, first);
+    rd_boundary_resize_begin(ui_key_from_string(ui_key_zero(), str8_lit("state_behaviour_soft_drag")), &mount, first, first->next);
     rd_state->frame_index += 1;
     rd_boundary_resize_move(0.1f, 0.05f, 1);
     state_frame(ws);

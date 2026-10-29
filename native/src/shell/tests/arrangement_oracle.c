@@ -881,7 +881,10 @@ rd_arrangement_resize(RD_Arrangement *arrangement, RD_PanelID id, F32 delta, F32
 {
   RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(arrangement, id);
   RD_ArrangementPanel *next = panel->next;
-  if(panel == &rd_nil_arrangement_panel || next == &rd_nil_arrangement_panel) { return; }
+  // A boundary pairs a panel that has space with the next that has (#486).
+  if(panel == &rd_nil_arrangement_panel || panel->weight <= 0) { return; }
+  while(next != &rd_nil_arrangement_panel && next->weight <= 0) { next = next->next; }
+  if(next == &rd_nil_arrangement_panel) { return; }
   F32 min = panel->weight, max = next->weight, total = 0;
   for(RD_ArrangementPanel *child = panel->parent->first; child != &rd_nil_arrangement_panel; child = child->next)
   { total += Max(0.f, child->weight); }
@@ -902,7 +905,10 @@ rd_arrangement_equalize(RD_Arrangement *arrangement, RD_PanelID id)
 {
   RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(arrangement, id);
   rd_arrangement_resize(arrangement, id, 0, 0);
-  rd_arrangement_resize(arrangement, id, (panel->next->weight-panel->weight)/2, 0);
+  RD_ArrangementPanel *next = panel->next;
+  while(next != &rd_nil_arrangement_panel && next->weight <= 0) { next = next->next; }
+  if(panel->weight <= 0 || next == &rd_nil_arrangement_panel) { return; }
+  rd_arrangement_resize(arrangement, id, (next->weight-panel->weight)/2, 0);
 }
 
 internal B32

@@ -571,3 +571,33 @@ pub extern "C" fn wheelhouse_arrangement_intent_name(kind: u32) -> Text {
 pub extern "C" fn wheelhouse_arrangement_quantize(weight: f32) -> f32 {
     wheelhouse_core::arrangement::quantize(weight)
 }
+
+/// The sibling the boundary after child `i` of a split pairs it with, given
+/// the `len` children's weights: the next one with space. `len` when there is
+/// none (the child has no space, or nothing with space follows it). The
+/// core's rule (arrangement::boundary_partner), for the shell to draw
+/// splitters by.
+///
+/// # Safety
+/// `weights` is `len` floats, or NULL when `len` is 0.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_arrangement_boundary_partner(weights: *const f32, len: usize, i: usize) -> usize {
+    let weights = if len == 0 { &[] } else { std::slice::from_raw_parts(weights, len) };
+    wheelhouse_core::arrangement::boundary_partner(weights, i).unwrap_or(len)
+}
+
+#[cfg(test)]
+mod boundary_partner_tests {
+    use super::wheelhouse_arrangement_boundary_partner as partner;
+
+    #[test]
+    fn the_wrapper_answers_len_for_none_and_takes_no_weights() {
+        let w = [0.5f32, 0.0, 0.5];
+        unsafe {
+            assert_eq!(partner(w.as_ptr(), 3, 0), 2);
+            assert_eq!(partner(w.as_ptr(), 3, 1), 3);
+            assert_eq!(partner(w.as_ptr(), 3, 2), 3);
+            assert_eq!(partner(std::ptr::null(), 0, 0), 0);
+        }
+    }
+}

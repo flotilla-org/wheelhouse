@@ -5453,16 +5453,45 @@ rd_boundary_resize_apply(void)
   { rd_arrangement_resize(resize->live, resize->panel, resize->delta, resize->floor); }
 }
 
-internal void
-rd_boundary_resize_begin(UI_Key key, UIShell_WorkspaceMount *mount, RD_PanelNode *panel)
+// The sibling after `child` that its boundary pairs it with: the next with
+// space, by the core's rule; nil when it has no boundary.
+internal RD_PanelNode *
+rd_panel_node_boundary_partner(RD_PanelNode *parent, RD_PanelNode *child)
 {
+  Temp scratch = scratch_begin(0, 0);
+  U64 count = 0, index = 0;
+  for(RD_PanelNode *c = parent->first; c != &rd_nil_panel_node; c = c->next) { count += 1; }
+  F32 *weights = push_array(scratch.arena, F32, count);
+  count = 0;
+  for(RD_PanelNode *c = parent->first; c != &rd_nil_panel_node; c = c->next)
+  {
+    if(c == child) { index = count; }
+    weights[count++] = c->pct_of_parent;
+  }
+  U64 partner = wheelhouse_arrangement_boundary_partner(weights, count, index);
+  scratch_end(scratch);
+  RD_PanelNode *result = &rd_nil_panel_node;
+  if(partner < count)
+  {
+    result = parent->first;
+    for(U64 k = 0; k < partner; k += 1) { result = result->next; }
+  }
+  return result;
+}
+
+internal void
+rd_boundary_resize_begin(UI_Key key, UIShell_WorkspaceMount *mount, RD_PanelNode *panel, RD_PanelNode *partner)
+{
+  // `partner` is what rd_panel_node_boundary_partner gives `panel`, as the
+  // core's resize pairs it; a sidebar's sections always have space, so it is
+  // their next sibling.
   rd_boundary_resize_end();
   RD_BoundaryResize *resize = &rd_state->boundary_resize;
   resize->arena = arena_alloc();
   resize->key = key;
   resize->owner = mount->owner;
   resize->panel = panel->address.id;
-  resize->laid_out = v2f32(panel->pct_of_parent, panel->next->pct_of_parent);
+  resize->laid_out = v2f32(panel->pct_of_parent, partner->pct_of_parent);
   resize->frame_index = rd_state->frame_index;
   rd_boundary_resize_apply();
 }
@@ -5996,7 +6025,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
       //- rjf: do UI for drag boundaries between all children
       //
       for(RD_PanelNode *child = panel->first;
-          child != &rd_nil_panel_node && child->next != &rd_nil_panel_node;
+          child != &rd_nil_panel_node;
           child = child->next)
       {
         RD_PanelNode *min_child = child;
@@ -6006,12 +6035,21 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
         // returns to when expanded.
         if(split_axis == Axis2_Y && rd_dock_host_kind_from_panel_owner(panel->address.owner) == RD_DockHostKind_Sidebar)
         {
+          // Saved sections always have space (a document's weights are
+          // positive), so the core pairs each with its next sibling.
+          if(max_child == &rd_nil_panel_node) { continue; }
           F32 header = uishell_sidebar_row_height(), h = 0;
           if(uishell_sidebar_panel_collapsed(min_child, header, &h) || uishell_sidebar_panel_collapsed(max_child, header, &h)) { continue; }
         }
         // A workspace panel shown without space (an empty one its layout
-        // keeps for slots to land in) has no boundary to drag.
-        else if(min_child->pct_of_parent <= 0 || max_child->pct_of_parent <= 0) { continue; }
+        // keeps for slots to land in) has no boundary to drag, and the
+        // panels either side of it share one: the core pairs each with the
+        // next sibling that has space.
+        else
+        {
+          max_child = rd_panel_node_boundary_partner(panel, min_child);
+          if(max_child == &rd_nil_panel_node) { continue; }
+        }
         Rng2F32 min_child_rect = rd_target_rect_from_panel_node_child(panel_rect, panel, min_child);
         Rng2F32 max_child_rect = rd_target_rect_from_panel_node_child(panel_rect, panel, max_child);
         Rng2F32 boundary_rect = {0};
@@ -6039,7 +6077,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           }
           else if(ui_pressed(sig))
           {
-            rd_boundary_resize_begin(box->key, mount, min_child);
+            rd_boundary_resize_begin(box->key, mount, min_child, max_child);
           }
           else if(ui_dragging(sig) && resize != 0)
           {
