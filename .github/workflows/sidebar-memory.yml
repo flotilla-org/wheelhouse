@@ -1,8 +1,8 @@
 name: Sidebar memory regression
 
 # Native sidebar benchmark with an RSS ceiling and growth gate (#195, #199):
-# a scheduled and on-demand regression check, not a required gate. Pins come from build.yml so the two
-# workflows cannot drift.
+# a scheduled and on-demand regression check, not a required gate. Pins come from ci/pins.toml, as in
+# build.yml, so the two workflows cannot drift.
 on:
   schedule:
     - cron: '23 4 * * 1'
@@ -35,13 +35,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: wheelhouse
-      - name: Read dependency pins from build.yml
-        run: |
-          for name in CLEAT_REV JACKSTAY_REV; do
-            value=$(sed -n "s/^  ${name}: *\([0-9a-f]\{40\}\).*/\1/p" .github/workflows/build.yml)
-            test -n "$value" || { echo "missing $name in build.yml" >&2; exit 1; }
-            echo "$name=$value" >> "$GITHUB_ENV"
-          done
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Read dependency pins from ci/pins.toml
+        run: python ci/pins.py github-env >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           repository: flotilla-org/cleat
@@ -53,9 +51,6 @@ jobs:
           ref: ${{ env.JACKSTAY_REV }}
           path: jackstay
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - name: Install build, display and measurement dependencies
         run: |
           sudo apt-get update

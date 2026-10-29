@@ -13,16 +13,6 @@ concurrency:
   group: native-builds-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # Remote packet attach (cleat#379): `cleat proxy` and provider transports,
-  # additive on provider ABI 11; packet protocol 15. Daemons on an older
-  # protocol are rejected: coordinate the Cleat fleet and daily-driver
-  # rollout (#97). Remote hosts need this Cleat for `cleat proxy` (#104).
-  CLEAT_REV: c88692aa62c10fbeb10ecd22f6e637fb600ebd62
-  # Jackstay main: ABI 0.17, the v3 track handshake (jackstay#119) with
-  # affordances as a track.
-  JACKSTAY_REV: bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac
-
 jobs:
   daily-driver:
     name: Daily-driver lifecycle / ${{ matrix.os }}
@@ -43,6 +33,9 @@ jobs:
         if: runner.os != 'Windows'
       - run: python tools/test-windows-terminal-input-readiness.py
       - run: python tools/test-embed-sidebar-fixture.py
+      - run: python ci/test_pins.py
+      - run: python3 ci/test_run_ui_diagnostics.py
+        if: runner.os != 'Windows'
       - run: bash -n scripts/run-daily-driver.sh
         if: runner.os != 'Windows'
 
@@ -69,6 +62,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: wheelhouse
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Read dependency pins from ci/pins.toml
+        shell: bash
+        run: python ci/pins.py github-env >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           repository: flotilla-org/cleat
@@ -80,9 +79,6 @@ jobs:
           ref: ${{ env.JACKSTAY_REV }}
           path: jackstay
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - name: Install Linux build and display dependencies
         if: runner.os == 'Linux'
         run: |
@@ -149,30 +145,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tools/check-windows-conpty.ps1 -Expect inbox
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      # --managed_content_diagnostics and tools/test-remote-terminal.sh stay
-      # macOS-only: they run real terminal
-      # sessions, which ask Cleat for its Ghostty VT engine, and this job builds
-      # Cleat without one (vt: none). Running it here needs a ghostty-vt build.
       - name: Linux UI diagnostics
         if: runner.os == 'Linux'
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
-        run: |
-          task_dir=$(mktemp -d)
-          trap 'rm -rf "$task_dir"' EXIT
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/shared-user" --project:"$task_dir/shared-project" --shared_ui_diagnostics --shared_ui_fixture_dir:"$task_dir"
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/selection-user" --project:"$task_dir/selection-project" --terminal_selection_diagnostics
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/jackstay-user" --project:"$task_dir/jackstay-project" --jackstay_input_diagnostics
-          WHEELHOUSE_INPUT_TEST_GENERIC=1 timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/jackstay-generic-user" --project:"$task_dir/jackstay-generic-project" --jackstay_input_diagnostics
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/preview-control-user" --project:"$task_dir/preview-control-project" --preview_diagnostics --no_preview_refresh_budget --no_preview_surface_budget --no_preview_render_budget
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/hosting-user" --project:"$task_dir/hosting-project" --hosting_diagnostics
-          timeout 120s xvfb-run -a ./build/wheelhouse --user:"$task_dir/table-user" --project:"$task_dir/table-project" --table_diagnostics
+        run: python3 ci/run-ui-diagnostics.py --os linux
       - name: Terminal launch environment
         shell: bash
         run: python tools/test-terminal-environment.py
@@ -187,29 +164,7 @@ jobs:
         run: bash native/src/mac/window_manager/tests/run_scroll_events.sh
       - name: macOS UI diagnostics
         if: runner.os == 'macOS'
-        run: |
-          task_dir=$(mktemp -d)
-          trap 'rm -rf "$task_dir"' EXIT
-          ./build/wheelhouse --user:"$task_dir/shared-user" --project:"$task_dir/shared-project" --shared_ui_diagnostics --shared_ui_fixture_dir:"$task_dir"
-          ./build/wheelhouse --user:"$task_dir/selection-user" --project:"$task_dir/selection-project" --terminal_selection_diagnostics
-          ./build/wheelhouse --user:"$task_dir/presentation-user" --project:"$task_dir/presentation-project" --presentation_diagnostics
-          ./build/wheelhouse --user:"$task_dir/hosting-user" --project:"$task_dir/hosting-project" --hosting_diagnostics
-          bash tools/test-remote-terminal.sh ./build/wheelhouse ../cleat/target/debug/cleat
-          ./build/wheelhouse --user:"$task_dir/skipped-frame-user" --project:"$task_dir/skipped-frame-project" --skipped_frame_diagnostics
-          ./build/wheelhouse --user:"$task_dir/resize-user" --project:"$task_dir/resize-project" --dashboard:"$task_dir/resize-dashboard" --live_resize_diagnostics
-          ./build/wheelhouse --user:"$task_dir/user" --project:"$task_dir/project" --sidebar_diagnostics
-          ./build/wheelhouse --user:"$task_dir/scroll-user" --project:"$task_dir/scroll-project" --scroll_region_diagnostics
-          ./build/wheelhouse --user:"$task_dir/preview-user" --project:"$task_dir/preview-project" --preview_diagnostics
-          ./build/wheelhouse --user:"$task_dir/jackstay-user" --project:"$task_dir/jackstay-project" --jackstay_input_diagnostics
-          WHEELHOUSE_INPUT_TEST_GENERIC=1 ./build/wheelhouse --user:"$task_dir/jackstay-generic-user" --project:"$task_dir/jackstay-generic-project" --jackstay_input_diagnostics
-          ./build/wheelhouse --user:"$task_dir/preview-control-user" --project:"$task_dir/preview-control-project" --preview_diagnostics --no_preview_refresh_budget --no_preview_surface_budget --no_preview_render_budget
-          ./build/wheelhouse --user:"$task_dir/link-user" --project:"$task_dir/link-project" --terminal_link_diagnostics
-          ./build/wheelhouse --user:"$task_dir/tooltip-user" --project:"$task_dir/tooltip-project" --tooltip_diagnostics
-          ./build/wheelhouse --user:"$task_dir/panel-user" --project:"$task_dir/panel-project" --panel_diagnostics
-          ./build/wheelhouse --user:"$task_dir/table-user" --project:"$task_dir/table-project" --table_diagnostics
-          ./build/wheelhouse --user:"$task_dir/managed-user" --project:"$task_dir/managed-project" --managed_content_diagnostics
-          ./build/wheelhouse --user:"$task_dir/glyph-user" --project:"$task_dir/glyph-project" --terminal_glyph_diagnostics --terminal_glyph_fixture_ppm:"$task_dir/terminal.ppm"
-          python3 tools/validate-terminal-fixture-ppm.py "$task_dir/terminal.ppm"
+        run: python3 ci/run-ui-diagnostics.py --os macos
       - name: Headless section placement lifecycle
         run: python tools/test-section-placement.py
       - name: Windows terminal input regression
