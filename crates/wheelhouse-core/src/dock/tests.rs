@@ -301,7 +301,7 @@ fn restore_moves_a_cross_level_placement_to_its_default_host_keeping_its_identit
     let section = find_tab(w.workspace(), SIDEBAR_SECTION).expect("there");
     let pending = w.restore();
     // A section moves to the sidebar, which places it by its hints.
-    assert_eq!(pending, [section.clone()]);
+    assert_eq!(pending, std::slice::from_ref(&section));
     assert_eq!(panel_of(w.sidebar(), &section), Some(root(w.sidebar()).children[0].id));
     assert_eq!(root(w.sidebar()).children[0].tabs.last(), Some(&section));
     assert!(panel_of(w.workspace(), &section).is_none() && count(w.sidebar(), SIDEBAR_SECTION) == 2);

@@ -118,7 +118,8 @@ fn ddrenorm(oh: f64, ol: f64) -> (f64, f64) {
 /// C's double-to-int64 conversion as x86-64 makes it: out of range is
 /// INT64_MIN. stb only reaches it for magnitudes near 1e19.
 fn to_i64(x: f64) -> i64 {
-    if x >= -9.223372036854775808e18 && x < 9.223372036854775808e18 {
+    const LIMIT: f64 = 9_223_372_036_854_775_808.0;
+    if (-LIMIT..LIMIT).contains(&x) {
         x as i64
     } else {
         i64::MIN
@@ -260,7 +261,7 @@ fn real_to_str(value: f64, frac_digits: u32) -> (bool, Repr) {
         }
         if whole {
             let mut n = signed as u32;
-            while n != 0 && n % 1000 == 0 {
+            while n != 0 && n.is_multiple_of(1000) {
                 n /= 1000;
             }
             signed = n as i64;

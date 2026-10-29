@@ -927,7 +927,7 @@ pub fn problem<T: Clone + PartialEq>(a: &Arrangement<T>) -> Option<String> {
         }
         let mut total = 0.0f32;
         for c in &p.children {
-            if !(c.weight >= 0.0) {
+            if c.weight.is_nan() || c.weight < 0.0 {
                 return Some(format!("panel {} has a negative weight", c.id.0));
             }
             total += c.weight;

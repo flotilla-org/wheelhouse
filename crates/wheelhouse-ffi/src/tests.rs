@@ -1228,7 +1228,7 @@ mod arrangement_abi {
             1 => Intent::MoveTab { owner, tab: t, to: p, after },
             2 => Intent::CloseTab { owner, tab: t },
             3 => {
-                let t = if from_b { tc.draw(gs::sampled_from(&tabs(&b))) } else { t };
+                let t = if from_b { tc.draw(gs::sampled_from(tabs(&b))) } else { t };
                 Intent::DropTab { owner, tab: t, to: p, dir: tc.draw(gs::booleans()).then(|| draw_dir(&tc)), after }
             }
             4 => Intent::SplitPanel { owner, panel: p, dir: draw_dir(&tc) },
