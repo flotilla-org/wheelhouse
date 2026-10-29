@@ -772,11 +772,11 @@ unsafe fn effect_kinds(h: *mut WheelhouseCore) -> Vec<(u32, String)> {
     kinds
 }
 
-/// A card asked for by entity answers what a snapshot's detail of that
-/// entity does, for every catalog entity, and its actions are intents that
-/// do what the detail's actions do.
+/// Every catalog entity has its card, which answers what the core's catalog
+/// card of it says, and its actions are intents that do what the core's
+/// actions on the entity do.
 #[test]
-fn a_card_answers_what_the_snapshot_detail_does() {
+fn every_catalog_entity_has_its_card() {
     unsafe {
         let daily = include_str!("../../../data/sidebar/daily-driver.kdl");
         let fixture = include_str!("../../../data/sidebar/fixture.jsonl");
@@ -784,7 +784,7 @@ fn a_card_answers_what_the_snapshot_detail_does() {
         let setups = [(daily, fixture, false), ("", include_str!("../../../fixtures/typed-detail.jsonl"), false), (daily, fixture, true)];
         let mut checked = 0;
         for (config, facts, stale) in setups {
-            // Two cores with the same facts: one dispatches the detail's
+            // Two cores with the same facts: one dispatches the core's
             // actions, the other applies the card's intents.
             let cores = [create(config), create(config)];
             for h in cores {
@@ -794,13 +794,10 @@ fn a_card_answers_what_the_snapshot_detail_does() {
                 assert_eq!(wheelhouse_provider_set_stale(h, text(PROVIDER), stale as u32, ptr::null_mut()), 1);
             }
             let [h, other] = cores;
-            let s = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
-            for index in 0..wheelhouse_snapshot_detail_count(s) {
-                let mut d = MaybeUninit::uninit();
-                assert_eq!(wheelhouse_snapshot_detail(s, index, d.as_mut_ptr()), 1);
-                let d = d.assume_init();
-                let entity = d.entity.read().unwrap();
-                let card = wheelhouse_card_acquire(h, d.entity, ptr::null_mut());
+            let (now_ms, cards) = (*h).sidebar.detail_cards();
+            for d in &cards {
+                let entity = d.entity.clone();
+                let card = wheelhouse_card_acquire(h, EntityView::of(&entity), ptr::null_mut());
                 assert!(!card.is_null(), "{entity:?} has a card");
                 assert_eq!(wheelhouse_card_is_current(h, card, ptr::null_mut()), 1);
                 let mut c = MaybeUninit::uninit();
@@ -808,70 +805,73 @@ fn a_card_answers_what_the_snapshot_detail_does() {
                 let c = c.assume_init();
                 assert_eq!(c.entity.read().unwrap(), entity);
                 assert_eq!(
-                    (c.label.read(), c.field_count, c.error.read(), c.has_workspace, c.workspace_id.bytes, c.now_ms),
-                    (d.label.read(), d.field_count, d.error.read(), d.has_workspace, d.workspace_id.bytes, d.now_ms)
+                    (c.label.read().unwrap(), c.field_count, c.error.read().unwrap(), c.has_workspace, c.workspace_id.bytes),
+                    (
+                        d.label.clone(),
+                        d.fields.len(),
+                        d.error.clone().unwrap_or_default(),
+                        d.workspace_id.is_some() as u32,
+                        workspace_view(d.workspace_id).bytes
+                    )
                 );
-                assert_eq!(c.has_url, (d.copy_url != NONE) as u32);
-                for f in 0..d.field_count {
-                    let (mut df, mut cf) = (MaybeUninit::uninit(), MaybeUninit::uninit());
-                    assert_eq!(wheelhouse_snapshot_detail_field(s, index, f, df.as_mut_ptr()), 1);
+                assert_eq!((c.opening, c.now_ms), (d.opening as u32, now_ms));
+                assert_eq!(c.has_url, (*h).sidebar.subject_url(&entity).is_some() as u32);
+                let provider_stale = (*h).sidebar.provider_is_stale(&entity.provider);
+                for (f, field) in d.fields.iter().enumerate() {
+                    let mut cf = MaybeUninit::uninit();
                     assert_eq!(wheelhouse_card_field(card, f, cf.as_mut_ptr()), 1);
-                    let (df, cf) = (df.assume_init(), cf.assume_init());
+                    let cf = cf.assume_init();
                     let view = |v: &DetailFieldView| {
                         (
                             (v.name.read(), v.section.read(), v.role, v.label.read(), v.has_value, v.text.read()),
                             (v.source_key.read(), v.source_id.read(), v.has_observation, v.observed_at_ms, v.stale, v.relation_count),
                         )
                     };
-                    assert_eq!(view(&cf), view(&df));
-                    for r in 0..df.relation_count {
-                        let (mut dr, mut cr) = (MaybeUninit::uninit(), MaybeUninit::uninit());
-                        assert_eq!(wheelhouse_snapshot_detail_relation(s, index, f, r, ptr::null(), 0, dr.as_mut_ptr()), 1);
+                    assert_eq!(view(&cf), view(&detail_field_view(field, provider_stale)));
+                    for (r, relation) in field.relations.iter().enumerate() {
+                        let mut cr = MaybeUninit::uninit();
                         assert_eq!(wheelhouse_card_relation(card, f, r, ptr::null(), 0, cr.as_mut_ptr()), 1);
-                        let (dr, cr) = (dr.assume_init(), cr.assume_init());
+                        let cr = cr.assume_init();
                         let target = cr.entity.read().unwrap();
-                        assert_eq!(target, dr.entity.read().unwrap());
+                        assert_eq!(&target, relation);
                         assert_eq!(cr.display_text.read().unwrap(), target.id);
                         // A relation already on the path is left out.
                         assert_eq!(wheelhouse_card_relation(card, f, r, &cr.entity, 1, cr_out()), 0);
                     }
-                    assert_eq!(wheelhouse_card_relation(card, f, df.relation_count, ptr::null(), 0, cr_out()), 0);
+                    assert_eq!(wheelhouse_card_relation(card, f, field.relations.len(), ptr::null(), 0, cr_out()), 0);
                 }
-                assert_eq!(wheelhouse_card_field(card, d.field_count, MaybeUninit::uninit().as_mut_ptr()), 0);
+                assert_eq!(wheelhouse_card_field(card, d.fields.len(), MaybeUninit::uninit().as_mut_ptr()), 0);
                 for a in 0..3 {
-                    let (mut da, mut ca) = (MaybeUninit::uninit(), MaybeUninit::uninit());
-                    let has = wheelhouse_snapshot_detail_action(s, index, a, da.as_mut_ptr());
-                    assert_eq!(wheelhouse_card_action(card, a, ca.as_mut_ptr()), has);
+                    let mut ca = MaybeUninit::uninit();
+                    let has = wheelhouse_card_action(card, a, ca.as_mut_ptr());
+                    assert_eq!(has, [1, c.has_url, 0][a], "{entity:?} action {a}");
                     if has == 0 {
                         continue;
                     }
-                    let (da, ca) = (da.assume_init(), ca.assume_init());
-                    assert_eq!((ca.intent.read(), ca.label.read()), (da.intent.read(), da.label.read()));
+                    let ca = ca.assume_init();
+                    if a == 0 {
+                        assert_eq!(
+                            (ca.intent.read().unwrap(), ca.label.read().unwrap()),
+                            (d.primary_intent.as_str().to_owned(), d.primary_label.clone())
+                        );
+                    }
                     assert_eq!(ca.entity.read().unwrap(), entity);
                     assert_eq!(ca.kind, [WHEELHOUSE_INTENT_ACTIVATE, WHEELHOUSE_INTENT_COPY_SUBJECT_URL][a]);
-                    // The detail's action on one core, the card's intent on the
-                    // other. Earlier actions changed the core, so the detail's
-                    // comes from a fresh snapshot.
-                    let fresh = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
-                    let mut fa = MaybeUninit::uninit();
-                    let found = wheelhouse_snapshot_detail_find(fresh, d.entity);
-                    assert_eq!(wheelhouse_snapshot_detail_action(fresh, found, a, fa.as_mut_ptr()), 1);
-                    let mut error = ptr::null_mut();
-                    let dispatched = wheelhouse_dispatch(h, fresh, fa.assume_init().action, &mut error);
-                    wheelhouse_string_free(error);
-                    wheelhouse_snapshot_release(fresh);
+                    // The core's action on one core, the card's intent on the other.
+                    let action =
+                        [Action::Activate { entity: entity.clone() }, Action::CopySubjectUrl { entity: entity.clone() }][a].clone();
+                    let dispatched = (*other).sidebar.dispatch(action).map(|effects| (*other).effects.extend(effects));
                     let intent =
                         IntentView { kind: ca.kind, key: text(""), entity: ca.entity, name: text(""), has_value: 0, value: text("") };
                     let mut error = ptr::null_mut();
-                    let applied = wheelhouse_apply_intent(other, &intent, ptr::null_mut(), &mut error);
+                    let applied = wheelhouse_apply_intent(h, &intent, ptr::null_mut(), &mut error);
                     wheelhouse_string_free(error);
-                    assert_eq!(applied == WHEELHOUSE_INTENT_ACCEPTED, dispatched == 1, "{entity:?} action {a}");
-                    assert_eq!(effect_kinds(other), effect_kinds(h), "{entity:?} action {a}");
+                    assert_eq!(applied == WHEELHOUSE_INTENT_ACCEPTED, dispatched.is_ok(), "{entity:?} action {a}");
+                    assert_eq!(effect_kinds(h), effect_kinds(other), "{entity:?} action {a}");
                     checked += 1;
                 }
                 wheelhouse_card_release(card);
             }
-            wheelhouse_snapshot_release(s);
             // An entity the catalog doesn't have has no card, and no error.
             let mut error = ptr::null_mut();
             let missing = EntityView { provider: text(PROVIDER), kind: text("vessel"), id: text("nowhere") };

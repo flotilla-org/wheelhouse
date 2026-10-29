@@ -12,54 +12,87 @@ fn entity(kind: Text, id: Text) -> EntityView {
 unsafe fn read(t: Text) -> String {
     String::from_utf8(std::slice::from_raw_parts(t.data, t.len).to_vec()).unwrap()
 }
-unsafe fn field(s: *const WheelhouseSnapshot, card: usize, name: &str) -> DetailFieldView {
-    let mut d = MaybeUninit::uninit();
-    assert_eq!(wheelhouse_snapshot_detail(s, card, d.as_mut_ptr()), 1);
-    for i in 0..d.assume_init().field_count {
+// A card's field by name.
+unsafe fn field(card: *const WheelhouseCard, name: &str) -> DetailFieldView {
+    let index = field_index(card, name);
+    let mut f = MaybeUninit::uninit();
+    assert_eq!(wheelhouse_card_field(card, index, f.as_mut_ptr()), 1);
+    f.assume_init()
+}
+unsafe fn field_index(card: *const WheelhouseCard, name: &str) -> usize {
+    let mut c = MaybeUninit::uninit();
+    assert_eq!(wheelhouse_card(card, c.as_mut_ptr()), 1);
+    for i in 0..c.assume_init().field_count {
         let mut f = MaybeUninit::uninit();
-        assert_eq!(wheelhouse_snapshot_detail_field(s, card, i, f.as_mut_ptr()), 1);
-        let f = f.assume_init();
-        if read(f.name) == name {
-            return f;
+        assert_eq!(wheelhouse_card_field(card, i, f.as_mut_ptr()), 1);
+        if read(f.assume_init().name) == name {
+            return i;
         }
     }
     panic!("missing field {name}")
 }
-unsafe fn acquire_worktree(h: *mut WheelhouseCore) -> *mut WheelhouseSnapshot {
-    let s = wheelhouse_snapshot_acquire(h, ptr::null_mut());
-    assert_ne!(wheelhouse_snapshot_detail_request(h, s, entity(text("worktree"), text("w")), ptr::null_mut()), usize::MAX);
-    s
+unsafe fn card_info(card: *const WheelhouseCard) -> CardView {
+    let mut c = MaybeUninit::uninit();
+    assert_eq!(wheelhouse_card(card, c.as_mut_ptr()), 1);
+    c.assume_init()
+}
+unsafe fn acquire(h: *mut WheelhouseCore, kind: &str, id: &str) -> *mut WheelhouseCard {
+    let mut error = ptr::null_mut();
+    let card = wheelhouse_card_acquire(h, entity(text(kind), text(id)), &mut error);
+    assert!(error.is_null());
+    card
+}
+unsafe fn acquire_worktree(h: *mut WheelhouseCore) -> *mut WheelhouseCard {
+    let card = acquire(h, "worktree", "w");
+    assert!(!card.is_null());
+    card
+}
+unsafe fn action(card: *const WheelhouseCard, index: usize) -> CardActionView {
+    let mut a = MaybeUninit::uninit();
+    assert_eq!(wheelhouse_card_action(card, index, a.as_mut_ptr()), 1);
+    a.assume_init()
+}
+// Applies a card's action as the intent it is.
+unsafe fn apply(h: *mut WheelhouseCore, a: &CardActionView) -> u32 {
+    let intent = IntentView { kind: a.kind, key: text(""), entity: a.entity, name: text(""), has_value: 0, value: text("") };
+    wheelhouse_apply_intent(h, &intent, ptr::null_mut(), ptr::null_mut())
 }
 // Whether the card of worktree `w` says its workspace is opening, and has one.
 unsafe fn card_opening(h: *mut WheelhouseCore) -> (u32, u32) {
-    let card = wheelhouse_card_acquire(h, entity(text("worktree"), text("w")), ptr::null_mut());
-    let mut c = MaybeUninit::uninit();
-    assert_eq!(wheelhouse_card(card, c.as_mut_ptr()), 1);
-    let c = c.assume_init();
+    let card = acquire_worktree(h);
+    let c = card_info(card);
     wheelhouse_card_release(card);
     (c.opening, c.has_workspace)
 }
-// Acceptance scenario: all six catalog kinds preserve typed roles, known-empty
-// facts, observation provenance and relations even when there is no tree node.
+// The kinds of the effects queued since the last take.
+unsafe fn effect_kinds(h: *mut WheelhouseCore) -> Vec<u32> {
+    let effects = wheelhouse_effects_take(h, ptr::null_mut());
+    let kinds = (0..wheelhouse_effects_count(effects))
+        .map(|i| {
+            let mut e = MaybeUninit::uninit();
+            assert_eq!(wheelhouse_effects_get(effects, i, e.as_mut_ptr()), 1);
+            e.assume_init().kind
+        })
+        .collect();
+    wheelhouse_effects_release(effects);
+    kinds
+}
+// Acceptance scenario: all six catalog kinds have a card that preserves typed
+// roles, known-empty facts, observation provenance and relations even when
+// there is no tree node.
 #[test]
 fn six_kind_native_detail_contract() {
     unsafe {
         let h = wheelhouse_create(ptr::null(), 0, ptr::null_mut());
         assert!(!h.is_null());
+        assert_eq!(wheelhouse_abi_version(), 13);
         for line in include_str!("../../../fixtures/typed-detail.jsonl").lines() {
             assert_eq!(wheelhouse_apply_patch_json(h, 42, text(PROVIDER), text(line), ptr::null_mut()), 1);
         }
-        let legacy = wheelhouse_snapshot_acquire(h, ptr::null_mut());
-        assert_eq!(wheelhouse_snapshot_detail_count(legacy), 0);
-        assert_eq!(wheelhouse_snapshot_detail_find(legacy, entity(text("worktree"), text("worktree:identity / #"))), usize::MAX);
-        wheelhouse_snapshot_release(legacy);
-        let s = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
-        assert_eq!(wheelhouse_abi_version(), 12);
-        assert_eq!(wheelhouse_snapshot_detail_count(s), 6);
         for kind in ["change_request", "issue", "convoy", "role", "project", "worktree"] {
-            let card = wheelhouse_snapshot_detail_find(s, entity(text(kind), text(&format!("{kind}:identity / #"))));
-            assert_ne!(card, usize::MAX);
-            let f = field(s, card, "summary");
+            let card = acquire(h, kind, &format!("{kind}:identity / #"));
+            assert!(!card.is_null(), "{kind} has a card");
+            let f = field(card, "summary");
             assert_eq!(f.role, 3);
             assert_eq!(read(f.section), "facts");
             assert_eq!(read(f.label), "Summary");
@@ -71,68 +104,66 @@ fn six_kind_native_detail_contract() {
             assert_eq!(f.stale, 0);
             assert_eq!(read(f.source_key), "summary.text");
             assert_eq!(read(f.source_id), "fixture-producer");
-            assert_eq!(field(s, card, "identity").role, 0);
-            assert_eq!(field(s, card, "label").role, 1);
-            assert_eq!(field(s, card, "state").role, 2);
-            let related = field(s, card, "related");
+            assert_eq!(field(card, "identity").role, 0);
+            assert_eq!(field(card, "label").role, 1);
+            assert_eq!(field(card, "state").role, 2);
+            let related = field(card, "related");
             assert_eq!(related.role, 4);
             assert!(related.relation_count >= 1);
+            wheelhouse_card_release(card);
         }
         // Missing facts remain declared, without fabricating an empty observation.
-        let card = wheelhouse_snapshot_detail_find(s, entity(text("worktree"), text("worktree:identity / #")));
-        let missing = field(s, card, "branch");
+        let card = acquire(h, "worktree", "worktree:identity / #");
+        let missing = field(card, "branch");
         assert_eq!(missing.has_value, 0);
         assert_eq!(missing.has_observation, 0);
         assert!(!missing.text.data.is_null());
         assert!(!missing.source_id.data.is_null());
-        let mut d = MaybeUninit::uninit();
-        assert_eq!(wheelhouse_snapshot_detail(s, card, d.as_mut_ptr()), 1);
-        let d = d.assume_init();
-        let mut related_index = None;
-        for i in 0..d.field_count {
-            let mut f = MaybeUninit::uninit();
-            wheelhouse_snapshot_detail_field(s, card, i, f.as_mut_ptr());
-            if read(f.assume_init().name) == "related" {
-                related_index = Some(i);
-            }
-        }
-        let related_index = related_index.unwrap();
+        // A relation gives its target's identity and ID; the target's own
+        // card has its label.
+        let related = field_index(card, "related");
         let mut r = MaybeUninit::uninit();
-        assert_eq!(wheelhouse_snapshot_detail_relation(s, card, related_index, 0, ptr::null(), 0, r.as_mut_ptr()), 1);
+        assert_eq!(wheelhouse_card_relation(card, related, 0, ptr::null(), 0, r.as_mut_ptr()), 1);
         let r = r.assume_init();
         assert_eq!(read(r.entity.kind), "issue");
         assert_eq!(read(r.entity.id), "issue:identity / #");
-        assert_eq!(read(r.display_text), "Display issue");
-        assert_ne!(r.detail, usize::MAX);
+        assert_eq!(read(r.display_text), "issue:identity / #");
+        let target = wheelhouse_card_acquire(h, r.entity, ptr::null_mut());
+        assert_eq!(read(card_info(target).label), "Display issue");
+        wheelhouse_card_release(target);
+        // A relation already on the navigation path is left out.
         let path = [r.entity];
-        assert_eq!(wheelhouse_snapshot_detail_relation(s, card, related_index, 0, path.as_ptr(), 1, MaybeUninit::uninit().as_mut_ptr()), 0);
+        assert_eq!(wheelhouse_card_relation(card, related, 0, path.as_ptr(), 1, MaybeUninit::uninit().as_mut_ptr()), 0);
+        // A relation to an entity the catalog doesn't have is still given; it has no card.
         let mut unavailable = MaybeUninit::uninit();
-        assert_eq!(wheelhouse_snapshot_detail_relation(s, card, related_index, 1, ptr::null(), 0, unavailable.as_mut_ptr()), 1);
-        assert_eq!(unavailable.assume_init().detail, usize::MAX);
-        let mut action = MaybeUninit::uninit();
-        assert_eq!(wheelhouse_snapshot_detail_action(s, card, 0, action.as_mut_ptr()), 1);
-        let action = action.assume_init();
-        assert_eq!(read(action.intent), "inspect");
-        assert_eq!(read(action.entity.id), "worktree:identity / #");
-        assert_eq!(action.action, d.activate);
-        assert_eq!(d.has_workspace, 0);
-        // Existing dispatch takes the card's stable entity action and emits Inspect.
-        assert_eq!(wheelhouse_dispatch(h, s, d.activate, ptr::null_mut()), 1);
-        // Snapshot ownership permits reading old facts after mutations: time
-        // alone changes nothing, and a new snapshot sees the producer's unset.
+        assert_eq!(wheelhouse_card_relation(card, related, 1, ptr::null(), 0, unavailable.as_mut_ptr()), 1);
+        let mut error = ptr::null_mut();
+        assert!(wheelhouse_card_acquire(h, unavailable.assume_init().entity, &mut error).is_null());
+        assert!(error.is_null());
+        let primary = action(card, 0);
+        assert_eq!(read(primary.intent), "inspect");
+        assert_eq!(read(primary.entity.id), "worktree:identity / #");
+        assert_eq!(card_info(card).has_workspace, 0);
+        // The card's action, applied as its intent, emits Inspect.
+        assert_eq!(primary.kind, WHEELHOUSE_INTENT_ACTIVATE);
+        assert_eq!(apply(h, &primary), WHEELHOUSE_INTENT_ACCEPTED);
+        assert_eq!(effect_kinds(h), [WHEELHOUSE_EFFECT_INSPECT]);
+        // A card keeps its facts after mutations: time alone changes
+        // nothing, and a new card sees the producer's unset.
         wheelhouse_tick(h, 143, ptr::null_mut());
-        let boundary = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
-        assert_eq!(field(boundary, card, "summary").has_value, 1);
+        let boundary = acquire(h, "worktree", "worktree:identity / #");
+        assert_eq!(field(boundary, "summary").has_value, 1);
         let unset = r#"{"target":{"kind":"entity","value":{"kind":"worktree","id":"worktree:identity / #"}},"source_id":"fixture-producer","unset":["summary.text"]}"#;
         assert_eq!(wheelhouse_apply_patch_json(h, 144, text(PROVIDER), text(unset), ptr::null_mut()), 1);
-        let expired = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
-        assert_eq!(field(expired, card, "summary").has_value, 0);
-        assert_eq!(field(s, card, "summary").has_value, 1);
-        assert_eq!(wheelhouse_snapshot_detail_find(s, entity(text("unknown"), text(""))), usize::MAX);
-        assert_eq!(wheelhouse_snapshot_detail_field(s, usize::MAX, 0, ptr::null_mut()), 0);
-        wheelhouse_snapshot_release(expired);
-        wheelhouse_snapshot_release(boundary);
-        wheelhouse_snapshot_release(s);
+        let expired = acquire(h, "worktree", "worktree:identity / #");
+        assert_eq!(field(expired, "summary").has_value, 0);
+        assert_eq!(field(card, "summary").has_value, 1);
+        assert_eq!(wheelhouse_card_is_current(h, card, ptr::null_mut()), 0);
+        assert!(acquire(h, "unknown", "").is_null());
+        assert_eq!(wheelhouse_card_field(card, usize::MAX, MaybeUninit::uninit().as_mut_ptr()), 0);
+        for c in [expired, boundary, card] {
+            wheelhouse_card_release(c);
+        }
         wheelhouse_destroy(h);
     }
 }
@@ -140,7 +171,7 @@ fn six_kind_native_detail_contract() {
 // Lifecycle scenario: materialization uses the primary control label, its
 // card is opening from the request until the workspace is live (as a chip
 // draws it), an identical re-send changes nothing, and while its provider is stale a retained
-// fact exposes its writer and receipt time, marked stale, through the native ABI.
+// fact exposes its writer and receipt time, marked stale, through the card.
 #[test]
 fn native_controls_resends_and_retained_staleness() {
     unsafe {
@@ -153,21 +184,19 @@ fn native_controls_resends_and_retained_staleness() {
         assert!(!h.is_null());
         let patch = r#"{"target":{"kind":"entity","value":{"kind":"worktree","id":"w"}},"source_id":"producer","set":{"display.label":{"value":{"type":"text","value":"Worker"}},"summary.text":{"value":{"type":"text","value":"observed"}},"action.primary.target":{"value":{"type":"text","value":"worktree:w"}},"action.primary.recipe":{"value":{"type":"text","value":"exec sh"}},"action.primary.label":{"value":{"type":"text","value":"Attach"}}}}"#;
         assert_eq!(wheelhouse_apply_patch_json(h, 100, text(PROVIDER), text(patch), ptr::null_mut()), 1);
-        let s = acquire_worktree(h);
-        let card = wheelhouse_snapshot_detail_find(s, entity(text("worktree"), text("w")));
-        let mut action = MaybeUninit::uninit();
-        assert_eq!(wheelhouse_snapshot_detail_action(s, card, 0, action.as_mut_ptr()), 1);
-        let action = action.assume_init();
-        assert_eq!(read(action.intent), "materialize-workspace");
-        assert_eq!(read(action.label), "Attach");
+        let card = acquire_worktree(h);
+        let primary = action(card, 0);
+        assert_eq!(read(primary.intent), "materialize-workspace");
+        assert_eq!(read(primary.label), "Attach");
         assert_eq!(card_opening(h), (0, 0), "not asked for yet");
-        assert_eq!(wheelhouse_dispatch(h, s, action.action, ptr::null_mut()), 1);
+        assert_eq!(apply(h, &primary), WHEELHOUSE_INTENT_ACCEPTED);
         assert_eq!(card_opening(h), (1, 0), "asked for, not live");
+        wheelhouse_card_release(card);
         let effects = wheelhouse_effects_take(h, ptr::null_mut());
         let mut effect = MaybeUninit::uninit();
         assert_eq!(wheelhouse_effects_get(effects, 0, effect.as_mut_ptr()), 1);
         let effect = effect.assume_init();
-        assert_eq!(effect.kind, 1);
+        assert_eq!(effect.kind, WHEELHOUSE_EFFECT_MATERIALIZE);
         assert_eq!(
             wheelhouse_complete(
                 h,
@@ -185,26 +214,24 @@ fn native_controls_resends_and_retained_staleness() {
         assert_eq!(card_opening(h), (0, 1), "live");
         assert_eq!(wheelhouse_apply_patch_json(h, 105, text(PROVIDER), text(patch), ptr::null_mut()), 1);
         let fresh = acquire_worktree(h);
-        assert_eq!(field(fresh, card, "summary").observed_at_ms, 100, "an identical re-send changes nothing");
+        assert_eq!(field(fresh, "summary").observed_at_ms, 100, "an identical re-send changes nothing");
         assert_eq!(wheelhouse_tick(h, 10_000, ptr::null_mut()), 1);
         let boundary = acquire_worktree(h);
-        assert_eq!(field(boundary, card, "summary").stale, 0);
+        assert_eq!(field(boundary, "summary").stale, 0);
         // The producer's connection drops: its facts are kept, and stale.
         assert_eq!(wheelhouse_provider_set_stale(h, text(PROVIDER), 1, ptr::null_mut()), 1);
         let expired = acquire_worktree(h);
-        let f = field(expired, card, "summary");
+        let f = field(expired, "summary");
         assert_eq!(f.has_value, 1);
         assert_eq!(f.stale, 1);
         assert_eq!(f.observed_at_ms, 100);
         assert_eq!(read(f.source_id), "producer");
-        let mut d = MaybeUninit::uninit();
-        assert_eq!(wheelhouse_snapshot_detail(expired, card, d.as_mut_ptr()), 1);
-        let d = d.assume_init();
-        assert!(!d.error.data.is_null());
-        assert_eq!(d.has_workspace, 1);
-        assert_eq!(d.workspace_id.bytes, tab_workspace_id(7).to_bytes());
-        for s in [expired, boundary, fresh, s] {
-            wheelhouse_snapshot_release(s);
+        let c = card_info(expired);
+        assert!(!c.error.data.is_null());
+        assert_eq!(c.has_workspace, 1);
+        assert_eq!(c.workspace_id.bytes, tab_workspace_id(7).to_bytes());
+        for card in [expired, boundary, fresh] {
+            wheelhouse_card_release(card);
         }
         wheelhouse_destroy(h);
     }
@@ -225,146 +252,93 @@ fn last_writer_provenance() {
             );
             assert_eq!(wheelhouse_apply_patch_json(h, 0, text(PROVIDER), text(&patch), ptr::null_mut()), 1);
         }
-        let s = acquire_worktree(h);
-        let card = wheelhouse_snapshot_detail_find(s, entity(text("worktree"), text("w")));
-        assert_eq!(read(field(s, card, "summary").source_id), "a-source");
+        let card = acquire_worktree(h);
+        assert_eq!(read(field(card, "summary").source_id), "a-source");
         let unset = r#"{"target":{"kind":"entity","value":{"kind":"worktree","id":"w"}},"source_id":"a-source","unset":["summary.text"]}"#;
         assert_eq!(wheelhouse_apply_patch_json(h, 1, text(PROVIDER), text(unset), ptr::null_mut()), 1);
         let next = acquire_worktree(h);
-        assert_eq!(field(next, card, "summary").has_value, 0);
-        wheelhouse_snapshot_release(next);
-        wheelhouse_snapshot_release(s);
+        assert_eq!(field(next, "summary").has_value, 0);
+        wheelhouse_card_release(next);
+        wheelhouse_card_release(card);
         wheelhouse_destroy(h);
     }
 }
 
-// Demand queries preserve the eager contract for all catalog identities, including
-// hidden relations. Appending never moves borrowed text; old actions are rejected.
+// A card is the core's answer when it was taken: it reports the core's clock
+// then, it is current until the core changes, and it owns its text, which
+// stays readable after later patches and the core's destruction.
 #[test]
-fn demand_details_equal_eager_and_keep_snapshot_owned_lifetimes() {
+fn a_card_owns_its_answer() {
     unsafe {
         let h = wheelhouse_create(ptr::null(), 0, ptr::null_mut());
         for line in include_str!("../../../fixtures/typed-detail.jsonl").lines() {
             assert_eq!(wheelhouse_apply_patch_json(h, 42, text(PROVIDER), text(line), ptr::null_mut()), 1);
         }
-        let plain = wheelhouse_snapshot_acquire(h, ptr::null_mut());
-        let eager = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
-        assert_eq!(wheelhouse_snapshot_detail_count(plain), 0);
-        assert_eq!(wheelhouse_snapshot_node_count(plain), wheelhouse_snapshot_node_count(eager));
-        // An unexpired tick leaves this revision current. Later demand still
-        // renders all cards against the acquisition clock, not the new core clock.
+        let held = acquire(h, "worktree", "worktree:identity / #");
+        let c = card_info(held);
+        assert_eq!(c.now_ms, 42);
+        let (borrowed, label) = (c.label, read(c.label));
+        // An unexpired tick leaves the card current, at the clock it was taken at.
         assert_eq!(wheelhouse_tick(h, 43, ptr::null_mut()), 1);
-        assert_eq!(wheelhouse_snapshot_is_current(h, plain, ptr::null_mut()), 1);
-        let mut held = None;
-        for kind in ["worktree", "issue", "change_request", "convoy", "role", "project"] {
-            let id = format!("{kind}:identity / #");
-            let index = wheelhouse_snapshot_detail_request(h, plain, entity(text(kind), text(&id)), ptr::null_mut());
-            let original = wheelhouse_snapshot_detail_find(eager, entity(text(kind), text(&id)));
-            assert_ne!(index, usize::MAX);
-            assert_eq!(wheelhouse_snapshot_detail_request(h, plain, entity(text(kind), text(&id)), ptr::null_mut()), index);
-            let mut a = MaybeUninit::uninit();
-            let mut b = MaybeUninit::uninit();
-            assert_eq!(wheelhouse_snapshot_detail(plain, index, a.as_mut_ptr()), 1);
-            assert_eq!(wheelhouse_snapshot_detail(eager, original, b.as_mut_ptr()), 1);
-            let a = a.assume_init();
-            let b = b.assume_init();
-            assert_eq!(a.now_ms, 42);
-            assert_eq!(a.now_ms, b.now_ms);
-            assert_eq!((read(a.label), a.field_count, a.has_workspace), (read(b.label), b.field_count, b.has_workspace));
-            for f in 0..a.field_count {
-                let mut x = MaybeUninit::uninit();
-                let mut y = MaybeUninit::uninit();
-                assert_eq!(wheelhouse_snapshot_detail_field(plain, index, f, x.as_mut_ptr()), 1);
-                assert_eq!(wheelhouse_snapshot_detail_field(eager, original, f, y.as_mut_ptr()), 1);
-                let x = x.assume_init();
-                let y = y.assume_init();
-                assert_eq!(
-                    (read(x.name), read(x.text), x.has_value, x.observed_at_ms, x.stale),
-                    (read(y.name), read(y.text), y.has_value, y.observed_at_ms, y.stale)
-                );
-            }
-            if held.is_none() {
-                held = Some((a.label, read(a.label), a.activate));
-            }
-        }
-        let (borrowed, label, action) = held.unwrap();
-        assert_eq!(read(borrowed), label);
-        assert_eq!(wheelhouse_snapshot_detail_count(plain), 6);
-        assert_eq!(wheelhouse_snapshot_detail_request(h, plain, entity(text("missing"), text("")), ptr::null_mut()), usize::MAX);
+        assert_eq!(wheelhouse_card_is_current(h, held, ptr::null_mut()), 1);
+        assert_eq!(card_info(held).now_ms, 42);
+        let later = acquire(h, "worktree", "worktree:identity / #");
+        assert_eq!(card_info(later).now_ms, 43);
+        wheelhouse_card_release(later);
+        assert!(acquire(h, "issue", "new").is_null());
         let patch = r#"{"target":{"kind":"entity","value":{"kind":"issue","id":"new"}},"source_id":"test","set":{"display.label":{"value":{"type":"text","value":"New"}}},"unset":[]}"#;
         assert_eq!(wheelhouse_apply_patch_json(h, 43, text(PROVIDER), text(patch), ptr::null_mut()), 1);
         assert_eq!(read(borrowed), label);
-        let mut error = ptr::null_mut();
-        assert_eq!(wheelhouse_snapshot_detail_request(h, plain, entity(text("issue"), text("new")), &mut error), usize::MAX);
-        assert!(!error.is_null());
-        wheelhouse_string_free(error);
-        assert_eq!(wheelhouse_dispatch(h, plain, action, ptr::null_mut()), 0);
-        let fresh = wheelhouse_snapshot_acquire(h, ptr::null_mut());
-        assert_ne!(wheelhouse_snapshot_detail_request(h, fresh, entity(text("issue"), text("new")), ptr::null_mut()), usize::MAX);
+        assert_eq!(wheelhouse_card_is_current(h, held, ptr::null_mut()), 0);
+        let new = acquire(h, "issue", "new");
+        assert!(!new.is_null());
+        assert_eq!(read(card_info(new).label), "New");
         let unset = r#"{"target":{"kind":"entity","value":{"kind":"issue","id":"new"}},"source_id":"test","unset":["display.label"]}"#;
         assert_eq!(wheelhouse_apply_patch_json(h, 44, text(PROVIDER), text(unset), ptr::null_mut()), 1);
-        let removed = wheelhouse_snapshot_acquire(h, ptr::null_mut());
-        assert_eq!(wheelhouse_snapshot_detail_request(h, removed, entity(text("issue"), text("new")), ptr::null_mut()), usize::MAX);
-        assert_ne!(wheelhouse_snapshot_detail_find(fresh, entity(text("issue"), text("new"))), usize::MAX);
-        wheelhouse_snapshot_release(removed);
-        // Cached detail on the old snapshot remains readable after mutation.
-        assert_ne!(
-            wheelhouse_snapshot_detail_request(h, plain, entity(text("worktree"), text("worktree:identity / #")), ptr::null_mut()),
-            usize::MAX
-        );
-        for snapshot in [fresh, eager, plain] {
-            wheelhouse_snapshot_release(snapshot);
-        }
+        assert!(acquire(h, "issue", "new").is_null());
+        assert_eq!(read(card_info(new).label), "New");
         wheelhouse_destroy(h);
+        assert_eq!(read(borrowed), label);
+        assert_eq!(read(card_info(new).label), "New");
+        wheelhouse_card_release(new);
+        wheelhouse_card_release(held);
     }
 }
 
-// A non-placement region still resolves its template and reports errors through
-// plain and detailed native snapshots; the narrow path cannot silently skip it.
+// A non-placement region still resolves its template and reports errors
+// through the snapshot; the narrow path cannot silently skip it.
 #[test]
 fn nonplacement_region_reports_template_diagnostic() {
     unsafe {
         let config = "region \"legacy\" root-template=\"missing-template\"";
         let h = wheelhouse_create(config.as_ptr(), config.len(), ptr::null_mut());
         assert!(!h.is_null());
-        for snapshot in [wheelhouse_snapshot_acquire(h, ptr::null_mut()), wheelhouse_snapshot_acquire_details(h, ptr::null_mut())] {
-            assert!(wheelhouse_snapshot_diagnostic_count(snapshot) > 0);
-            wheelhouse_snapshot_release(snapshot);
-        }
+        let snapshot = wheelhouse_snapshot_acquire(h, ptr::null_mut());
+        assert!(wheelhouse_snapshot_diagnostic_count(snapshot) > 0);
+        wheelhouse_snapshot_release(snapshot);
         wheelhouse_destroy(h);
     }
 }
 
-// Invalid text at the C boundary is rejected without appending output. Empty
-// null text remains valid by the shared Text contract; foreign snapshots fail.
+// Unreadable text at the C boundary is an error, with no card. Empty null
+// text is valid by the shared Text contract: no such entity, no error.
 #[test]
-fn demand_rejects_invalid_text_and_foreign_snapshots() {
+fn a_card_request_rejects_invalid_text() {
     unsafe {
         let h = wheelhouse_create(ptr::null(), 0, ptr::null_mut());
-        let snapshot = wheelhouse_snapshot_acquire(h, ptr::null_mut());
         let invalid_utf8 = [0xff];
         let bad_texts = [Text { data: ptr::null(), len: 1 }, Text { data: invalid_utf8.as_ptr(), len: 1 }];
         for bad in bad_texts {
             for (kind, id) in [(bad, text("id")), (text("kind"), bad)] {
                 let mut error = ptr::null_mut();
-                assert_eq!(wheelhouse_snapshot_detail_request(h, snapshot, entity(kind, id), &mut error), usize::MAX);
+                assert!(wheelhouse_card_acquire(h, entity(kind, id), &mut error).is_null());
                 assert!(!error.is_null());
                 wheelhouse_string_free(error);
-                assert_eq!(wheelhouse_snapshot_detail_count(snapshot), 0);
             }
         }
         let mut error = ptr::null_mut();
-        assert_eq!(
-            wheelhouse_snapshot_detail_request(h, snapshot, entity(Text { data: ptr::null(), len: 0 }, text("")), &mut error),
-            usize::MAX
-        );
+        assert!(wheelhouse_card_acquire(h, entity(Text { data: ptr::null(), len: 0 }, text("")), &mut error).is_null());
         assert!(error.is_null());
-        let other = wheelhouse_create(ptr::null(), 0, ptr::null_mut());
-        assert_eq!(wheelhouse_snapshot_detail_request(other, snapshot, entity(text("kind"), text("id")), &mut error), usize::MAX);
-        assert!(!error.is_null());
-        wheelhouse_string_free(error);
-        wheelhouse_destroy(other);
-        wheelhouse_snapshot_release(snapshot);
         wheelhouse_destroy(h);
     }
 }

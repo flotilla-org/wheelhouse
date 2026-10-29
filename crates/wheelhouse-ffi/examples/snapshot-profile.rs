@@ -28,39 +28,27 @@ fn main() {
                 assert_eq!(wheelhouse_apply_patch_json(h, 100, text("bench"), text(&patch), ptr::null_mut()), 1);
             }
             println!("load entities={n} phases={}", serde_json::to_string(&profile::take()).unwrap());
-            let warm = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
+            let warm = wheelhouse_snapshot_acquire(h, ptr::null_mut());
             assert!(!warm.is_null());
             let nodes = wheelhouse_snapshot_node_count(warm);
             wheelhouse_snapshot_release(warm);
             profile::take();
             let mut plain = vec![];
-            let mut detailed = vec![];
             for iteration in 0..10 {
                 let patch = format!(
                     r#"{{"target":{{"kind":"entity","value":{{"kind":"issue","id":"bench-0"}}}},"source_id":"bench","set":{{"bench.tick":{{"value":{{"type":"text","value":"{iteration}"}}}}}},"unset":[]}}"#
                 );
                 assert_eq!(wheelhouse_apply_patch_json(h, 100 + iteration, text("bench"), text(&patch), ptr::null_mut()), 1);
                 let start = Instant::now();
-                let s = if iteration % 2 == 0 {
-                    wheelhouse_snapshot_acquire(h, ptr::null_mut())
-                } else {
-                    wheelhouse_snapshot_acquire_details(h, ptr::null_mut())
-                };
+                let s = wheelhouse_snapshot_acquire(h, ptr::null_mut());
                 assert!(!s.is_null());
-                let elapsed = start.elapsed().as_secs_f64() * 1000.;
-                if iteration % 2 == 0 {
-                    plain.push(elapsed);
-                } else {
-                    detailed.push(elapsed);
-                }
+                plain.push(start.elapsed().as_secs_f64() * 1000.);
                 wheelhouse_snapshot_release(s);
             }
             plain.sort_by(f64::total_cmp);
-            detailed.sort_by(f64::total_cmp);
             println!(
-                "updates entities={n} nodes={nodes} plain_median_ms={:.3} detailed_median_ms={:.3} phases={}",
-                plain[2],
-                detailed[2],
+                "updates entities={n} nodes={nodes} plain_median_ms={:.3} phases={}",
+                plain[5],
                 serde_json::to_string(&profile::take()).unwrap()
             );
             let mut demand = vec![];
@@ -70,29 +58,16 @@ fn main() {
                 );
                 assert_eq!(wheelhouse_apply_patch_json(h, 100 + iteration, text("bench"), text(&patch), ptr::null_mut()), 1);
                 let start = Instant::now();
-                let s = wheelhouse_snapshot_acquire(h, ptr::null_mut());
                 for id in ["bench-0", "hidden-detail"] {
-                    assert_ne!(
-                        wheelhouse_snapshot_detail_request(
-                            h,
-                            s,
-                            EntityView { provider: text("bench"), kind: text("issue"), id: text(id) },
-                            ptr::null_mut()
-                        ),
-                        usize::MAX
-                    );
-                }
-                demand.push(start.elapsed().as_secs_f64() * 1000.);
-                // Same-snapshot requests use the materialized detail, with no evaluation.
-                for _ in 0..10 {
-                    wheelhouse_snapshot_detail_request(
+                    let card = wheelhouse_card_acquire(
                         h,
-                        s,
-                        EntityView { provider: text("bench"), kind: text("issue"), id: text("bench-0") },
+                        EntityView { provider: text("bench"), kind: text("issue"), id: text(id) },
                         ptr::null_mut(),
                     );
+                    assert!(!card.is_null());
+                    wheelhouse_card_release(card);
                 }
-                wheelhouse_snapshot_release(s);
+                demand.push(start.elapsed().as_secs_f64() * 1000.);
             }
             demand.sort_by(f64::total_cmp);
             println!(

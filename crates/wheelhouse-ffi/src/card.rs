@@ -15,8 +15,8 @@ pub struct WheelhouseCard {
     stale: bool,
 }
 
-/// A card's summary. Observations use host monotonic milliseconds, as a
-/// snapshot detail's do.
+/// A card's summary. now_ms is the core's clock when the card was taken, in
+/// host monotonic milliseconds, as its fields' observations are.
 #[repr(C)]
 pub struct CardView {
     pub entity: EntityView,
