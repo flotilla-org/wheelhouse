@@ -21,9 +21,9 @@ license = "MIT"
 
 [workspace.dependencies]
 # binnacle draws the tables (#505). Pinned by revision: the repos move together.
-binnacle-core = { git = "https://github.com/flotilla-org/binnacle.git", rev = "7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8" }
-binnacle-ffi = { git = "https://github.com/flotilla-org/binnacle.git", rev = "7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8" }
-binnacle-memory = { git = "https://github.com/flotilla-org/binnacle.git", rev = "7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8" }
+binnacle-core = { git = "https://github.com/flotilla-org/binnacle.git", rev = "4897a5818fe947b530a9005abe3ee1e60037a48b" }
+binnacle-ffi = { git = "https://github.com/flotilla-org/binnacle.git", rev = "4897a5818fe947b530a9005abe3ee1e60037a48b" }
+binnacle-memory = { git = "https://github.com/flotilla-org/binnacle.git", rev = "4897a5818fe947b530a9005abe3ee1e60037a48b" }
 ansi_term = "0.12"
 crossterm = "0.28.1"
 insta = "1"

@@ -81,12 +81,12 @@ dependencies = [
 [[package]]
 name = "binnacle-core"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8#7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=4897a5818fe947b530a9005abe3ee1e60037a48b#4897a5818fe947b530a9005abe3ee1e60037a48b"
 
 [[package]]
 name = "binnacle-ffi"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8#7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=4897a5818fe947b530a9005abe3ee1e60037a48b#4897a5818fe947b530a9005abe3ee1e60037a48b"
 dependencies = [
  "binnacle-core",
  "binnacle-group",
@@ -95,7 +95,7 @@ dependencies = [
 [[package]]
 name = "binnacle-group"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8#7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=4897a5818fe947b530a9005abe3ee1e60037a48b#4897a5818fe947b530a9005abe3ee1e60037a48b"
 dependencies = [
  "binnacle-core",
  "binnacle-memory",
@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "binnacle-memory"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8#7a9c1e41735d1b9a6ea9df5d98b4827eea78a4e8"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=4897a5818fe947b530a9005abe3ee1e60037a48b#4897a5818fe947b530a9005abe3ee1e60037a48b"
 dependencies = [
  "binnacle-core",
  "regex",
