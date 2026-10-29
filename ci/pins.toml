@@ -1,0 +1,22 @@
+# Cross-repo commits CI builds against. Bump them here, never in .github/workflows.
+# `python ci/pins.py github-env` turns each entry into an `env = rev` line for
+# $GITHUB_ENV; see ci/README.md. Binnacle is pinned in Cargo.toml, not here.
+format = 1
+
+[cleat]
+env = "CLEAT_REV"
+repo = "flotilla-org/cleat"
+rev = "c88692aa62c10fbeb10ecd22f6e637fb600ebd62"
+track = "manual"
+# Remote packet attach (cleat#379): `cleat proxy` and provider transports,
+# additive on provider ABI 11; packet protocol 15. Daemons on an older
+# protocol are rejected: coordinate the Cleat fleet and daily-driver
+# rollout (#97). Remote hosts need this Cleat for `cleat proxy` (#104).
+
+[jackstay]
+env = "JACKSTAY_REV"
+repo = "flotilla-org/jackstay"
+rev = "bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac"
+track = "manual"
+# Jackstay main: ABI 0.17, the v3 track handshake (jackstay#119) with
+# affordances as a track.
