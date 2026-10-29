@@ -21,6 +21,10 @@ use crate::suggested_layout::Axis;
 mod weight;
 pub use weight::quantize;
 
+fn children_weights<T>(children: &[Panel<T>]) -> Vec<f32> {
+    children.iter().map(|c| c.weight).collect()
+}
+
 /// The sibling the boundary after child `i` of a split pairs it with, given
 /// the children's weights: the next one with space (a weight above zero).
 /// A child with no space has no boundary, and neither has the last one
@@ -216,7 +220,8 @@ pub enum Edit<T> {
     /// weights drifted from summing to one are rescaled first.
     Resize { panel: PanelId, delta: f32, floor: f32 },
     /// Gives the two sides of the boundary after `panel` equal shares of
-    /// their space, leaving panels between them at zero, rescaling drifted siblings as resizing does.
+    /// their space, leaving panels between them at zero, rescaling
+    /// drifted siblings as resizing does.
     Equalize { panel: PanelId },
     /// Every tab of `from`, a Selected View and a removed tab included,
     /// becomes `to`: its View moved to another owner, or its key changed.
@@ -630,7 +635,7 @@ impl<T: Clone + PartialEq> Arrangement<T> {
         let Some(path) = self.path(id) else { return false };
         let Some((&i, parent_path)) = path.split_last() else { return false };
         let parent = self.at_mut(parent_path);
-        let Some(j) = boundary_partner(&parent.children.iter().map(|c| c.weight).collect::<Vec<_>>(), i) else { return false };
+        let Some(j) = boundary_partner(&children_weights(&parent.children), i) else { return false };
         let (mut min, mut max) = (parent.children[i].weight, parent.children[j].weight);
         let total = parent.children.iter().fold(0.0f32, |total, child| total + c_max(0.0, child.weight));
         if total > 0.0 && (total - 1.0).abs() > 0.0001 {
@@ -664,7 +669,7 @@ impl<T: Clone + PartialEq> Arrangement<T> {
         let weight = self.at(&path).weight;
         let next = path.split_last().and_then(|(&i, parent)| {
             let children = &self.at(parent).children;
-            boundary_partner(&children.iter().map(|c| c.weight).collect::<Vec<_>>(), i).map(|j| children[j].weight)
+            boundary_partner(&children_weights(children), i).map(|j| children[j].weight)
         });
         let next = next.unwrap_or(0.0);
         self.resize(id, (next - weight) / 2.0, 0.0) || applied

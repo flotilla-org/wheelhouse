@@ -5482,6 +5482,9 @@ rd_panel_node_boundary_partner(RD_PanelNode *parent, RD_PanelNode *child)
 internal void
 rd_boundary_resize_begin(UI_Key key, UIShell_WorkspaceMount *mount, RD_PanelNode *panel, RD_PanelNode *partner)
 {
+  // `partner` is what rd_panel_node_boundary_partner gives `panel`, as the
+  // core's resize pairs it; a sidebar's sections always have space, so it is
+  // their next sibling.
   rd_boundary_resize_end();
   RD_BoundaryResize *resize = &rd_state->boundary_resize;
   resize->arena = arena_alloc();
@@ -6032,6 +6035,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
         // returns to when expanded.
         if(split_axis == Axis2_Y && rd_dock_host_kind_from_panel_owner(panel->address.owner) == RD_DockHostKind_Sidebar)
         {
+          // Saved sections always have space (a document's weights are
+          // positive), so the core pairs each with its next sibling.
           if(max_child == &rd_nil_panel_node) { continue; }
           F32 header = uishell_sidebar_row_height(), h = 0;
           if(uishell_sidebar_panel_collapsed(min_child, header, &h) || uishell_sidebar_panel_collapsed(max_child, header, &h)) { continue; }
