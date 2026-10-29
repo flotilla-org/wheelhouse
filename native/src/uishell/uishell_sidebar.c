@@ -1985,10 +1985,10 @@ uishell_sidebar_init(RD_WindowState *ws)
     state->initialized = 1;
     char *error = 0;
     // A host requires exactly the ABI it was built against.
-    if(wheelhouse_abi_version() != 11)
+    if(wheelhouse_abi_version() != 12)
     {
       Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 11 is required; this library has ABI %u",
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 12 is required; this library has ABI %u",
         (U32)wheelhouse_abi_version()));
       scratch_end(scratch);
       return state;
@@ -3319,11 +3319,18 @@ uishell_sidebar_chip_status(UIShell_SidebarState *state, UIShell_SidebarNode nod
   return status;
 }
 
+// Change requests and issues are subjects: their chips are labels, coloured
+// by their status.
+internal B32
+uishell_sidebar_kind_is_subject(String8 kind)
+{
+  return str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0);
+}
+
 internal B32
 uishell_sidebar_is_subject(UIShell_SidebarNode node)
 {
-  String8 kind = uishell_sidebar_string(node.entity.kind);
-  return str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0);
+  return uishell_sidebar_kind_is_subject(uishell_sidebar_string(node.entity.kind));
 }
 
 internal B32
@@ -3350,10 +3357,45 @@ uishell_sidebar_subject_color(String8 status)
   return color;
 }
 
+// The colour of a chip's text (its label or icon) by its entity's kind and
+// status: an ended one's faded, a subject's by its status, else the text's.
+// The tool strip colours its items by it too.
+internal Vec4F32
+uishell_sidebar_chip_text_color(String8 kind, String8 status)
+{
+  if(str8_match(status, str8_lit("ended"), 0)) { return uishell_sidebar_ended_color(); }
+  if(uishell_sidebar_kind_is_subject(kind)) { return uishell_sidebar_subject_color(status); }
+  return ui_color_from_name(str8_lit("text"));
+}
+
+// An icon as an entity's template presents it (`icon`: the producer's
+// presentation.icon, or the template's override), else one by `kind`. The
+// one lookup for rows, chips and the tool strip. Supported symbolic names
+// use the icon font (`*icon_font`); any other value is a literal glyph in
+// the normal font/fallback chain.
+internal String8
+uishell_sidebar_icon(String8 icon, String8 kind, B32 *icon_font)
+{
+  *icon_font = 1;
+  struct { char *name; RD_IconKind kind; } icons[] = {
+    {"terminal", RD_IconKind_Machine}, {"overview", RD_IconKind_Thumbnails},
+    {"role", RD_IconKind_Threads}, {"threads", RD_IconKind_Threads},
+    {"gear", RD_IconKind_Gear}, {"code", RD_IconKind_Module},
+    {"review", RD_IconKind_Glasses}, {"workspace", RD_IconKind_Window},
+  };
+  for(U64 i = 0; i < ArrayCount(icons); i++)
+  { if(str8_match(icon, str8_cstring(icons[i].name), 0)) { return rd_icon_kind_text_table[icons[i].kind]; } }
+  if(icon.size) { *icon_font = 0; return icon; }
+  RD_IconKind fallback = str8_match(kind, str8_lit("project"), 0) ? RD_IconKind_FolderClosedOutline :
+    str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("role"), 0) ? RD_IconKind_Threads :
+    str8_match(kind, str8_lit("change_request"), 0) ? RD_IconKind_Glasses :
+    str8_match(kind, str8_lit("issue"), 0) ? RD_IconKind_FileOutline : RD_IconKind_Machine;
+  return rd_icon_kind_text_table[fallback];
+}
+
 // An entity's one icon, for its row, its chip, its ghost and its drag lift:
-// the icon its template presents (the producer's presentation.icon, or the
-// template's override), else one by kind. A card's node, which isn't a
-// row, takes its entity's row's.
+// uishell_sidebar_icon of what its template presents. A card's node, which
+// isn't a row, takes its entity's row's.
 internal String8
 uishell_sidebar_node_icon(UIShell_SidebarState *state, UIShell_SidebarNode node, B32 *icon_font)
 {
@@ -3366,23 +3408,7 @@ uishell_sidebar_node_icon(UIShell_SidebarState *state, UIShell_SidebarNode node,
       { node = n; break; }
     }
   }
-  String8 icon = uishell_sidebar_string(node.icon);
-  *icon_font = 1;
-  // Supported symbolic suggestions use the existing icon font. Other values
-  // are literal glyphs rendered with the normal font/fallback chain.
-  struct { char *name; RD_IconKind kind; } icons[] = {
-    {"terminal", RD_IconKind_Machine}, {"overview", RD_IconKind_Thumbnails},
-    {"role", RD_IconKind_Threads}, {"threads", RD_IconKind_Threads},
-    {"gear", RD_IconKind_Gear}, {"code", RD_IconKind_Module},
-    {"review", RD_IconKind_Glasses}, {"workspace", RD_IconKind_Window},
-  };
-  for(U64 i = 0; i < ArrayCount(icons); i++)
-  { if(str8_match(icon, str8_cstring(icons[i].name), 0)) { return rd_icon_kind_text_table[icons[i].kind]; } }
-  if(icon.size) { *icon_font = 0; return icon; }
-  String8 kind = uishell_sidebar_string(node.entity.kind);
-  RD_IconKind fallback = str8_match(kind, str8_lit("project"), 0) ? RD_IconKind_FolderClosedOutline :
-    str8_match(kind, str8_lit("convoy"), 0) || str8_match(kind, str8_lit("role"), 0) ? RD_IconKind_Threads : RD_IconKind_Machine;
-  return rd_icon_kind_text_table[fallback];
+  return uishell_sidebar_icon(uishell_sidebar_string(node.icon), uishell_sidebar_string(node.entity.kind), icon_font);
 }
 
 // A chip is its entity's icon, except a project's own chip, which opens
@@ -3395,6 +3421,18 @@ uishell_sidebar_chip_icon(UIShell_SidebarState *state, UIShell_SidebarNode node,
      str8_match(icon, rd_icon_kind_text_table[RD_IconKind_FolderClosedOutline], 0))
   { icon = rd_icon_kind_text_table[RD_IconKind_Thumbnails]; }
   return icon;
+}
+
+// What a chip draws for its entity's icon (`icon`, as uishell_sidebar_icon
+// gives it): a workspace's status mark while it is ended or opening, in the
+// main font, else the icon. The tool strip draws its items by it too.
+internal String8
+uishell_sidebar_chip_glyph(String8 icon, B32 *icon_font, String8 kind, String8 status, uint32_t state)
+{
+  if(uishell_sidebar_kind_is_subject(kind) || !(str8_match(status, str8_lit("ended"), 0) || state == WHEELHOUSE_OPENING))
+  { return icon; }
+  *icon_font = 0;
+  return uishell_sidebar_status_mark((UIShell_SidebarNode){.state = state}, status);
 }
 
 internal String8
@@ -3450,8 +3488,10 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
   Temp scratch = scratch_begin(0, 0);
   F32 em = ui_top_font_size();
   B32 subject = uishell_sidebar_is_subject(node), icon_font = 0;
-  String8 label = subject ? uishell_sidebar_chip_label(state, node) : uishell_sidebar_chip_icon(state, node, &icon_font);
   String8 status = uishell_sidebar_chip_status(state, node);
+  String8 label = subject ? uishell_sidebar_chip_label(state, node) :
+    uishell_sidebar_chip_glyph(uishell_sidebar_chip_icon(state, node, &icon_font), &icon_font,
+                               uishell_sidebar_string(node.entity.kind), status, node.state);
   Vec4F32 border = subject ? uishell_sidebar_subject_color(status) : uishell_sidebar_action_border();
   Vec4F32 fill = node.selected ? uishell_sidebar_selection_fill(1) :
     mix_4f32(ui_color_from_name(str8_lit("background")), border, node.state == WHEELHOUSE_LIVE ? 0.23f : 0.06f);
@@ -3460,9 +3500,7 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
   UI_CornerRadius(subject ? em*0.7f : 3.f) UI_PrefHeight(ui_px(em*1.6f, 1))
   UI_FixedY(Max(0.f, (row_height-4.f-em*1.6f)*0.5f))
   UI_PrefWidth(menu ? ui_pct(1, 0) : ui_px(uishell_sidebar_chip_width(state, node)-4.f, 1))
-  UI_BackgroundColor(fill) UI_TextColor(str8_match(status, str8_lit("ended"), 0) ?
-    uishell_sidebar_ended_color() :
-    subject ? border : ui_color_from_name(str8_lit("text")))
+  UI_BackgroundColor(fill) UI_TextColor(uishell_sidebar_chip_text_color(uishell_sidebar_string(node.entity.kind), status))
   UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center) UI_FontSize(em*0.9f)
   {
     ui_set_next_border_color(border);
@@ -3472,8 +3510,6 @@ uishell_sidebar_inline_action(UIShell_SidebarState *state, RD_WindowState *ws,
     UI_Parent(box) UI_PrefHeight(ui_pct(1, 1)) UI_PrefWidth(ui_pct(1, 0))
     {
       if(menu) { ui_label(uishell_sidebar_chip_label(state, node)); }
-      else if(!subject && (str8_match(status, str8_lit("ended"), 0) || node.state == WHEELHOUSE_OPENING))
-      { ui_label(uishell_sidebar_status_mark(node, status)); }
       else if(icon_font) RD_Font(RD_FontSlot_Icons) { ui_label(label); }
       else { ui_label(label); }
     }

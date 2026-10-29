@@ -186,8 +186,8 @@ Settled for #122 on 2026-10-23 (`native/src/uishell/uishell_tool_strip.c`):
   than fit fades out its last visible item and scrolls by whole items.
 - **Icons only:** each item has a tooltip, or its hover card, which opens beside
   the strip, level with the item.
-- **Subject:** a click reveals its row in the sidebar, opening the sidebar if
-  it's collapsed.
+- **Subject:** drawn as its sidebar chip, by what its card presents (#447). A
+  click reveals its row in the sidebar, opening the sidebar if it's collapsed.
 - **Layouts:** a layout's `glyph`, else its name's first letter, with the
   current one marked. A click shows that layout. The right-click menu has
   *Show this layout*, *Show the default layout* and, for a rearranged current
@@ -211,8 +211,12 @@ Settled for #122 on 2026-10-23 (`native/src/uishell/uishell_tool_strip.c`):
 
   The linked items are a convoy's PRs, then its issues. A vessel links none
   until its convoy's PRs and issues reach it: they aren't its own facts, and a
-  strip loop can't follow the convoy to them. A project links none yet. A
-  workspace not open yet is drawn weak. A click runs the item's primary
+  strip loop can't follow the convoy to them. A project links none yet. Each
+  item is drawn as its entity's sidebar chip, whether or not the sidebar shows
+  one: the chip's icon, or a workspace's mark (`…`, `×`) while it is opening or
+  ended, in the chip's colour, so a subject is coloured by its status (#447).
+  A project's item is its icon, not its chip's overview glyph, since it opens
+  the project. A workspace not open yet is drawn weak. A click runs the item's primary
   action, which opens a workspace or switches to it, or opens a URL. Its hover
   card has the other actions. Whether ancestors and children need telling
   apart (a vessel's project and convoy are above it, a convoy's vessels below)

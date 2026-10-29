@@ -30,6 +30,15 @@ unsafe fn acquire_worktree(h: *mut WheelhouseCore) -> *mut WheelhouseSnapshot {
     assert_ne!(wheelhouse_snapshot_detail_request(h, s, entity(text("worktree"), text("w")), ptr::null_mut()), usize::MAX);
     s
 }
+// Whether the card of worktree `w` says its workspace is opening, and has one.
+unsafe fn card_opening(h: *mut WheelhouseCore) -> (u32, u32) {
+    let card = wheelhouse_card_acquire(h, entity(text("worktree"), text("w")), ptr::null_mut());
+    let mut c = MaybeUninit::uninit();
+    assert_eq!(wheelhouse_card(card, c.as_mut_ptr()), 1);
+    let c = c.assume_init();
+    wheelhouse_card_release(card);
+    (c.opening, c.has_workspace)
+}
 // Acceptance scenario: all six catalog kinds preserve typed roles, known-empty
 // facts, observation provenance and relations even when there is no tree node.
 #[test]
@@ -45,7 +54,7 @@ fn six_kind_native_detail_contract() {
         assert_eq!(wheelhouse_snapshot_detail_find(legacy, entity(text("worktree"), text("worktree:identity / #"))), usize::MAX);
         wheelhouse_snapshot_release(legacy);
         let s = wheelhouse_snapshot_acquire_details(h, ptr::null_mut());
-        assert_eq!(wheelhouse_abi_version(), 11);
+        assert_eq!(wheelhouse_abi_version(), 12);
         assert_eq!(wheelhouse_snapshot_detail_count(s), 6);
         for kind in ["change_request", "issue", "convoy", "role", "project", "worktree"] {
             let card = wheelhouse_snapshot_detail_find(s, entity(text(kind), text(&format!("{kind}:identity / #"))));
@@ -128,8 +137,9 @@ fn six_kind_native_detail_contract() {
     }
 }
 
-// Lifecycle scenario: materialization uses the primary control label, an
-// identical re-send changes nothing, and while its provider is stale a retained
+// Lifecycle scenario: materialization uses the primary control label, its
+// card is opening from the request until the workspace is live (as a chip
+// draws it), an identical re-send changes nothing, and while its provider is stale a retained
 // fact exposes its writer and receipt time, marked stale, through the native ABI.
 #[test]
 fn native_controls_resends_and_retained_staleness() {
@@ -150,7 +160,9 @@ fn native_controls_resends_and_retained_staleness() {
         let action = action.assume_init();
         assert_eq!(read(action.intent), "materialize-workspace");
         assert_eq!(read(action.label), "Attach");
+        assert_eq!(card_opening(h), (0, 0), "not asked for yet");
         assert_eq!(wheelhouse_dispatch(h, s, action.action, ptr::null_mut()), 1);
+        assert_eq!(card_opening(h), (1, 0), "asked for, not live");
         let effects = wheelhouse_effects_take(h, ptr::null_mut());
         let mut effect = MaybeUninit::uninit();
         assert_eq!(wheelhouse_effects_get(effects, 0, effect.as_mut_ptr()), 1);
@@ -170,6 +182,7 @@ fn native_controls_resends_and_retained_staleness() {
         wheelhouse_effects_release(effects);
         let workspace = WorkspaceInput { id: tab_workspace_id(7).into(), position: 0, name: text("Worker"), selected: 1 };
         assert_eq!(wheelhouse_observe(h, &workspace, 1, ptr::null(), 0, ptr::null_mut()), 1);
+        assert_eq!(card_opening(h), (0, 1), "live");
         assert_eq!(wheelhouse_apply_patch_json(h, 105, text(PROVIDER), text(patch), ptr::null_mut()), 1);
         let fresh = acquire_worktree(h);
         assert_eq!(field(fresh, card, "summary").observed_at_ms, 100, "an identical re-send changes nothing");

@@ -71,7 +71,7 @@ static int same(WheelhouseWorkspaceId a, WheelhouseWorkspaceId b) {
 
 /* Facts, topology, the snapshot, dispatch, effects and completion. */
 static void check_sidebar(const char *config_path, const char *patches_path) {
-    assert(wheelhouse_abi_version() == 11);
+    assert(wheelhouse_abi_version() == 12);
     char *config = read_file(config_path);
     WheelhouseCore *h = create(config);
     ok(wheelhouse_configure(h, text(config), &error));

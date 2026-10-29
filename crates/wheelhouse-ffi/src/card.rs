@@ -29,6 +29,13 @@ pub struct CardView {
     /// The workspace live for the entity, if any.
     pub has_workspace: u32,
     pub workspace_id: WorkspaceIdView,
+    /// Its workspace is being opened (none is live yet).
+    pub opening: u32,
+    /// What a chip of the entity presents, as a WheelhouseStripEntry's:
+    /// its status, attention and icon; absent ones are empty.
+    pub status: Text,
+    pub attention: u32,
+    pub icon: Text,
 }
 
 /// A card's action: an intent (`kind`, a WHEELHOUSE_INTENT_*) on `entity`.
@@ -103,6 +110,10 @@ pub unsafe extern "C" fn wheelhouse_card(c: *const WheelhouseCard, out: *mut Car
         error: Text::borrowed(c.card.error.as_deref().unwrap_or("")),
         has_workspace: c.card.workspace_id.is_some() as u32,
         workspace_id: workspace_view(c.card.workspace_id),
+        opening: c.card.opening as u32,
+        status: Text::borrowed(c.card.presented.status.as_deref().unwrap_or("")),
+        attention: c.card.presented.attention as u32,
+        icon: Text::borrowed(c.card.presented.icon.as_deref().unwrap_or("")),
     };
     1
 }

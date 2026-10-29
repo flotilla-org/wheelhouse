@@ -1,7 +1,7 @@
 //! A subject's tool strip (docs/core/sidebar-design/tool-strip.md): the related
 //! workspaces and linked items its kind's `strip` lists. Each entry is an
-//! entity; its label, state, hover card and actions are its detail
-//! (wheelhouse_snapshot_detail_request).
+//! entity, with what a chip of it presents; its label, hover card and
+//! actions are its detail (wheelhouse_card_acquire).
 use super::*;
 use wheelhouse_core::tool_strip::{StripEntry, StripSection};
 
@@ -15,6 +15,12 @@ pub struct WheelhouseStripEntry {
     /// WHEELHOUSE_STRIP_*.
     pub section: u32,
     pub entity: EntityView,
+    /// What a chip of the entity presents, whether or not the sidebar shows
+    /// one: its status, attention and icon (a symbolic name or a glyph), as
+    /// a stream node's are; absent ones are empty.
+    pub status: Text,
+    pub attention: u32,
+    pub icon: Text,
 }
 
 /// A subject's strip, in section order, then in the order its loops list
@@ -39,6 +45,7 @@ pub unsafe extern "C" fn wheelhouse_strip_get(
     run(h, error_out, |h| {
         let subject = subject.read()?;
         let listed = h.sidebar.strip(&subject);
+        let text = |value: &Option<String>| Text::borrowed(value.as_deref().unwrap_or(""));
         let entries: Vec<WheelhouseStripEntry> = listed
             .iter()
             .map(|entry| WheelhouseStripEntry {
@@ -47,6 +54,9 @@ pub unsafe extern "C" fn wheelhouse_strip_get(
                     StripSection::Linked => WHEELHOUSE_STRIP_LINKED,
                 },
                 entity: EntityView::of(&entry.entity),
+                status: text(&entry.presented.status),
+                attention: entry.presented.attention as u32,
+                icon: text(&entry.presented.icon),
             })
             .collect();
         let value = WheelhouseStrip { entries: entries.as_ptr(), count: entries.len() };

@@ -225,16 +225,28 @@ placement "sessions" {
     apply-template "wheelhouse/entry"
   }
 }
+// A subject's chip is its label, coloured by its status: its readiness or
+// state, which it presents too, so the tool strip, which lists subjects the
+// sidebar may not show, colours them alike. A producer's icon is the one
+// the strip draws (and the Attention row), else its kind's.
 template "change_request/native" {
   field "label" key="display.label"
   field "kind" key="entity.kind"
   field "readiness" key="flotilla.change_request.readiness"
   field "orphaned" key="flotilla.orphaned" prefix="orphaned:"
+  use "wheelhouse/subject-presentation"
+  field "tone" key="flotilla.change_request.readiness" presents="status"
 }
 template "issue/native" {
   field "label" key="display.label"
   field "kind" key="entity.kind"
   field "status" key="flotilla.issue.state"
+  use "wheelhouse/subject-presentation"
+  field "tone" key="flotilla.issue.state" presents="status"
+}
+fragment "wheelhouse/subject-presentation" {
+  field "icon" key="presentation.icon" presents="icon"
+  field "attention" key="status.attention" presents="attention"
 }
 placement "attention" {
   for "change_request" kind="change_request" visibility="wheelhouse/subject-attention" tier="medium" {

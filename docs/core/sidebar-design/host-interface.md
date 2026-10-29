@@ -1,4 +1,4 @@
-# The host interface (ABI 11)
+# The host interface (ABI 12)
 
 What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
@@ -8,7 +8,7 @@ behind it is in [Slots and arrangements](slots-and-arrangements.md),
 [The sidebar arrangement](sidebar-arrangement.md) and the
 [Workspace Overlay](workspace-overlay.md).
 
-`wheelhouse_abi_version()` returns 9. Each call has one form: there is no
+`wheelhouse_abi_version()` returns 12. Each call has one form: there is no
 compatibility with earlier versions, and a host requires exactly the version
 it was built against.
 
@@ -116,7 +116,7 @@ ABI 4 is not imported.
 | `wheelhouse_workspace_content_revision` | Poll to learn when to read slots, plans and arrangements again. |
 | `wheelhouse_layouts_get` / `_free` | `WheelhouseLayoutList`: a workspace's [Workspace Layouts](workspace-layouts.md) in the template's order, each `WheelhouseLayout` with `WHEELHOUSE_LAYOUT_DEFAULT` and `_CURRENT` flags. Empty when its subject's kind has no template. |
 | `wheelhouse_layout_choose(h, ws, has_name, name)` | Show a layout, or (`has_name` 0) follow the default. The shown layout's edits are kept for when it is shown again; the arrangement's generation moves. Resetting a layout is `wheelhouse_arrangement_resolve` FOLLOW. |
-| `wheelhouse_strip_get(h, subject)` / `_free` | `WheelhouseStrip`: the subject's [tool strip](tool-strip.md), its related workspaces then its linked items, each an `WheelhouseStripEntry` with its `WHEELHOUSE_STRIP_*` section and entity. Read each entry's detail for its label, state and actions. It follows the catalog: read it again when the snapshot's revision moves. |
+| `wheelhouse_strip_get(h, subject)` / `_free` | `WheelhouseStrip`: the subject's [tool strip](tool-strip.md), its related workspaces then its linked items, each an `WheelhouseStripEntry` with its `WHEELHOUSE_STRIP_*` section, entity, and what a chip of it presents (`status`, `attention`, `icon`). Read each entry's detail for its label and actions. It follows the catalog: read it again when the snapshot's revision moves. |
 
 ## Arrangements
 
@@ -159,6 +159,16 @@ single pass, appending each panel to its parent.
   `variable:` and the key.
 
 Committing an arrangement never changes the snapshot's revision.
+
+## From ABI 11
+
+ABI 12 gives each `WheelhouseStripEntry` what a chip of its entity presents,
+whether or not the sidebar shows one: `status`, `attention` and `icon`, as a
+`WheelhouseStreamNode` carries them (wheelhouse#447). A card
+(`WheelhouseCardInfo`) carries the same for its entity, so a hover card or a
+strip's own subject draws its chip icon, and `opening` while its workspace is
+being opened. Both structs change layout, so a host built against ABI 11 must
+be rebuilt.
 
 ## From ABI 10
 

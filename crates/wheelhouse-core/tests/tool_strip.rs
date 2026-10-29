@@ -69,7 +69,11 @@ fn subject_of(kind: &str, id: &str, number: &str, convoy: &str) -> wheelhouse_co
 }
 
 fn listed(sidebar: &Sidebar, subject: EntityRef) -> Vec<(StripSection, String)> {
-    sidebar.strip(&subject).into_iter().map(|StripEntry { section, entity }| (section, format!("{}/{}", entity.kind, entity.id))).collect()
+    sidebar
+        .strip(&subject)
+        .into_iter()
+        .map(|StripEntry { section, entity, .. }| (section, format!("{}/{}", entity.kind, entity.id)))
+        .collect()
 }
 
 fn related(id: &str) -> (StripSection, String) {
@@ -228,4 +232,115 @@ fn a_removed_subject_keeps_its_strip_in_its_workspace_and_across_a_restart() {
     restarted.observe(vec![Workspace { id: worker(), position: 0, name: "Bravo".into(), selected: true }], vec![]);
     restarted.import_record(&name, &record).unwrap();
     assert_eq!(listed(&restarted, v1), kept, "a key only the strip reads is kept too");
+}
+
+/// A sidebar placing convoys, their vessels and their change requests, each
+/// kind by its own template (a lead vessel by another, which ours isn't);
+/// issues it never places, so they take their kind's compact template. A
+/// convoy's strip lists all three.
+const CHIPS: &str = r#"
+region "tree" root-template="title" form="compact" placement="tree"
+template "title" slot="compact" node-kind="entity" { field "label" source="literal" value="Tree"; }
+placement "tree" {
+  for "convoy" kind="convoy" { apply-template "convoy/row"; }
+}
+template "convoy/row" {
+  field "label" key="display.label"
+  for "lead" kind="vessel" { match "flotilla.convoy" of="convoy"; match "test.lead" value="true"; apply-template "lead/row"; }
+  for "vessel" kind="vessel" { match "flotilla.convoy" of="convoy"; apply-template "vessel/row"; }
+  for "change_request" kind="change_request" { match "flotilla.subject_of" of="convoy"; apply-template "subject/row"; }
+}
+fragment "chip" {
+  field "icon" key="presentation.icon" presents="icon"
+  field "attention" key="status.attention" presents="attention"
+  field "status" key="status.state" presents="status"
+}
+template "vessel/row" {
+  field "label" key="display.label"
+  use "chip"
+  field "icon-override" source="literal" value="terminal" presents="icon"
+}
+template "lead/row" {
+  field "label" key="display.label"
+  field "icon-override" source="literal" value="gear" presents="icon"
+}
+template "subject/row" {
+  field "label" key="display.label"
+  use "chip"
+}
+template "issue/compact" slot="compact" node-kind="entity" {
+  field "label" key="display.label"
+  use "chip"
+  field "icon-override" source="literal" value="code" presents="icon"
+}
+workspace kind="convoy" {
+  strip {
+    related { for "vessel" kind="vessel" { match "flotilla.convoy" of="convoy"; }; };
+    linked {
+      for "change_request" kind="change_request" { match "flotilla.subject_of" of="convoy"; };
+      for "issue" kind="issue" { match "flotilla.subject_of" of="convoy"; };
+    };
+  }
+}
+"#;
+
+// Behaviour (#447): a strip entry carries what a chip of its entity presents,
+// from the same rules and the same template: the producer's
+// `presentation.icon`, else the template's `icon-override`, else none; and
+// its `status.state` and `status.attention`. Where the sidebar places the
+// entity, the entry agrees with its node; where it never does, the entry
+// still has its kind's template's presentation. Its card presents the same.
+//
+// The generator draws, for a vessel (template with an override, after a
+// loop over lead vessels only, which it isn't), a change
+// request (template without one) and an issue (never placed; its kind's
+// compact template, with an override), each of: no icon, a symbolic one or
+// a literal glyph; no status or one of two; attention unset, false or true.
+#[hegel::test(test_cases = 100)]
+fn a_strip_entry_presents_its_entity_as_its_chip_does(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    use wheelhouse_core::MetadataValue;
+    let mut sidebar = Sidebar::new(CHIPS).unwrap();
+    let convoy = entity("convoy", "c");
+    let mut patches = vec![patch(convoy.clone(), &[("display.label", text("C"))])];
+    let mut expected = vec![];
+    for (kind, link, override_icon) in [
+        ("vessel", "flotilla.convoy", Some("terminal")),
+        ("change_request", "flotilla.subject_of", None),
+        ("issue", "flotilla.subject_of", Some("code")),
+    ] {
+        let icon = [None, Some("review"), Some("★")][tc.draw(gs::integers::<usize>().max_value(2))];
+        let status = [None, Some("running"), Some("ci_failing")][tc.draw(gs::integers::<usize>().max_value(2))];
+        let attention = [None, Some(false), Some(true)][tc.draw(gs::integers::<usize>().max_value(2))];
+        let mut facts = vec![("display.label", text(kind)), (link, refs(convoy.clone()))];
+        facts.extend(icon.map(|icon| ("presentation.icon", text(icon))));
+        facts.extend(status.map(|status| ("status.state", text(status))));
+        facts.extend(attention.map(|attention| ("status.attention", MetadataValue::Bool(attention))));
+        patches.push(patch(entity(kind, "x"), &facts));
+        expected.push((format!("{kind}/x"), icon.or(override_icon).map(str::to_owned), status.map(str::to_owned), attention == Some(true)));
+    }
+    sidebar.feed(100, patches);
+    let strip = sidebar.strip(&convoy);
+    let presented: Vec<_> = strip
+        .iter()
+        .map(|entry| {
+            let p = &entry.presented;
+            (format!("{}/{}", entry.entity.kind, entry.entity.id), p.icon.clone(), p.status.clone(), p.attention)
+        })
+        .collect();
+    assert_eq!(presented, expected);
+
+    let snapshot = sidebar.snapshot();
+    let placed = common::nodes(&snapshot.surface);
+    for entry in &strip {
+        let node = placed.iter().find(|node| node.entity == entry.entity);
+        match entry.entity.kind.as_str() {
+            "issue" => assert!(node.is_none(), "the sidebar never places an issue"),
+            _ => assert_eq!(Some(&entry.presented), node.map(|node| &node.content.presented), "{} as its chip", entry.entity.kind),
+        }
+        // Its card presents the same, for the hover card and the strip's
+        // own subject item, which draw the entity's icon from it.
+        let card = sidebar.detail_card(&entry.entity).expect("a listed entity has a card");
+        assert_eq!(card.presented, entry.presented, "{}'s card as its entry", entry.entity.kind);
+    }
 }

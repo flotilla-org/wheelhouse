@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 use kdl::KdlNode;
 use serde::Deserialize;
 
+use crate::presentation::Presented;
 use crate::template_config::{PlacementLoop, TemplateConfigError};
 use crate::EntityRef;
 
@@ -50,6 +51,12 @@ pub enum StripSection {
 pub struct StripEntry {
     pub section: StripSection,
     pub entity: EntityRef,
+    /// What a chip of the entity presents (its icon, status and attention),
+    /// whether or not the sidebar shows one: what the `presents` fields of
+    /// the template the sidebar gives its kind
+    /// (`TemplateConfigCatalog::applied_template_for_kind`), else of its
+    /// kind's own compact template, give for its facts.
+    pub presented: Presented,
 }
 
 /// Read a `strip` node: its `related` and `linked` sections, each a list of

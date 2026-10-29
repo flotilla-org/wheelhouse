@@ -202,15 +202,30 @@ workspace kind="vessel" {
   layout "all" { tabs id="main" { slots rest=true; }; }
   strip { linked { for "issue" kind="issue" { match "flotilla.vessel" of="vessel"; order "display.label"; }; }; }
 }
+template "issue/compact" slot="compact" node-kind="entity" {
+  field "label" key="display.label"
+  field "icon" key="presentation.icon" presents="icon"
+  field "status" key="status.state" presents="status"
+  field "attention" key="status.attention" presents="attention"
+}
 "#;
         let config = format!("{}\n{template}", include_str!("../../wheelhouse-core/tests/fixtures/abbreviation.kdl"));
         let mut error = ptr::null_mut();
         let h = create(&config);
         let patch = r#"{"type":"metadata-patch","target":{"kind":"entity","value":{"kind":"vessel","id":"worker"}},"source_id":"test","set":{"flotilla.vessel":{"value":{"type":"text","value":"worker"}},"display.label":{"value":{"type":"text","value":"worker"}}},"unset":[]}"#;
         assert_eq!(wheelhouse_apply_patch_json(h, 0, text(PROVIDER), text(patch), &mut error), 1);
-        for (issue, vessel) in [("i2", "worker"), ("i1", "worker"), ("i3", "other")] {
+        // i1 presents an icon, a status and attention; i2 none of them.
+        for (issue, vessel, presented) in [
+            ("i2", "worker", ""),
+            (
+                "i1",
+                "worker",
+                r#","presentation.icon":{"value":{"type":"text","value":"review"}},"status.state":{"value":{"type":"text","value":"ci_failing"}},"status.attention":{"value":{"type":"bool","value":true}}"#,
+            ),
+            ("i3", "other", ""),
+        ] {
             let patch = format!(
-                r#"{{"type":"metadata-patch","target":{{"kind":"entity","value":{{"kind":"issue","id":"{issue}"}}}},"source_id":"test","set":{{"flotilla.vessel":{{"value":{{"type":"text","value":"{vessel}"}}}},"display.label":{{"value":{{"type":"text","value":"{issue}"}}}}}},"unset":[]}}"#
+                r#"{{"type":"metadata-patch","target":{{"kind":"entity","value":{{"kind":"issue","id":"{issue}"}}}},"source_id":"test","set":{{"flotilla.vessel":{{"value":{{"type":"text","value":"{vessel}"}}}},"display.label":{{"value":{{"type":"text","value":"{issue}"}}}}{presented}}},"unset":[]}}"#
             );
             assert_eq!(wheelhouse_apply_patch_json(h, 0, text(PROVIDER), text(&patch), &mut error), 1);
         }
@@ -288,12 +303,33 @@ workspace kind="vessel" {
 
         let subject = EntityView { provider: text(PROVIDER), kind: text("vessel"), id: text("worker") };
         let strip = wheelhouse_strip_get(h, subject, &mut error);
-        let listed: Vec<(u32, String)> = slice((*strip).entries, (*strip).count)
+        let listed: Vec<(u32, String, String, String, u32)> = slice((*strip).entries, (*strip).count)
             .unwrap()
             .iter()
-            .map(|entry| (entry.section, format!("{}/{}", entry.entity.kind.read().unwrap(), entry.entity.id.read().unwrap())))
+            .map(|entry| {
+                let id = format!("{}/{}", entry.entity.kind.read().unwrap(), entry.entity.id.read().unwrap());
+                (entry.section, id, entry.icon.read().unwrap(), entry.status.read().unwrap(), entry.attention)
+            })
             .collect();
-        assert_eq!(listed, [(WHEELHOUSE_STRIP_LINKED, "issue/i1".into()), (WHEELHOUSE_STRIP_LINKED, "issue/i2".into())]);
+        assert_eq!(
+            listed,
+            [
+                (WHEELHOUSE_STRIP_LINKED, "issue/i1".into(), "review".into(), "ci_failing".into(), 1),
+                (WHEELHOUSE_STRIP_LINKED, "issue/i2".into(), String::new(), String::new(), 0)
+            ]
+        );
+        // Each entity's card presents what its entry does.
+        for entry in slice((*strip).entries, (*strip).count).unwrap() {
+            let card = wheelhouse_card_acquire(h, entry.entity, &mut error);
+            let mut c = MaybeUninit::uninit();
+            assert_eq!(wheelhouse_card(card, c.as_mut_ptr()), 1);
+            let c = c.assume_init();
+            assert_eq!(
+                (c.icon.read().unwrap(), c.status.read().unwrap(), c.attention),
+                (entry.icon.read().unwrap(), entry.status.read().unwrap(), entry.attention)
+            );
+            wheelhouse_card_release(card);
+        }
         wheelhouse_strip_free(strip);
         let missing = EntityView { provider: text(PROVIDER), kind: text("vessel"), id: text("nobody") };
         let strip = wheelhouse_strip_get(h, missing, &mut error);

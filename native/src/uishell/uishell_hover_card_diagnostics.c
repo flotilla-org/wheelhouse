@@ -903,6 +903,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       { uishell_sidebar_card_content(&fixture, ws, card, 0, node, index, 400, 0); }
       ui_end_build();
       B32 title = 0, identity = 0, facts = 0, expected_facts = 0;
+      // The header's icon is its entity's chip icon (the governor role's
+      // presented gear, not its kind's threads), the first icon drawn.
+      B32 icon_font = 0;
+      String8 chip_icon = uishell_sidebar_node_icon(&fixture, node, &icon_font), header_icon = str8_zero();
+      FNT_Tag icons_tag = rd_font_from_slot(RD_FontSlot_Icons);
       WheelhouseCardInfo d = {0}; uishell_sidebar_card_info(&fixture, index, &d);
       for(U64 f = 0; f < d.field_count; f++)
       {
@@ -912,6 +917,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
       {
         String8 text = ui_box_display_string(box);
+        if(!header_icon.size && text.size && MemoryMatchStruct(&box->font, &icons_tag)) { header_icon = text; }
         title |= str8_match(text, str8_cstring(cards[i].title), 0);
         identity |= str8_match(text, str8_cstring(cards[i].id), 0);
         WheelhouseCardInfo d = {0}; uishell_sidebar_card_info(&fixture, index, &d);
@@ -923,6 +929,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         CardCheck(!str8_match(str8_prefix(text, 6), str8_lit("Title:"), 0), "typed headers do not display flat prefixes");
       }
       CardCheck(title && identity && facts == expected_facts, "each shipped template renders its header and facts");
+      CardCheck(icon_font && str8_match(header_icon, chip_icon, 0), "each card's header draws its entity's chip icon");
     }
     fprintf(stderr, "Hover card diagnostics: subscription entities\n");
     // An entity from a Dashboard subscription is keyed by the subscription's
