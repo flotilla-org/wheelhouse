@@ -151,12 +151,13 @@ uishell_table_diagnostics(RD_WindowState *ws)
     U64 count = snap.axes[BINNACLE_ROWS].count;
     String8 before = uishell_table_diag_cell(scratch.arena, table, 0, 1);
     B32 changed = 0;
-    for(U64 t = 1; t <= 12 && !changed; t += 1)
+    // The clock runs a tick at a time: after a long gap the table starts
+    // its clock again rather than catching up.
+    for(U64 t = 1; t <= 12; t += 1)
     {
       snap = uishell_table_diag_frame(table, 1200, 800, 1000000+t*250000);
-      changed = !str8_match(before, uishell_table_diag_cell(scratch.arena, table, 0, 1), 0);
+      changed |= !str8_match(before, uishell_table_diag_cell(scratch.arena, table, 0, 1), 0);
     }
-    snap = uishell_table_diag_frame(table, 1200, 800, 4000000);
     TableCheck(changed, "a live ticker's price changes as the clock runs");
     TableCheck(snap.axes[BINNACLE_ROWS].count > count, "the live table lists new tickers");
     TableCheck(wheelhouse_table_frame(table, 1200, 800, 4000000) <= 250000, "a live table says when it next changes");

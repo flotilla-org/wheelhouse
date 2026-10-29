@@ -52,3 +52,20 @@ fn the_live_clock_only_lists_more_and_says_when_it_next_changes(tc: hegel::TestC
         count = now_count;
     }
 }
+
+/// A long gap between frames (a hidden tab, a sleep) doesn't replay the
+/// missed ticks: one frame lists at most one new ticker.
+#[hegel::test(test_cases = 50)]
+fn a_long_gap_starts_the_live_clock_again(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    let (mut table, mut grid) = Table::open("live", METRICS).expect("live");
+    let start = Duration::from_micros(tc.draw(gs::integers::<u64>().max_value(1_000_000)));
+    table.tick(&mut grid, start);
+    table.pump(&mut grid, |_| {});
+    let count = grid.snapshot().count(Axis::Rows);
+    let gap = Duration::from_secs(tc.draw(gs::integers::<u64>().min_value(10).max_value(36_000)));
+    table.tick(&mut grid, start + gap);
+    table.pump(&mut grid, |_| {});
+    let after = grid.snapshot().count(Axis::Rows);
+    assert!(after <= count + 1, "{after} rows after a {gap:?} gap, from {count}");
+}
