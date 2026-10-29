@@ -1052,6 +1052,7 @@ struct RD_State
   Arena *frame_arenas[2];
   U64 frame_time_us_history[64];
   U64 num_frames_requested;
+  U64 frame_deadline_us; // the earliest rd_request_frame_at, or 0
   F64 time_in_seconds;
   U64 time_in_us;
 
@@ -1710,6 +1711,7 @@ internal String8Array rd_gather_auto_exprs(Arena *arena);
 //~ rjf: Continuous Frame Requests
 
 internal void rd_request_frame(void);
+internal void rd_request_frame_at(U64 at_us);
 
 ////////////////////////////////
 //~ rjf: Main State Accessors

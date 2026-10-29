@@ -497,14 +497,25 @@ internal WM_EventList
 wm_get_events(Arena *arena, B32 wait)
 {
   WM_EventList evts = {0};
+  U64 timeout_us = wait ? wm_take_wait_timeout_us() : 0;
+  U64 until_us = timeout_us == max_U64 ? max_U64 : now_time_us() + timeout_us;
   for(;XPending(lnx_wm_state->display) > 0 || (wait && evts.count == 0);)
   {
     if(XPending(lnx_wm_state->display) == 0)
     {
       struct pollfd fds[] = {{ConnectionNumber(lnx_wm_state->display), POLLIN, 0}, {lnx_wm_state->wake_pipe[0], POLLIN, 0}};
       int result;
-      do { result = poll(fds, 2, -1); } while(result < 0 && errno == EINTR);
-      if(result < 0) { break; }
+      do
+      {
+        int timeout_ms = -1;
+        if(until_us != max_U64)
+        {
+          U64 now = now_time_us();
+          timeout_ms = until_us > now ? (int)Min((until_us - now + 999)/1000, (U64)max_S32) : 0;
+        }
+        result = poll(fds, 2, timeout_ms);
+      } while(result < 0 && errno == EINTR);
+      if(result <= 0) { break; }
       if(fds[1].revents & POLLIN)
       {
         char bytes[128];

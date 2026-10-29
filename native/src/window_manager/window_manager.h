@@ -201,6 +201,8 @@ internal B32 wm_monitor_match(WM_Monitor a, WM_Monitor b);
 //~ rjf: Event Functions (Helpers, Implemented Once)
 
 internal String8 wm_string_from_event_kind(WM_EventKind kind);
+internal void wm_set_wait_deadline(U64 until_us);
+internal U64 wm_take_wait_timeout_us(void);
 internal String8List wm_string_list_from_modifiers(Arena *arena, WM_Modifiers flags);
 internal String8 wm_string_from_modifiers_key(Arena *arena, WM_Modifiers modifiers, WM_Key key);
 internal U32 wm_codepoint_from_modifiers_and_key(WM_Modifiers flags, WM_Key key);

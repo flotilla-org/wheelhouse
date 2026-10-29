@@ -297,7 +297,9 @@ uishell_sidebar_card_hover_at(UIShell_SidebarState *state, UIShell_SidebarNode n
   card->source_seen = 1;
   card->source_rect = sig.box->rect;
   card->departure = ui_state->mouse;
-  rd_request_frame();
+  // Waiting to open is a clock, not motion: one frame at the delay. An open
+  // card animates by its own requests, and the pointer's moves wake the rest.
+  if(!card->open) { rd_request_frame_at(card->candidate_since + UIShell_HoverCardOpenDelayUS); }
 }
 
 // The node's home row: it anchors the node's inline and detached cards, and
@@ -1149,7 +1151,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     uishell_sidebar_card_tick(card, mouse, now);
     card->cap_shown = card->cap_drawn = 0;
     if(!card->open) { continue; }
-    if(card->left_at && card->placement == UIShell_CardPlacement_Transient) { rd_request_frame(); }
+    if(card->left_at && card->placement == UIShell_CardPlacement_Transient) { rd_request_frame_at(card->left_at + UIShell_HoverCardLeaveDelayUS); }
     ui_state->hover_card_focus |= card->focused;
     UI_Key key = slot >= ArrayCount(state->cards) ? card->mask.key : ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", slot);
     UI_Key content_key = ui_key_from_stringf(key, "content");

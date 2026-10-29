@@ -1608,6 +1608,15 @@ wm_get_events(Arena *arena, B32 wait)
   w32_wm_event_arena = arena;
   MemoryZeroStruct(&w32_wm_event_list);
   MSG msg = {0};
+  U64 timeout_us = wait ? wm_take_wait_timeout_us() : 0;
+  if(wait && timeout_us != max_U64)
+  {
+    // A bounded wait: wake for any message or at the deadline, then drain
+    // what is queued without blocking again.
+    DWORD timeout_ms = (DWORD)Min((timeout_us + 999)/1000, (U64)0xFFFFFFFEu);
+    MsgWaitForMultipleObjectsEx(0, 0, timeout_ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    wait = 0;
+  }
   if(!wait || GetMessage(&msg, 0, 0, 0))
   {
     B32 first_wait = wait;

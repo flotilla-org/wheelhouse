@@ -259,6 +259,7 @@ wm_send_wakeup_event(void)
 internal WM_EventList
 wm_get_events(Arena *arena, B32 wait)
 {
+  if(wait) { wm_take_wait_timeout_us(); }
   WM_EventList evts = {0};
   return evts;
 }

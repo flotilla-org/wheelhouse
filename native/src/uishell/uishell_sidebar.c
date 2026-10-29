@@ -2448,7 +2448,7 @@ uishell_sidebar_held(UIShell_SidebarState *state, UI_Signal sig)
   if(ui_pressed(sig)) { state->hold_key = sig.box->key; state->hold_us = now; }
   if(!ui_key_match(state->hold_key, sig.box->key)) { return 0; }
   if(!ui_dragging(sig)) { state->hold_key = ui_key_zero(); return 0; }
-  if(now-state->hold_us < UIShell_HoldUS) { rd_request_frame(); return 0; }
+  if(now-state->hold_us < UIShell_HoldUS) { rd_request_frame_at(state->hold_us + UIShell_HoldUS); return 0; }
   ui_kill_action();
   state->hold_key = ui_key_zero();
   return 1;
