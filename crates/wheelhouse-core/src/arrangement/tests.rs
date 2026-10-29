@@ -166,25 +166,27 @@ fn resizing_respects_the_floor_and_equalizing_evens(tc: TestCase) {
     let panel = draw_panel(&tc, &a);
     let Some(path) = a.path(panel.0) else { return };
     let Some((&i, parent)) = path.split_last() else { return };
-    if i + 1 >= a.at(parent).children.len() {
-        return;
-    }
-    let (w, next) = (a.at(parent).children[i].weight, a.at(parent).children[i + 1].weight);
+    let weights: Vec<f32> = a.at(parent).children.iter().map(|c| c.weight).collect();
+    let Some(j) = boundary_partner(&weights, i) else { return };
+    let (w, next) = (weights[i], weights[j]);
     let delta = tc.draw(gs::floats::<f32>().min_value(-1.5).max_value(1.5).allow_nan(false).allow_infinity(false));
     let floor = tc.draw(gs::floats::<f32>().min_value(0.0).max_value(0.6).allow_nan(false).allow_infinity(false));
     apply(&mut a, &Edit::Resize { panel, delta, floor }, &|_| false);
     // Equalize what the resize left uneven.
     let mut equalized = a.clone();
-    let (w2, next2) = (a.at(parent).children[i].weight, a.at(parent).children[i + 1].weight);
+    let (w2, next2) = (a.at(parent).children[i].weight, a.at(parent).children[j].weight);
     if w + next >= 2.0 * floor {
         assert!(w2 >= floor - 1e-6 && next2 >= floor - 1e-6, "{w}+{next} by {delta} over {floor}: {w2}, {next2}");
     }
     assert!((w2 + next2 - (w + next)).abs() <= 2e-6, "the sum moved: {w}+{next} became {w2}+{next2}");
     // From a valid arrangement: a floor the sides couldn't keep lets the
     // resize take one below zero.
-    if problem(&equalized).is_none() {
+    // A resize can leave a side with no space (floor 0), and then there is
+    // no boundary to equalize.
+    let left: Vec<f32> = equalized.at(parent).children.iter().map(|c| c.weight).collect();
+    if let (None, Some(j)) = (problem(&equalized), boundary_partner(&left, i)) {
         apply(&mut equalized, &Edit::Equalize { panel }, &|_| false);
-        let (e, e_next) = (equalized.at(parent).children[i].weight, equalized.at(parent).children[i + 1].weight);
+        let (e, e_next) = (equalized.at(parent).children[i].weight, equalized.at(parent).children[j].weight);
         assert!((e - e_next).abs() <= 1e-6, "{w2} and {next2} equalized to {e} and {e_next}");
     }
 }
@@ -553,6 +555,86 @@ fn resizing_moves_one_boundary_and_equalizing_evens_it() {
     assert_eq!((child(&f.a, 0).weight, last(&f.a).weight), (0.5, 0.5));
     ed(&mut f.a, Edit::Equalize { panel: last_id });
     valid(&f.a);
+}
+
+fn weights(a: &Arrangement<View>) -> Vec<f32> {
+    root(a).children.iter().map(|c| c.weight).collect()
+}
+
+#[test]
+fn a_boundary_pairs_the_panels_either_side_of_empty_ones() {
+    // A | empty | B: the boundary after A is between A and B.
+    let mut f = build("split_x panels:{0.4:{text} 0:{text} 0.6:{text}}");
+    let (first, middle) = (child(&f.a, 0).id, child(&f.a, 1).id);
+    ed(&mut f.a, Edit::Resize { panel: first, delta: 0.1, floor: 0.05 });
+    assert_eq!(weights(&f.a), [0.5, 0.0, 0.5]);
+    ed(&mut f.a, Edit::Resize { panel: first, delta: 0.5, floor: 0.05 });
+    assert_eq!(weights(&f.a), [0.95, 0.0, 0.05]);
+    ed(&mut f.a, Edit::Equalize { panel: first });
+    assert_eq!(weights(&f.a), [0.5, 0.0, 0.5]);
+    // The empty panel has no boundary of its own.
+    assert!(!ed(&mut f.a, Edit::Resize { panel: middle, delta: 0.1, floor: 0.05 }).applied);
+    assert!(!ed(&mut f.a, Edit::Equalize { panel: middle }).applied);
+    assert_eq!(weights(&f.a), [0.5, 0.0, 0.5]);
+    valid(&f.a);
+    // Two in a row: A | e | e | B.
+    let mut f = build("split_x panels:{0.7:{text} 0:{text} 0:{text} 0.3:{text}}");
+    let first = child(&f.a, 0).id;
+    ed(&mut f.a, Edit::Equalize { panel: first });
+    assert_eq!(weights(&f.a), [0.5, 0.0, 0.0, 0.5]);
+    // At the end: A | B | e has the one boundary, and none after B.
+    let mut f = build("split_x panels:{0.7:{text} 0.3:{text} 0:{text}}");
+    let (first, second) = (child(&f.a, 0).id, child(&f.a, 1).id);
+    assert!(!ed(&mut f.a, Edit::Resize { panel: second, delta: 0.1, floor: 0.05 }).applied);
+    ed(&mut f.a, Edit::Equalize { panel: first });
+    assert_eq!(weights(&f.a), [0.5, 0.5, 0.0]);
+    valid(&f.a);
+}
+
+/// For any split, the boundaries are exactly the consecutive pairs of
+/// panels with space, and resizing or equalizing one changes only that
+/// pair's weights.
+#[hegel::test(test_cases = 300)]
+fn boundaries_pair_consecutive_panels_with_space(tc: TestCase) {
+    let mut next_tab = 1;
+    let mut a = valid_build(&tc, &mut next_tab);
+    let splits: Vec<PanelId> = a.panels().filter(|p| p.children.len() >= 2).map(|p| p.id).collect();
+    if splits.is_empty() {
+        return;
+    }
+    let split = tc.draw(gs::sampled_from(&splits));
+    let path = a.path(split.0).expect("a split");
+    // Some children empty, the rest sharing the space.
+    let shares: Vec<u32> = (0..a.at(&path).children.len()).map(|_| tc.draw(gs::integers::<u32>().max_value(4))).collect();
+    let total: u32 = shares.iter().sum();
+    if total == 0 {
+        return;
+    }
+    for (child, share) in a.at_mut(&path).children.iter_mut().zip(&shares) {
+        child.weight = quantize(*share as f32 / total as f32);
+    }
+    let before: Vec<f32> = a.at(&path).children.iter().map(|c| c.weight).collect();
+    let live: Vec<usize> = (0..before.len()).filter(|&i| before[i] > 0.0).collect();
+    for i in 0..before.len() {
+        let expected = live.iter().position(|&l| l == i).and_then(|k| live.get(k + 1)).copied();
+        assert_eq!(boundary_partner(&before, i), expected, "{before:?} after {i}");
+        let id = a.at(&path).children[i].id;
+        let delta = tc.draw(gs::floats::<f32>().min_value(-1.0).max_value(1.0).allow_nan(false).allow_infinity(false));
+        for edit in [Edit::Resize { panel: id, delta, floor: 0.0 }, Edit::Equalize { panel: id }] {
+            let mut edited = a.clone();
+            let out = apply(&mut edited, &edit, &|_| false);
+            assert_eq!(out.applied, expected.is_some(), "{edit:?} on {before:?} after {i}");
+            let after: Vec<f32> = edited.at(&path).children.iter().map(|c| c.weight).collect();
+            for (k, (was, now)) in before.iter().zip(&after).enumerate() {
+                if Some(k) != expected && k != i {
+                    assert_eq!(was, now, "{edit:?} on {before:?} after {i} moved {k}");
+                }
+            }
+            if let Some(j) = expected {
+                assert!((before[i] + before[j] - after[i] - after[j]).abs() <= 2e-6, "{edit:?}: {before:?} became {after:?}");
+            }
+        }
+    }
 }
 
 #[test]

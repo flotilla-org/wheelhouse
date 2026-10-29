@@ -1573,6 +1573,16 @@ WheelhouseText wheelhouse_arrangement_intent_name(uint32_t kind);
 // places, read back (core: arrangement::quantize).
 float wheelhouse_arrangement_quantize(float weight);
 
+// The sibling the boundary after child `i` of a split pairs it with, given
+// the `len` children's weights: the next one with space. `len` when there is
+// none (the child has no space, or nothing with space follows it). The
+// core's rule (arrangement::boundary_partner), for the shell to draw
+// splitters by.
+//
+// # Safety
+// `weights` is `len` floats, or NULL when `len` is 0.
+size_t wheelhouse_arrangement_boundary_partner(const float *weights, size_t len, size_t i);
+
 // The card of `entity` as the core has it now: NULL without an error when
 // the catalog has no such entity. Release it with wheelhouse_card_release;
 // its text stays valid until then.
