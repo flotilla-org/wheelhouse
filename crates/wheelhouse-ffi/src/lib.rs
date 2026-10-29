@@ -213,7 +213,7 @@ unsafe fn provider(provider: Text) -> Result<String, String> {
 /// was built against.
 #[no_mangle]
 pub extern "C" fn wheelhouse_abi_version() -> u32 {
-    12
+    13
 }
 /// A sidebar configured with a template catalog (KDL), or NULL with an
 /// error.
@@ -594,8 +594,7 @@ pub unsafe extern "C" fn wheelhouse_workspace_registered(
     run(h, error_out, |h| Ok(h.sidebar.registered_workspaces().contains(&workspace.into()))).unwrap_or(false) as u32
 }
 
-// Snapshots, details, dispatch and effects. A snapshot owns all the text it
-// returns and survives sidebar mutation and destruction; release it after
+// Snapshots, dispatch and effects. A snapshot owns all the text it returns and survives sidebar mutation and destruction; release it after
 // rendering.
 
 pub const WHEELHOUSE_CATALOG: u32 = 0;
@@ -750,18 +749,7 @@ pub(crate) struct Node {
     pub(crate) copy_url: usize,
     pub(crate) toggle: usize,
 }
-/// Immutable catalog card and existing dispatch references, owned by a detail snapshot.
-pub(crate) struct Detail {
-    card: DetailCard,
-    activate: usize,
-    copy_url: usize,
-    /// Its entity's provider was stale when the snapshot was taken.
-    stale: bool,
-}
 pub struct WheelhouseSnapshot {
-    pub(crate) now_ms: u64,
-    pub(crate) details: Vec<Detail>,
-    pub(crate) detail_index: BTreeMap<EntityRef, usize>,
     pub(crate) client: u64,
     pub(crate) generation: u64,
     pub(crate) nodes: Vec<Node>,
@@ -771,22 +759,7 @@ pub struct WheelhouseSnapshot {
     pub(crate) diagnostics: Vec<String>,
 }
 impl WheelhouseSnapshot {
-    // Exported text borrows String/Vec heap buffers, never inline Detail/Action
-    // storage. Appending may move structs but must not move those buffers or
-    // renumber existing actions; small inline-string representations would break it.
-    fn add_detail(&mut self, card: DetailCard, sidebar: &Sidebar) -> usize {
-        let activate = self.action(Action::Activate { entity: card.entity.clone() });
-        let copy_url = if sidebar.subject_url(&card.entity).is_some() {
-            self.action(Action::CopySubjectUrl { entity: card.entity.clone() })
-        } else {
-            NONE
-        };
-        let index = self.details.len();
-        self.detail_index.insert(card.entity.clone(), index);
-        let stale = sidebar.provider_is_stale(&card.entity.provider);
-        self.details.push(Detail { card, activate, copy_url, stale });
-        index
-    }
+    // Exported text borrows the String/Vec heap buffers the snapshot owns.
     fn action(&mut self, a: Action) -> usize {
         let id = self.actions.len();
         self.actions.push(a);
@@ -883,27 +856,14 @@ pub unsafe extern "C" fn wheelhouse_snapshot_is_current(
 /// are included.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_snapshot_acquire(h: *mut WheelhouseCore, error_out: *mut *mut c_char) -> *mut WheelhouseSnapshot {
-    acquire_snapshot(h, error_out, false)
+    acquire_snapshot(h, error_out)
 }
-/// As wheelhouse_snapshot_acquire, with every catalog card's detail.
-/// wheelhouse_snapshot_acquire resolves none (detail_count is 0 until
-/// requested).
-#[no_mangle]
-pub unsafe extern "C" fn wheelhouse_snapshot_acquire_details(
-    h: *mut WheelhouseCore,
-    error_out: *mut *mut c_char,
-) -> *mut WheelhouseSnapshot {
-    acquire_snapshot(h, error_out, true)
-}
-unsafe fn acquire_snapshot(h: *mut WheelhouseCore, error_out: *mut *mut c_char, include_details: bool) -> *mut WheelhouseSnapshot {
+unsafe fn acquire_snapshot(h: *mut WheelhouseCore, error_out: *mut *mut c_char) -> *mut WheelhouseSnapshot {
     run(h, error_out, |h| {
         let _phase = profile::span("abi-acquire");
         let snapshot = h.sidebar.snapshot();
         let _flatten = profile::span("abi-flatten");
         let mut out = WheelhouseSnapshot {
-            now_ms: h.sidebar.now_ms(),
-            details: vec![],
-            detail_index: Default::default(),
             client: h.client,
             generation: h.sidebar.revision(),
             nodes: vec![],
@@ -974,41 +934,13 @@ unsafe fn acquire_snapshot(h: *mut WheelhouseCore, error_out: *mut *mut c_char, 
                 control.label = if definition.label.is_empty() { definition.name.clone() } else { definition.label.clone() };
             }
         }
-        if include_details {
-            let (now_ms, cards) = h.sidebar.detail_cards();
-            out.now_ms = now_ms;
-            for card in cards {
-                out.add_detail(card, &h.sidebar);
-            }
-        }
         Ok(Box::into_raw(Box::new(out)))
     })
     .unwrap_or(ptr::null_mut())
 }
-/// A catalog card: an entity's exact detail, independent of where it is
-/// placed. Observations use host monotonic milliseconds; a field's
-/// observed_at_ms is the winning fact's receipt time, and TTL and source_id
-/// give its freshness and producer.
-#[repr(C)]
-pub struct DetailView {
-    pub entity: EntityView,
-    pub label: Text,
-    pub field_count: usize,
-    pub activate: usize,
-    pub copy_url: usize,
-    pub now_ms: u64,
-    pub error: Text,
-    /// The workspace live for the entity, if any.
-    pub has_workspace: u32,
-    pub workspace_id: WorkspaceIdView,
-}
-#[repr(C)]
-pub struct DetailActionView {
-    pub intent: Text,
-    pub label: Text,
-    pub entity: EntityView,
-    pub action: usize,
-}
+/// A card's field (wheelhouse_card_field). Observations use host monotonic
+/// milliseconds: observed_at_ms is the winning fact's receipt time, and
+/// source_id gives its producer.
 #[repr(C)]
 pub struct DetailFieldView {
     pub name: Text,
@@ -1024,122 +956,6 @@ pub struct DetailFieldView {
     /// Observed from a provider that is stale (its connection dropped).
     pub stale: u32,
     pub relation_count: usize,
-}
-#[repr(C)]
-pub struct DetailRelationView {
-    pub entity: EntityView,
-    pub display_text: Text,
-    /// Index for detail lookup, or NONE if the referenced entity is unavailable.
-    pub detail: usize,
-}
-/// Append an entity's detail to a current snapshot and return its index:
-/// WHEELHOUSE_NONE without an error when the catalog has no such entity.
-/// Each entity is appended once; earlier text and action indices stay valid
-/// until release. A stale snapshot's existing details stay readable, but it
-/// takes no new requests. Not safe with concurrent use of the snapshot.
-#[no_mangle]
-pub unsafe extern "C" fn wheelhouse_snapshot_detail_request(
-    h: *mut WheelhouseCore,
-    s: *mut WheelhouseSnapshot,
-    entity: EntityView,
-    error_out: *mut *mut c_char,
-) -> usize {
-    run(h, error_out, |h| {
-        let s = s.as_mut().ok_or("null snapshot")?;
-        let entity = entity.read()?;
-        if s.client != h.client {
-            return Err("snapshot belongs to another client".into());
-        }
-        if let Some(index) = s.detail_index.get(&entity) {
-            return Ok(*index);
-        }
-        if s.generation != h.sidebar.revision() {
-            return Err("stale snapshot".into());
-        }
-        Ok(match h.sidebar.detail_card(&entity) {
-            Some(card) => s.add_detail(card, &h.sidebar),
-            None => NONE,
-        })
-    })
-    .unwrap_or(NONE)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn wheelhouse_snapshot_detail_count(s: *const WheelhouseSnapshot) -> usize {
-    s.as_ref().map_or(0, |s| s.details.len())
-}
-/// The index of an entity's detail in the snapshot, or WHEELHOUSE_NONE.
-#[no_mangle]
-pub unsafe extern "C" fn wheelhouse_snapshot_detail_find(s: *const WheelhouseSnapshot, entity: EntityView) -> usize {
-    let (Some(s), Ok(entity)) = (s.as_ref(), entity.read()) else {
-        return NONE;
-    };
-    s.detail_index.get(&entity).copied().unwrap_or(NONE)
-}
-#[no_mangle]
-pub unsafe extern "C" fn wheelhouse_snapshot_detail(s: *const WheelhouseSnapshot, index: usize, out: *mut DetailView) -> u32 {
-    let (Some(s), Some(out)) = (s.as_ref(), out.as_mut()) else {
-        return 0;
-    };
-    let Some(d) = s.details.get(index) else {
-        return 0;
-    };
-    *out = DetailView {
-        entity: EntityView::of(&d.card.entity),
-        label: Text::borrowed(&d.card.label),
-        field_count: d.card.fields.len(),
-        activate: d.activate,
-        copy_url: d.copy_url,
-        now_ms: s.now_ms,
-        error: Text::borrowed(d.card.error.as_deref().unwrap_or("")),
-        has_workspace: d.card.workspace_id.is_some() as u32,
-        workspace_id: workspace_view(d.card.workspace_id),
-    };
-    1
-}
-/// A detail's action: index 0 is its primary action (intent open-url,
-/// focus-workspace, materialize-workspace or inspect), index 1 copies its URL
-/// (0 when it has none). Both dispatch like snapshot actions.
-#[no_mangle]
-pub unsafe extern "C" fn wheelhouse_snapshot_detail_action(
-    s: *const WheelhouseSnapshot,
-    detail: usize,
-    index: usize,
-    out: *mut DetailActionView,
-) -> u32 {
-    let (Some(s), Some(out)) = (s.as_ref(), out.as_mut()) else {
-        return 0;
-    };
-    let Some(d) = s.details.get(detail) else {
-        return 0;
-    };
-    let (intent, label, action) = match index {
-        0 => (d.card.primary_intent.as_str(), d.card.primary_label.as_str(), d.activate),
-        1 if d.copy_url != NONE => ("copy-url", "Copy URL", d.copy_url),
-        _ => return 0,
-    };
-    *out =
-        DetailActionView { intent: Text::borrowed(intent), label: Text::borrowed(label), entity: EntityView::of(&d.card.entity), action };
-    1
-}
-#[no_mangle]
-pub unsafe extern "C" fn wheelhouse_snapshot_detail_field(
-    s: *const WheelhouseSnapshot,
-    detail: usize,
-    field: usize,
-    out: *mut DetailFieldView,
-) -> u32 {
-    let (Some(s), Some(out)) = (s.as_ref(), out.as_mut()) else {
-        return 0;
-    };
-    let Some(d) = s.details.get(detail) else {
-        return 0;
-    };
-    let Some(f) = d.card.fields.get(field) else {
-        return 0;
-    };
-    *out = detail_field_view(f, d.stale);
-    1
 }
 /// A card field's view; `stale` is whether its entity's provider was.
 pub(crate) fn detail_field_view(f: &DetailField, stale: bool) -> DetailFieldView {
@@ -1161,36 +977,6 @@ pub(crate) fn detail_field_view(f: &DetailField, stale: bool) -> DetailFieldView
 /// Whether `entity` is on a navigation path (or the path can't be read).
 pub(crate) unsafe fn on_path(entity: &EntityRef, path: &[EntityView]) -> bool {
     path.iter().any(|item| item.read().map_or(true, |item| item == *entity))
-}
-/// A relation of a detail's field: an entity, its detail (or
-/// WHEELHOUSE_NONE) and the text to show. Pass the navigation path of
-/// entities: a relation already on it returns 0.
-#[no_mangle]
-pub unsafe extern "C" fn wheelhouse_snapshot_detail_relation(
-    s: *const WheelhouseSnapshot,
-    detail: usize,
-    field: usize,
-    relation: usize,
-    path: *const EntityView,
-    path_count: usize,
-    out: *mut DetailRelationView,
-) -> u32 {
-    let (Some(s), Some(out), Ok(path)) = (s.as_ref(), out.as_mut(), slice(path, path_count)) else {
-        return 0;
-    };
-    let Some(entity) = s.details.get(detail).and_then(|d| d.card.fields.get(field)).and_then(|f| f.relations.get(relation)) else {
-        return 0;
-    };
-    if on_path(entity, path) {
-        return 0;
-    }
-    let target = s.detail_index.get(entity).copied();
-    *out = DetailRelationView {
-        entity: EntityView::of(entity),
-        display_text: Text::borrowed(target.map_or(entity.id.as_str(), |index| s.details[index].card.label.as_str())),
-        detail: target.unwrap_or(NONE),
-    };
-    1
 }
 
 /// A snapshot node. Keys are opaque and stable for a placement across

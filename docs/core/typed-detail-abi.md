@@ -46,85 +46,47 @@ text and string lists do not implicitly become relationships. Other typed
 relationship keys can be declared by configuration. Existing legacy text keys,
 such as `flotilla.project`, are not inferred as links.
 
-## Snapshot lookup and ownership
+## Cards by entity
 
-Opt in by acquiring with `wheelhouse_snapshot_acquire_details`; ordinary
-`wheelhouse_snapshot_acquire` retains the flat-client cost and produces no cards:
-`detail_count` returns 0 and `detail_find` returns `WHEELHOUSE_NONE`, even for an
-entity present in the flat tree. Zero-length output text has a non-null pointer.
-Detail identity lookup and relation target lookup use a snapshot-owned index.
-
-All output buffers are borrowed from an acquired `WheelhouseSnapshot`;
-release it only after finishing all reads. Indices are snapshot-local. Reacquire
-and find by exact entity after draining facts, time, configuration, topology or
-completion changes. Old snapshots remain readable. Action dispatch uses the
-existing snapshot generation/client validation, including for these new actions.
+A host asks for an entity's card by entity (docs/design/change-stream.md,
+PR 5.4); a snapshot carries no cards:
 
 | Export | Result |
 | --- | --- |
-| `wheelhouse_snapshot_detail_request` | Append one exact entity's card to a current snapshot; returns its index or `WHEELHOUSE_NONE` |
-| `wheelhouse_snapshot_acquire_details` | Opt-in enriched snapshot acquisition |
-| `wheelhouse_snapshot_detail_count` | Number of catalog cards |
-| `wheelhouse_snapshot_detail_find` | Exact entity lookup; `WHEELHOUSE_NONE` when unavailable |
-| `wheelhouse_snapshot_detail` | Card entity, label, field count, action IDs, clock, error, optional Workspace ID |
-| `wheelhouse_snapshot_detail_field` | Name, section, role, label, unadorned text, presence, source and observation metadata, relation count |
-| `wheelhouse_snapshot_detail_relation` | Exact target identity, display label and detail index, filtered by navigation path |
-| `wheelhouse_snapshot_detail_action` | Semantic intent, label, stable target identity and dispatch action ID |
-
-### Cards by entity
-
-An interactive host that follows the change stream has no snapshot to ask, so
-it asks for a card by entity (docs/design/change-stream.md, PR 5.4):
-
-| Export | Result |
-| --- | --- |
-| `wheelhouse_card_acquire` | One exact entity's card as the core has it now; NULL, without an error, when the catalog has no such entity |
+| `wheelhouse_card_acquire` | One exact entity's card as the core has it now; NULL, without an error, when the catalog has no such entity, and NULL with an error for unreadable text |
 | `wheelhouse_card_is_current` | Whether the card is still the core's answer: the snapshot's currency (revision and client) |
-| `wheelhouse_card` | Entity, label, field count, `has_url`, clock, error, optional Workspace ID |
-| `wheelhouse_card_field` | As `wheelhouse_snapshot_detail_field` |
+| `wheelhouse_card` | Entity, label, field count, `has_url`, clock, error, optional Workspace ID, `opening`, and the entity's chip status, attention and icon |
+| `wheelhouse_card_field` | A `WheelhouseDetailField`: name, section, role, label, unadorned text, presence, source and observation metadata, `stale`, relation count |
 | `wheelhouse_card_relation` | Exact target identity and its ID as fallback text, filtered by navigation path; ask for the target's own card for its label |
 | `wheelhouse_card_action` | Semantic intent, label, target identity and the `WHEELHOUSE_INTENT_*` kind to apply: 0 is the primary action (`ACTIVATE`), 1 copies the URL (`COPY_SUBJECT_URL`, only with `has_url`) |
 | `wheelhouse_card_release` | Release it; its text is valid until then |
 
+A card owns all the text it returns, which stays valid after later changes
+and the core's destruction, until release. It is the core's answer at one
+revision: its `now_ms` is the core's host-monotonic clock when it was
+acquired, and it stays current through heartbeats and ticks that change
+nothing. Ask again when it is no longer current; the old card stays readable.
 A card's actions are intents on its entity, applied with
 `wheelhouse_apply_intent`, so there is no stale action index: a host that
 queues an action keeps its entity and intent name, and matches them against a
 current card when it acts. Native keeps the cards it asked for until the first,
-the oldest, is no longer current. Native no longer reads the snapshot detail
-exports below; they remain for the ABI's own tests until those move to cards.
+the oldest, is no longer current. The core's revision cache retains at most 64
+cards or misses.
 
-### Snapshot details
-
-For interactive hosts, acquire a plain snapshot and call
-`wheelhouse_snapshot_detail_request(core, snapshot, entity, &error)` only for
-identities needed by cards. This includes hidden relation targets and retained
-ended subjects. A miss returns `WHEELHOUSE_NONE` without an error. A request for
-new details on a stale or foreign snapshot fails; already materialized details
-remain readable on old snapshots. Previously returned text and action indices
-remain valid when more details are appended, until snapshot release. A given
-identity is appended only once. The core's revision cache retains at most 64
-cards or misses; snapshot output retains each requested card for its full lifetime.
-
-Plain acquisition now also captures the sidebar's host-monotonic `now_ms`,
-where it previously stored zero internally. All details appended to that snapshot
-report its acquisition clock, even if the core later advances time without
-changing the revision. Eager snapshots retain the same clock semantics.
-
-Relation lookup returns the target identity even before its detail is requested;
-the label falls back to its ID and the detail index is `WHEELHOUSE_NONE`. Request
-the target, then read the relation again to obtain its label/index. Navigation
-paths still filter cycles before demand, and absent entities remain unavailable.
+### Card contents
 
 Lookup is over the complete resolved catalog, including entities absent from all
-placements or hidden by presentation filters. A configuration resolution failure
-is reported in the card's `error`; no field contents are guessed.
+placements or hidden by presentation filters, hidden relation targets and
+retained ended subjects. A configuration resolution failure is reported in the
+card's `error`; no field contents are guessed.
 
 `has_value=0` denotes a missing fact; `has_value=1` with zero-length text denotes
-known empty. Empty literals and empty typed lists are also known values. Missing
-fields remain declared so consumers can choose their presentation. `source_key`
-identifies the winning metadata source. When no fallback source resolves, it is
-empty; no declared key is guessed as the cause of a missing fact.
-Literal/synthetic values also have no source key.
+known empty. Zero-length output text has a non-null pointer. Empty literals and
+empty typed lists are also known values. Missing fields remain declared so
+consumers can choose their presentation. `source_key` identifies the winning
+metadata source. When no fallback source resolves, it is empty; no declared key
+is guessed as the cause of a missing fact. Literal/synthetic values also have no
+source key.
 
 `has_observation` distinguishes an observation from a synthetic value.
 `observed_at_ms` is the winning fact's controller receipt/refresh time, in the
@@ -141,17 +103,20 @@ relative-age formatting and stale colors.
 Relations come directly from typed entity references. Self references are omitted; duplicate references retain only their first occurrence.
 Iterate `relation_count`, passing the exact entity navigation path to each
 relation lookup; return 0 means skip that index. Path filtering does not renumber
-indices. The display text is the target's current label (its ID if unavailable).
-A target with no placement still has a detail index; a target absent from the
-catalog has `detail=WHEELHOUSE_NONE`. Never parse relation field text for targets.
+indices. A relation gives the target's identity and its ID as `display_text`;
+ask for the target's card for its label. A target with no placement still has a
+card; a target absent from the catalog has none (`wheelhouse_card_acquire`
+returns NULL without an error). Never parse relation field text for targets.
 
-Action index 0 is the primary control; index 1 is copy URL when available.
-Primary intent is `open-url`, `focus-workspace`, `materialize-workspace`, or
-`inspect`; the copy intent is `copy-url`. The primary label uses the same
-`action.primary.label` fact as workspace controls, with a semantic default.
-`action` is dispatched through `wheelhouse_dispatch`, targeting the stable entity
-and producing the existing effects/completions. Primary activation retains the
-existing precedence: a subject URL opens in the browser before workspace focus.
+Action index 0 is the primary action, kind `WHEELHOUSE_INTENT_ACTIVATE`; index 1
+is copy URL, kind `WHEELHOUSE_INTENT_COPY_SUBJECT_URL`, when the card has
+`has_url`. Primary intent is `open-url`, `focus-workspace`,
+`materialize-workspace`, or `inspect`; the copy intent is `copy-url`. The primary
+label uses the same `action.primary.label` fact as workspace controls, with a
+semantic default. Apply an action with `wheelhouse_apply_intent`, as an intent
+of its kind on its entity; it targets the stable entity and produces the
+existing effects/completions. Primary activation retains the existing
+precedence: a subject URL opens in the browser before workspace focus.
 
 Preview identity is separate from all field roles: `has_workspace` and
 `workspace_id` (16 bytes) identify a live workspace even for a card without a placement.
@@ -167,8 +132,11 @@ Zellij reserved hover panel is unchanged.
 missing kind-specific facts, and typed self/hidden/unavailable relations.
 Core tests enumerate every role across missing and known-empty values and check
 KDL/JSON agreement, effective KDL round trips, separate labels/text, empty
-literals, invalid roles and preservation of flat output. Native Rust tests cover
-path omission, exact targets, observation provenance, provider staleness, action
-identity and immutable snapshot lifetimes. The independent C fixture links the
-real library and checks the actual C layouts, hidden navigation and live preview
-identity, along with the other ABI scenarios.
+literals, invalid roles and preservation of flat output. Native Rust tests check
+that every catalog entity's card answers what the core's catalog card says and
+that its actions do what the core's actions do, and cover path omission, exact
+targets, observation provenance, provider staleness, action intents, card
+currency and owned card lifetimes, and the rejection of unreadable text. The
+independent C fixture links the real library and checks the actual card
+layouts, a card's live preview identity and its action applied as an intent,
+along with the other ABI scenarios.

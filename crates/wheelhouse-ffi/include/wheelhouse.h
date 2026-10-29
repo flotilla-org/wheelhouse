@@ -431,53 +431,6 @@ typedef struct {
   WheelhouseText id;
 } WheelhouseEntity;
 
-// A catalog card: an entity's exact detail, independent of where it is
-// placed. Observations use host monotonic milliseconds; a field's
-// observed_at_ms is the winning fact's receipt time, and TTL and source_id
-// give its freshness and producer.
-typedef struct {
-  WheelhouseEntity entity;
-  WheelhouseText label;
-  size_t field_count;
-  size_t activate;
-  size_t copy_url;
-  uint64_t now_ms;
-  WheelhouseText error;
-  // The workspace live for the entity, if any.
-  uint32_t has_workspace;
-  WheelhouseWorkspaceId workspace_id;
-} WheelhouseDetail;
-
-typedef struct {
-  WheelhouseText intent;
-  WheelhouseText label;
-  WheelhouseEntity entity;
-  size_t action;
-} WheelhouseDetailAction;
-
-typedef struct {
-  WheelhouseText name;
-  WheelhouseText section;
-  uint32_t role;
-  WheelhouseText label;
-  uint32_t has_value;
-  WheelhouseText text;
-  WheelhouseText source_key;
-  WheelhouseText source_id;
-  uint32_t has_observation;
-  uint64_t observed_at_ms;
-  // Observed from a provider that is stale (its connection dropped).
-  uint32_t stale;
-  size_t relation_count;
-} WheelhouseDetailField;
-
-typedef struct {
-  WheelhouseEntity entity;
-  WheelhouseText display_text;
-  // Index for detail lookup, or NONE if the referenced entity is unavailable.
-  size_t detail;
-} WheelhouseDetailRelation;
-
 // A snapshot node. Keys are opaque and stable for a placement across
 // snapshots; qualify a section's with is_section.
 typedef struct {
@@ -564,8 +517,8 @@ typedef struct {
   WheelhouseText primary_target;
 } WheelhouseEffect;
 
-// A card's summary. Observations use host monotonic milliseconds, as a
-// snapshot detail's do.
+// A card's summary. now_ms is the core's clock when the card was taken, in
+// host monotonic milliseconds, as its fields' observations are.
 typedef struct {
   WheelhouseEntity entity;
   WheelhouseText label;
@@ -595,6 +548,25 @@ typedef struct {
   uint32_t kind;
   WheelhouseEntity entity;
 } WheelhouseCardAction;
+
+// A card's field (wheelhouse_card_field). Observations use host monotonic
+// milliseconds: observed_at_ms is the winning fact's receipt time, and
+// source_id gives its producer.
+typedef struct {
+  WheelhouseText name;
+  WheelhouseText section;
+  uint32_t role;
+  WheelhouseText label;
+  uint32_t has_value;
+  WheelhouseText text;
+  WheelhouseText source_key;
+  WheelhouseText source_id;
+  uint32_t has_observation;
+  uint64_t observed_at_ms;
+  // Observed from a provider that is stale (its connection dropped).
+  uint32_t stale;
+  size_t relation_count;
+} WheelhouseDetailField;
 
 // A relation of a card's field: an entity and the text to show without
 // its own card (its ID).
@@ -1147,54 +1119,6 @@ uint32_t wheelhouse_snapshot_is_current(WheelhouseCore *h,
 // and every other node's parent is an earlier node. Collapsed children
 // are included.
 WheelhouseSnapshot *wheelhouse_snapshot_acquire(WheelhouseCore *h, char **error_out);
-
-// As wheelhouse_snapshot_acquire, with every catalog card's detail.
-// wheelhouse_snapshot_acquire resolves none (detail_count is 0 until
-// requested).
-WheelhouseSnapshot *wheelhouse_snapshot_acquire_details(WheelhouseCore *h, char **error_out);
-
-// Append an entity's detail to a current snapshot and return its index:
-// WHEELHOUSE_NONE without an error when the catalog has no such entity.
-// Each entity is appended once; earlier text and action indices stay valid
-// until release. A stale snapshot's existing details stay readable, but it
-// takes no new requests. Not safe with concurrent use of the snapshot.
-size_t wheelhouse_snapshot_detail_request(WheelhouseCore *h,
-                                          WheelhouseSnapshot *s,
-                                          WheelhouseEntity entity,
-                                          char **error_out);
-
-size_t wheelhouse_snapshot_detail_count(const WheelhouseSnapshot *s);
-
-// The index of an entity's detail in the snapshot, or WHEELHOUSE_NONE.
-size_t wheelhouse_snapshot_detail_find(const WheelhouseSnapshot *s, WheelhouseEntity entity);
-
-uint32_t wheelhouse_snapshot_detail(const WheelhouseSnapshot *s,
-                                    size_t index,
-                                    WheelhouseDetail *out);
-
-// A detail's action: index 0 is its primary action (intent open-url,
-// focus-workspace, materialize-workspace or inspect), index 1 copies its URL
-// (0 when it has none). Both dispatch like snapshot actions.
-uint32_t wheelhouse_snapshot_detail_action(const WheelhouseSnapshot *s,
-                                           size_t detail,
-                                           size_t index,
-                                           WheelhouseDetailAction *out);
-
-uint32_t wheelhouse_snapshot_detail_field(const WheelhouseSnapshot *s,
-                                          size_t detail,
-                                          size_t field,
-                                          WheelhouseDetailField *out);
-
-// A relation of a detail's field: an entity, its detail (or
-// WHEELHOUSE_NONE) and the text to show. Pass the navigation path of
-// entities: a relation already on it returns 0.
-uint32_t wheelhouse_snapshot_detail_relation(const WheelhouseSnapshot *s,
-                                             size_t detail,
-                                             size_t field,
-                                             size_t relation,
-                                             const WheelhouseEntity *path,
-                                             size_t path_count,
-                                             WheelhouseDetailRelation *out);
 
 size_t wheelhouse_snapshot_node_count(const WheelhouseSnapshot *s);
 

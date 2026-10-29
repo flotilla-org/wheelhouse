@@ -1,4 +1,4 @@
-# The host interface (ABI 12)
+# The host interface (ABI 13)
 
 What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
@@ -8,7 +8,7 @@ behind it is in [Slots and arrangements](slots-and-arrangements.md),
 [The sidebar arrangement](sidebar-arrangement.md) and the
 [Workspace Overlay](workspace-overlay.md).
 
-`wheelhouse_abi_version()` returns 12. Each call has one form: there is no
+`wheelhouse_abi_version()` returns 13. Each call has one form: there is no
 compatibility with earlier versions, and a host requires exactly the version
 it was built against.
 
@@ -60,14 +60,14 @@ it was built against.
 
 ## The snapshot and effects
 
-`wheelhouse_snapshot_acquire` (or `_acquire_details`, with every catalog
-card) returns the sidebar as nodes in preorder; `wheelhouse_snapshot_is_current`
+`wheelhouse_snapshot_acquire` returns the sidebar as nodes in preorder; `wheelhouse_snapshot_is_current`
 checks it cheaply. An `WheelhouseNode` carries what ABI 2 kept in side calls:
 its entity with provider, `stale`, `loop_key`, `workspace_id` (16 bytes, LIVE
 nodes), a section's `default_host`/`has_order`/`order`, and `copy_url`. An
 `WheelhouseControl` carries its display variable's name and `persist`. Fields,
-diagnostics and details are read by index as before;
-`wheelhouse_snapshot_detail_find` and `_request` take an `WheelhouseEntity`.
+diagnostics and a node's detail template are read by index as before. An
+entity's details come from its card, asked for by entity with
+`wheelhouse_card_acquire` ([Structured details](../typed-detail-abi.md)).
 
 `wheelhouse_dispatch(h, snapshot, action)` queues effects;
 `wheelhouse_effects_take` drains them. An `WheelhouseEffect` carries
@@ -159,6 +159,17 @@ single pass, appending each panel to its parent.
   `variable:` and the key.
 
 Committing an arrangement never changes the snapshot's revision.
+
+## From ABI 12
+
+ABI 13 removes the snapshot detail exports (wheelhouse#496):
+`wheelhouse_snapshot_acquire_details`, `wheelhouse_snapshot_detail_request`,
+`_detail_count`, `_detail_find`, `wheelhouse_snapshot_detail`,
+`_detail_action`, `_detail_field` and `_detail_relation`, with
+`WheelhouseDetail`, `WheelhouseDetailAction` and `WheelhouseDetailRelation`.
+A host asks for an entity's card instead (`wheelhouse_card_acquire`) and
+applies its actions as intents with `wheelhouse_apply_intent`.
+`WheelhouseDetailField` stays, as the card's field (`wheelhouse_card_field`).
 
 ## From ABI 11
 

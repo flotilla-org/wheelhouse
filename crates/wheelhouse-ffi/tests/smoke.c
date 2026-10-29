@@ -71,7 +71,7 @@ static int same(WheelhouseWorkspaceId a, WheelhouseWorkspaceId b) {
 
 /* Facts, topology, the snapshot, dispatch, effects and completion. */
 static void check_sidebar(const char *config_path, const char *patches_path) {
-    assert(wheelhouse_abi_version() == 12);
+    assert(wheelhouse_abi_version() == 13);
     char *config = read_file(config_path);
     WheelhouseCore *h = create(config);
     ok(wheelhouse_configure(h, text(config), &error));
@@ -139,22 +139,25 @@ found:
     WheelhouseWorkdir dir = {worker, T("/repo")};
     ok(wheelhouse_observe_workdirs(h, &dir, 1, &error));
 
-    s = wheelhouse_snapshot_acquire_details(h, &error);
-    assert(s && !error);
+    s = snapshot(h);
     vessel = find(s, "vessel", &n);
     assert(n.state == WHEELHOUSE_LIVE && same(n.workspace_id, worker));
+    /* v's card has its workspace, and its action focuses it. */
     WheelhouseEntity v = {T("sub-1"), T("vessel"), T("v")};
-    size_t detail = wheelhouse_snapshot_detail_find(s, v);
-    WheelhouseDetail card;
-    assert(wheelhouse_snapshot_detail(s, detail, &card) && card.has_workspace && same(card.workspace_id, worker));
-    WheelhouseDetailAction action;
-    assert(wheelhouse_snapshot_detail_action(s, detail, 0, &action) && eq(action.intent, "focus-workspace"));
+    WheelhouseCard *card = wheelhouse_card_acquire(h, v, &error);
+    assert(card && !error);
+    WheelhouseCardInfo info;
+    assert(wheelhouse_card(card, &info) && info.has_workspace && same(info.workspace_id, worker));
+    WheelhouseCardAction action;
+    assert(wheelhouse_card_action(card, 0, &action) && eq(action.intent, "focus-workspace"));
+    assert(action.kind == WHEELHOUSE_INTENT_ACTIVATE);
     WheelhouseDetailField detail_field;
-    assert(wheelhouse_snapshot_detail_field(s, detail, 0, &detail_field));
+    assert(wheelhouse_card_field(card, 0, &detail_field));
     WheelhouseEntity other = {T("sub-2"), T("vessel"), T("v")};
-    assert(wheelhouse_snapshot_detail_find(s, other) == WHEELHOUSE_NONE);
-    assert(wheelhouse_snapshot_detail_request(h, s, v, &error) == detail && !error);
-    ok(wheelhouse_dispatch(h, s, card.activate, &error));
+    assert(!wheelhouse_card_acquire(h, other, &error) && !error);
+    WheelhouseIntent activate = {action.kind, T(""), action.entity, T(""), 0, T("")};
+    assert(wheelhouse_apply_intent(h, &activate, NULL, &error) == WHEELHOUSE_INTENT_ACCEPTED && !error);
+    wheelhouse_card_release(card);
     effects = wheelhouse_effects_take(h, &error);
     assert(wheelhouse_effects_get(effects, 0, &e) && e.kind == WHEELHOUSE_EFFECT_FOCUS && same(e.workspace_id, worker));
     ok(wheelhouse_complete(h, e.request_id, WHEELHOUSE_COMPLETE_FOCUS, e.workspace_id, T(""), &error));

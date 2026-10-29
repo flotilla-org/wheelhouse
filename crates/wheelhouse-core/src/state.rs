@@ -1974,8 +1974,9 @@ impl ControllerState {
     }
 
     /// Resolve every catalog entity, including identities with no placement.
-    /// Builds one catalog and resolves detail templates and observations for it;
-    /// native hosts opt in with snapshot_acquire_details, keeping flat acquire cheap.
+    /// Builds one catalog and resolves detail templates and observations for it,
+    /// returned with the clock they were resolved at. Hosts ask for one entity's
+    /// card instead (detail_card), keeping snapshot acquisition cheap.
     pub fn detail_cards(&self) -> (u64, Vec<DetailCard>) {
         let _phase = profile::span("details");
         let evaluation = self.evaluate_revision();
