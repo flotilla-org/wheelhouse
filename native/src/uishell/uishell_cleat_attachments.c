@@ -251,13 +251,29 @@ uishell_cleat_connection_acquire(UIShell_CleatRoute route)
 }
 
 // Wakes the UI thread when a linger may have run out, so an idle Wheelhouse
-// still drops the connection.
+// still drops the connection. One waker at a time sleeps to the latest
+// deadline, waking once for each it passes; a release while it sleeps only
+// moves the deadline.
+global U64 uishell_cleat_linger_deadline_us = 0;
+global U64 uishell_cleat_linger_waker = 0;
+
 internal void
 uishell_cleat_linger_wake(void *p)
 {
-  U64 linger_us = (U64)(uintptr_t)p;
-  sleep_ms((U32)Min(linger_us/1000 + 50, (U64)max_U32));
-  wm_send_wakeup_event();
+  (void)p;
+  U64 woken_for = 0;
+  for(;;)
+  {
+    U64 deadline = ins_atomic_u64_eval(&uishell_cleat_linger_deadline_us);
+    U64 now = now_time_us();
+    if(deadline > now) { sleep_ms((U32)Min((deadline - now)/1000 + 50, (U64)max_U32)); continue; }
+    if(deadline != woken_for) { wm_send_wakeup_event(); woken_for = deadline; }
+    ins_atomic_u64_eval_assign(&uishell_cleat_linger_waker, 0);
+    // A release that moved the deadline after the read above, and saw this
+    // waker still running, left the new deadline to it.
+    if(ins_atomic_u64_eval(&uishell_cleat_linger_deadline_us) == deadline ||
+       ins_atomic_u64_eval_cond_assign(&uishell_cleat_linger_waker, 1, 0) != 0) { break; }
+  }
 }
 
 internal void
@@ -268,7 +284,11 @@ uishell_cleat_connection_release(UIShell_CleatConnection *connection)
   if(connection->users == 0)
   {
     connection->idle_since_us = now_time_us();
-    thread_detach(thread_launch(uishell_cleat_linger_wake, (void *)(uintptr_t)uishell_cleat_connection_linger_us));
+    ins_atomic_u64_eval_assign(&uishell_cleat_linger_deadline_us, connection->idle_since_us + uishell_cleat_connection_linger_us);
+    if(ins_atomic_u64_eval_cond_assign(&uishell_cleat_linger_waker, 1, 0) == 0)
+    {
+      thread_detach(thread_launch(uishell_cleat_linger_wake, 0));
+    }
   }
 }
 
@@ -360,6 +380,8 @@ uishell_cleat_attachment_attach(UIShell_CleatAttachment *attachment)
     .colors = &attachment->colors,
     .role = CLEAT_ROLE_NO_VIEW,
   };
+  // Each View sizes its own Cleat view as it opens; the first View's size
+  // only seeds the attachment.
   if(attachment->first_ref != 0)
   {
     desc.cols = Max(attachment->first_ref->cols, 1);
@@ -503,27 +525,27 @@ uishell_cleat_connection_reopen(UIShell_CleatConnection *connection)
   }
 }
 
-// A command transport's state, read only while some view of it isn't
-// streaming: one that failed after streaming reopens, one that never
-// streamed gives up.
+// A command transport's state, read only while some view of it reads
+// disconnected (a view still connecting, or of a session that closed, says
+// nothing about the transport): one that failed after streaming reopens, one
+// that never streamed gives up.
 internal void
 uishell_cleat_connection_watch(UIShell_CleatConnection *connection)
 {
   if(!connection->route.ssh || connection->given_up || connection->provider == 0) { return; }
-  B32 all_streaming = 1, any_view = 0;
+  B32 any_disconnected = 0;
   for(UIShell_CleatAttachment *a = uishell_cleat_attachments; a != 0; a = a->next)
   {
     if(a->connection != connection) { continue; }
     for(UIShell_CleatViewRef *ref = a->first_ref; ref != 0; ref = ref->next)
     {
       if(ref->view == 0) { continue; }
-      any_view = 1;
-      B32 streaming = cleat_view_connection_state(ref->view) == CLEAT_SESSION_STREAMING;
-      connection->streamed |= streaming;
-      all_streaming &= streaming;
+      U32 state = cleat_view_connection_state(ref->view);
+      connection->streamed |= state == CLEAT_SESSION_STREAMING;
+      any_disconnected |= state == CLEAT_SESSION_DISCONNECTED;
     }
   }
-  if(!any_view || all_streaming) { return; }
+  if(!any_disconnected) { return; }
   cleat_transport_state state = {.size = sizeof(state)};
   if(!cleat_provider_transport_state(connection->provider, &state) || state.retrying) { return; }
   if(connection->streamed) { uishell_cleat_connection_reopen(connection); }

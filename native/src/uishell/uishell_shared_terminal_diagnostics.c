@@ -2,14 +2,15 @@
 // attachment, attachments on one daemon share one connection, and the
 // last-touched View drives (uishell_cleat_attachments.c).
 //
-// It needs a private Cleat daemon with two live sessions and a host ssh
+// It needs a private Cleat daemon with three live sessions and a host ssh
 // reaches, named by environment (tools/test-shared-terminals.sh sets them up,
 // with a PATH `ssh` shim when no sshd is at hand, which makes the command
 // transport killable):
 //   WH_SHARED_HOST      the ssh destination
 //   WH_SHARED_CLEAT     the Cleat binary, run here and there
 //   WH_SHARED_ROOT      its daemon's runtime root
-//   WH_SHARED_SESSIONS  two live sessions in that daemon, comma separated
+//   WH_SHARED_SESSIONS  three live sessions in that daemon, comma separated;
+//                       the third is killed
 // Remote endpoints are Unix only, like Cleat's command transport.
 
 #if !OS_WINDOWS
@@ -160,7 +161,9 @@ uishell_shared_terminal_diagnostics(RD_WindowState *ws)
   UIShell_SharedDiag d = {.ws = ws, .host = str8_cstring(env_host), .cleat = str8_cstring(env_cleat), .root = str8_cstring(env_root)};
   String8 sessions = str8_cstring(env_sessions);
   U64 comma = str8_find_needle(sessions, 0, str8_lit(","), 0);
-  String8 one = str8_prefix(sessions, comma), two = str8_skip(sessions, comma+1);
+  U64 comma2 = str8_find_needle(sessions, comma+1, str8_lit(","), 0);
+  String8 one = str8_prefix(sessions, comma), two = str8_substr(sessions, r1u64(comma+1, comma2));
+  String8 three = str8_skip(sessions, comma2+1);
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
   CFG_Node *owner = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
   d.panel = rd_fixture_leaf(rd_fixture_owner(owner));
@@ -284,6 +287,23 @@ uishell_shared_terminal_diagnostics(RD_WindowState *ws)
       sleep_ms(50);
     }
     SharedCheck(str8_find_needle(capture, 0, str8_lit("WH-SHARED-42"), 0) < capture.size, "the re-attached session takes input");
+
+    // A View opening on the live connection, and its session then ending,
+    // leave the transport and the other sessions alone.
+    CFG_Node *with_third[3] = {remote[0], remote[1], uishell_shared_diag_view(&d, ssh, three, str8_zero())};
+    UIShell_TerminalViewState *r3 = uishell_shared_diag_state(&d, with_third[2]);
+    opens = connection->opens;
+    SharedWait(with_third, 3, uishell_shared_diag_streaming(r3));
+    SharedCheck(uishell_shared_diag_streaming(r3) && connection->opens == opens && r3->shared->attachment->connection == connection,
+                "a View opening on a live connection doesn't reopen it");
+    uishell_shared_diag_run(scratch.arena, "'%S' --runtime-root '%S' kill '%S' >/dev/null 2>&1; true", d.cleat, d.root, three);
+    SharedWait(with_third, 3, uishell_terminal_connection_state(r3) == CLEAT_SESSION_CLOSED);
+    for(U64 settle = now_time_us()+Million(1); now_time_us() < settle;) { uishell_shared_diag_frame(&d, with_third, 3); sleep_ms(20); }
+    SharedCheck(uishell_terminal_connection_state(r3) == CLEAT_SESSION_CLOSED && connection->opens == opens && !connection->given_up &&
+                uishell_shared_diag_streaming(r1) && uishell_shared_diag_streaming(r2),
+                "a session ending on a live connection leaves the connection and the other sessions streaming");
+    uishell_shared_diag_release(&d, with_third[2]);
+    uishell_cleat_attachments_end_frame();
   }
 
   //- 4. After the last attachment on a connection goes, the connection stays

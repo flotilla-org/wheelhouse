@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared terminal acceptance (#417), headless: a private Cleat daemon runs two
+# Shared terminal acceptance (#417), headless: a private Cleat daemon runs three
 # shell sessions, and Wheelhouse's --shared_terminal_diagnostics shows them in
 # several Views, locally and through `ssh <host> cleat proxy`, checking that
 # they share attachments and connections.
@@ -18,7 +18,7 @@ shift 2
 work=$(mktemp -d /tmp/wh-shared-XXXX)
 root="$work/rt"
 cleanup() {
-  for session in crew-one crew-two; do "$cleat" --runtime-root "$root" kill "$session" >/dev/null 2>&1 || true; done
+  for session in crew-one crew-two crew-three; do "$cleat" --runtime-root "$root" kill "$session" >/dev/null 2>&1 || true; done
   if [ -f "$root/default/daemon.pid" ]; then kill "$(cat "$root/default/daemon.pid")" 2>/dev/null || true; fi
   rm -rf "$work"
 }
@@ -27,6 +27,7 @@ unset CLEAT_SESSION CLEAT_DAEMON CLEAT_OUTPUT_DAEMON CLEAT_RUNTIME_DIR
 mkdir -p "$root"
 "$cleat" --runtime-root "$root" launch crew-one --cmd "sh" >/dev/null
 "$cleat" --runtime-root "$root" launch crew-two --cmd "sh" >/dev/null
+"$cleat" --runtime-root "$root" launch crew-three --cmd "sh" >/dev/null
 host=${WH_SHARED_HOST-}
 if [ -z "$host" ]; then
   host=shimmed-host
@@ -41,5 +42,5 @@ SHIM
   chmod +x "$work/bin/ssh"
   export PATH="$work/bin:$PATH"
 fi
-WH_SHARED_HOST="$host" WH_SHARED_CLEAT="$cleat" WH_SHARED_ROOT="$root" WH_SHARED_SESSIONS=crew-one,crew-two \
+WH_SHARED_HOST="$host" WH_SHARED_CLEAT="$cleat" WH_SHARED_ROOT="$root" WH_SHARED_SESSIONS=crew-one,crew-two,crew-three \
   ${@+"$@"} "$wheelhouse" --user:"$work/user" --project:"$work/project" --shared_terminal_diagnostics
