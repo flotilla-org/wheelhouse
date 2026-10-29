@@ -594,8 +594,8 @@ pub unsafe extern "C" fn wheelhouse_workspace_registered(
     run(h, error_out, |h| Ok(h.sidebar.registered_workspaces().contains(&workspace.into()))).unwrap_or(false) as u32
 }
 
-// Snapshots, dispatch and effects. A snapshot owns all the text it returns and survives sidebar mutation and destruction; release it after
-// rendering.
+// Snapshots, dispatch and effects. A snapshot owns all the text it returns
+// and survives sidebar mutation and destruction; release it after rendering.
 
 pub const WHEELHOUSE_CATALOG: u32 = 0;
 pub const WHEELHOUSE_LATENT: u32 = 1;
