@@ -276,20 +276,25 @@ uishell_cleat_linger_wake(void *p)
   }
 }
 
+// The connection has no users from now: its linger starts, with a wake at
+// its end.
+internal void
+uishell_cleat_connection_idle(UIShell_CleatConnection *connection)
+{
+  connection->idle_since_us = now_time_us();
+  ins_atomic_u64_eval_assign(&uishell_cleat_linger_deadline_us, connection->idle_since_us + uishell_cleat_connection_linger_us);
+  if(ins_atomic_u64_eval_cond_assign(&uishell_cleat_linger_waker, 1, 0) == 0)
+  {
+    thread_detach(thread_launch(uishell_cleat_linger_wake, 0));
+  }
+}
+
 internal void
 uishell_cleat_connection_release(UIShell_CleatConnection *connection)
 {
   if(connection == 0 || connection->users == 0) { return; }
   connection->users--;
-  if(connection->users == 0)
-  {
-    connection->idle_since_us = now_time_us();
-    ins_atomic_u64_eval_assign(&uishell_cleat_linger_deadline_us, connection->idle_since_us + uishell_cleat_connection_linger_us);
-    if(ins_atomic_u64_eval_cond_assign(&uishell_cleat_linger_waker, 1, 0) == 0)
-    {
-      thread_detach(thread_launch(uishell_cleat_linger_wake, 0));
-    }
-  }
+  if(connection->users == 0) { uishell_cleat_connection_idle(connection); }
 }
 
 // A provider for a reader that holds no session on it (the Sessions View's
@@ -300,7 +305,7 @@ uishell_cleat_daemon_provider_from_name(String8 daemon_name)
 {
   UIShell_CleatRoute route = {.daemon = daemon_name};
   UIShell_CleatConnection *connection = uishell_cleat_connection_from_route(route);
-  if(connection->users == 0) { connection->idle_since_us = now_time_us(); }
+  if(connection->users == 0) { uishell_cleat_connection_idle(connection); }
   return connection->provider;
 }
 
