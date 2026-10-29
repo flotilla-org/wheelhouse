@@ -11333,7 +11333,8 @@ rd_request_frame(void)
 // Asks for one frame at at_us on now_time_us's clock, without building the
 // frames before it: for work that changes on a clock (a live table's next
 // tick, a hold or open delay). The earliest request wins; a builder that
-// still wants its frame asks again as it builds.
+// still wants its frame asks again as it builds. Requests aren't cancelled:
+// one that outlives its reason costs a single frame when it comes due.
 internal void
 rd_request_frame_at(U64 at_us)
 {
