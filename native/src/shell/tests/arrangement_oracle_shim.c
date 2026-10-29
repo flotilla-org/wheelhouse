@@ -167,6 +167,17 @@ oracle_quantize(F32 weight)
   return rd_arrangement_quantize(weight);
 }
 
+// The words rd_dock_rule_message gives a rule, into `out`; their length.
+ORACLE_EXPORT U64
+oracle_rule_message(U32 rule, U8 *out, U64 cap)
+{
+  oracle_init();
+  String8 message = rd_dock_rule_message((RD_DockRule)rule);
+  U64 n = Min(message.size, cap);
+  MemoryCopy(out, message.str, n);
+  return message.size;
+}
+
 ORACLE_EXPORT U64 oracle_clear(OracleArrangement *h) { return rd_arrangement_clear(h->arrangement); }
 ORACLE_EXPORT void oracle_discard(OracleArrangement *h) { rd_arrangement_discard(h->arrangement); }
 ORACLE_EXPORT U64 oracle_split(OracleArrangement *h, U64 panel, S32 dir) { return rd_arrangement_split(h->arrangement, panel, oracle_dir(dir)); }

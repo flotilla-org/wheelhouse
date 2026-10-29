@@ -9,7 +9,7 @@
 #![cfg(oracle)]
 use hegel::generators as gs;
 use hegel::TestCase;
-use wheelhouse_arrangement_oracle::{quantize as c_quantize, Oracle};
+use wheelhouse_arrangement_oracle::{quantize as c_quantize, weight_bits, Oracle};
 use wheelhouse_core::arrangement::generate::{build_step, draw_dir, draw_hidden, draw_tab, edit_step, Step, Tab};
 use wheelhouse_core::arrangement::{drop_across, problem, quantize, Arrangement};
 
@@ -26,7 +26,9 @@ fn step_both(rust: &mut Arrangement<Tab>, c: &mut Oracle, step: &Step) {
         }
     };
     assert_eq!(outcome, expected, "outcomes differ after {step:?}");
-    assert_eq!(*rust, c.dump(), "documents differ after {step:?}");
+    let dumped = c.dump();
+    assert_eq!(*rust, dumped, "documents differ after {step:?}");
+    assert_eq!(weight_bits(rust), weight_bits(&dumped), "weights differ in their bits after {step:?}");
     assert_eq!(problem(rust), c.problem(), "validity differs after {step:?}");
 }
 
@@ -59,23 +61,50 @@ fn drops_from_another_arrangement_match_the_c(tc: TestCase) {
         step_both(&mut b, &mut cb, &step);
     }
     for _ in 0..tc.draw(gs::integers::<usize>().max_value(4)) {
-        let tab = draw_tab(&tc, &b, next_tab);
+        // Half the drops take a tab from a source panel whose other tabs are
+        // all hidden, where the source's settle turns on them.
+        let crowded: Vec<Vec<Tab>> = b.panels().filter(|p| p.tabs.len() >= 2).map(|p| p.tabs.clone()).collect();
+        let mut hidden = draw_hidden(&tc, &a);
+        let tab = if !crowded.is_empty() && tc.draw(gs::booleans()) {
+            let source = tc.draw(gs::sampled_from(&crowded[..]));
+            let tab = tc.draw(gs::sampled_from(&source[..]));
+            hidden.extend(source.iter().copied().filter(|t| *t != tab));
+            tab
+        } else {
+            hidden.extend(draw_hidden(&tc, &b));
+            draw_tab(&tc, &b, next_tab)
+        };
         let to = wheelhouse_core::arrangement::generate::draw_panel(&tc, &a);
         let dir = tc.draw(gs::booleans()).then(|| draw_dir(&tc));
         let after = tc.draw(gs::booleans()).then(|| draw_tab(&tc, &a, next_tab));
-        let mut hidden = draw_hidden(&tc, &a);
-        hidden.extend(draw_hidden(&tc, &b));
         let (out, settled) = drop_across(&mut a, &mut b, &tab, to, dir, after, &|t| hidden.contains(t));
         let (c_out, c_changed, c_heir) = ca.drop_across(&mut cb, tab, to, dir, after, &hidden);
         let what = format!("drop {tab} into {to:?} {dir:?} after {after:?}, hidden {hidden:?}");
         assert_eq!((out.applied, out.panel, out.source, out.heir), (c_out.applied, c_out.panel, c_out.source, c_out.heir), "{what}");
         assert_eq!((settled.applied, settled.heir), (c_changed, c_heir), "{what}");
-        assert_eq!(a, ca.dump(), "{what}");
-        assert_eq!(b, cb.dump(), "{what}");
+        let (da, db) = (ca.dump(), cb.dump());
+        assert_eq!(a, da, "{what}");
+        assert_eq!(b, db, "{what}");
+        assert_eq!((weight_bits(&a), weight_bits(&b)), (weight_bits(&da), weight_bits(&db)), "{what}");
         // Either side may go on being edited.
         let step = edit_step(&tc, &b, next_tab);
         step_both(&mut b, &mut cb, &step);
     }
+}
+
+/// A resize whose floor can't hold leaves a weight of -0.0, which `==`
+/// can't tell from 0.0 but the C's `%f` writes as "-0.000000".
+#[test]
+fn a_resize_past_its_floor_keeps_the_cs_signed_zero() {
+    use wheelhouse_core::arrangement::{Dir, Edit, PanelId};
+    let mut rust = Arrangement::new();
+    let mut c = Oracle::new();
+    for edit in
+        [Edit::Clear, Edit::Split { panel: PanelId(1), dir: Dir::Right }, Edit::Resize { panel: PanelId(1), delta: -0.5000001, floor: 0.6 }]
+    {
+        step_both(&mut rust, &mut c, &Step::Edit { edit, hidden: vec![] });
+    }
+    assert!(weight_bits(&rust).contains(&(-0.0f32).to_bits()), "the case still reaches -0.0: {:?}", weight_bits(&rust));
 }
 
 /// The weight format: every quantized weight is the C's, bit for bit,

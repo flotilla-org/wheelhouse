@@ -57,6 +57,7 @@ extern "C" {
     fn oracle_dump(h: *mut c_void, out: *mut u64, cap: u64) -> u64;
     fn oracle_problem(h: *mut c_void, out: *mut u8, cap: u64) -> u64;
     fn oracle_quantize(weight: f32) -> f32;
+    fn oracle_rule_message(rule: u32, out: *mut u8, cap: u64) -> u64;
     fn oracle_clear(h: *mut c_void) -> u64;
     fn oracle_discard(h: *mut c_void);
     fn oracle_split(h: *mut c_void, panel: u64, dir: i32) -> u64;
@@ -328,6 +329,22 @@ fn host(h: &Host) -> OracleHost {
         available_width: h.available_width,
         pad: 0,
     }
+}
+
+/// The words the C gives `rule`.
+pub fn rule_message(rule: Rule) -> String {
+    let raw = Rule::ALL.iter().position(|r| *r == rule).expect("every rule is in ALL") as u32;
+    let mut out = vec![0u8; 256];
+    // SAFETY: out holds cap bytes; the C writes at most that many.
+    let len = unsafe { oracle_rule_message(raw, out.as_mut_ptr(), out.len() as u64) } as usize;
+    out.truncate(len.min(256));
+    String::from_utf8(out).expect("the C's messages are UTF-8")
+}
+
+/// The bits of each panel's weight, in tree order: `==` on `f32` can't
+/// tell -0.0 from 0.0, and `%f` writes them differently.
+pub fn weight_bits(a: &Arrangement<Tab>) -> Vec<u32> {
+    a.panels().map(|p| p.weight.to_bits()).collect()
 }
 
 fn rule(raw: u32) -> Rule {
