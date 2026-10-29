@@ -582,9 +582,12 @@ rd_core_doc_from_arrangement(Arena *arena, RD_Arrangement *arrangement)
 }
 
 // Takes an edited document back into `arrangement`, reusing each panel's node
-// by ID and its tab nodes.
+// by ID and each tab's node by View address, so a pointer held across an edit
+// still names the panel or the View it named, as the C edits in place kept
+// it. A View readdressed from `renamed_from` keeps its node under its new
+// address.
 internal void
-rd_arrangement_take(RD_Arrangement *arrangement, const WheelhouseEditDoc *doc)
+rd_arrangement_take_renamed(RD_Arrangement *arrangement, const WheelhouseEditDoc *doc, RD_ViewAddress renamed_from, RD_ViewAddress renamed_to)
 {
   Temp scratch = scratch_begin(&arrangement->arena, 1);
   RD_ArrangementPanel *root = arrangement->root;
@@ -596,8 +599,16 @@ rd_arrangement_take(RD_Arrangement *arrangement, const WheelhouseEditDoc *doc)
   U64 slot_count = 16;
   while(slot_count < 2*old_count) { slot_count *= 2; }
   U64 *slots = push_array(scratch.arena, U64, slot_count); // index+1; 0 is empty
-  // Tab nodes to reuse.
-  RD_ArrangementTab *pool = 0;
+  // Tab nodes to reuse, panels' then removed, by address in a second table.
+  U64 old_tab_count = 0;
+  for(RD_ArrangementPanel *p = root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(root, p)) { old_tab_count += p->tab_count; }
+  for(RD_ArrangementTab *tab = arrangement->first_removed; tab != 0; tab = tab->next) { old_tab_count += 1; }
+  RD_ArrangementTab **old_tabs = push_array(scratch.arena, RD_ArrangementTab *, old_tab_count);
+  B8 *tab_used = push_array(scratch.arena, B8, old_tab_count);
+  U64 tab_slot_count = 16;
+  while(tab_slot_count < 2*old_tab_count) { tab_slot_count *= 2; }
+  U64 *tab_slots = push_array(scratch.arena, U64, tab_slot_count); // index+1; 0 is empty
+  U64 old_tab_n = 0;
   {
     U64 i = 0;
     for(RD_ArrangementPanel *p = root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(root, p), i += 1)
@@ -609,11 +620,53 @@ rd_arrangement_take(RD_Arrangement *arrangement, const WheelhouseEditDoc *doc)
     }
     for(U64 j = 0; j < old_count; j++)
     {
-      for(RD_ArrangementTab *tab = old[j]->first_tab, *next = 0; tab != 0; tab = next) { next = tab->next; SLLStackPush(pool, tab); }
+      for(RD_ArrangementTab *tab = old[j]->first_tab; tab != 0 && old_tab_n < old_tab_count; tab = tab->next) { old_tabs[old_tab_n++] = tab; }
     }
-    for(RD_ArrangementTab *tab = arrangement->first_removed, *next = 0; tab != 0; tab = next) { next = tab->next; SLLStackPush(pool, tab); }
+    for(RD_ArrangementTab *tab = arrangement->first_removed; tab != 0 && old_tab_n < old_tab_count; tab = tab->next) { old_tabs[old_tab_n++] = tab; }
+    for(U64 k = 0; k < old_tab_n; k++)
+    {
+      RD_ViewAddress view = old_tabs[k]->view;
+      if(!rd_view_address_is_nil(renamed_from) && rd_view_address_match(view, renamed_from)) { view = renamed_to; }
+      U64 h = u64_hash_from_str8(str8_struct(&view)) & (tab_slot_count-1);
+      while(tab_slots[h] != 0) { h = (h+1) & (tab_slot_count-1); }
+      tab_slots[h] = k+1;
+    }
   }
-#define RD_TakeTab(out) do { if(pool) { (out) = pool; SLLStackPop(pool); } else { (out) = push_array(arrangement->arena, RD_ArrangementTab, 1); } MemoryZeroStruct(out); } while(0)
+  // Each of the document's tabs, panels' in order then removed, gets the
+  // first unused old node with its address; the rest get old nodes no tab
+  // matched, then new ones.
+  U64 doc_tab_count = doc->removed_count;
+  for(U64 i = 0; i < doc->panel_count; i++) { doc_tab_count += doc->panels[i].tab_count; }
+  RD_ArrangementTab **doc_tabs = push_array(scratch.arena, RD_ArrangementTab *, doc_tab_count);
+  {
+    U64 d = 0;
+    for(U64 i = 0; i <= doc->panel_count; i++)
+    {
+      U64 count = i < doc->panel_count ? doc->panels[i].tab_count : doc->removed_count;
+      const WheelhouseTab *tabs = i < doc->panel_count ? doc->panels[i].tabs : doc->removed;
+      for(U64 t = 0; t < count; t++, d++)
+      {
+        RD_ViewAddress view = rd_view_from_core_tab(&tabs[t]);
+        for(U64 h = u64_hash_from_str8(str8_struct(&view)) & (tab_slot_count-1); tab_slots[h] != 0; h = (h+1) & (tab_slot_count-1))
+        {
+          U64 k = tab_slots[h]-1;
+          RD_ViewAddress was = old_tabs[k]->view;
+          if(!rd_view_address_is_nil(renamed_from) && rd_view_address_match(was, renamed_from)) { was = renamed_to; }
+          if(!tab_used[k] && rd_view_address_match(was, view)) { doc_tabs[d] = old_tabs[k]; tab_used[k] = 1; break; }
+        }
+      }
+    }
+    U64 k = 0;
+    for(d = 0; d < doc_tab_count; d++)
+    {
+      if(doc_tabs[d] != 0) { continue; }
+      while(k < old_tab_n && tab_used[k]) { k += 1; }
+      if(k < old_tab_n) { doc_tabs[d] = old_tabs[k]; tab_used[k] = 1; }
+      else { doc_tabs[d] = push_array(arrangement->arena, RD_ArrangementTab, 1); }
+    }
+  }
+  U64 next_doc_tab = 0;
+#define RD_TakeTab(out) do { (out) = doc_tabs[next_doc_tab++]; MemoryZeroStruct(out); } while(0)
   RD_ArrangementPanel **nodes = push_array(scratch.arena, RD_ArrangementPanel *, doc->panel_count);
   for(U64 i = 0; i < doc->panel_count; i++)
   {
@@ -683,6 +736,12 @@ rd_arrangement_take(RD_Arrangement *arrangement, const WheelhouseEditDoc *doc)
   scratch_end(scratch);
 }
 
+internal void
+rd_arrangement_take(RD_Arrangement *arrangement, const WheelhouseEditDoc *doc)
+{
+  rd_arrangement_take_renamed(arrangement, doc, rd_nil_view_address, rd_nil_view_address);
+}
+
 // What an edit did, as the operations report it.
 typedef struct RD_ArrangementOutcome RD_ArrangementOutcome;
 struct RD_ArrangementOutcome
@@ -741,7 +800,14 @@ rd_arrangement_apply(RD_Arrangement *arrangement, WheelhouseEdit edit, RD_Arrang
   WheelhouseEditResult *edited = wheelhouse_arrangement_apply(&doc, &edit, shown ? rd_arrangement_hidden : 0, &rule, &error);
   if(edited)
   {
-    rd_arrangement_take(arrangement, &edited->doc);
+    if(edit.kind == WHEELHOUSE_EDIT_READDRESS)
+    {
+      rd_arrangement_take_renamed(arrangement, &edited->doc, rd_view_from_core_tab(&edit.tab), rd_view_from_core_tab(&edit.to));
+    }
+    else
+    {
+      rd_arrangement_take(arrangement, &edited->doc);
+    }
     result.applied = edited->outcome.applied != 0;
     result.panel = edited->outcome.panel;
     result.source = edited->outcome.source;
