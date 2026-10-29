@@ -6,3 +6,6 @@ members:
   - alias: cleat
     url: https://github.com/flotilla-org/cleat
     roles: [code]
+  - alias: binnacle
+    url: https://github.com/flotilla-org/binnacle
+    roles: [code]
