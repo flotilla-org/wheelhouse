@@ -1572,6 +1572,31 @@ internal U64 rd_arrangement_version(RD_PanelOwner owner);
 // goes, and those after it in its host move up. Setting what it has
 // already changes nothing.
 internal void rd_arrangement_set(RD_Arrangement *arrangement);
+// Arrangement intents (#516): the one way a command or gesture changes an
+// arrangement. The core applies the intent (arrangement::Intent, by its
+// WHEELHOUSE_INTENT_* kind) to a copy of its owner's live arrangement, by the
+// shell's rule for which tabs count (rd_tab_is_shown), and the result is set.
+// A drop whose View is in another owner's arrangement (the sidebar's) edits
+// that one too, in the same intent. Until the stores take intents (#441,
+// step 4) they apply here, to the live copies.
+typedef struct RD_ArrangementIntentResult RD_ArrangementIntentResult;
+struct RD_ArrangementIntentResult
+{
+  B32 applied;
+  // The panel made or landed in, the panel a drop left (in the intent's
+  // arrangement), and the leaf that takes focus after a close.
+  RD_PanelID panel;
+  RD_PanelID source;
+  RD_PanelID heir;
+  // A moved View's address after the intent (a drop or move into another
+  // owner can change it); otherwise the intent's View as it was.
+  RD_ViewAddress moved;
+};
+// An intent of `kind` on `owner`'s arrangement, its other fields empty.
+internal WheelhouseArrangementIntent rd_arrangement_intent(U32 kind, RD_PanelOwner owner);
+internal void rd_arrangement_intent_tab(WheelhouseArrangementIntent *intent, RD_ViewAddress tab);
+internal void rd_arrangement_intent_after(WheelhouseArrangementIntent *intent, RD_ViewAddress after);
+internal RD_ArrangementIntentResult rd_arrangement_apply_intent(WheelhouseArrangementIntent intent);
 // Gives `panel` of its owner's live arrangement `weight` without setting it:
 // this device's size for it, which commits leave out, as the sidebar's sizes
 // from content are.
