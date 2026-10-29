@@ -88,7 +88,7 @@ impl Model {
 }
 
 fn follow(sidebar: &mut Sidebar, id: SubscriptionId, model: &mut Model) -> Vec<u64> {
-    let Some(delta) = sidebar.poll(id) else {
+    let Some(delta) = sidebar.poll(id).unwrap() else {
         return vec![];
     };
     let delta = Delta::from(&delta);

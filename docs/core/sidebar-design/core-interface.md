@@ -26,7 +26,10 @@ Instead of whole snapshots, a frontend can follow the sidebar's change stream
 ([design](../../design/change-stream.md)). `subscribe()` gives a
 `SubscriptionId`; each `poll(id)` gives a `SidebarDelta` from what that
 subscription last had to now, the first one everything. `changed_since(id)` says,
-without building anything, whether a poll may have something. A change that
+without building anything, whether a poll may have something. Both return an
+`UnknownSubscription` error for a subscription never given or since
+unsubscribed, and change nothing; IDs are never reused, so a stale one is
+never someone else's. A change that
 presents nothing new delivers nothing, and a subscriber that polls rarely gets
 one delta to now. Apply each delta whole to a `StreamView`, the keyed model of
 sections, nodes and child lists; its generation is then the delta's. Nodes'

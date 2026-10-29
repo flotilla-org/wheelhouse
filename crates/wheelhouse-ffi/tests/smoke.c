@@ -71,7 +71,7 @@ static int same(WheelhouseWorkspaceId a, WheelhouseWorkspaceId b) {
 
 /* Facts, topology, the snapshot, dispatch, effects and completion. */
 static void check_sidebar(const char *config_path, const char *patches_path) {
-    assert(wheelhouse_abi_version() == 13);
+    assert(wheelhouse_abi_version() == 14);
     char *config = read_file(config_path);
     WheelhouseCore *h = create(config);
     ok(wheelhouse_configure(h, text(config), &error));
@@ -498,6 +498,11 @@ static void check_stream(const char *config_path, const char *patches_path) {
     assert(wheelhouse_apply_intent(h, &intent, &request, &error) == WHEELHOUSE_INTENT_INVALID);
     fails(0);
     ok(wheelhouse_unsubscribe(h, subscription, &error));
+    /* An unsubscribed ID is an error from both, not a quiet one. */
+    fails(wheelhouse_changed_since(h, subscription, &error));
+    assert(!wheelhouse_poll(h, subscription, &error));
+    fails(0);
+    assert(!wheelhouse_unsubscribe(h, subscription, &error) && !error);
     assert(wheelhouse_delta_op_count(NULL) == 0 && wheelhouse_delta_generation(NULL) == 0);
     wheelhouse_delta_release(NULL);
     assert(!wheelhouse_poll(NULL, 0, &error));

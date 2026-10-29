@@ -753,7 +753,56 @@ fn a_host_following_the_stream_has_what_the_snapshot_presents() {
         assert!(MOVES.with(|moves| moves.get()) > 0, "a rename reordered a list");
 
         assert_eq!(wheelhouse_unsubscribe(h, subscription, ptr::null_mut()), 1);
-        assert!(wheelhouse_poll(h, subscription, ptr::null_mut()).is_null());
+        assert!(wheelhouse_poll(h, subscription, &mut error).is_null());
+        assert!(!error.is_null(), "polling an unsubscribed ID is an error");
+        wheelhouse_string_free(error);
+        wheelhouse_destroy(h);
+    }
+}
+
+/// An unknown subscription, unsubscribed or never given, is an error from
+/// wheelhouse_changed_since and wheelhouse_poll that names it, where a quiet
+/// live one has none; and it doesn't poison the handle.
+#[test]
+fn an_unknown_subscription_is_an_error_not_quiet() {
+    unsafe {
+        let h = create(include_str!("../../../data/sidebar/daily-driver.kdl"));
+        let mut error = ptr::null_mut();
+        let (mut live, mut gone) = (0, 0);
+        assert_eq!(wheelhouse_subscribe(h, &mut live, &mut error), 1);
+        assert_eq!(wheelhouse_subscribe(h, &mut gone, &mut error), 1);
+        assert_eq!(wheelhouse_unsubscribe(h, gone, &mut error), 1);
+        assert_eq!(wheelhouse_unsubscribe(h, gone, &mut error), 0);
+        assert!(error.is_null(), "unsubscribing an unknown ID is quiet");
+
+        let d = wheelhouse_poll(h, live, &mut error);
+        assert!(!d.is_null() && error.is_null(), "the first poll gives everything");
+        wheelhouse_delta_release(d);
+        assert_eq!(wheelhouse_changed_since(h, live, &mut error), 0);
+        assert!(error.is_null(), "a quiet live subscription has no error");
+        assert!(wheelhouse_poll(h, live, &mut error).is_null());
+        assert!(error.is_null(), "a quiet live subscription has no error");
+
+        let never = live.max(gone) + 100;
+        for unknown in [gone, never] {
+            let names = |error: *mut c_char| {
+                assert!(!error.is_null(), "subscription {unknown} gave no error");
+                let message = CStr::from_ptr(error).to_string_lossy().into_owned();
+                wheelhouse_string_free(error);
+                assert!(message.contains(&format!("subscription {unknown}")), "{message}");
+            };
+            assert_eq!(wheelhouse_changed_since(h, unknown, &mut error), 0);
+            names(error);
+            assert!(wheelhouse_poll(h, unknown, &mut error).is_null());
+            names(error);
+        }
+
+        let mut again = 0;
+        assert_eq!(wheelhouse_subscribe(h, &mut again, &mut error), 1, "the handle isn't poisoned");
+        assert!(error.is_null() && again != gone && again != live);
+        let d = wheelhouse_poll(h, again, &mut error);
+        assert!(!d.is_null() && error.is_null());
+        wheelhouse_delta_release(d);
         wheelhouse_destroy(h);
     }
 }

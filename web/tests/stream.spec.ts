@@ -76,3 +76,24 @@ test("facts arriving later reach the page as deltas", async ({ page }) => {
   await compare(page);
   await expect(page.getByText("Renamed by a later fact").first()).toBeVisible();
 });
+
+test("a page whose subscription is lost follows again from a new one", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.evaluate(() => {
+    const wheelhouse = (window as any).wheelhouse;
+    wheelhouse.forget();
+    wheelhouse.apply(
+      1000,
+      JSON.stringify({
+        target: { kind: "entity", value: { kind: "project", id: "p" } },
+        source_id: "fixture",
+        set: { "display.label": { value: { type: "text", value: "Renamed after the subscription was lost" } } },
+      }),
+    );
+  });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  await compare(page);
+  await expect(page.getByText("Renamed after the subscription was lost").first()).toBeVisible();
+  expect(errors).toEqual([]);
+});

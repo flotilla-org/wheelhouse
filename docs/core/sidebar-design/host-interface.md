@@ -1,4 +1,4 @@
-# The host interface (ABI 13)
+# The host interface (ABI 14)
 
 What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
@@ -159,6 +159,18 @@ single pass, appending each panel to its parent.
   `variable:` and the key.
 
 Committing an arrangement never changes the snapshot's revision.
+
+## From ABI 13
+
+ABI 14 makes an unknown subscription, one never given or since
+unsubscribed, an error from `wheelhouse_changed_since` and `wheelhouse_poll`
+(wheelhouse#498). Before, both were quiet for it: 0 and NULL with no error,
+as for a subscription with nothing to deliver, so a host that lost its
+subscription stopped following without a signal. Now 0 or NULL with no error
+means only that there is nothing to deliver. `wheelhouse_unsubscribe` is
+unchanged: 0 with no error for an unknown ID. Nothing changes layout. A host
+that ignored errors from these two calls should now, on one, follow again
+from a new subscription, whose first delta gives everything.
 
 ## From ABI 12
 

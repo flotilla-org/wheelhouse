@@ -121,9 +121,22 @@ internal void
 uishell_sidebar_model_follow(Arena *arena, UIShell_SidebarModelRun *run, char *step)
 {
   run->steps++;
-  if(!wheelhouse_changed_since(run->core, run->subscription, 0)) { return; }
-  WheelhouseDelta *delta = wheelhouse_poll(run->core, run->subscription, 0);
-  if(!delta) { return; }
+  // Either call fails for a subscription the core no longer knows: count it,
+  // so a lost subscription fails loudly rather than following nothing.
+  char *error = 0;
+  if(!wheelhouse_changed_since(run->core, run->subscription, &error))
+  {
+    if(error) { fprintf(stderr, "FAIL sidebar model after %s: %s\n", step, error); run->failures++; }
+    wheelhouse_string_free(error);
+    return;
+  }
+  WheelhouseDelta *delta = wheelhouse_poll(run->core, run->subscription, &error);
+  if(!delta)
+  {
+    if(error) { fprintf(stderr, "FAIL sidebar model after %s: %s\n", step, error); run->failures++; }
+    wheelhouse_string_free(error);
+    return;
+  }
   for(U64 i = 0; i < wheelhouse_delta_op_count(delta); i++)
   {
     WheelhouseDeltaOp op = {0}; wheelhouse_delta_op(delta, i, &op);

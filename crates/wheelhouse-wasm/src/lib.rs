@@ -58,15 +58,19 @@ impl Core {
         self.sidebar.unsubscribe(SubscriptionId(subscription.into()))
     }
 
-    /// Whether a poll may have something; it builds nothing.
+    /// Whether a poll may have something; it builds nothing. False means
+    /// only that there is nothing to deliver: an unknown subscription (never
+    /// given, or unsubscribed) throws.
     #[wasm_bindgen(js_name = changedSince)]
-    pub fn changed_since(&self, subscription: u32) -> bool {
-        self.sidebar.changed_since(SubscriptionId(subscription.into()))
+    pub fn changed_since(&self, subscription: u32) -> Result<bool, JsError> {
+        self.sidebar.changed_since(SubscriptionId(subscription.into())).map_err(error)
     }
 
-    /// What changed since this subscription's last delta, or nothing.
+    /// What changed since this subscription's last delta, or nothing when
+    /// there is nothing to deliver. An unknown subscription (never given, or
+    /// unsubscribed) throws.
     pub fn poll(&mut self, subscription: u32) -> Result<Option<Ts<Delta>>, JsError> {
-        let delta = self.sidebar.poll(SubscriptionId(subscription.into()));
+        let delta = self.sidebar.poll(SubscriptionId(subscription.into())).map_err(error)?;
         Ok(delta.as_ref().map(|delta| Delta::from(delta).into_ts()).transpose()?)
     }
 

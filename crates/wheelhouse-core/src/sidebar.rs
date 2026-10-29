@@ -21,7 +21,7 @@ use crate::{
     sidebar_arrangement::{self, Declared, LocalSection, Report, SidebarArrangement, SidebarDoc, SidebarView},
     slots::{ArrangementCommit, ArrangementDoc, ArrangementView, Baseline, OverlayView, Resolve, SlotInfo},
     state::{ControllerState, ControllerTab, EntityActivation, RevisionEvaluation},
-    stream::{self, SidebarDelta, SubscriptionId},
+    stream::{self, SidebarDelta, SubscriptionId, UnknownSubscription},
     suggested_layout::{PrimarySlot, RebindPolicy, ViewSpec},
     target_resolution::{PortableResolution, SavedResolution},
     template_config::{parse_template_config_kdl, TemplateConfigCatalog},
@@ -1338,20 +1338,24 @@ impl Sidebar {
     /// Whether a poll might have something to deliver. It builds nothing:
     /// check after draining a batch, and poll only when it is true. A change
     /// that turns out to present nothing new still makes it true once.
-    pub fn changed_since(&self, id: SubscriptionId) -> bool {
-        self.subscriptions.get(&id).is_some_and(|subscription| subscription.seen != Some(self.revision) || !subscription.intents.is_empty())
+    /// `Ok(false)` means only that there is nothing to deliver; an unknown
+    /// subscription is an error, and changes nothing.
+    pub fn changed_since(&self, id: SubscriptionId) -> Result<bool, UnknownSubscription> {
+        let subscription = self.subscriptions.get(&id).ok_or(UnknownSubscription(id))?;
+        Ok(subscription.seen != Some(self.revision) || !subscription.intents.is_empty())
     }
 
     /// What changed since this subscription's last delta, or everything for
-    /// its first, with the intents accepted since; none when nothing it
-    /// presents changed and no intent was accepted, or for an unknown
-    /// subscription.
-    pub fn poll(&mut self, id: SubscriptionId) -> Option<SidebarDelta> {
-        if !self.changed_since(id) {
-            return None;
+    /// its first, with the intents accepted since; `Ok(None)` when nothing it
+    /// presents changed and no intent was accepted. An unknown subscription
+    /// is an error, and changes nothing: no subscription, and not the
+    /// revision.
+    pub fn poll(&mut self, id: SubscriptionId) -> Result<Option<SidebarDelta>, UnknownSubscription> {
+        if !self.changed_since(id)? {
+            return Ok(None);
         }
         let current = self.snapshot_rc().clone();
-        let subscription = self.subscriptions.get_mut(&id)?;
+        let subscription = self.subscriptions.get_mut(&id).ok_or(UnknownSubscription(id))?;
         let ops = stream::delta(subscription.delivered.as_deref(), &current);
         let first = subscription.delivered.is_none();
         subscription.seen = Some(current.revision);
@@ -1359,7 +1363,7 @@ impl Sidebar {
         // walk shares its nodes.
         subscription.delivered = Some(current.clone());
         let intents = std::mem::take(&mut subscription.intents);
-        (first || !ops.is_empty() || !intents.is_empty()).then_some(SidebarDelta { generation: current.revision, ops, intents })
+        Ok((first || !ops.is_empty() || !intents.is_empty()).then_some(SidebarDelta { generation: current.revision, ops, intents }))
     }
 
     /// The surface a first evaluation of the current state presents, with

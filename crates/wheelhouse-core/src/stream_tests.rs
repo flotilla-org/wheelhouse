@@ -1,7 +1,7 @@
 //! The change stream (docs/design/change-stream.md): a frontend that applies
 //! every delta it is given has what a fresh snapshot presents, however often
 //! it polls.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use hegel::generators as gs;
@@ -10,7 +10,7 @@ use hegel::TestCase;
 use crate::presentation::PlacementNode;
 use crate::scaling_tests::{catalog, fleet, patch, text, Shape, CONFIG, PROVIDER};
 use crate::sidebar::{HostEffect, Intent, IntentReceipt, Sidebar, Workspace};
-use crate::stream::{apply_list, list_ops, ListOp, StreamView, SubscriptionId};
+use crate::stream::{apply_list, list_ops, ListOp, StreamView, SubscriptionId, UnknownSubscription};
 use crate::{tab_workspace_id, EntityRef, MetadataPatch, MetadataTarget, MetadataValue};
 
 const DAILY_DRIVER: &str = include_str!("../../../data/sidebar/daily-driver.kdl");
@@ -197,7 +197,7 @@ struct Follower {
 
 impl Follower {
     fn poll(&mut self, sidebar: &mut Sidebar) {
-        let delta = sidebar.poll(self.id);
+        let delta = sidebar.poll(self.id).unwrap();
         match (&mut self.view, delta) {
             (None, Some(delta)) => {
                 assert_eq!(delta.intents, std::mem::take(&mut self.awaited));
@@ -221,7 +221,7 @@ impl Follower {
         // keeps the generation of the last change it saw.
         fresh.generation = view.generation;
         assert!(view == &fresh, "the followed view differs from a fresh snapshot's");
-        assert!(sidebar.poll(self.id).is_none(), "a poll straight after another has nothing");
+        assert!(sidebar.poll(self.id).unwrap().is_none(), "a poll straight after another has nothing");
     }
 }
 
@@ -264,6 +264,93 @@ fn followed_views_match_fresh_snapshots_with_a_shared_placement(tc: TestCase) {
     followed_views_match_fresh_snapshots(tc, &shared);
 }
 
+/// `changed_since` and `poll` fail exactly for a subscription that isn't
+/// live, never given or since unsubscribed, and a failed call changes
+/// nothing: the revision stays, and every live subscription goes on as it
+/// would have without it, as a twin sidebar given only the calls that
+/// succeed shows. No ID is ever given twice.
+#[hegel::test(test_cases = 300)]
+fn only_live_subscriptions_are_followed(tc: TestCase) {
+    let mut sidebar = Sidebar::new(CONFIG).unwrap();
+    let mut twin = Sidebar::new(CONFIG).unwrap();
+    for sidebar in [&mut sidebar, &mut twin] {
+        sidebar.apply(0, PROVIDER, fleet(SHAPE, CONVOYS)).unwrap();
+    }
+    let mut given: Vec<SubscriptionId> = vec![];
+    let mut live = BTreeSet::new();
+    let mut now = 0;
+    for _ in 0..tc.draw(gs::integers::<usize>().max_value(30)) {
+        // An ID given before, live or not, or one not given yet.
+        let drawn = || {
+            if !given.is_empty() && tc.draw(gs::booleans()) {
+                given[tc.draw(gs::integers::<usize>().max_value(given.len() - 1))]
+            } else {
+                let next = given.iter().map(|id| id.0 + 1).max().unwrap_or(0);
+                SubscriptionId(next + tc.draw(gs::integers::<u64>().max_value(3)))
+            }
+        };
+        match tc.draw(gs::integers::<u8>().max_value(4)) {
+            0 => {
+                let id = sidebar.subscribe();
+                assert!(!given.contains(&id), "{id:?} was given before");
+                assert_eq!(twin.subscribe(), id);
+                given.push(id);
+                live.insert(id);
+            }
+            1 => {
+                let id = drawn();
+                assert_eq!(sidebar.unsubscribe(id), live.remove(&id), "unsubscribing {id:?}");
+                twin.unsubscribe(id);
+            }
+            2 | 3 => {
+                let id = drawn();
+                let revision = sidebar.revision();
+                let polling = tc.draw(gs::booleans());
+                let result = if polling { sidebar.poll(id).map(|_| ()) } else { sidebar.changed_since(id).map(|_| ()) };
+                if live.contains(&id) {
+                    assert!(result.is_ok(), "a live subscription {id:?} failed");
+                    // The twin is given every call that succeeds.
+                    if polling {
+                        twin.poll(id).unwrap();
+                    }
+                } else {
+                    assert_eq!(result, Err(UnknownSubscription(id)));
+                    assert_eq!(sidebar.revision(), revision, "a failed call moved the revision");
+                }
+            }
+            _ => {
+                now += 1;
+                let c = tc.draw(gs::integers::<usize>().max_value(CONVOYS - 1));
+                let label = ["renamed", "zeta", "alpha"][tc.draw(gs::integers::<usize>().max_value(2))];
+                for sidebar in [&mut sidebar, &mut twin] {
+                    sidebar.apply(now, PROVIDER, [change("convoy", c, vec![("display.label", text(label))], &[])]).unwrap();
+                }
+            }
+        }
+    }
+    assert_eq!(sidebar.revision(), twin.revision());
+    for &id in &live {
+        assert_eq!(sidebar.changed_since(id), twin.changed_since(id), "{id:?} changed since");
+        assert_eq!(sidebar.poll(id), twin.poll(id), "{id:?} polled");
+    }
+}
+
+/// A quiet live subscription has nothing to deliver; the same ID once
+/// unsubscribed is an error from both calls.
+#[test]
+fn an_unsubscribed_id_is_an_error_not_quiet() {
+    let mut sidebar = Sidebar::new(CONFIG).unwrap();
+    sidebar.apply(1, PROVIDER, catalog(20)).unwrap();
+    let id = sidebar.subscribe();
+    sidebar.poll(id).unwrap().unwrap();
+    assert_eq!(sidebar.changed_since(id), Ok(false));
+    assert_eq!(sidebar.poll(id), Ok(None));
+    assert!(sidebar.unsubscribe(id));
+    assert_eq!(sidebar.changed_since(id), Err(UnknownSubscription(id)));
+    assert_eq!(sidebar.poll(id), Err(UnknownSubscription(id)));
+    assert!(UnknownSubscription(id).to_string().contains(&id.0.to_string()));
+}
+
 /// An intent's name is its serialized tag, so the two can't drift apart.
 #[test]
 fn intent_names_are_their_tags() {
@@ -288,10 +375,10 @@ fn deltas_list_accepted_intents_only() {
     let mut sidebar = Sidebar::new(CONFIG).unwrap();
     sidebar.apply(1, PROVIDER, catalog(20)).unwrap();
     let id = sidebar.subscribe();
-    sidebar.poll(id).unwrap();
+    sidebar.poll(id).unwrap().unwrap();
     let refused = sidebar.apply_intent(Intent::TogglePlacement { key: crate::PlacementKey::default() });
     assert!(matches!(refused, IntentReceipt::Refused { .. }), "{refused:?}");
-    assert!(!sidebar.changed_since(id) && sidebar.poll(id).is_none());
+    assert!(!sidebar.changed_since(id).unwrap() && sidebar.poll(id).unwrap().is_none());
     let name = sidebar.snapshot_shared().surface.display_variables[0].name.clone();
     let IntentReceipt::Accepted { request, .. } = sidebar.apply_intent(Intent::ToggleDisplayVariable { name: name.clone() }) else {
         panic!("a display variable toggles");
@@ -299,7 +386,7 @@ fn deltas_list_accepted_intents_only() {
     let IntentReceipt::Accepted { request: again, .. } = sidebar.apply_intent(Intent::ToggleDisplayVariable { name }) else {
         panic!("and toggles back");
     };
-    let delta = sidebar.poll(id).expect("accepted intents are listed");
+    let delta = sidebar.poll(id).unwrap().expect("accepted intents are listed");
     assert_eq!(delta.intents, [request, again]);
     assert!(delta.ops.is_empty(), "toggled and back presents nothing new: {:?}", delta.ops);
 }
@@ -311,20 +398,20 @@ fn an_intent_that_changes_nothing_is_listed() {
     let mut sidebar = Sidebar::new(CONFIG).unwrap();
     sidebar.apply(1, PROVIDER, catalog(20)).unwrap();
     let id = sidebar.subscribe();
-    sidebar.poll(id).unwrap();
+    sidebar.poll(id).unwrap().unwrap();
     let project = EntityRef::new(PROVIDER, "project", "fleet/p0@fleet");
     let IntentReceipt::Accepted { effects, .. } = sidebar.apply_intent(Intent::Activate { entity: project.clone() }) else {
         panic!("a project opens");
     };
     assert!(matches!(effects.as_slice(), [HostEffect::Materialize { .. }]), "{effects:?}");
-    sidebar.poll(id).unwrap();
+    sidebar.poll(id).unwrap().unwrap();
     let revision = sidebar.revision();
     let IntentReceipt::Accepted { request, effects } = sidebar.apply_intent(Intent::Activate { entity: project }) else {
         panic!("activating it again is accepted");
     };
     assert!(effects.is_empty() && sidebar.revision() == revision, "and changes nothing");
-    assert!(sidebar.changed_since(id));
-    assert_eq!(sidebar.poll(id).expect("it is listed").intents, [request]);
+    assert!(sidebar.changed_since(id).unwrap());
+    assert_eq!(sidebar.poll(id).unwrap().expect("it is listed").intents, [request]);
 }
 
 /// List operations turn any list of distinct keys into any other, and move
@@ -379,14 +466,14 @@ fn a_small_patch_at_fleet_scale_is_a_small_delta() {
         let mut sidebar = Sidebar::new(config).unwrap();
         sidebar.apply(1, PROVIDER, catalog(580)).unwrap();
         let id = sidebar.subscribe();
-        let first = sidebar.poll(id).unwrap();
+        let first = sidebar.poll(id).unwrap().unwrap();
         assert!(first.ops.len() > nodes(&sidebar).len(), "the first poll gives everything");
         for (i, status) in ["running", "done", "running"].into_iter().enumerate() {
             sidebar.apply(2 + i as u64, PROVIDER, [change("vessel", 5, vec![("status.state", text(status))], &[])]).unwrap();
             // Evaluate first, to time only the walk.
             sidebar.snapshot_shared();
             let started = std::time::Instant::now();
-            let delta = sidebar.poll(id).expect("a status change presents something");
+            let delta = sidebar.poll(id).unwrap().expect("a status change presents something");
             let elapsed = started.elapsed();
             assert!(delta.ops.len() <= 12, "a status change gave {} operations: {:?}", delta.ops.len(), delta.ops);
             println!("status change: {} operations, walked in {elapsed:?}", delta.ops.len());
@@ -401,11 +488,11 @@ fn a_change_nothing_presents_delivers_nothing() {
     let mut sidebar = Sidebar::new(CONFIG).unwrap();
     sidebar.apply(1, PROVIDER, catalog(60)).unwrap();
     let id = sidebar.subscribe();
-    sidebar.poll(id).unwrap();
+    sidebar.poll(id).unwrap().unwrap();
     sidebar.apply(2, PROVIDER, [crate::scaling_tests::delta(5, "landed")]).unwrap();
-    assert!(sidebar.changed_since(id), "the revision moved");
-    assert!(sidebar.poll(id).is_none());
-    assert!(!sidebar.changed_since(id), "and the poll caught up with it");
+    assert!(sidebar.changed_since(id).unwrap(), "the revision moved");
+    assert!(sidebar.poll(id).unwrap().is_none());
+    assert!(!sidebar.changed_since(id).unwrap(), "and the poll caught up with it");
 }
 
 /// A connector that reconnects resends its whole catalog. When what it
@@ -416,10 +503,10 @@ fn a_reconnect_resending_the_same_catalog_delivers_nothing() {
         let mut sidebar = Sidebar::new(config).unwrap();
         sidebar.apply(1, PROVIDER, catalog(120)).unwrap();
         let id = sidebar.subscribe();
-        sidebar.poll(id).unwrap();
+        sidebar.poll(id).unwrap().unwrap();
         sidebar.retract_provider(PROVIDER);
         sidebar.apply(2, PROVIDER, catalog(120)).unwrap();
-        let delta = sidebar.poll(id);
+        let delta = sidebar.poll(id).unwrap();
         assert!(delta.is_none(), "a reconnect gave {} operations", delta.map_or(0, |delta| delta.ops.len()));
     }
 }
@@ -485,11 +572,11 @@ fn a_url_that_arrives_later_reaches_the_stream() {
     sidebar.apply(1, "fixture", rest).unwrap();
     let id = sidebar.subscribe();
     let mut followed = StreamView::default();
-    followed.apply(&sidebar.poll(id).unwrap()).unwrap();
+    followed.apply(&sidebar.poll(id).unwrap().unwrap()).unwrap();
     let with_url = |view: &StreamView| view.nodes.values().filter(|n| n.has_url).count();
     assert_eq!(with_url(&followed), 0);
     sidebar.apply(2, "fixture", forge).unwrap();
-    let delta = sidebar.poll(id).expect("the forge gave subjects URLs");
+    let delta = sidebar.poll(id).unwrap().expect("the forge gave subjects URLs");
     followed.apply(&delta).unwrap();
     assert!(with_url(&followed) > 0);
     assert_eq!(followed, StreamView::of(sidebar.snapshot_shared()));

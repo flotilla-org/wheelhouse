@@ -9,7 +9,7 @@ The design was settled for wheelhouse#122; the strip as a whole is described
 in Wheelhouse's `docs/design/subject-workspaces.md`.
 
 Status: implemented in the core (`tool_strip.rs`, `state.rs`) and the C
-interface (ABI 13).
+interface (ABI 14).
 
 ## In short
 

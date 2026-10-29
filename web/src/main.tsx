@@ -1,7 +1,7 @@
 // The sidebar in the browser: the core runs as wasm, the page replays the
 // native fixture's facts into it, follows its change stream from the event
 // loop, and changes it by intent. No relay yet: the facts are recorded.
-import { For, Show } from "solid-js";
+import { batch, For, Show } from "solid-js";
 import { render } from "solid-js/web";
 import { unwrap } from "solid-js/store";
 import init, { Core, type Effect, type Intent, type Node, type Receipt } from "./core/wheelhouse_wasm";
@@ -14,13 +14,26 @@ const PROVIDER = "fixture";
 
 await init();
 const core = new Core(config);
-const subscription = core.subscribe();
-const { model, apply } = createModel();
+let subscription = core.subscribe();
+const { model, apply, reset } = createModel();
 
+// Both calls throw for a subscription the core no longer knows. Uncaught,
+// that would stop the frame loop for good: follow again from a new
+// subscription, whose first delta rebuilds the model.
 function follow() {
-  if (core.changedSince(subscription)) {
+  try {
+    if (core.changedSince(subscription)) {
+      const delta = core.poll(subscription);
+      if (delta) apply(delta);
+    }
+  } catch (error) {
+    console.warn("following the sidebar again:", error);
+    subscription = core.subscribe();
     const delta = core.poll(subscription);
-    if (delta) apply(delta);
+    batch(() => {
+      reset();
+      if (delta) apply(delta);
+    });
   }
 }
 
@@ -137,5 +150,6 @@ Object.assign(window, {
       follow();
     },
     intend,
+    forget: () => core.unsubscribe(subscription),
   },
 });
