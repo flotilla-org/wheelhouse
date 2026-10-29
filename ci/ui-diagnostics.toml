@@ -15,8 +15,9 @@
 #   env      variables set for that one run, written before the command.
 #
 # $task_dir is the one temporary directory the runner makes for the whole
-# run. On Windows only the flag name is used: the ps1 makes its own
-# directories and passes the shared_ui fixture directory itself.
+# run; it is expanded in commands, args, pre_args and env values. On Windows
+# only the flag name is used: the ps1 ignores prefix, args, pre_args and env,
+# makes its own directories and passes the shared_ui fixture directory itself.
 format = 1
 
 [[diagnostic]]

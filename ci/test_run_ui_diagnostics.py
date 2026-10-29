@@ -130,6 +130,20 @@ class Runner(unittest.TestCase):
         result = self.run_list(toml, "--os", "windows", "--names")
         self.assertEqual(result.stdout, "four\n")
 
+    def test_names_skips_commands(self):
+        toml = """
+            [[diagnostic]]
+            flag = "one"
+            prefix = "one"
+            os = ["macos"]
+            [[diagnostic]]
+            command = "true"
+            os = ["macos"]
+        """
+        result = self.run_list(toml, "--os", "macos", "--names")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "one\n")
+
     def test_stops_at_the_first_failure(self):
         toml = """
             [[diagnostic]]
@@ -196,10 +210,17 @@ class Runner(unittest.TestCase):
             prefix = "generic"
             env = { WHEELHOUSE_INPUT_TEST_GENERIC = "1" }
             os = ["linux"]
+            [[diagnostic]]
+            flag = "dir"
+            prefix = "dir"
+            env = { WHEELHOUSE_INPUT_TEST_GENERIC = "$task_dir/x" }
+            os = ["linux"]
         """
         result = self.run_list(toml, "--os", "linux")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([call["generic"] for call in self.calls("wheelhouse")], [None, "1"])
+        calls = self.calls("wheelhouse")
+        task_dir = calls[2]["argv"][0].split(":", 1)[1].rsplit("/", 1)[0]
+        self.assertEqual([call["generic"] for call in calls], [None, "1", f"{task_dir}/x"])
         result = self.run_list(toml, "--os", "linux", "--dry-run")
         self.assertTrue(result.stdout.splitlines()[1].startswith("WHEELHOUSE_INPUT_TEST_GENERIC=1 timeout 120s "))
 

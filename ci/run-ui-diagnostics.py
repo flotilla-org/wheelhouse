@@ -3,7 +3,7 @@
 
     python3 ci/run-ui-diagnostics.py --os linux            # run them
     python3 ci/run-ui-diagnostics.py --os macos --dry-run  # print the commands
-    python ci/run-ui-diagnostics.py --os windows --names   # print the flag names
+    python ci/run-ui-diagnostics.py --os windows --names   # print the flag names (commands have none)
 
 Run from the repository root. Makes one temporary directory for the whole run,
 runs each entry for the OS in file order, stops at the first failure with its
@@ -109,13 +109,13 @@ def for_os(entries, os_name):
     return [entry for entry in entries if os_name in entry["os"]]
 
 
-def words(entry, os_name):
-    """The entry's command line as shell words, with $task_dir unexpanded."""
+def command_line(entry, os_name):
+    """The entry's command line as shell text, with $task_dir unexpanded."""
     if "command" in entry:
-        return shlex.split(entry["command"], posix=False)
+        return entry["command"]
     prefix = entry["prefix"]
     stem = f"{prefix}-" if prefix else ""
-    line = [
+    words = [
         BINARY,
         f'--user:"{TASK_DIR}/{stem}user"',
         f'--project:"{TASK_DIR}/{stem}project"',
@@ -124,13 +124,13 @@ def words(entry, os_name):
         *entry.get("args", []),
     ]
     if os_name == "linux":
-        line = LINUX_WRAPPER + line
-    return line
+        words = LINUX_WRAPPER + words
+    return " ".join(words)
 
 
 def display(entry, os_name):
     env = [f"{key}={value}" for key, value in entry.get("env", {}).items()]
-    return " ".join(env + words(entry, os_name))
+    return " ".join(env + [command_line(entry, os_name)])
 
 
 def run(entries, os_name):
@@ -139,8 +139,10 @@ def run(entries, os_name):
         for entry in entries:
             line = display(entry, os_name)
             print(f"+ {line}", flush=True)
-            argv = shlex.split(" ".join(words(entry, os_name)).replace(TASK_DIR, task_dir))
-            env = dict(os.environ, **entry.get("env", {}))
+            # mkdtemp paths have no quotes or spaces, so plain substitution keeps the words.
+            argv = shlex.split(command_line(entry, os_name).replace(TASK_DIR, task_dir))
+            env = dict(os.environ)
+            env.update((key, value.replace(TASK_DIR, task_dir)) for key, value in entry.get("env", {}).items())
             status = subprocess.run(argv, env=env).returncode
             if status != 0:
                 print(f"run-ui-diagnostics: failed (exit {status}): {line}", file=sys.stderr, flush=True)
@@ -167,7 +169,8 @@ def main(argv=None):
 
     if args.names:
         for entry in entries:
-            print(entry["flag"])
+            if "flag" in entry:
+                print(entry["flag"])
         return 0
     if args.os_name == "windows":
         print("run-ui-diagnostics: Windows runs its list with native\\run_tests.bat "

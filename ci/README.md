@@ -66,8 +66,9 @@ prefix = "table"         # --user:"$task_dir/table-user" --project:"$task_dir/ta
 os = ["linux", "macos", "windows"]
 ```
 
-Optional keys: `args` (after the flag) and `pre_args` (before it), which may
-use `$task_dir`; `env`, variables for that run only. An entry can run a
+Optional keys: `args` (after the flag), `pre_args` (before it) and `env`,
+variables for that run only; all three may use `$task_dir`. Windows ignores
+them. An entry can run a
 `command` instead of the app, such as a check that reads what an earlier entry
 wrote. See the header of `ui-diagnostics.toml`.
 
