@@ -1,15 +1,21 @@
-// Declared View/host validity, independent of gestures and rendering.
+// Declared View/host validity, independent of gestures and rendering. The
+// rule, and restore's repair, are the core's (crates/wheelhouse-core/src/
+// dock.rs, through wheelhouse.h): the shell supplies its Renderers'
+// registrations, hosts measured in pixels and config, and instance counts.
 #ifndef SHELL_DOCKING_H
 #define SHELL_DOCKING_H
+
+#include "wheelhouse.h"
 
 // Restore deliberately ignores physical width: resizing is not structural repair.
 #define RD_DOCK_UNMEASURED_WIDTH 3.402823466e38f
 
 typedef enum RD_DockHostKind
 {
-  RD_DockHostKind_Sidebar,
-  RD_DockHostKind_WorkspaceRegion,
-  RD_DockHostKind_COUNT,
+  RD_DockHostKind_Sidebar = WHEELHOUSE_DOCK_HOST_SIDEBAR,
+  RD_DockHostKind_WorkspaceRegion = WHEELHOUSE_DOCK_HOST_WORKSPACE_REGION,
+  // No host kind: no destination.
+  RD_DockHostKind_COUNT = WHEELHOUSE_DOCK_HOST_NONE,
 } RD_DockHostKind;
 
 // Presentation belongs to the host; validity remains an independent query.
@@ -21,38 +27,39 @@ typedef enum RD_DockPresentation
 
 internal RD_DockPresentation rd_dock_presentation(RD_DockHostKind host, U64 tab_count);
 
+// The core's trait bits.
 typedef U32 RD_ViewTraits;
 enum
 {
-  RD_ViewTrait_Content = 1<<0,
-  RD_ViewTrait_Section = 1<<1,
-  RD_ViewTrait_SelectsWorkspaces = 1<<2,
-  RD_ViewTrait_Singleton = 1<<3,
-  RD_ViewTrait_NeedsWorkspaceSubject = 1<<4,
+  RD_ViewTrait_Content = WHEELHOUSE_VIEW_TRAIT_CONTENT,
+  RD_ViewTrait_Section = WHEELHOUSE_VIEW_TRAIT_SECTION,
+  RD_ViewTrait_SelectsWorkspaces = WHEELHOUSE_VIEW_TRAIT_SELECTS_WORKSPACES,
+  RD_ViewTrait_Singleton = WHEELHOUSE_VIEW_TRAIT_SINGLETON,
+  RD_ViewTrait_NeedsWorkspaceSubject = WHEELHOUSE_VIEW_TRAIT_NEEDS_WORKSPACE_SUBJECT,
   // Content supplied by the root Controlled Split, not a child workspace.
-  RD_ViewTrait_ControlSplitScope = 1<<6,
+  RD_ViewTrait_ControlSplitScope = WHEELHOUSE_VIEW_TRAIT_CONTROL_SPLIT_SCOPE,
   // Laying it out again at another size is harmless, so its drag floater
   // shows it live rather than as its texture (#253).
-  RD_ViewTrait_LiveDragPreview = 1<<7,
+  RD_ViewTrait_LiveDragPreview = WHEELHOUSE_VIEW_TRAIT_LIVE_DRAG_PREVIEW,
   // Draws a value: a Lens type of its name opens it, a watch cell or a hover
   // evaluation can embed it, and headless tests draw it as nothing.
-  RD_ViewTrait_Visualizer = 1<<8,
+  RD_ViewTrait_Visualizer = WHEELHOUSE_VIEW_TRAIT_VISUALIZER,
   // A dragged expression dropped on it becomes its expression.
-  RD_ViewTrait_ExpressionDrop = 1<<9,
+  RD_ViewTrait_ExpressionDrop = WHEELHOUSE_VIEW_TRAIT_EXPRESSION_DROP,
   // Draws its evaluated expression, from its context's `legacy_eval`: the
   // evaluator escape hatch until the evaluator is retired (#313).
-  RD_ViewTrait_LegacyEval = 1<<10,
+  RD_ViewTrait_LegacyEval = WHEELHOUSE_VIEW_TRAIT_LEGACY_EVAL,
   // Declares a producer version (terminal: render generation, text: content
   // hash), so shape-only workspace preservation is safe for it.
-  RD_ViewTrait_VersionedSurface = 1<<11,
+  RD_ViewTrait_VersionedSurface = WHEELHOUSE_VIEW_TRAIT_VERSIONED_SURFACE,
   // Offered by name where a View is made from an expression (the view lister).
-  RD_ViewTrait_Listed = 1<<12,
+  RD_ViewTrait_Listed = WHEELHOUSE_VIEW_TRAIT_LISTED,
   // A control view: it shows the Dashboard's arrangement, not a Slot.
-  RD_ViewTrait_Control = 1<<13,
+  RD_ViewTrait_Control = WHEELHOUSE_VIEW_TRAIT_CONTROL,
   // One of the shell's own pages (watch lists, the pending loader, getting
   // started): presses keep focus on its query bar, and floating, it has no
   // pull-out button.
-  RD_ViewTrait_QueryFocus = 1<<14,
+  RD_ViewTrait_QueryFocus = WHEELHOUSE_VIEW_TRAIT_QUERY_FOCUS,
 };
 
 typedef struct RD_ViewRegistration RD_ViewRegistration;
@@ -78,16 +85,16 @@ struct RD_DockHost
 
 typedef enum RD_DockRule
 {
-  RD_DockRule_Valid,
-  RD_DockRule_RegisteredView,
-  RD_DockRule_HostAcceptance,
-  RD_DockRule_WorkspaceSubject,
-  RD_DockRule_MinimumWidth,
-  RD_DockRule_Singleton,
-  RD_DockRule_OneControlSurface,
-  RD_DockRule_SelectorOutsideSelectedRegion,
-  RD_DockRule_SelectorCannotClose,
-  RD_DockRule_ControlSplitLevel,
+  RD_DockRule_Valid = WHEELHOUSE_DOCK_VALID,
+  RD_DockRule_RegisteredView = WHEELHOUSE_DOCK_REGISTERED_VIEW,
+  RD_DockRule_HostAcceptance = WHEELHOUSE_DOCK_HOST_ACCEPTANCE,
+  RD_DockRule_WorkspaceSubject = WHEELHOUSE_DOCK_WORKSPACE_SUBJECT,
+  RD_DockRule_MinimumWidth = WHEELHOUSE_DOCK_MINIMUM_WIDTH,
+  RD_DockRule_Singleton = WHEELHOUSE_DOCK_SINGLETON,
+  RD_DockRule_OneControlSurface = WHEELHOUSE_DOCK_ONE_CONTROL_SURFACE,
+  RD_DockRule_SelectorOutsideSelectedRegion = WHEELHOUSE_DOCK_SELECTOR_OUTSIDE_SELECTED_REGION,
+  RD_DockRule_SelectorCannotClose = WHEELHOUSE_DOCK_SELECTOR_CANNOT_CLOSE,
+  RD_DockRule_ControlSplitLevel = WHEELHOUSE_DOCK_CONTROL_SPLIT_LEVEL,
 } RD_DockRule;
 
 // Counts describe the proposed result, not the source layout. A move retains

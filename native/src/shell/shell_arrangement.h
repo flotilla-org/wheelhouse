@@ -4,14 +4,21 @@
 // relative split weights. The root's axis is the document's; each level
 // below alternates.
 //
-// The shell keeps the live copy of each owner's arrangement, which the
-// renderer reads and commands replace with an edited copy
-// (rd_arrangement_set, shell_core.c "Live arrangements"); docking previews
-// edit a copy they discard. A workspace's and the sidebar's are committed to
-// the core whole, at the end of a gesture, and follow what the core makes
-// of them (uishell_workspace_store.c, uishell_sidebar_store.c).
+// The document's type and the rules that edit it, and its validity, are the
+// core's (crates/wheelhouse-core/src/arrangement.rs, #516): each operation
+// below sends this arrangement to the core as its edit document, applies one
+// rule there and takes the result back, keeping the nodes of the panels that
+// stay. What the shell keeps is the live copy of each owner's arrangement,
+// which the renderer reads (rd_arrangement_set, shell_core.c "Live
+// arrangements"), the read-only queries and the geometry. Commands and
+// gestures change a live arrangement by intent (rd_arrangement_apply_intent);
+// docking previews edit a copy they discard. A workspace's and the sidebar's
+// are committed to the core whole, at the end of a gesture, and follow what
+// the core makes of them (uishell_workspace_store.c, uishell_sidebar_store.c).
 #ifndef SHELL_ARRANGEMENT_H
 #define SHELL_ARRANGEMENT_H
+
+#include "wheelhouse.h"
 
 // Stable within its arrangement; 0 is no panel.
 typedef U64 RD_PanelID;
@@ -302,7 +309,19 @@ internal Rng2F32 rd_arrangement_rect(RD_Arrangement *arrangement, Rng2F32 area, 
 // The first broken invariant, or empty. Operations keep a valid arrangement valid.
 internal String8 rd_arrangement_problem(Arena *arena, RD_Arrangement *arrangement);
 
+//- The core's edit document
+// The arrangement as the core's edit document (wheelhouse.h), in `arena`; a
+// tab is its View Address.
+internal WheelhouseEditDoc rd_core_doc_from_arrangement(Arena *arena, RD_Arrangement *arrangement);
+// Takes an edited document back into `arrangement`. A panel that stays
+// keeps its node; one the edit took away is left unlinked and empty.
+internal void rd_arrangement_take(RD_Arrangement *arrangement, const WheelhouseEditDoc *doc);
+internal WheelhouseTab rd_core_tab(RD_ViewAddress view);
+internal RD_ViewAddress rd_view_from_core_tab(const WheelhouseTab *tab);
+
 //- Operations
+// Each applies one of the core's rules (arrangement::Edit) to the
+// arrangement in place.
 // Replaces every panel with one empty root panel and returns it, as a layout
 // producer starts a document (a reset, a new workspace, a Suggested Layout).
 // The root's axis is kept until it splits. Every View it had goes when it is

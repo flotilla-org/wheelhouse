@@ -1,4 +1,4 @@
-# The host interface (ABI 14)
+# The host interface (ABI 15)
 
 What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
@@ -8,7 +8,7 @@ behind it is in [Slots and arrangements](slots-and-arrangements.md),
 [The sidebar arrangement](sidebar-arrangement.md) and the
 [Workspace Overlay](workspace-overlay.md).
 
-`wheelhouse_abi_version()` returns 13. Each call has one form: there is no
+`wheelhouse_abi_version()` returns 15. Each call has one form: there is no
 compatibility with earlier versions, and a host requires exactly the version
 it was built against.
 
@@ -159,6 +159,44 @@ single pass, appending each panel to its parent.
   `variable:` and the key.
 
 Committing an arrangement never changes the snapshot's revision.
+
+## Editing an arrangement
+
+The rules that edit an arrangement, and docking's, are the core's
+(wheelhouse#516), applied to a document the host passes; no sidebar handle is
+needed. The edit document, `WheelhouseEditDoc`, is the host's live shape
+rather than the stored one: panels in preorder with numeric IDs and a
+`next_id`, the root's axis, each panel's provider name (`named`),
+Presentation State move (`options_from`) and restore mark, and the tabs
+removed since the host last set it. A tab is a `WheelhouseTab`, an opaque
+`WHEELHOUSE_TAB_BYTES` copy the core only compares (the native shell's View
+Address).
+
+- `wheelhouse_arrangement_apply(doc, edit, hidden, context)` applies one
+  `WheelhouseEdit` (`WHEELHOUSE_EDIT_*`, one per rule) and returns the edited
+  document and a `WheelhouseEditOutcome`: applied, the panel made or landed
+  in, a drop's source, a close's heir and the tabs removed. `hidden` says
+  which tabs a settle passes over. `wheelhouse_arrangement_problem` is the
+  validity check. Free results with `wheelhouse_edit_result_free`.
+- `wheelhouse_arrangement_apply_intent(doc, intent, source, hidden,
+  context)` applies a `WheelhouseArrangementIntent` (`WHEELHOUSE_INTENT_*`:
+  select-tab, move-tab, close-tab, drop-tab, split-panel, close-panel,
+  reorder-panel, resize-panel, equalize-panel; names from
+  `wheelhouse_arrangement_intent_name`) to its owner's document. A drop
+  whose tab is in another owner's arrangement passes that one as `source`,
+  and the result has it settled too.
+- `wheelhouse_dock_check`, `_placement`, `_creation` and `_closure` judge a
+  View's place (`WHEELHOUSE_DOCK_*`, with `wheelhouse_dock_rule_message`),
+  from the host's registrations (`WheelhouseViewRegistration`,
+  `WHEELHOUSE_VIEW_TRAIT_*`), hosts and an optional instance counter.
+  `wheelhouse_dock_restore` repairs a window's documents and returns them
+  with dirty marks and the sidebar sections it moved
+  (`wheelhouse_dock_restore_free`).
+
+## From ABI 14
+
+ABI 15 adds the edit document, its edits and intents, and docking's rule and
+restore (wheelhouse#516), above. Nothing else changes.
 
 ## From ABI 13
 

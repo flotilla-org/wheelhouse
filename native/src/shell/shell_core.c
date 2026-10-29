@@ -3615,6 +3615,88 @@ rd_arrangement_set(RD_Arrangement *arrangement)
   scratch_end(scratch);
 }
 
+//~ Arrangement intents (#516)
+
+internal WheelhouseArrangementIntent
+rd_arrangement_intent(U32 kind, RD_PanelOwner owner)
+{
+  WheelhouseArrangementIntent intent = {0};
+  intent.kind = kind;
+  intent.owner_kind = owner.kind == RD_PanelOwnerKind_Sidebar ? WHEELHOUSE_OWNER_SIDEBAR : WHEELHOUSE_OWNER_WORKSPACE;
+  MemoryCopy(intent.owner.bytes, owner.id.v, sizeof(intent.owner.bytes));
+  intent.dir = WHEELHOUSE_DIR_NONE;
+  return intent;
+}
+
+internal void
+rd_arrangement_intent_tab(WheelhouseArrangementIntent *intent, RD_ViewAddress tab)
+{
+  intent->has_tab = !rd_view_address_is_nil(tab);
+  intent->tab = rd_core_tab(tab);
+}
+
+internal void
+rd_arrangement_intent_after(WheelhouseArrangementIntent *intent, RD_ViewAddress after)
+{
+  intent->has_after = !rd_view_address_is_nil(after);
+  intent->after = rd_core_tab(after);
+}
+
+internal RD_ArrangementIntentResult
+rd_arrangement_apply_intent(WheelhouseArrangementIntent intent)
+{
+  RD_ArrangementIntentResult result = {0};
+  Temp scratch = scratch_begin(0, 0);
+  RD_PanelOwner owner = {intent.owner_kind == WHEELHOUSE_OWNER_SIDEBAR ? RD_PanelOwnerKind_Sidebar : RD_PanelOwnerKind_Workspace};
+  MemoryCopy(owner.id.v, intent.owner.bytes, sizeof(owner.id.v));
+  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, owner);
+  RD_ViewAddress view = intent.has_tab ? rd_view_from_core_tab(&intent.tab) : rd_nil_view_address;
+  CFG_Node *view_cfg = rd_cfg_from_view(view);
+  // A dropped View's panel in another owner's arrangement is settled there,
+  // as it was before the View left it.
+  RD_Arrangement *source = 0;
+  if(intent.kind == WHEELHOUSE_INTENT_DROP_TAB)
+  {
+    RD_PanelAddress from = rd_panel_from_view(view);
+    if(from.id != 0 && !rd_panel_owner_match(from.owner, owner)) { source = rd_arrangement_from_panel_owner(scratch.arena, from.owner); }
+  }
+  WheelhouseEditDoc doc = rd_core_doc_from_arrangement(scratch.arena, arrangement);
+  WheelhouseEditDoc source_doc = {0};
+  if(source) { source_doc = rd_core_doc_from_arrangement(scratch.arena, source); }
+  RD_ArrangementRuleContext rule = {rd_tab_is_shown};
+  char *error = 0;
+  WheelhouseEditResult *edited = wheelhouse_arrangement_apply_intent(&doc, &intent, source ? &source_doc : 0, rd_arrangement_hidden, &rule, &error);
+  if(edited)
+  {
+    result.applied = edited->outcome.applied != 0;
+    result.panel = edited->outcome.panel;
+    result.source = edited->outcome.source;
+    result.heir = edited->outcome.heir;
+    if(result.applied)
+    {
+      rd_arrangement_take(arrangement, &edited->doc);
+      rd_arrangement_set(arrangement);
+      if(source && edited->has_source)
+      {
+        rd_arrangement_take(source, &edited->source_doc);
+        rd_arrangement_set(source);
+      }
+    }
+    wheelhouse_edit_result_free(edited);
+  }
+  else
+  {
+    fprintf(stderr, "Arrangement intent %u not applied: %s\n", intent.kind, error ? error : "unknown error");
+    wheelhouse_string_free(error);
+  }
+  // A moved View's address may change as its new owner takes it; a closed
+  // one's node is gone.
+  B32 moves = intent.kind == WHEELHOUSE_INTENT_DROP_TAB || intent.kind == WHEELHOUSE_INTENT_MOVE_TAB;
+  result.moved = moves && result.applied && view_cfg != &cfg_nil_node ? rd_view_address_from_cfg(view_cfg) : view;
+  scratch_end(scratch);
+  return result;
+}
+
 internal void
 rd_arrangement_present_weight(RD_PanelAddress panel, F32 weight)
 {
@@ -5406,13 +5488,22 @@ rd_boundary_resize_move(F32 delta, F32 floor, B32 moved)
   rd_boundary_resize_apply();
 }
 
-// The mouse was released: save the moved boundary, once.
+// The mouse was released: save the moved boundary, once, as a resize-panel
+// intent, which the core applies to the live arrangement as each frame
+// applied it to the copy.
 internal void
 rd_boundary_resize_commit(void)
 {
   RD_BoundaryResize *resize = &rd_state->boundary_resize;
   if(resize->moved) { rd_boundary_resize_apply(); }
-  if(resize->moved && resize->arena) { rd_arrangement_set(resize->live); }
+  if(resize->moved && resize->arena)
+  {
+    WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_RESIZE_PANEL, resize->owner);
+    intent.panel = resize->panel;
+    intent.delta = resize->delta;
+    intent.floor = resize->floor;
+    rd_arrangement_apply_intent(intent);
+  }
   rd_boundary_resize_end();
 }
 
@@ -5942,11 +6033,9 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           {
             ui_kill_action();
             if(sidebar_boundary) { uishell_sidebar_manual_sizing(mount->window_cfg, 0); }
-            Temp temp = temp_begin(scratch.arena);
-            RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(temp.arena, mount->owner);
-            rd_arrangement_equalize(arrangement, min_child->address.id);
-            rd_arrangement_set(arrangement);
-            temp_end(temp);
+            WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_EQUALIZE_PANEL, mount->owner);
+            intent.panel = min_child->address.id;
+            rd_arrangement_apply_intent(intent);
           }
           else if(ui_pressed(sig))
           {

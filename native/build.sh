@@ -231,7 +231,7 @@ then
   # Keep required steps separate: set -e ignores failures before &&.
   # CI enforces the headless contract; developer builds opt in explicitly.
   if [ "${CI:-}" = "true" ] || [ "${WHEELHOUSE_DOCKING_TESTS:-0}" = "1" ]; then
-    CC="$compiler" python3 ../tools/test-docking.py
+    CC="$compiler" python3 ../tools/test-docking.py "$core_lib_dir"
     if [ "$host_os" = "Linux" ]; then
       CC="$compiler" python3 ../tools/test-docking-integration.py "$core_lib_dir" "$cleat_lib_dir" \
         --core-include "$repo_root/crates/wheelhouse-ffi/include" --cleat-include "$cleat_dir/crates/cleat/include"

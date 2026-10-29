@@ -42,6 +42,8 @@ One entry point: `apply(intent) -> IntentReceipt`. The receipt is accepted, with
 
 Step 0's vocabulary is the sidebar's existing `Action`s, renamed as intents. Later steps add arrangement, lifecycle and store intents. The vocabulary is the core's logical-state commands, shared with the Automation Endpoint (ADR 0014): each intent has a stable name a named command maps onto.
 
+Step 1 of #441 (#516) adds the arrangement intents (`arrangement::Intent`): `select-tab`, `move-tab`, `close-tab`, `drop-tab`, `split-panel`, `close-panel`, `reorder-panel`, `resize-panel` and `equalize-panel`, each naming its owner (a workspace or a window's sidebar) and panel. Until the stores take intents (#441, step 4), a frontend applies one to its own live copy of the owner's arrangement with the core's pure rule (`arrangement::apply_intent`; natively `rd_arrangement_apply_intent`, through `wheelhouse_arrangement_apply_intent`) and sets the result, and the stores keep committing whole documents. Every native command that edits an arrangement, a tab drag's drop and a boundary drag's release go through it; a boundary drag's frames and a tab drag's measuring apply the rule to a copy and send nothing.
+
 ## Bindings
 
 Rust types are the source.

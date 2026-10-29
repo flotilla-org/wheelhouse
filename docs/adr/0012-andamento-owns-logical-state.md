@@ -1,7 +1,11 @@
 # Andamento Owns Logical State; Arrangements Are Committed as Documents
 
-**Status:** accepted, not yet implemented. Revised 2026-10-10 after an
-adversarial review (see "Revision" below). Decided on
+**Status:** accepted, and implemented in part: workspace and sidebar
+arrangements are committed to the core as documents, and since #516 their
+edit and docking rules are the core's (see "The rules are the core's"). The
+rest of the migration is tracked in `docs/roadmap.md`, "State model
+migration". Revised 2026-10-10 after an adversarial review (see "Revision"
+below), and narrowed 2026-10-29 for #441. Decided on
 [Map: a target state model for Wheelhouse](https://github.com/flotilla-org/wheelhouse/issues/290),
 in [Draw the line between logical state and Presentation State](https://github.com/flotilla-org/wheelhouse/issues/294),
 [Decide how and where state is saved](https://github.com/flotilla-org/wheelhouse/issues/296) and
@@ -34,9 +38,10 @@ same Dashboard or workspace meaningfully. Andamento owns all logical state:
 
 **Arrangements are documents, not operation streams.** A workspace's
 arrangement, and the Dashboard's sidebar arrangement, are each one typed
-document. Wheelhouse owns the live copy in a typed C module: docking previews,
-drop geometry, validity rules and minimum sizes all need pixels and stay
-there. When a gesture ends, Wheelhouse commits the whole document with an
+document. The document's type, the rules that edit it and the docking
+validity rules are the core's; each frontend keeps its own live copy, and the
+previews, drop geometry, widths and minimum sizes that need pixels stay with
+it. When a gesture ends, Wheelhouse commits the whole document with an
 expected generation (`set_arrangement(target, doc, expected_gen)`). Andamento
 stores it, validates it against the Slot set, and reconciles it: it places
 Slots or regions that appeared since, and reports ones that went away. An
@@ -91,3 +96,22 @@ found that:
 
 Committing whole documents at gesture end keeps the decision (Andamento owns
 and shares the logical state) and removes all four problems.
+
+## The rules are the core's (2026-10-29)
+
+The first decision put the edit rules with the live copy, in Wheelhouse's C,
+because docking needs pixels. Only the measuring does: which panel a split
+makes, which tab a close selects, what a drop leaves behind and which View
+may go where are rules over the document and a few numbers the frontend
+measures. A web frontend would have had to write them again, and two
+frontends would have drifted into writing documents the other repairs.
+#516 (step 1 of #441) moved them into the core: `arrangement.rs` edits the
+live document's shape (numeric panel IDs, the root's axis, a provider's
+panel names), `dock.rs` judges placements and repairs saved documents, and
+both reach the frontends through the C ABI and wasm. Wheelhouse keeps the
+live copy, its versions and View bookkeeping, and the geometry; its commands
+and gestures change an arrangement by named intent (`select-tab`,
+`drop-tab`, `resize-panel`, ...), which the Automation Endpoint (ADR 0014)
+can invoke. A gesture still previews on a copy each frame, with the core's
+pure rule, and sends one intent when it ends.
+

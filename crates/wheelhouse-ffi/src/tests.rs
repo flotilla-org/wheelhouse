@@ -973,3 +973,331 @@ fn a_card_is_current_until_the_core_changes() {
         wheelhouse_destroy(other);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Arrangement edits and intents through the ABI (#516): a document and each
+// edit and intent kind cross and come back, and the result is the core's
+// own `apply`. Tabs are numbers, carried in a tab's first eight bytes.
+mod arrangement_abi {
+    use super::super::*;
+    use hegel::generators as gs;
+    use hegel::TestCase;
+    use std::ffi::c_void;
+    use wheelhouse_core::arrangement::generate::{draw_dir, draw_panel, draw_tab, edit_step, tabs, Step};
+    use wheelhouse_core::arrangement::{apply, apply_intent, Arrangement, Dir, Edit, Intent, Outcome, Owner, OwnerKind, Panel, PanelId};
+    use wheelhouse_core::WorkspaceId;
+
+    type Tab = u64;
+
+    fn tab(t: Tab) -> WheelhouseTab {
+        let mut bytes = [0; WHEELHOUSE_TAB_BYTES];
+        bytes[..8].copy_from_slice(&t.to_le_bytes());
+        // The rest is the host's: the core must carry it as it is.
+        bytes[WHEELHOUSE_TAB_BYTES - 1] = 0xa5;
+        WheelhouseTab { bytes }
+    }
+
+    fn number(t: &WheelhouseTab) -> Tab {
+        assert_eq!(t.bytes[WHEELHOUSE_TAB_BYTES - 1], 0xa5, "a tab's bytes cross whole");
+        u64::from_le_bytes(t.bytes[..8].try_into().expect("eight bytes"))
+    }
+
+    fn map<A: Clone + PartialEq, B: Clone + PartialEq>(a: &Arrangement<A>, f: &impl Fn(&A) -> B) -> Arrangement<B> {
+        fn panel<A, B>(p: &Panel<A>, f: &impl Fn(&A) -> B) -> Panel<B> {
+            Panel {
+                id: p.id,
+                weight: p.weight,
+                children: p.children.iter().map(|c| panel(c, f)).collect(),
+                tabs: p.tabs.iter().map(f).collect(),
+                selected: p.selected.as_ref().map(f),
+                named: p.named.clone(),
+                options_from: p.options_from,
+                restore_emptied: p.restore_emptied,
+            }
+        }
+        Arrangement {
+            root: a.root.as_ref().map(|r| panel(r, f)),
+            root_axis: a.root_axis,
+            next_id: a.next_id,
+            removed: a.removed.iter().map(f).collect(),
+        }
+    }
+
+    fn abi_dir(d: Option<Dir>) -> u32 {
+        match d {
+            None => WHEELHOUSE_DIR_NONE,
+            Some(Dir::Left) => WHEELHOUSE_DIR_LEFT,
+            Some(Dir::Up) => WHEELHOUSE_DIR_UP,
+            Some(Dir::Right) => WHEELHOUSE_DIR_RIGHT,
+            Some(Dir::Down) => WHEELHOUSE_DIR_DOWN,
+        }
+    }
+
+    fn blank_edit(kind: u32) -> WheelhouseEdit {
+        let none = tab(0);
+        WheelhouseEdit {
+            kind,
+            dir: WHEELHOUSE_DIR_NONE,
+            panel: 0,
+            after_panel: 0,
+            has_tab: 0,
+            tab: none,
+            has_after: 0,
+            after: none,
+            to: none,
+            weight: 0.0,
+            delta: 0.0,
+            floor: 0.0,
+            select: 0,
+            may_close: 0,
+        }
+    }
+
+    fn abi_edit(edit: &Edit<Tab>) -> WheelhouseEdit {
+        let with_tab = |e: &mut WheelhouseEdit, t: Option<&Tab>| {
+            if let Some(t) = t {
+                (e.has_tab, e.tab) = (1, tab(*t));
+            }
+        };
+        let with_after = |e: &mut WheelhouseEdit, t: Option<&Tab>| {
+            if let Some(t) = t {
+                (e.has_after, e.after) = (1, tab(*t));
+            }
+        };
+        match edit {
+            Edit::Clear => blank_edit(WHEELHOUSE_EDIT_CLEAR),
+            Edit::Discard => blank_edit(WHEELHOUSE_EDIT_DISCARD),
+            Edit::Split { panel, dir } => WheelhouseEdit { panel: panel.0, dir: abi_dir(Some(*dir)), ..blank_edit(WHEELHOUSE_EDIT_SPLIT) },
+            Edit::Add { parent, weight } => {
+                WheelhouseEdit { panel: parent.map_or(0, |p| p.0), weight: *weight, ..blank_edit(WHEELHOUSE_EDIT_ADD) }
+            }
+            Edit::Remove { panel } => WheelhouseEdit { panel: panel.0, ..blank_edit(WHEELHOUSE_EDIT_REMOVE) },
+            Edit::Close { panel } => WheelhouseEdit { panel: panel.0, ..blank_edit(WHEELHOUSE_EDIT_CLOSE) },
+            Edit::InsertTab { tab: t, to, after, select } => {
+                let mut e = WheelhouseEdit { panel: to.0, select: *select as u32, ..blank_edit(WHEELHOUSE_EDIT_INSERT_TAB) };
+                with_tab(&mut e, Some(t));
+                with_after(&mut e, after.as_ref());
+                e
+            }
+            Edit::DetachTab { tab: t } => {
+                let mut e = blank_edit(WHEELHOUSE_EDIT_DETACH_TAB);
+                with_tab(&mut e, Some(t));
+                e
+            }
+            Edit::RemoveTab { tab: t } => {
+                let mut e = blank_edit(WHEELHOUSE_EDIT_REMOVE_TAB);
+                with_tab(&mut e, Some(t));
+                e
+            }
+            Edit::Drop { tab: t, to, dir, after } => {
+                let mut e = WheelhouseEdit { panel: to.0, dir: abi_dir(*dir), ..blank_edit(WHEELHOUSE_EDIT_DROP) };
+                with_tab(&mut e, t.as_ref());
+                with_after(&mut e, after.as_ref());
+                e
+            }
+            Edit::Settle { panel, dir, may_close } => {
+                WheelhouseEdit { panel: panel.0, dir: abi_dir(*dir), may_close: *may_close as u32, ..blank_edit(WHEELHOUSE_EDIT_SETTLE) }
+            }
+            Edit::Select { panel, tab: t } => {
+                let mut e = WheelhouseEdit { panel: panel.0, ..blank_edit(WHEELHOUSE_EDIT_SELECT) };
+                with_tab(&mut e, t.as_ref());
+                e
+            }
+            Edit::Reorder { panel, after } => {
+                WheelhouseEdit { panel: panel.0, after_panel: after.map_or(0, |p| p.0), ..blank_edit(WHEELHOUSE_EDIT_REORDER) }
+            }
+            Edit::Resize { panel, delta, floor } => {
+                WheelhouseEdit { panel: panel.0, delta: *delta, floor: *floor, ..blank_edit(WHEELHOUSE_EDIT_RESIZE) }
+            }
+            Edit::Equalize { panel } => WheelhouseEdit { panel: panel.0, ..blank_edit(WHEELHOUSE_EDIT_EQUALIZE) },
+            Edit::Readdress { from, to } => {
+                let mut e = WheelhouseEdit { to: tab(*to), ..blank_edit(WHEELHOUSE_EDIT_READDRESS) };
+                with_tab(&mut e, Some(from));
+                e
+            }
+        }
+    }
+
+    /// The hidden rule's context: the hidden tabs.
+    unsafe extern "C" fn hide(context: *mut c_void, t: *const WheelhouseTab) -> u32 {
+        let hidden = &*(context as *const Vec<Tab>);
+        hidden.contains(&number(&*t)) as u32
+    }
+
+    fn outcome(o: &WheelhouseEditOutcome) -> Outcome<Tab> {
+        let id = |raw: u64| (raw != 0).then_some(PanelId(raw));
+        Outcome {
+            applied: o.applied != 0,
+            panel: id(o.panel),
+            source: id(o.source),
+            heir: id(o.heir),
+            removed: unsafe { slice(o.removed, o.removed_count) }.expect("removed").iter().map(number).collect(),
+        }
+    }
+
+    unsafe fn read(doc: &WheelhouseEditDoc) -> Arrangement<Tab> {
+        map(&arrangement::read_edit_doc(doc).expect("a document the core wrote reads back"), &number)
+    }
+
+    #[hegel::test(test_cases = 300)]
+    fn every_edit_crosses_the_abi_and_matches_the_core(tc: TestCase) {
+        let (mut a, _, next_tab) = wheelhouse_core::arrangement::generate::build(&tc, 20);
+        // A dock restore's marks cross too.
+        for id in wheelhouse_core::arrangement::generate::panel_ids(&a) {
+            a.panel_mut(id).expect("there").restore_emptied = tc.draw(gs::booleans());
+        }
+        for _ in 0..tc.draw(gs::integers::<usize>().max_value(8)) {
+            let Step::Edit { edit, hidden } = edit_step(&tc, &a, next_tab + 1) else { unreachable!("edit steps are edits") };
+            let doc = arrangement::EditDoc::of(map(&a, &|t: &Tab| tab(*t)));
+            unsafe {
+                assert_eq!(read(&doc.doc()), a, "a document crosses and comes back");
+                let mut error = ptr::null_mut();
+                let rule: WheelhouseTabRule = Some(hide);
+                let result =
+                    wheelhouse_arrangement_apply(&doc.doc(), &abi_edit(&edit), rule, &hidden as *const _ as *mut c_void, &mut error);
+                assert!(!result.is_null(), "{edit:?}");
+                let expected = apply(&mut a, &edit, &|t| hidden.contains(t));
+                assert_eq!(read(&(*result).doc), a, "{edit:?}");
+                assert_eq!(outcome(&(*result).outcome), expected, "{edit:?}");
+                assert_eq!((*result).has_source, 0);
+                wheelhouse_edit_result_free(result);
+            }
+        }
+    }
+
+    fn blank_intent(kind: u32, owner: Owner) -> WheelhouseArrangementIntent {
+        WheelhouseArrangementIntent {
+            kind,
+            owner_kind: if owner.kind == OwnerKind::Sidebar { WHEELHOUSE_OWNER_SIDEBAR } else { WHEELHOUSE_OWNER_WORKSPACE },
+            owner: owner.id.into(),
+            dir: WHEELHOUSE_DIR_NONE,
+            panel: 0,
+            after_panel: 0,
+            has_tab: 0,
+            tab: tab(0),
+            has_after: 0,
+            after: tab(0),
+            delta: 0.0,
+            floor: 0.0,
+        }
+    }
+
+    fn abi_intent(intent: &Intent<Tab>) -> WheelhouseArrangementIntent {
+        let b = |kind| blank_intent(kind, intent.owner());
+        let tabbed = |kind, p: PanelId, t: Option<&Tab>, after: Option<&Tab>, d: Option<Dir>| {
+            let mut i = WheelhouseArrangementIntent { panel: p.0, dir: abi_dir(d), ..b(kind) };
+            if let Some(t) = t {
+                (i.has_tab, i.tab) = (1, tab(*t));
+            }
+            if let Some(t) = after {
+                (i.has_after, i.after) = (1, tab(*t));
+            }
+            i
+        };
+        match intent {
+            Intent::SelectTab { panel, tab: t, .. } => tabbed(WHEELHOUSE_INTENT_SELECT_TAB, *panel, t.as_ref(), None, None),
+            Intent::MoveTab { tab: t, to, after, .. } => tabbed(WHEELHOUSE_INTENT_MOVE_TAB, *to, Some(t), after.as_ref(), None),
+            Intent::CloseTab { tab: t, .. } => tabbed(WHEELHOUSE_INTENT_CLOSE_TAB, PanelId(0), Some(t), None, None),
+            Intent::DropTab { tab: t, to, dir, after, .. } => tabbed(WHEELHOUSE_INTENT_DROP_TAB, *to, Some(t), after.as_ref(), *dir),
+            Intent::SplitPanel { panel, dir, .. } => tabbed(WHEELHOUSE_INTENT_SPLIT_PANEL, *panel, None, None, Some(*dir)),
+            Intent::ClosePanel { panel, .. } => tabbed(WHEELHOUSE_INTENT_CLOSE_PANEL, *panel, None, None, None),
+            Intent::ReorderPanel { panel, after, .. } => {
+                WheelhouseArrangementIntent { panel: panel.0, after_panel: after.map_or(0, |p| p.0), ..b(WHEELHOUSE_INTENT_REORDER_PANEL) }
+            }
+            Intent::ResizePanel { panel, delta, floor, .. } => {
+                WheelhouseArrangementIntent { panel: panel.0, delta: *delta, floor: *floor, ..b(WHEELHOUSE_INTENT_RESIZE_PANEL) }
+            }
+            Intent::EqualizePanel { panel, .. } => tabbed(WHEELHOUSE_INTENT_EQUALIZE_PANEL, *panel, None, None, None),
+        }
+    }
+
+    /// Every intent kind, owners of both kinds, and drops from a second
+    /// arrangement.
+    #[hegel::test(test_cases = 300)]
+    fn every_intent_crosses_the_abi_and_matches_the_core(tc: TestCase) {
+        let (mut a, _, next_tab) = wheelhouse_core::arrangement::generate::build(&tc, 16);
+        let (b, _, _) = wheelhouse_core::arrangement::generate::build(&tc, 10);
+        // The second arrangement's tabs are its own.
+        let mut b = map(&b, &|t: &Tab| t + 1000);
+        let owner = Owner {
+            kind: if tc.draw(gs::booleans()) { OwnerKind::Sidebar } else { OwnerKind::Workspace },
+            id: WorkspaceId::from_bytes(tc.draw(gs::integers::<u128>()).to_le_bytes()),
+        };
+        let p = draw_panel(&tc, &a);
+        let t = draw_tab(&tc, &a, next_tab);
+        let after = tc.draw(gs::booleans()).then(|| draw_tab(&tc, &a, next_tab));
+        let from_b = tc.draw(gs::booleans()) && !tabs(&b).is_empty();
+        let intent = match tc.draw(gs::integers::<u8>().max_value(8)) {
+            0 => Intent::SelectTab { owner, panel: p, tab: after },
+            1 => Intent::MoveTab { owner, tab: t, to: p, after },
+            2 => Intent::CloseTab { owner, tab: t },
+            3 => {
+                let t = if from_b { tc.draw(gs::sampled_from(tabs(&b))) } else { t };
+                Intent::DropTab { owner, tab: t, to: p, dir: tc.draw(gs::booleans()).then(|| draw_dir(&tc)), after }
+            }
+            4 => Intent::SplitPanel { owner, panel: p, dir: draw_dir(&tc) },
+            5 => Intent::ClosePanel { owner, panel: p },
+            6 => Intent::ReorderPanel { owner, panel: p, after: tc.draw(gs::booleans()).then(|| draw_panel(&tc, &a)) },
+            7 => Intent::ResizePanel {
+                owner,
+                panel: p,
+                delta: tc.draw(gs::floats::<f32>().min_value(-1.0).max_value(1.0).allow_nan(false).allow_infinity(false)),
+                floor: 0.05,
+            },
+            _ => Intent::EqualizePanel { owner, panel: p },
+        };
+        let hidden: Vec<Tab> = vec![];
+        let doc = arrangement::EditDoc::of(map(&a, &|t: &Tab| tab(*t)));
+        let source_doc = arrangement::EditDoc::of(map(&b, &|t: &Tab| tab(*t)));
+        let with_source = matches!(intent, Intent::DropTab { .. }) && from_b;
+        unsafe {
+            let mut error = ptr::null_mut();
+            let source_view = source_doc.doc();
+            let result = wheelhouse_arrangement_apply_intent(
+                &doc.doc(),
+                &abi_intent(&intent),
+                if with_source { &source_view } else { ptr::null() },
+                None,
+                ptr::null_mut(),
+                &mut error,
+            );
+            assert!(!result.is_null(), "{intent:?}");
+            let expected = apply_intent(&mut a, &intent, with_source.then_some(&mut b), &|t| hidden.contains(t));
+            assert_eq!(read(&(*result).doc), a, "{intent:?}");
+            assert_eq!(outcome(&(*result).outcome), expected.outcome, "{intent:?}");
+            assert_eq!((*result).has_source != 0, expected.source.is_some(), "{intent:?}");
+            if let Some(source) = expected.source {
+                assert_eq!(read(&(*result).source_doc), b, "{intent:?}");
+                assert_eq!(outcome(&(*result).source_outcome), source, "{intent:?}");
+            }
+            wheelhouse_edit_result_free(result);
+            let name = wheelhouse_arrangement_intent_name(abi_intent(&intent).kind).read().expect("a name");
+            assert_eq!(name, intent.name());
+        }
+    }
+
+    /// A malformed document is an error, not a guess.
+    #[test]
+    fn a_malformed_document_is_refused() {
+        unsafe {
+            let a = map(
+                &{
+                    let mut a: Arrangement<Tab> = Arrangement::new();
+                    apply(&mut a, &Edit::Clear, &|_| false);
+                    apply(&mut a, &Edit::Split { panel: PanelId(1), dir: Dir::Left }, &|_| false);
+                    a
+                },
+                &|t: &Tab| tab(*t),
+            );
+            let doc = arrangement::EditDoc::of(a);
+            let mut view = doc.doc();
+            let mut panels: Vec<WheelhouseEditPanel> = slice(view.panels, view.panel_count).expect("panels").to_vec();
+            panels[1].parent = 2;
+            view.panels = panels.as_ptr();
+            let mut error = ptr::null_mut();
+            let result = wheelhouse_arrangement_apply(&view, &blank_edit(WHEELHOUSE_EDIT_CLEAR), None, ptr::null_mut(), &mut error);
+            assert!(result.is_null() && !error.is_null());
+            wheelhouse_string_free(error);
+        }
+    }
+}

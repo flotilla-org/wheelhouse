@@ -1,5 +1,9 @@
-// Headless tests of the arrangement module through its interface, and of
-// the renderer's panel tree read from it. Fixtures are described in the
+// Headless tests of what the shell keeps of arrangements: its live copy's
+// nodes across the core's edits, copies and matching, weight strings, and
+// the renderer's panel tree and geometry read from it. The edit rules are
+// the core's and are tested there (crates/wheelhouse-core/src/arrangement/
+// tests.rs, and against the C they replaced in
+// crates/wheelhouse-arrangement-oracle). Fixtures are described in the
 // config syntax (a panel is a weight, anything else a tab) and built with
 // the module's own operations.
 #define BUILD_CONSOLE_INTERFACE 1
@@ -107,13 +111,6 @@ tab_at(RD_ArrangementPanel *panel, U64 index)
   return t ? t->view : rd_nil_view_address;
 }
 
-internal B32
-removed(RD_Arrangement *arrangement, RD_ViewAddress view)
-{
-  for(RD_ArrangementTab *t = arrangement->first_removed; t; t = t->next) { if(rd_view_address_match(t->view, view)) { return 1; } }
-  return 0;
-}
-
 // A valid arrangement, its copy one document with it, and the renderer lays
 // every panel out where the arrangement says.
 internal void
@@ -162,14 +159,6 @@ random_panel(RD_Arrangement *arrangement, U64 *seed, B32 leaf)
   return &rd_nil_arrangement_panel;
 }
 
-// The caller's visibility rule for drops: one View is filtered out.
-global RD_ViewAddress hidden_view;
-internal B32
-shown_tab(RD_ViewAddress view)
-{
-  return !rd_view_address_match(view, hidden_view);
-}
-
 internal void
 entry_point(CmdLine *cmdline)
 {
@@ -207,365 +196,32 @@ entry_point(CmdLine *cmdline)
     test_focused = test_tabs_on_bottom = 0;
   }
 
-  // Splitting inserts beside a panel along its parent's axis, at %f precision,
-  // or bisects it across; closing reverses both.
+  // A weight to write is %f's; one that %f would change keeps more digits.
   {
-    RD_Arrangement *arrangement = build(arena, "split_x panels:{0.5:{text} 0.5:{terminal}}");
-    RD_PanelID left_id = arrangement->root->first->id;
-    RD_PanelID middle = rd_arrangement_split(arrangement, left_id, Dir2_Right);
-    RD_ArrangementPanel *root = arrangement->root;
-    Check(root->child_count == 3 && root->first->next->id == middle);
-    Check(root->first->weight == 0.333333f && root->first->next->weight == 0.333333f && root->last->weight == 0.333333f);
-    RD_PanelID below = rd_arrangement_split(arrangement, middle, Dir2_Down);
-    RD_ArrangementPanel *column = rd_arrangement_panel_from_id(arrangement, below)->parent;
-    Check(column->weight == 0.333333f && column->first->id == middle && column->first->weight == 0.5f);
-    check_layout(arena, arrangement);
-    // Closing one of two collapses the split into the survivor.
-    Check(rd_arrangement_close(arrangement, below) == middle);
-    Check(rd_arrangement_panel_from_id(arrangement, middle)->parent == arrangement->root);
-    Check(rd_arrangement_panel_from_id(arrangement, middle)->weight == 0.333333f);
-    check_layout(arena, arrangement);
-    // Closing one of three gives its share to the others; focus goes before it.
-    Check(rd_arrangement_close(arrangement, middle) == left_id);
-    Check(abs_f32(arrangement->root->first->weight-0.5f) < 0.00001f && arrangement->root->first->weight == arrangement->root->last->weight);
-    check_layout(arena, arrangement);
-    // The root's survivor becomes the root, and the root's axis is its own.
-    RD_PanelID right = arrangement->root->last->id;
-    RD_ViewAddress left_tab = tab_at(arrangement->root->first, 0);
-    rd_arrangement_split(arrangement, right, Dir2_Down);
-    Check(rd_arrangement_close(arrangement, left_id) == right);
-    Check(arrangement->root_axis == Axis2_Y && arrangement->root->child_count == 2 && arrangement->root->weight == 1.f);
-    Check(removed(arrangement, left_tab));
-    check_layout(arena, arrangement);
-    rd_arrangement_close(arrangement, arrangement->root->first->id);
-    Check(arrangement->root->first == &rd_nil_arrangement_panel && rd_arrangement_close(arrangement, arrangement->root->id) == 0);
-    // A split left inside a same-axis parent merges into it, scaled.
-    arrangement = build(arena, "split_x panels:{0.4:{text} 0.6:{0.5:{0.3:{text} 0.7:{text}} 0.5:{text}}}");
-    RD_ArrangementPanel *inner = arrangement->root->last->first;
-    RD_PanelID first = inner->first->id;
-    Check(rd_arrangement_close(arrangement, arrangement->root->last->last->id) == first);
-    Check(arrangement->root->child_count == 3 && arrangement->root->first->next->id == first);
-    Check(arrangement->root->first->next->weight == 0.18f && arrangement->root->last->weight == 0.42f);
-    check_layout(arena, arrangement);
-  }
-
-  // Hand-edited weights are kept exactly, even moved into a new split, and a
-  // panel that held its whole parent leaves its siblings equal shares.
-  {
-    RD_Arrangement *arrangement = build(arena, "split_x panels:{0.3333333333:{text} 1.1:{terminal} 0:{text}}");
-    Check(rd_arrangement_problem(arena, arrangement).size != 0);
-    F32 kept = arrangement->root->first->weight;
-    RD_PanelID first = arrangement->root->first->id;
-    RD_PanelID down = rd_arrangement_split(arrangement, first, Dir2_Down);
-    Check(rd_arrangement_panel_from_id(arrangement, first)->weight == 0.5f);
-    Check(rd_arrangement_panel_from_id(arrangement, down)->parent->weight == kept && arrangement->root->first->next->weight == 1.1f);
-    rd_arrangement_close(arrangement, arrangement->root->first->next->id);
-    Check(arrangement->root->first->weight == 0.5f && arrangement->root->last->weight == 0.5f);
-    check_layout(arena, arrangement);
-    // A weight to write is %f's; one that %f would change keeps more digits.
+    F32 kept = (F32)f64_from_str8(str8_lit("0.3333333333"));
     Check(str8_match(rd_arrangement_weight_string(arena, 0.5f), str8_lit("0.500000"), 0));
     Check((F32)f64_from_str8(rd_arrangement_weight_string(arena, kept)) == kept);
+    Check(rd_arrangement_quantize(1.f/3.f) == 0.333333f);
   }
 
-  // Moving a tab selects it where it lands and leaves its old panel without
-  // a selection; a View from elsewhere joins as any tab does.
-  {
-    RD_Arrangement *arrangement = build(arena, "split_x panels:{0.5:{text:{selected} terminal} 0.5:{jackstay:{selected}}}");
-    RD_PanelID left = arrangement->root->first->id, right = arrangement->root->last->id;
-    RD_ViewAddress a = tab_at(arrangement->root->first, 0), terminal = tab_at(arrangement->root->first, 1);
-    RD_ViewAddress jackstay = tab_at(arrangement->root->last, 0);
-    Check(rd_arrangement_move_tab(arrangement, a, right, jackstay));
-    Check(!rd_arrangement_move_tab(arrangement, a, right, a) && !rd_arrangement_move_tab(arrangement, a, 99, rd_nil_view_address));
-    Check(rd_view_address_is_nil(rd_arrangement_panel_from_id(arrangement, left)->selected));
-    Check(rd_view_address_match(rd_arrangement_panel_from_id(arrangement, right)->selected, a));
-    Check(rd_view_address_match(tab_at(rd_arrangement_panel_from_id(arrangement, right), 1), a));
-    check_layout(arena, arrangement);
-    // First place, and a reorder within a panel.
-    Check(rd_arrangement_move_tab(arrangement, a, right, rd_nil_view_address) && rd_arrangement_select(arrangement, right, jackstay));
-    Check(rd_view_address_match(tab_at(rd_arrangement_panel_from_id(arrangement, right), 0), a));
-    RD_ViewAddress sessions = new_view("sessions");
-    Check(rd_arrangement_move_tab(arrangement, sessions, left, terminal));
-    Check(rd_view_address_match(tab_at(rd_arrangement_panel_from_id(arrangement, left), 1), sessions));
-    check_layout(arena, arrangement);
-    // Closing a panel removes its Views; a copy is edited independently.
-    RD_Arrangement *copy = rd_arrangement_copy(arena, arrangement);
-    rd_arrangement_close(copy, left);
-    Check(rd_arrangement_panel_from_id(arrangement, left)->tab_count == 2 && rd_arrangement_panel_from_id(copy, left) == &rd_nil_arrangement_panel);
-    Check(removed(copy, terminal) && removed(copy, sessions) && !removed(arrangement, terminal));
-    check_layout(arena, copy);
-  }
-
-  // Selecting is within a panel; nil selects none. Removing a tab names its
-  // View, for setting to release, and a copy made meanwhile keeps the list.
+  // An edit is the core's; the shell keeps its live copy's nodes. A panel
+  // the edit keeps is the node it was, so a pointer to it stays good; one it
+  // takes away is left unlinked and empty; the removed Views are listed
+  // newest first.
   {
     RD_Arrangement *arrangement = build(arena, "split_x panels:{0.5:{text:{selected} terminal} 0.5:{jackstay}}");
-    RD_PanelID left = arrangement->root->first->id, right = arrangement->root->last->id;
-    RD_ViewAddress a = tab_at(arrangement->root->first, 0), terminal = tab_at(arrangement->root->first, 1);
-    Check(!rd_arrangement_select(arrangement, right, a) && !rd_arrangement_select(arrangement, 99, rd_nil_view_address));
-    Check(rd_arrangement_select(arrangement, left, terminal) && rd_view_address_match(arrangement->root->first->selected, terminal));
-    Check(rd_arrangement_select(arrangement, left, rd_nil_view_address) && rd_view_address_is_nil(arrangement->root->first->selected));
-    Check(rd_arrangement_select(arrangement, left, terminal));
-    Check(rd_arrangement_remove_tab(arrangement, terminal) && !rd_arrangement_remove_tab(arrangement, terminal));
-    Check(rd_view_address_is_nil(arrangement->root->first->selected) && arrangement->root->first->tab_count == 1);
-    Check(removed(arrangement, terminal));
-    RD_Arrangement *preview = rd_arrangement_copy(arena, arrangement);
-    Check(removed(preview, terminal));
+    RD_ArrangementPanel *left = arrangement->root->first, *right = arrangement->root->last;
+    RD_ViewAddress text = tab_at(left, 0), terminal = tab_at(left, 1), jackstay = tab_at(right, 0);
+    Check(rd_arrangement_remove_tab(arrangement, text) && rd_arrangement_remove_tab(arrangement, terminal));
+    Check(arrangement->root->first == left && left->tab_count == 0 && rd_view_address_is_nil(left->selected));
+    Check(rd_view_address_match(arrangement->first_removed->view, terminal) && rd_view_address_match(arrangement->first_removed->next->view, text));
+    RD_PanelID heir = rd_arrangement_close(arrangement, left->id);
+    Check(heir == right->id && arrangement->root == right && right->weight == 1.f && right->parent == &rd_nil_arrangement_panel);
+    Check(left->parent == &rd_nil_arrangement_panel && left->next == &rd_nil_arrangement_panel && left->prev == &rd_nil_arrangement_panel);
+    Check(rd_view_address_match(right->first_tab->view, jackstay) && right->tab_count == 1);
+    RD_PanelID made = rd_arrangement_split(arrangement, right->id, Dir2_Down);
+    Check(rd_arrangement_panel_from_id(arrangement, made)->parent->first == right && arrangement->root_axis == Axis2_Y);
     check_layout(arena, arrangement);
-    // Reordering moves a panel and its weight among its siblings.
-    rd_arrangement_split(arrangement, right, Dir2_Right);
-    RD_ArrangementPanel *first = arrangement->root->first, *last = arrangement->root->last;
-    first->weight = 0.2f; first->next->weight = 0.3f; last->weight = 0.5f;
-    Check(rd_arrangement_reorder(arrangement, first->id, last->id));
-    Check(arrangement->root->first->id == right && arrangement->root->last->id == left && arrangement->root->last->weight == 0.2f);
-    check_layout(arena, arrangement);
-    Check(rd_arrangement_reorder(arrangement, left, 0) && arrangement->root->first->id == left);
-    Check(!rd_arrangement_reorder(arrangement, left, left) && !rd_arrangement_reorder(arrangement, arrangement->root->id, 0));
-    rd_arrangement_split(arrangement, left, Dir2_Down);
-    Check(!rd_arrangement_reorder(arrangement, left, right));
-    check_layout(arena, arrangement);
-    // A View's tabs follow it to a new address, and its selection.
-    RD_ViewAddress moved = new_view("text");
-    Check(rd_arrangement_select(arrangement, left, a));
-    Check(rd_arrangement_readdress(arrangement, a, moved) && !rd_arrangement_readdress(arrangement, a, moved));
-    Check(rd_arrangement_panel_from_view(arrangement, moved)->id == left && rd_arrangement_panel_from_view(arrangement, a) == &rd_nil_arrangement_panel);
-    Check(rd_view_address_match(rd_arrangement_panel_from_id(arrangement, left)->selected, moved));
-  }
-
-  // A drop settles the panel its View left in the same edit, by the caller's
-  // rule: a move closes a source with no shown tab left, or selects its first
-  // shown tab; a split closes it only with no tabs left, and selects only when
-  // it has no Selected View.
-  {
-    char *text = "split_x panels:{0.3:{text:{selected} terminal binary} 0.3:{jackstay} 0.4:{sessions}}";
-    RD_Arrangement *arrangement = build(arena, text);
-    RD_PanelID source = arrangement->root->first->id, middle = arrangement->root->first->next->id, last = arrangement->root->last->id;
-    RD_ViewAddress a = tab_at(arrangement->root->first, 0), hidden = tab_at(arrangement->root->first, 1), b = tab_at(arrangement->root->first, 2);
-    hidden_view = hidden;
-    // Moving an unselected tab still selects the first shown one; the hidden
-    // tab is passed over.
-    Check(rd_arrangement_select(arrangement, source, b));
-    RD_ArrangementDrop drop = rd_arrangement_drop(arrangement, b, last, Dir2_Invalid, rd_nil_view_address, shown_tab);
-    Check(drop.panel == last && drop.source == source && drop.heir == 0);
-    Check(rd_view_address_match(rd_arrangement_panel_from_id(arrangement, source)->selected, a));
-    check_layout(arena, arrangement);
-    // Moving the last shown tab closes the source, removing the hidden View;
-    // its next sibling is the heir.
-    drop = rd_arrangement_drop(arrangement, a, middle, Dir2_Invalid, rd_nil_view_address, shown_tab);
-    Check(drop.panel == middle && drop.source == source && drop.heir == middle);
-    Check(rd_arrangement_panel_from_id(arrangement, source) == &rd_nil_arrangement_panel);
-    Check(rd_view_address_match(rd_arrangement_panel_from_id(arrangement, middle)->selected, a));
-    Check(removed(arrangement, hidden) && !removed(arrangement, a));
-    check_layout(arena, arrangement);
-    // Moving within a panel settles nothing.
-    drop = rd_arrangement_drop(arrangement, a, middle, Dir2_Invalid, rd_nil_view_address, shown_tab);
-    Check(drop.panel == middle && drop.heir == 0 && arrangement->root->child_count == 2);
-
-    // A split keeps a source with only a hidden tab, without selecting it.
-    arrangement = build(arena, text);
-    source = arrangement->root->first->id; middle = arrangement->root->first->next->id;
-    a = tab_at(arrangement->root->first, 0); hidden = tab_at(arrangement->root->first, 1); b = tab_at(arrangement->root->first, 2);
-    hidden_view = hidden;
-    Check(rd_arrangement_select(arrangement, source, b));
-    drop = rd_arrangement_drop(arrangement, a, middle, Dir2_Down, rd_nil_view_address, shown_tab);
-    Check(drop.panel != 0 && drop.source == source && drop.heir == 0);
-    Check(rd_view_address_match(rd_arrangement_panel_from_id(arrangement, source)->selected, b));
-    Check(rd_view_address_match(rd_arrangement_panel_from_id(arrangement, drop.panel)->selected, a));
-    rd_arrangement_drop(arrangement, b, middle, Dir2_Up, rd_nil_view_address, shown_tab);
-    Check(rd_view_address_is_nil(rd_arrangement_panel_from_id(arrangement, source)->selected) && rd_arrangement_panel_from_id(arrangement, source)->tab_count == 1);
-    check_layout(arena, arrangement);
-    // Splitting its last tab off a panel keeps that panel, now empty.
-    RD_PanelID landed = rd_arrangement_panel_from_view(arrangement, b)->id;
-    drop = rd_arrangement_drop(arrangement, b, landed, Dir2_Right, rd_nil_view_address, shown_tab);
-    Check(drop.source == landed && drop.heir == 0 && rd_arrangement_panel_from_id(arrangement, landed)->tab_count == 0);
-    // A split takes an emptied source away and names its heir.
-    RD_PanelID emptied = rd_arrangement_panel_from_view(arrangement, b)->id;
-    drop = rd_arrangement_drop(arrangement, b, source, Dir2_Left, rd_nil_view_address, shown_tab);
-    Check(drop.source == emptied && drop.heir != 0 && rd_arrangement_panel_from_id(arrangement, emptied) == &rd_nil_arrangement_panel);
-    Check(rd_arrangement_panel_from_id(arrangement, landed)->tab_count == 0);
-    check_layout(arena, arrangement);
-    // No View only splits; settling without closing leaves an emptied panel.
-    U64 panels_before = 0;
-    for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p)) { panels_before += 1; }
-    drop = rd_arrangement_drop(arrangement, rd_nil_view_address, source, Dir2_Down, rd_nil_view_address, shown_tab);
-    Check(drop.panel != 0 && drop.source == 0 && rd_arrangement_panel_from_id(arrangement, drop.panel)->tab_count == 0);
-    Check(!rd_arrangement_settle(arrangement, drop.panel, Dir2_Invalid, shown_tab, 0));
-    Check(rd_arrangement_settle(arrangement, drop.panel, Dir2_Invalid, shown_tab, 1));
-    Check(rd_arrangement_panel_from_id(arrangement, drop.panel) == &rd_nil_arrangement_panel);
-    U64 panels_after = 0;
-    for(RD_ArrangementPanel *p = arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(arrangement->root, p)) { panels_after += 1; }
-    Check(panels_after == panels_before);
-    check_layout(arena, arrangement);
-    hidden_view = rd_nil_view_address;
-  }
-
-  // A panel a provider's document named stays when a move empties it: that
-  // document planned it (#445). Its unnamed sibling, emptied in turn, goes.
-  {
-    RD_Arrangement *arrangement = build(arena, "split_x panels:{0.3:{text:{selected}} 0.3:{terminal:{selected}} 0.4:{sessions}}");
-    RD_ArrangementPanel *named = arrangement->root->first;
-    named->doc_id = str8_lit("files");
-    RD_PanelID named_id = named->id, unnamed = named->next->id, last = arrangement->root->last->id;
-    RD_ArrangementDrop drop = rd_arrangement_drop(arrangement, tab_at(named, 0), last, Dir2_Invalid, rd_nil_view_address, shown_tab);
-    Check(drop.source == named_id && drop.heir == 0 && rd_arrangement_panel_from_id(arrangement, named_id)->tab_count == 0);
-    drop = rd_arrangement_drop(arrangement, tab_at(rd_arrangement_panel_from_id(arrangement, unnamed), 0), last, Dir2_Invalid, rd_nil_view_address, shown_tab);
-    Check(drop.source == unnamed && drop.heir != 0 && rd_arrangement_panel_from_id(arrangement, unnamed) == &rd_nil_arrangement_panel);
-    Check(arrangement->root->child_count == 2);
-    check_layout(arena, arrangement);
-  }
-
-  // Resizing moves one boundary, holding both sides to the floor where they
-  // can, after putting drifted siblings right.
-  {
-    RD_Arrangement *arrangement = build(arena, "split_x panels:{0.2:{text} 0.3:{text} 0.5:{text}}");
-    RD_ArrangementPanel *a = arrangement->root->first, *b = a->next;
-    rd_arrangement_resize(arrangement, a->id, 0.25f, 0.05f);
-    Check(a->weight == 0.45f && b->weight == 0.05f);
-    rd_arrangement_resize(arrangement, a->id, -0.6f, 0.05f);
-    Check(a->weight == 0.05f && b->weight == 0.45f);
-    rd_arrangement_resize(arrangement, arrangement->root->last->id, 0.1f, 0.05f);
-    check_layout(arena, arrangement);
-    arrangement = build(arena, "panels:{0.4:{text} 0.4:{text} 0.4:{text}}");
-    rd_arrangement_resize(arrangement, arrangement->root->first->id, 0, 0.05f);
-    Check(rd_arrangement_problem(arena, arrangement).size == 0 && arrangement->root->first->weight == 0.333333f);
-    // Equalizing splits the two sides' space evenly, after the same rescale.
-    arrangement = build(arena, "split_x panels:{0.2:{text} 0.3:{text} 0.5:{text}}");
-    rd_arrangement_equalize(arrangement, arrangement->root->first->next->id);
-    Check(arrangement->root->first->weight == 0.2f && arrangement->root->first->next->weight == 0.4f &&
-          arrangement->root->last->weight == 0.4f);
-    check_layout(arena, arrangement);
-    arrangement = build(arena, "panels:{0.6:{text} 0.6:{text}}");
-    rd_arrangement_equalize(arrangement, arrangement->root->first->id);
-    Check(arrangement->root->first->weight == 0.5f && arrangement->root->last->weight == 0.5f);
-    rd_arrangement_equalize(arrangement, arrangement->root->last->id);
-    Check(arrangement->root->first->weight == 0.5f && rd_arrangement_problem(arena, arrangement).size == 0);
-  }
-
-  // A Floating Panel's arrangement is a leaf of tabs. A View moves between
-  // two as a move into one and a settle of the other, which never closes its
-  // root; emptied, it stays until it is discarded.
-  {
-    RD_Arrangement *into = build(arena, "panels:{text:{selected} terminal}");
-    RD_Arrangement *from = build(arena, "panels:{jackstay:{selected} text}");
-    RD_ViewAddress log = tab_at(into->root, 1), jackstay = tab_at(from->root, 0), text = tab_at(from->root, 1);
-    Check(into->root->first == &rd_nil_arrangement_panel && into->root->tab_count == 2 && rd_view_address_match(into->root->selected, tab_at(into->root, 0)));
-    Check(rd_arrangement_detach_tab(from, jackstay) && rd_arrangement_move_tab(into, jackstay, into->root->id, log));
-    Check(rd_view_address_match(tab_at(into->root, 2), jackstay) && rd_view_address_match(into->root->selected, jackstay));
-    check_layout(arena, into);
-    Check(from->root->tab_count == 1 && rd_view_address_is_nil(from->root->selected) && !removed(from, jackstay));
-    Check(rd_arrangement_settle(from, from->root->id, Dir2_Invalid, 0, 1) && rd_view_address_match(from->root->selected, text));
-    check_layout(arena, from);
-    Check(rd_arrangement_remove_tab(from, text) && !rd_arrangement_settle(from, from->root->id, Dir2_Invalid, 0, 1));
-    Check(from->root != &rd_nil_arrangement_panel && from->root->tab_count == 0 && removed(from, text));
-    rd_arrangement_discard(from);
-    Check(from->root == &rd_nil_arrangement_panel && rd_arrangement_problem(arena, from).size == 0);
-  }
-
-  // The sidebar's edits. An empty arrangement's first panel makes the root;
-  // sections arrive at weight 1 or at an equal share.
-  {
-    RD_Arrangement *sidebar = rd_arrangement_alloc(arena, test_owner);
-    Check(sidebar->root == &rd_nil_arrangement_panel && sidebar->root_axis == Axis2_Y);
-    RD_PanelID first = rd_arrangement_add(sidebar, 0, 1.f);
-    RD_PanelID second = rd_arrangement_add(sidebar, sidebar->root->id, 1.f);
-    Check(first != 0 && second != 0 && sidebar->root->child_count == 2 && sidebar->root->first->id == first);
-    Check(rd_arrangement_add(sidebar, 0, 1.f) == 0 && rd_arrangement_add(sidebar, 99, 1.f) == 0);
-    Check(sidebar->root->first->weight == 1.f && sidebar->root->last->weight == 1.f);
-    RD_PanelID third = rd_arrangement_add(sidebar, sidebar->root->id, 0);
-    for(RD_ArrangementPanel *p = sidebar->root->first; p != &rd_nil_arrangement_panel; p = p->next) { Check(p->weight == 0.333333f); }
-    Check(sidebar->root->last->id == third);
-    check_layout(arena, sidebar);
-    // An equal share counts malformed or zero weights as 0.01.
-    sidebar->root->first->weight = 0;
-    rd_arrangement_add(sidebar, sidebar->root->id, 0);
-    for(RD_ArrangementPanel *p = sidebar->root->first; p != &rd_nil_arrangement_panel; p = p->next) { Check(p->weight > 0); }
-    check_layout(arena, sidebar);
-  }
-
-  // A sidebar merged into one panel keeps its tabs, Selected View and
-  // Presentation State in a panel of their own; the root keeps its ID.
-  {
-    RD_Arrangement *sidebar = build(arena, "panels:{text:{selected} terminal}");
-    RD_PanelID root = sidebar->root->id;
-    RD_ViewAddress text = tab_at(sidebar->root, 0);
-    RD_PanelID added = rd_arrangement_add(sidebar, root, 0);
-    RD_ArrangementPanel *lifted = sidebar->root->first;
-    Check(sidebar->root->id == root && sidebar->root->tab_count == 0 && rd_view_address_is_nil(sidebar->root->selected));
-    Check(lifted->tab_count == 2 && rd_view_address_match(lifted->selected, text) && lifted->weight == 0.5f && sidebar->root->last->id == added);
-    // The shell is told the lifted panel takes the root's Presentation State.
-    Check(lifted->options_from == root && lifted->id != root);
-    check_layout(arena, sidebar);
-    RD_PanelTree tree = rd_panel_tree_from_arrangement(arena, test_owner, sidebar);
-    Check(rd_view_address_match(tree.root->first->selected_tab, text));
-  }
-
-  // Removing a panel leaves its siblings' weights, and a split it leaves with
-  // one panel, as they are; a split it empties goes too, short of the root.
-  {
-    RD_Arrangement *sidebar = build(arena, "panels:{0.5:{text} 0.3:{0.5:{terminal} 0.5:{}} 0.2:{jackstay}}");
-    RD_ArrangementPanel *split = sidebar->root->first->next;
-    RD_PanelID split_id = split->id;
-    RD_ViewAddress terminal = tab_at(split->first, 0);
-    Check(!rd_arrangement_remove(sidebar, sidebar->root->id) && !rd_arrangement_remove(sidebar, 99));
-    Check(rd_arrangement_remove(sidebar, split->last->id));
-    Check(split->child_count == 1 && sidebar->root->child_count == 3 && sidebar->root->first->weight == 0.5f);
-    Check(rd_arrangement_remove(sidebar, rd_arrangement_panel_from_view(sidebar, terminal)->id));
-    Check(sidebar->root->child_count == 2 && sidebar->root->first->weight == 0.5f && sidebar->root->last->weight == 0.2f);
-    Check(rd_arrangement_panel_from_id(sidebar, split_id) == &rd_nil_arrangement_panel && removed(sidebar, terminal));
-  }
-
-  // A layout producer replaces a document: clearing leaves one empty root
-  // with a new ID, keeps its axis until it splits, and removes every View,
-  // which a tab can take back.
-  {
-    RD_Arrangement *arrangement = build(arena, "split_x panels:{0.5:{text:{selected} terminal} 0.5:{jackstay}}");
-    RD_PanelID old_last = arrangement->root->last->id;
-    RD_ViewAddress text = tab_at(arrangement->root->first, 0), kept = tab_at(arrangement->root->last, 0);
-    RD_PanelID root = rd_arrangement_clear(arrangement);
-    Check(arrangement->root->id == root && root > old_last && arrangement->root->tab_count == 0 && arrangement->root_axis == Axis2_X);
-    Check(removed(arrangement, text) && removed(arrangement, kept));
-    Check(rd_arrangement_problem(arena, arrangement).size == 0);
-    RD_PanelID side = rd_arrangement_split(arrangement, root, Dir2_Right);
-    rd_arrangement_resize(arrangement, root, 0.22f, 0);
-    Check(rd_arrangement_panel_from_id(arrangement, root)->weight == 0.72f && rd_arrangement_panel_from_id(arrangement, side)->weight == 0.28f);
-    RD_ViewAddress made = new_view("text");
-    Check(rd_arrangement_move_tab(arrangement, made, side, rd_nil_view_address) && rd_arrangement_move_tab(arrangement, kept, root, rd_nil_view_address));
-    Check(rd_arrangement_panel_from_view(arrangement, kept)->id == arrangement->root->first->id);
-    check_layout(arena, arrangement);
-    // A new owner's document has a panel once it is cleared; one that never
-    // splits keeps the axis it had.
-    RD_Arrangement *fresh = rd_arrangement_alloc(arena, test_owner);
-    root = rd_arrangement_clear(fresh);
-    RD_ViewAddress tab = new_view("terminal");
-    Check(rd_arrangement_move_tab(fresh, tab, root, rd_nil_view_address) && rd_view_address_match(fresh->root->selected, tab));
-    Check(fresh->root_axis == Axis2_Y);
-    check_layout(arena, fresh);
-  }
-
-  // Restore's operations. A View detached from one arrangement and inserted
-  // into another changes neither's other panels, and lands selected only if
-  // it was.
-  {
-    RD_Arrangement *panels = build(arena, "panels:{0.5:{terminal:{selected} text} 0.5:{jackstay}}");
-    RD_Arrangement *sidebar = build(arena, "panels:{sidebar_section:{selected} text}");
-    for(U32 source_first = 0; source_first < 2; source_first++)
-    {
-      RD_Arrangement *source = source_first ? sidebar : panels, *destination = source_first ? panels : sidebar;
-      RD_ViewAddress moving = source_first ? sidebar->root->last_tab->view : panels->root->first->last_tab->view;
-      RD_ArrangementPanel *leaf = source_first ? panels->root->first : sidebar->root;
-      RD_ViewAddress kept_selected = leaf->selected;
-      Check(rd_arrangement_detach_tab(source, moving) && !rd_arrangement_detach_tab(source, moving));
-      Check(rd_arrangement_panel_from_view(source, moving) == &rd_nil_arrangement_panel && !removed(source, moving));
-      Check(rd_arrangement_insert_tab(destination, moving, leaf->id, leaf->last_tab->view, 0));
-      Check(rd_view_address_match(leaf->selected, kept_selected) && rd_view_address_match(leaf->last_tab->view, moving));
-      check_layout(arena, source);
-      check_layout(arena, destination);
-    }
-    RD_ViewAddress chosen = panels->root->first->first_tab->view;
-    RD_ArrangementPanel *right = panels->root->last;
-    Check(rd_arrangement_insert_tab(panels, chosen, right->id, rd_nil_view_address, 1));
-    Check(rd_view_address_match(right->selected, chosen) && rd_view_address_match(right->first_tab->view, chosen));
-    Check(rd_view_address_is_nil(panels->root->first->selected));
-    check_layout(arena, panels);
   }
 
   // Two arrangements are one document when their panels, IDs, weights,
@@ -615,8 +271,8 @@ entry_point(CmdLine *cmdline)
     temp_end(deep_temp);
   }
 
-  // Random edits keep a valid arrangement valid, and the renderer lays it
-  // out as the arrangement does.
+  // After random edits (the core's), the renderer lays an arrangement out as
+  // the arrangement does.
   for(U64 seed = 1; seed <= 40; seed++)
   {
     U64 state = seed;

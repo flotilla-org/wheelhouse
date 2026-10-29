@@ -21,15 +21,19 @@ use wheelhouse_core::{
     WorkspaceId,
 };
 
+pub mod arrangement;
 pub mod card;
 pub mod dashboard;
+pub mod dock;
 pub mod documents;
 pub mod slots;
 pub mod stream;
 pub mod strip;
 pub mod tables;
+pub use arrangement::*;
 pub use card::*;
 pub use dashboard::*;
+pub use dock::*;
 pub use documents::*;
 pub use slots::*;
 pub use stream::*;
@@ -213,7 +217,7 @@ unsafe fn provider(provider: Text) -> Result<String, String> {
 /// was built against.
 #[no_mangle]
 pub extern "C" fn wheelhouse_abi_version() -> u32 {
-    14
+    15
 }
 /// A sidebar configured with a template catalog (KDL), or NULL with an
 /// error.

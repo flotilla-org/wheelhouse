@@ -709,33 +709,23 @@ rd_dock_move_allowed(Arena *arena, char *operation, RD_ViewAddress view, RD_Pane
 }
 
 // Drops `view` into `destination`, or into the new panel splitting it along
-// `dir` makes, after `prev` (nil: first), and sets `arrangement`, which is
-// `destination`'s. When the panel the View left is in it, the same edit
-// settles that panel (rd_arrangement_drop), closing it if the drop emptied
-// it. A panel in another arrangement (the sidebar's) is settled in that one:
-// reselected, and closed when the drop left it no tabs (#358). Returns the drop and, in *moved_out, the
-// View's address after it: a move into another owner can change it.
+// `dir` makes, after `prev` (nil: first): a drop-tab intent
+// (rd_arrangement_apply_intent). The panel the View left is settled in the
+// same intent, in whichever arrangement it is: closed if the drop emptied
+// it (#358), unless a layout named it. Returns the drop and, in
+// *moved_out, the View's address after it: a move into another owner can
+// change it.
 internal RD_ArrangementDrop
-uishell_drop_view(RD_Arrangement *arrangement, RD_ViewAddress view, RD_PanelAddress destination, Dir2 dir, RD_ViewAddress prev, RD_ViewAddress *moved_out)
+uishell_drop_view(RD_ViewAddress view, RD_PanelAddress destination, Dir2 dir, RD_ViewAddress prev, RD_ViewAddress *moved_out)
 {
-  CFG_Node *view_cfg = rd_cfg_from_view(view);
-  RD_PanelAddress source = rd_panel_from_view(view);
-  RD_ArrangementDrop drop = rd_arrangement_drop(arrangement, view, destination.id, dir, prev, rd_tab_is_shown);
-  if(moved_out) { *moved_out = view; }
-  if(drop.panel == 0) { return drop; }
-  // The panel it left, as it was before the View left it.
-  Temp scratch = scratch_begin(&arrangement->arena, 1);
-  RD_Arrangement *left = drop.source == 0 ? rd_arrangement_from_panel_owner(scratch.arena, source.owner) : 0;
-  rd_arrangement_set(arrangement);
-  if(moved_out) { *moved_out = rd_view_address_from_cfg(view_cfg); }
-  if(left)
-  {
-    RD_ArrangementPanel *left_panel = rd_arrangement_panel_from_id(left, source.id);
-    rd_arrangement_detach_tab(left, view);
-    rd_arrangement_settle(left, left_panel->id, dir, rd_tab_is_shown, left_panel->tab_count == 0);
-    rd_arrangement_set(left);
-  }
-  scratch_end(scratch);
+  WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_DROP_TAB, destination.owner);
+  intent.panel = destination.id;
+  intent.dir = rd_arrangement_core_dir(dir);
+  rd_arrangement_intent_tab(&intent, view);
+  rd_arrangement_intent_after(&intent, prev);
+  RD_ArrangementIntentResult result = intent.has_tab ? rd_arrangement_apply_intent(intent) : (RD_ArrangementIntentResult){0};
+  if(moved_out) { *moved_out = result.applied ? result.moved : view; }
+  RD_ArrangementDrop drop = {result.applied ? result.panel : 0, result.source, result.heir};
   return drop;
 }
 
@@ -765,8 +755,10 @@ uishell_dispatch_tab_command(String8 name)
     RD_ViewAddress tab = uishell_regs()->tab;
     RD_PanelAddress panel = rd_panel_from_view(tab);
     if(panel.id == 0) { panel = uishell_regs()->panel; }
-    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
-    if(rd_arrangement_select(arrangement, panel.id, tab)) { rd_arrangement_set(arrangement); }
+    WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_SELECT_TAB, panel.owner);
+    intent.panel = panel.id;
+    rd_arrangement_intent_tab(&intent, tab);
+    rd_arrangement_apply_intent(intent);
     scratch_end(scratch);
   }
   else if(str8_match(name, str8_lit("next_tab"), 0) ||
@@ -827,9 +819,21 @@ uishell_dispatch_tab_command(String8 name)
     {
       new_prev = filtered_tabs.last->v;
     }
-    UIShell_RegsScope(.dst_panel = address, .view = uishell_regs()->tab, .prev_tab = new_prev)
+    if(rd_panel_exists(address) && !rd_view_address_match(new_prev, tab) && rd_dock_move_allowed(scratch.arena, "move", tab, address, Dir2_Invalid))
     {
-      uishell_push_cmd_current(str8_lit("move_view"));
+      WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_MOVE_TAB, address.owner);
+      intent.panel = address.id;
+      rd_arrangement_intent_tab(&intent, tab);
+      rd_arrangement_intent_after(&intent, new_prev);
+      RD_ArrangementIntentResult moved = rd_arrangement_apply_intent(intent);
+      UIShell_RegsScope(.panel = address, .tab = moved.moved)
+      {
+        uishell_push_cmd_current(str8_lit("focus_tab"));
+      }
+      UIShell_RegsScope(.panel = address)
+      {
+        uishell_push_cmd_current(str8_lit("focus_panel"));
+      }
     }
     scratch_end(scratch);
   }
@@ -879,11 +883,12 @@ uishell_dispatch_tab_command(String8 name)
         cfg_node_new(rd_state->cfg, project, rd_state->project_path);
       }
       RD_ViewAddress address = rd_view_address_from_cfg(tab);
-      RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
-      RD_ArrangementPanel *destination = rd_arrangement_panel_from_id(arrangement, panel.id);
-      if(rd_arrangement_move_tab(arrangement, address, destination->id, destination->last_tab ? destination->last_tab->view : rd_nil_view_address))
-      { rd_arrangement_set(arrangement); }
-      else { cfg_node_release(rd_state->cfg, tab); }
+      RD_ArrangementPanel *destination = rd_arrangement_panel_from_id(rd_arrangement_live(panel.owner), panel.id);
+      WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_MOVE_TAB, panel.owner);
+      intent.panel = destination->id;
+      rd_arrangement_intent_tab(&intent, address);
+      rd_arrangement_intent_after(&intent, destination->last_tab ? destination->last_tab->view : rd_nil_view_address);
+      if(!rd_arrangement_apply_intent(intent).applied) { cfg_node_release(rd_state->cfg, tab); }
       UIShell_RegsScope(.tab = address)
       {
         uishell_push_cmd_current(str8_lit("focus_tab"));
@@ -902,9 +907,11 @@ uishell_dispatch_tab_command(String8 name)
     cfg_node_insert_child(rd_state->cfg, src->parent, src, dst);
     rd_view_key_assign(dst, 1);
     RD_ViewAddress copy = rd_view_address_from_cfg(dst);
-    RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
-    if(rd_arrangement_move_tab(arrangement, copy, panel.id, uishell_regs()->tab)) { rd_arrangement_set(arrangement); }
-    else { cfg_node_release(rd_state->cfg, dst); }
+    WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_MOVE_TAB, panel.owner);
+    intent.panel = panel.id;
+    rd_arrangement_intent_tab(&intent, copy);
+    rd_arrangement_intent_after(&intent, uishell_regs()->tab);
+    if(!rd_arrangement_apply_intent(intent).applied) { cfg_node_release(rd_state->cfg, dst); }
     UIShell_RegsScope(.tab = copy)
     {
       uishell_push_cmd_current(str8_lit("focus_tab"));
@@ -945,19 +952,17 @@ uishell_dispatch_tab_command(String8 name)
         uishell_push_cmd_current(str8_lit("focus_tab"));
       }
     }
-    if(rd_arrangement_remove_tab(arrangement, closed))
+    // A panel left with no tabs goes, and its siblings grow into its space
+    // (#358); a root panel, or one a layout planned, stays. Focus passes to
+    // its heir.
+    WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_CLOSE_TAB, address.owner);
+    rd_arrangement_intent_tab(&intent, closed);
+    RD_ArrangementIntentResult result = rd_arrangement_apply_intent(intent);
+    if(result.applied && result.heir != 0 && focused)
     {
-      // A panel left with no tabs goes, and its siblings grow into its space
-      // (#358); a root panel, or one a layout planned, stays. Focus passes
-      // to its heir.
-      RD_PanelID heir = panel->tab_count == 0 && rd_arrangement_closes_when_emptied(panel) ? rd_arrangement_close(arrangement, panel->id) : 0;
-      rd_arrangement_set(arrangement);
-      if(heir != 0 && focused)
+      UIShell_RegsScope(.panel = rd_panel_address(address.owner, result.heir))
       {
-        UIShell_RegsScope(.panel = rd_panel_address(address.owner, heir))
-        {
-          uishell_push_cmd_current(str8_lit("focus_panel"));
-        }
+        uishell_push_cmd_current(str8_lit("focus_panel"));
       }
     }
     scratch_end(scratch);
@@ -971,7 +976,7 @@ uishell_dispatch_tab_command(String8 name)
     if(rd_panel_exists(dst_panel) && !rd_view_address_match(prev_tab, view) && rd_dock_move_allowed(scratch.arena, "move", view, dst_panel, Dir2_Invalid))
     {
       RD_ViewAddress moved = view;
-      uishell_drop_view(rd_arrangement_from_panel_owner(scratch.arena, dst_panel.owner), view, dst_panel, Dir2_Invalid, prev_tab, &moved);
+      uishell_drop_view(view, dst_panel, Dir2_Invalid, prev_tab, &moved);
       UIShell_RegsScope(.panel = dst_panel, .tab = moved)
       {
         uishell_push_cmd_current(str8_lit("focus_tab"));
@@ -1082,11 +1087,14 @@ uishell_dispatch_panel_command(String8 name)
       RD_Arrangement *arrangement = workspace_mount.arrangement;
       B32 do_drop = do_dragdrop_split && rd_cfg_from_view(moving_view) != &cfg_nil_node && rd_panel_exists(uishell_regs()->panel);
       RD_ArrangementDrop drop = {0};
-      if(do_drop) { drop = uishell_drop_view(arrangement, moving_view, split_panel, split_dir, rd_nil_view_address, &moving_view); }
+      if(do_drop) { drop = uishell_drop_view(moving_view, split_panel, split_dir, rd_nil_view_address, &moving_view); }
       else
       {
-        drop.panel = rd_arrangement_split(arrangement, split_panel.id, split_dir);
-        if(drop.panel != 0) { rd_arrangement_set(arrangement); }
+        WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_SPLIT_PANEL, split_panel.owner);
+        intent.panel = split_panel.id;
+        intent.dir = rd_arrangement_core_dir(split_dir);
+        RD_ArrangementIntentResult split = rd_arrangement_apply_intent(intent);
+        drop.panel = split.applied ? split.panel : 0;
       }
       RD_PanelAddress new_panel_address = rd_panel_address(workspace_mount.owner, drop.panel);
       B32 new_panel_exists = rd_panel_exists(new_panel_address);
@@ -1176,11 +1184,11 @@ uishell_dispatch_panel_command(String8 name)
     Temp scratch = scratch_begin(0, 0);
     UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_current_regs(scratch.arena);
     RD_PanelAddress panel = uishell_regs()->panel;
-    RD_Arrangement *arrangement = workspace_mount.arrangement;
-    RD_PanelID heir = rd_arrangement_close(arrangement, rd_panel_owner_match(panel.owner, workspace_mount.owner) ? panel.id : 0);
+    WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_CLOSE_PANEL, workspace_mount.owner);
+    intent.panel = rd_panel_owner_match(panel.owner, workspace_mount.owner) ? panel.id : 0;
+    RD_PanelID heir = rd_arrangement_apply_intent(intent).heir;
     if(heir != 0)
     {
-      rd_arrangement_set(arrangement);
       if(rd_panel_address_match(workspace_mount.panel_tree.focused->address, panel))
       {
         UIShell_RegsScope(.panel = rd_panel_address(workspace_mount.owner, heir))
@@ -1205,9 +1213,12 @@ uishell_dispatch_panel_command(String8 name)
         break;
       }
     }
-    if(parent->child_count > 1 && rd_arrangement_reorder(arrangement, parent->first->id, parent->last->id))
+    if(parent->child_count > 1)
     {
-      rd_arrangement_set(arrangement);
+      WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_REORDER_PANEL, panel.owner);
+      intent.panel = parent->first->id;
+      intent.after_panel = parent->last->id;
+      rd_arrangement_apply_intent(intent);
     }
     scratch_end(scratch);
   }

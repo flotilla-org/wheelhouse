@@ -1,5 +1,8 @@
-// Headless tests of the docking checker, the production drag query and
-// restore over typed arrangements. The shell's hosts are described here as
+// Headless tests of the shell's docking: its Renderers' declarations as the
+// core's rule judges them, the production drag, creation and close queries,
+// and restore's round trip through the core. The rule's own cases are the
+// core's (crates/wheelhouse-core/src/dock/tests.rs, and against the C they
+// replaced in crates/wheelhouse-arrangement-oracle). The shell's hosts are described here as
 // it makes them (rd_dock_host_from_owner): one window (Controlled Split 7),
 // its child workspace 20, and their levels.
 #define BUILD_CONSOLE_INTERFACE 1
@@ -174,46 +177,6 @@ entry_point(CmdLine *cmdline)
       Check(rd_dock_check(view, p) == RD_DockRule_Valid);
     }
   }
-  RD_ViewRegistration *selector = rd_dock_view_from_name(str8_lit("workspace_selector"));
-  RD_ViewRegistration custom = {str8_lit_comp("subject_section"), RD_ViewTrait_Section|RD_ViewTrait_NeedsWorkspaceSubject|RD_ViewTrait_Singleton, 100, RD_DockHostKind_Sidebar};
-  RD_DockProposal p = {{RD_DockHostKind_Sidebar, 7, 0, 1, 100}, 7, 1, 1, 0};
-  // Width is inclusive at the boundary. Missing subjects, duplicate singleton
-  // instances, and zero/two Control Surfaces are invalid proposed layouts.
-  Check(rd_dock_check(&custom, p) == RD_DockRule_Valid);
-  p.host.available_width = 99; Check(rd_dock_check(&custom, p) == RD_DockRule_MinimumWidth);
-  p.host.available_width = 101; Check(rd_dock_check(&custom, p) == RD_DockRule_Valid);
-  p.host.available_width = 100;
-  p.host.has_workspace_subject = 0; Check(rd_dock_check(&custom, p) == RD_DockRule_WorkspaceSubject);
-  p.host.has_workspace_subject = 1;
-  p.host.kind = RD_DockHostKind_WorkspaceRegion; Check(rd_dock_check(&custom, p) == RD_DockRule_HostAcceptance);
-  p.host.kind = RD_DockHostKind_Sidebar;
-  p.instances_after = 0; Check(rd_dock_check(&custom, p) == RD_DockRule_Singleton);
-  p.instances_after = 2; Check(rd_dock_check(&custom, p) == RD_DockRule_Singleton);
-  p.instances_after = 1;
-  p.control_surfaces_after = 0; Check(rd_dock_check(selector, p) == RD_DockRule_OneControlSurface);
-  p.control_surfaces_after = 2; Check(rd_dock_check(selector, p) == RD_DockRule_OneControlSurface);
-  p.control_surfaces_after = 1;
-  // The selecting View may move, but cannot close.
-  Check(rd_dock_check(selector, p) == RD_DockRule_Valid);
-  p.closing = 1; Check(rd_dock_check(selector, p) == RD_DockRule_SelectorCannotClose);
-  p.closing = 0;
-  Check(rd_dock_check(0, p) == RD_DockRule_RegisteredView);
-  p.host.kind = RD_DockHostKind_COUNT; Check(rd_dock_check(selector, p) == RD_DockRule_HostAcceptance);
-  p.host.kind = (RD_DockHostKind)-1; Check(rd_dock_check(selector, p) == RD_DockRule_HostAcceptance);
-  RD_ViewRegistration *fleet_section = rd_dock_view_from_name(str8_lit("sidebar_section"));
-  p.host.kind = RD_DockHostKind_WorkspaceRegion;
-  p.host.workspace_region = 0;
-  p.host.level = p.view_level = 7;
-  Check(rd_dock_check(fleet_section, p) == RD_DockRule_Valid);
-  p.host.level = 8;
-  Check(rd_dock_check(fleet_section, p) == RD_DockRule_ControlSplitLevel);
-
-  Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 1) == RD_DockPresentation_SectionHeader);
-  Check(rd_dock_presentation(RD_DockHostKind_Sidebar, 2) == RD_DockPresentation_SectionHeader);
-  Check(rd_dock_presentation(RD_DockHostKind_WorkspaceRegion, 1) == RD_DockPresentation_Tabs);
-  Check(rd_dock_host_kind_from_panel_owner((RD_PanelOwner){RD_PanelOwnerKind_Sidebar}) == RD_DockHostKind_Sidebar);
-  Check(rd_dock_host_kind_from_panel_owner(test_owner) == RD_DockHostKind_WorkspaceRegion);
-
   // These are the very queries made by split, boundary and catch-all drop
   // sites. The selector is the window's one Control Surface.
   rd_dock_instance_count = test_instance_count;
@@ -304,85 +267,6 @@ entry_point(CmdLine *cmdline)
     docs.sidebar->dirty = docs.workspace->dirty = 0;
     pending = rd_dock_restore(&docs, test_registration);
     Check(pending.count == 0 && !DIRTY());
-  }
-  // A hand-edited invalid placement returns to its declared default without
-  // losing identity. Valid Views stay put.
-  {
-    RESTORE_SETUP("panels:{workspace_selector text}", "panels:{terminal}");
-    RD_ViewAddress selector_view = find(sidebar, "workspace_selector"), text_view = find(sidebar, "text"), terminal_view = find(workspace, "terminal");
-    rd_dock_restore(&docs, test_registration);
-    Check(panel_of(sidebar, selector_view) == sidebar->root->id);
-    Check(panel_of(workspace, text_view) == workspace->root->id && panel_of(workspace, terminal_view) == workspace->root->id);
-    Check(rd_view_address_match(workspace->root->last_tab->view, text_view));
-    docs.sidebar->dirty = docs.workspace->dirty = 0;
-    rd_dock_restore(&docs, test_registration);
-    Check(!DIRTY());
-  }
-  // Duplicate singleton declarations cannot create a second Control Surface.
-  // Restore prefers the valid placement even when an invalid copy comes first.
-  {
-    RESTORE_SETUP("panels:{workspace_selector}", "panels:{workspace_selector terminal}");
-    RD_ViewAddress kept = find(sidebar, "workspace_selector"), duplicate = find(workspace, "workspace_selector");
-    rd_dock_restore(&docs, test_registration);
-    Check(count(workspace, "workspace_selector") == 0 && count(sidebar, "workspace_selector") == 1);
-    Check(panel_of(sidebar, kept) != 0);
-    // The duplicate goes: setting its arrangement releases its View.
-    B32 released = 0;
-    for(RD_ArrangementTab *t = workspace->first_removed; t; t = t->next) { released |= rd_view_address_match(t->view, duplicate); }
-    Check(released);
-  }
-  // Invalid content under the sidebar falls back to the first leaf of a
-  // split workspace.
-  {
-    RESTORE_SETUP("panels:{terminal}", "panels:{0.5:{text} 0.5:{jackstay}}");
-    RD_ViewAddress misplaced = find(sidebar, "terminal");
-    rd_dock_restore(&docs, test_registration);
-    Check(panel_of(workspace, misplaced) == workspace->root->first->id);
-    Check(rd_view_address_match(workspace->root->first->last_tab->view, misplaced));
-  }
-  // When all copies are invalid, tree order is the deterministic tie-breaker;
-  // an empty sidebar gets a panel for the one that moves.
-  {
-    RESTORE_SETUP("", "panels:{workspace_selector workspace_selector}");
-    RD_ViewAddress first = workspace->root->first_tab->view;
-    rd_dock_restore(&docs, test_registration);
-    Check(sidebar->root != &rd_nil_arrangement_panel && rd_view_address_match(sidebar->root->first_tab->view, first));
-    Check(count(workspace, "workspace_selector") == 0 && count(sidebar, "workspace_selector") == 1);
-  }
-  // A View restore moves between two arrangements leaves the one it was in
-  // with its panel and other Views, and removes nothing.
-  {
-    RESTORE_SETUP("panels:{0.5:{sidebar_section:{selected} terminal} 0.5:{sidebar_section}}", "panels:{0.5:{terminal} 0.5:{text}}");
-    RD_PanelID source = sidebar->root->first->id;
-    RD_ViewAddress misplaced = sidebar->root->first->last_tab->view;
-    rd_dock_restore(&docs, test_registration);
-    Check(panel_of(workspace, misplaced) == workspace->root->first->id && rd_view_address_match(workspace->root->first->last_tab->view, misplaced));
-    Check(rd_arrangement_panel_from_id(sidebar, source)->tab_count == 1 && count(sidebar, "terminal") == 0);
-    Check(sidebar->first_removed == 0 && workspace->first_removed == 0);
-    Check(rd_arrangement_problem(arena, sidebar).size == 0 && rd_arrangement_problem(arena, workspace).size == 0);
-    docs.sidebar->dirty = docs.workspace->dirty = 0;
-    rd_dock_restore(&docs, test_registration);
-    Check(!DIRTY());
-  }
-  // Where a View lands, its panel keeps its Selected View unless the View
-  // was itself selected where it was; the panel it left keeps its own, or
-  // has none if it left.
-  for(U32 marked = 0; marked < 2; marked++)
-  {
-    RESTORE_SETUP(marked ? "panels:{1:{sidebar_section jackstay:{selected}}}" : "panels:{1:{sidebar_section:{selected} jackstay}}",
-                  "panels:{terminal:{selected} text}");
-    RD_ViewAddress jackstay = find(sidebar, "jackstay"), selected_terminal = find(workspace, "terminal"), section = find(sidebar, "sidebar_section");
-    rd_dock_restore(&docs, test_registration);
-    Check(panel_of(workspace, jackstay) == workspace->root->id && rd_view_address_match(workspace->root->last_tab->view, jackstay));
-    Check(rd_view_address_match(workspace->root->selected, marked ? jackstay : selected_terminal));
-    Check(rd_view_address_match(sidebar->root->first->selected, marked ? rd_nil_view_address : section));
-  }
-  // Empty layouts remain empty; there is already an implicit root Control
-  // Surface and restore must not manufacture content Views.
-  {
-    RESTORE_SETUP("", "");
-    RD_ViewAddressList pending = rd_dock_restore(&docs, test_registration);
-    Check(pending.count == 0 && !DIRTY() && sidebar->root == &rd_nil_arrangement_panel && workspace->root == &rd_nil_arrangement_panel);
   }
 #undef RESTORE_SETUP
 #undef DIRTY
