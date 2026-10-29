@@ -92,7 +92,8 @@ impl OverviewWindow {
     /// current workspace opens: the camera flies to it from wherever it is,
     /// whether it was showing another workspace or the overview. A changed
     /// shape, or workspaces coming and going, moves the camera with the scene
-    /// without a flight.
+    /// without a flight; a flight under way re-aims at where its destination
+    /// went.
     pub fn update(&mut self, entries: Vec<OverviewEntry>, current: Option<WorkspaceId>, aspect: f64, now_ms: f64) {
         let changed = entries != self.entries;
         if changed {
@@ -120,10 +121,19 @@ impl OverviewWindow {
             self.mode = OverviewMode::Workspace;
             self.pan_cy = None;
             self.go(now_ms);
-        } else if reshaped || !self.flying(now_ms) {
-            // The scene moved under a camera at rest, or the region changed
-            // shape: stay on what it shows.
-            if self.target().is_some_and(|target| self.rig.is_none_or(|rig| rig.destination() != target)) {
+        } else {
+            self.follow_scene(now_ms, reshaped);
+        }
+    }
+
+    /// After the scene moved: a flight re-aims at where its destination
+    /// went; a camera at rest, or one in a region that changed shape, stays
+    /// on what it shows.
+    fn follow_scene(&mut self, now_ms: f64, reshaped: bool) {
+        if self.target().is_some_and(|target| self.rig.is_none_or(|rig| rig.destination() != target)) {
+            if self.flying(now_ms) && !reshaped {
+                self.go(now_ms);
+            } else {
                 self.cut();
             }
         }
@@ -187,11 +197,12 @@ impl OverviewWindow {
 
     /// Rows: slide group `group`'s row by `by` scene units (negative shows
     /// what is further right), within its range.
-    pub fn slide(&mut self, group: usize, by: f64) {
+    pub fn slide(&mut self, group: usize, by: f64, now_ms: f64) {
         if let Some(group) = self.scene.groups.get(group) {
             let slide = (group.slide + by).clamp(group.slide_min, 0.0);
             self.slides.insert(group.key.clone(), slide);
             self.rebuild();
+            self.follow_scene(now_ms, false);
         }
     }
 
@@ -208,7 +219,7 @@ impl OverviewWindow {
     }
 
     /// Collapse or expand cluster `cluster` of group `group`.
-    pub fn toggle_cluster(&mut self, group: usize, cluster: usize) {
+    pub fn toggle_cluster(&mut self, group: usize, cluster: usize, now_ms: f64) {
         let Some(key) = self.layout.groups.get(group).and_then(|g| g.clusters.get(cluster)).map(|c| c.key.clone()) else {
             return;
         };
@@ -216,7 +227,7 @@ impl OverviewWindow {
             self.collapsed.insert(key);
         }
         self.rebuild();
-        self.cut();
+        self.follow_scene(now_ms, false);
     }
 
     pub fn mode(&self) -> &OverviewMode {

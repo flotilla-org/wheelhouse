@@ -1954,7 +1954,11 @@ uint32_t wheelhouse_overview_pick(WheelhouseCore *h,
 
 // Rows: slide group `group`'s row by `by` scene units (negative shows what
 // is further right), within its range.
-uint32_t wheelhouse_overview_slide(WheelhouseCore *h, size_t group, double by, char **error_out);
+uint32_t wheelhouse_overview_slide(WheelhouseCore *h,
+                                   size_t group,
+                                   double by,
+                                   double now_ms,
+                                   char **error_out);
 
 // Scroll the overview down (or up) by `by` scene units.
 uint32_t wheelhouse_overview_pan(WheelhouseCore *h, double by, char **error_out);
@@ -1964,6 +1968,7 @@ uint32_t wheelhouse_overview_pan(WheelhouseCore *h, double by, char **error_out)
 uint32_t wheelhouse_overview_toggle_cluster(WheelhouseCore *h,
                                             size_t group,
                                             size_t cluster,
+                                            double now_ms,
                                             char **error_out);
 
 // WHEELHOUSE_OVERVIEW_ROWS or _GRID; the camera cuts to the same place.

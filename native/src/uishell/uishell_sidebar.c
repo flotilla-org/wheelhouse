@@ -344,6 +344,11 @@ struct UIShell_SidebarState
   // each of its sections has scrolled by.
   Rng2F32 strip_rect;
   U64 strip_scroll[5];
+  // The overview (uishell_overview.c): its clock, the frame it last moved
+  // on, and the overview toggle as it last saw it.
+  F64 overview_clock_ms;
+  U64 overview_clock_frame;
+  B32 overview_toggle_seen;
   B32 card_escape_down;
   WheelhouseEntity card_action_target;
   String8 card_action_intent;
@@ -6051,6 +6056,7 @@ uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
 }
 
 #include "uishell/uishell_tool_strip.c"
+#include "uishell/uishell_overview.c"
 #include "uishell/uishell_git_diagnostics.c"
 #include "uishell/uishell_chip_diagnostics.c"
 

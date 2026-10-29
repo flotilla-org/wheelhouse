@@ -209,9 +209,15 @@ pub unsafe extern "C" fn wheelhouse_overview_pick(
 /// Rows: slide group `group`'s row by `by` scene units (negative shows what
 /// is further right), within its range.
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_overview_slide(h: *mut WheelhouseCore, group: usize, by: f64, error_out: *mut *mut c_char) -> u32 {
+pub unsafe extern "C" fn wheelhouse_overview_slide(
+    h: *mut WheelhouseCore,
+    group: usize,
+    by: f64,
+    now_ms: f64,
+    error_out: *mut *mut c_char,
+) -> u32 {
     run(h, error_out, |h| {
-        h.overview.slide(group, if by.is_finite() { by } else { 0.0 });
+        h.overview.slide(group, if by.is_finite() { by } else { 0.0 }, now_ms);
         Ok(())
     })
     .is_some() as u32
@@ -234,10 +240,11 @@ pub unsafe extern "C" fn wheelhouse_overview_toggle_cluster(
     h: *mut WheelhouseCore,
     group: usize,
     cluster: usize,
+    now_ms: f64,
     error_out: *mut *mut c_char,
 ) -> u32 {
     run(h, error_out, |h| {
-        h.overview.toggle_cluster(group, cluster);
+        h.overview.toggle_cluster(group, cluster, now_ms);
         Ok(())
     })
     .is_some() as u32

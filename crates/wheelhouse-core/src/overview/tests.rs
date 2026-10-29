@@ -660,7 +660,11 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
             }
             6 if !window.scene().groups.is_empty() => {
                 let group = tc.draw(gs::integers::<usize>().max_value(window.scene().groups.len() - 1));
-                window.slide(group, tc.draw(gs::floats::<f64>().min_value(-20.0).max_value(20.0).allow_nan(false).allow_infinity(false)));
+                window.slide(
+                    group,
+                    tc.draw(gs::floats::<f64>().min_value(-20.0).max_value(20.0).allow_nan(false).allow_infinity(false)),
+                    now,
+                );
                 false
             }
             7 => {
@@ -670,7 +674,7 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
             8 if !window.layout().groups.is_empty() => {
                 let group = tc.draw(gs::integers::<usize>().max_value(window.layout().groups.len() - 1));
                 let clusters = window.layout().groups[group].clusters.len();
-                window.toggle_cluster(group, tc.draw(gs::integers::<usize>().max_value(clusters - 1)));
+                window.toggle_cluster(group, tc.draw(gs::integers::<usize>().max_value(clusters - 1)), now);
                 false
             }
             9 if tc.draw(gs::booleans()) => {
@@ -705,4 +709,34 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
         assert_eq!(window.settled(now), open && !window.flying(now));
         assert!(!window.flying(now + FlightTiming::default().max_ms));
     }
+}
+
+/// The scene moving under the camera: a workspace arriving mid-flight moves
+/// the destination tile, and the flight lands where it went; sliding the
+/// open workspace's row keeps the camera on it.
+#[test]
+fn the_camera_keeps_up_with_a_moving_scene() {
+    let project = || segment("project", entity("project", 0));
+    let one = entry("tree", vec![project()], 1);
+    let two = entry("tree", vec![project(), segment("convoy", entity("convoy", 1))], 2);
+    let three = entry("tree", vec![project(), segment("convoy", entity("convoy", 0))], 3);
+    // Enough more to overflow the row, after the destination.
+    let more: Vec<_> = (4..12).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
+    let mut window = OverviewWindow::default();
+    let before_three = [vec![one.clone(), two.clone()], more.clone()].concat();
+    window.update(before_three.clone(), Some(tab_workspace_id(1)), 1.6, 0.0);
+    window.update(before_three, Some(tab_workspace_id(2)), 1.6, 1000.0);
+    let before = window.scene().rest_camera(tab_workspace_id(2)).unwrap();
+    assert!(window.flying(1100.0));
+    window.update([vec![one, three, two], more].concat(), Some(tab_workspace_id(2)), 1.6, 1100.0);
+    let after = window.scene().rest_camera(tab_workspace_id(2)).unwrap();
+    assert_ne!(before, after, "the new workspace comes before the destination");
+    assert!(window.flying(1100.0));
+    assert!(near(window.camera(5000.0).unwrap(), after));
+    assert!(window.settled(5000.0));
+
+    window.slide(0, -10.0, 5000.0);
+    let slid = window.scene().rest_camera(tab_workspace_id(2)).unwrap();
+    assert_ne!(slid, after, "the row slid");
+    assert!(near(window.camera(5000.0).unwrap(), slid));
 }

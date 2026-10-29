@@ -2005,3 +2005,9 @@ wm_open_in_browser(String8 url)
   if(destination != 0) { [[NSWorkspace sharedWorkspace] openURL:destination]; }
   scratch_end(scratch);
 }
+
+internal B32
+wm_reduce_motion(void)
+{
+  return [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion];
+}

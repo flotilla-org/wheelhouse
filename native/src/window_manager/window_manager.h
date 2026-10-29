@@ -334,5 +334,8 @@ internal String8        wm_graphical_pick_file(Arena *arena, String8 initial_pat
 
 internal void           wm_show_in_filesystem_ui(String8 path);
 internal void           wm_open_in_browser(String8 url);
+// The system asks for less motion (macOS Reduce Motion, Windows client
+// area animations off); animations that move things should cut instead.
+internal B32            wm_reduce_motion(void);
 
 #endif // WINDOW_MANAGER_H

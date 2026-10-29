@@ -85,7 +85,7 @@ fn six_kind_native_detail_contract() {
     unsafe {
         let h = wheelhouse_create(ptr::null(), 0, ptr::null_mut());
         assert!(!h.is_null());
-        assert_eq!(wheelhouse_abi_version(), 15);
+        assert_eq!(wheelhouse_abi_version(), 16);
         for line in include_str!("../../../fixtures/typed-detail.jsonl").lines() {
             assert_eq!(wheelhouse_apply_patch_json(h, 42, text(PROVIDER), text(line), ptr::null_mut()), 1);
         }

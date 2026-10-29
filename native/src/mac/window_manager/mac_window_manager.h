@@ -15,6 +15,7 @@
 #import <Foundation/NSString.h>
 #import <Foundation/NSRunLoop.h>
 #import <Foundation/NSURL.h>
+#import <AppKit/NSAccessibility.h>
 #import <AppKit/NSAlert.h>
 #import <AppKit/NSApplication.h>
 #import <AppKit/NSCursor.h>
