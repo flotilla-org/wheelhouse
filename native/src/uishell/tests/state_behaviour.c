@@ -1069,6 +1069,127 @@ entry_point(CmdLine *cmdline)
     wheelhouse_slots_free(chip_slots);
     state_check_committed(ws);
 
+    //- The tool strip's layouts menu: "Reset layout" is offered when the
+    // arrangement is only resized as well as when it is owned (#485), and
+    // gives the layout's declared arrangement back either way.
+    {
+      // Resized: a soft weight override on the layout's agents panel, no
+      // structural change, committed as the host does for a divider drag.
+      uishell_store_reset_layout(chip);
+      state_frame(ws);
+      state_frame(ws);
+      UIShell_WorkspaceLayouts layouts = uishell_store_layouts(scratch.arena, chip);
+      StateCheck(!layouts.adjusted && !layouts.owned);
+      WheelhouseWorkspaceArrangement *declared = wheelhouse_arrangement_get(state->core, chip_id, 0);
+      StateCheck(declared && declared->doc.panel_count == 3 && !declared->owned && declared->flags == 0);
+      WheelhouseDocPanel resized[3];
+      for(U64 i = 0; declared && i < 3 && i < declared->doc.panel_count; i++) { resized[i] = declared->doc.panels[i]; }
+      F64 declared_weight = resized[1].weight;
+      resized[1].weight = declared_weight + 1.0;
+      resized[2].weight = 1.0;
+      WheelhouseArrangementDoc resized_doc = {resized, 3};
+      char *resize_error = 0;
+      WheelhouseWorkspaceArrangement *committed = wheelhouse_arrangement_commit(state->core, chip_id, &resized_doc, declared ? declared->generation : 0, &resize_error);
+      StateCheck(committed && committed->status == WHEELHOUSE_COMMITTED && !committed->owned &&
+                 (committed->flags & WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED));
+      wheelhouse_string_free(resize_error);
+      wheelhouse_arrangement_free(committed);
+      // The menu offers Reset for a resize alone (#485): `adjusted` without `owned`.
+      layouts = uishell_store_layouts(scratch.arena, chip);
+      StateCheck(layouts.adjusted && !layouts.owned);
+      uishell_store_reset_layout(chip);
+      WheelhouseWorkspaceArrangement *stored = wheelhouse_arrangement_get(state->core, chip_id, 0);
+      StateCheck(stored && !stored->owned && !(stored->flags & WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED) &&
+                 stored->doc.panel_count == 3 && stored->doc.panels[1].weight == declared_weight);
+      wheelhouse_arrangement_free(stored);
+      wheelhouse_arrangement_free(declared);
+      layouts = uishell_store_layouts(scratch.arena, chip);
+      StateCheck(!layouts.adjusted && !layouts.owned);
+      state_frame(ws);
+      state_frame(ws);
+      state_check_committed(ws);
+
+      // Rearranged: the shell, shown, moves to the agents' panel.
+      uishell_store_show_slot(chip, 0, str8_lit("t:shell"));
+      state_frame(ws);
+      state_frame(ws);
+      CFG_Node *shell_view = state_slot_view(chip, str8_lit("t:shell"));
+      StateCheck(shell_view != &cfg_nil_node);
+      RD_PanelAddress agents_panel = state_panels(scratch.arena, chip).root->first->address;
+      RD_PanelAddress files_panel = state_panels(scratch.arena, chip).root->last->address;
+      CFG_Node *primary = state_slot_view(chip, str8_lit("primary"));
+      uishell_cmd("move_view", .window = window->id, .panel = rd_panel_from_cfg(shell_view), .view = rd_view_address_from_cfg(shell_view),
+                  .dst_panel = agents_panel, .prev_tab = rd_view_address_from_cfg(primary));
+      state_frame(ws);
+      state_frame(ws);
+      shell_view = state_slot_view(chip, str8_lit("t:shell"));
+      StateCheck(rd_panel_address_match(rd_panel_from_cfg(shell_view), agents_panel));
+
+      // A panel added: the primary terminal splits out into a panel of its
+      // own, and the person closes the empty files panel, the shell's home.
+      uishell_cmd("split_panel", .window = window->id, .panel = agents_panel, .view = rd_view_address_from_cfg(primary),
+                  .dst_panel = agents_panel, .dir2 = Dir2_Down);
+      state_frame(ws);
+      state_frame(ws);
+      uishell_cmd("close_panel", .window = window->id, .panel = files_panel);
+      state_frame(ws);
+      state_frame(ws);
+      stored = wheelhouse_arrangement_get(state->core, chip_id, 0);
+      StateCheck(stored && stored->owned);
+      wheelhouse_arrangement_free(stored);
+      layouts = uishell_store_layouts(scratch.arena, chip);
+      StateCheck(layouts.owned && layouts.adjusted);
+      StateCheck(rd_arrangement_panel_from_id(rd_arrangement_live(uishell_store_owner(chip)), files_panel.id) == &rd_nil_arrangement_panel);
+      primary = state_slot_view(chip, str8_lit("primary"));
+      RD_PanelAddress extra_panel = rd_panel_from_cfg(primary);
+      StateCheck(!rd_panel_address_match(extra_panel, agents_panel));
+
+      // A Slot whose home panel is gone is shown in the first tabs panel,
+      // though another remains: the agents' panel (the shell leaves it empty)
+      // is first, the primary's the last.
+      shell_view = state_slot_view(chip, str8_lit("t:shell"));
+      StateCheck(rd_panel_address_match(rd_panel_from_cfg(shell_view), agents_panel));
+      uishell_store_remove(shell_view);
+      state_frame(ws);
+      state_frame(ws);
+      StateCheck(state_slot_view(chip, str8_lit("t:shell")) == &cfg_nil_node && uishell_store_unplaced(scratch.arena, chip).count == 1);
+      {
+        RD_Arrangement *two = rd_arrangement_live(uishell_store_owner(chip));
+        U64 leaves = 0;
+        RD_PanelID first_leaf = 0;
+        for(RD_ArrangementPanel *p = two->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(two->root, p))
+        {
+          if(p->child_count != 0) { continue; }
+          first_leaf = first_leaf ? first_leaf : p->id;
+          leaves += 1;
+        }
+        StateCheck(leaves == 2 && first_leaf == agents_panel.id && rd_arrangement_panel_from_id(two, extra_panel.id)->tab_count == 1);
+      }
+      uishell_store_show_slot(chip, 0, str8_lit("t:shell"));
+      state_frame(ws);
+      state_frame(ws);
+      shell_view = state_slot_view(chip, str8_lit("t:shell"));
+      StateCheck(shell_view != &cfg_nil_node && rd_panel_address_match(rd_panel_from_cfg(shell_view), agents_panel));
+      StateCheck(uishell_store_unplaced(scratch.arena, chip).count == 0);
+
+      // Reset restores the declared arrangement: two panels, the shell
+      // unplaced again, the files panel empty as the layout first made it.
+      uishell_store_reset_layout(chip);
+      state_frame(ws);
+      state_frame(ws);
+      stored = wheelhouse_arrangement_get(state->core, chip_id, 0);
+      StateCheck(stored && !stored->owned && !(stored->flags & WHEELHOUSE_ARRANGEMENT_FLAG_RESIZED));
+      wheelhouse_arrangement_free(stored);
+      layouts = uishell_store_layouts(scratch.arena, chip);
+      StateCheck(!layouts.owned && !layouts.adjusted);
+      RD_Arrangement *reset = rd_arrangement_live(uishell_store_owner(chip));
+      StateCheck(reset->root->child_count == 2);
+      RD_ArrangementPanel *reset_files = rd_arrangement_panel_from_id(reset, reset->root->last->id);
+      StateCheck(reset_files != &rd_nil_arrangement_panel && reset_files->tab_count == 0 && str8_match(reset_files->doc_id, str8_lit("files"), 0));
+      StateCheck(state_slot_view(chip, str8_lit("t:shell")) == &cfg_nil_node && uishell_store_unplaced(scratch.arena, chip).count == 1);
+      state_check_committed(ws);
+    }
+
     CFG_Node *convoy = state_open_subject(ws, str8_lit("convoy"), str8_lit("build"));
     state_frame(ws);
     UIShell_WorkspaceLayouts layouts = uishell_store_layouts(scratch.arena, convoy);
@@ -1084,6 +1205,22 @@ entry_point(CmdLine *cmdline)
     state_frame(ws);
     state_frame(ws);
     StateCheck(uishell_store_layouts(scratch.arena, convoy).current == 0);
+    state_check_committed(ws);
+    // Chosen by name, then the empty name for the default, directly as the
+    // layouts menu calls it.
+    // (current == 1 fails if the name is ignored; current == 0 below, if the
+    // empty name doesn't select the default.)
+    uishell_store_choose_layout(convoy, str8_lit("live-only"));
+    state_frame(ws);
+    state_frame(ws);
+    layouts = uishell_store_layouts(scratch.arena, convoy);
+    StateCheck(layouts.current == 1 && layouts.fallback == 0);
+    state_check_committed(ws);
+    uishell_store_choose_layout(convoy, str8_zero());
+    state_frame(ws);
+    state_frame(ws);
+    layouts = uishell_store_layouts(scratch.arena, convoy);
+    StateCheck(layouts.current == 0 && layouts.fallback == 0);
     state_check_committed(ws);
     uishell_cmd("close_workspace", .window = window->id, .cfg = convoy->id);
     state_frame(ws);
