@@ -1142,6 +1142,10 @@ mod arrangement_abi {
     #[hegel::test(test_cases = 300)]
     fn every_edit_crosses_the_abi_and_matches_the_core(tc: TestCase) {
         let (mut a, _, next_tab) = wheelhouse_core::arrangement::generate::build(&tc, 20);
+        // A dock restore's marks cross too.
+        for id in wheelhouse_core::arrangement::generate::panel_ids(&a) {
+            a.panel_mut(id).expect("there").restore_emptied = tc.draw(gs::booleans());
+        }
         for _ in 0..tc.draw(gs::integers::<usize>().max_value(8)) {
             let Step::Edit { edit, hidden } = edit_step(&tc, &a, next_tab + 1) else { unreachable!("edit steps are edits") };
             let doc = arrangement::EditDoc::of(map(&a, &|t: &Tab| tab(*t)));

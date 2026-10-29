@@ -172,16 +172,21 @@ fn resizing_respects_the_floor_and_equalizing_evens(tc: TestCase) {
     let (w, next) = (a.at(parent).children[i].weight, a.at(parent).children[i + 1].weight);
     let delta = tc.draw(gs::floats::<f32>().min_value(-1.5).max_value(1.5).allow_nan(false).allow_infinity(false));
     let floor = tc.draw(gs::floats::<f32>().min_value(0.0).max_value(0.6).allow_nan(false).allow_infinity(false));
-    let mut equalized = a.clone();
     apply(&mut a, &Edit::Resize { panel, delta, floor }, &|_| false);
+    // Equalize what the resize left uneven.
+    let mut equalized = a.clone();
     let (w2, next2) = (a.at(parent).children[i].weight, a.at(parent).children[i + 1].weight);
     if w + next >= 2.0 * floor {
         assert!(w2 >= floor - 1e-6 && next2 >= floor - 1e-6, "{w}+{next} by {delta} over {floor}: {w2}, {next2}");
     }
     assert!((w2 + next2 - (w + next)).abs() <= 2e-6, "the sum moved: {w}+{next} became {w2}+{next2}");
-    apply(&mut equalized, &Edit::Equalize { panel }, &|_| false);
-    let (e, e_next) = (equalized.at(parent).children[i].weight, equalized.at(parent).children[i + 1].weight);
-    assert!((e - e_next).abs() <= 1e-6, "{w} and {next} equalized to {e} and {e_next}");
+    // From a valid arrangement: a floor the sides couldn't keep lets the
+    // resize take one below zero.
+    if problem(&equalized).is_none() {
+        apply(&mut equalized, &Edit::Equalize { panel }, &|_| false);
+        let (e, e_next) = (equalized.at(parent).children[i].weight, equalized.at(parent).children[i + 1].weight);
+        assert!((e - e_next).abs() <= 1e-6, "{w2} and {next2} equalized to {e} and {e_next}");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -730,4 +735,65 @@ fn a_deep_split_chain_edits_without_exhausting_the_stack() {
     assert!(ed(&mut a, Edit::Drop { tab: Some("text#1".into()), to: leaf, dir: Some(Dir::Right), after: None }).applied);
     assert!(problem(&a).is_some(), "a chain of single children is not a valid arrangement");
     assert_eq!(a.panel_with(&"text#1".to_string()).map(|p| p.id), Some(PanelId(DEPTH + 1)));
+}
+
+fn owner() -> Owner {
+    Owner { kind: OwnerKind::Workspace, id: crate::WorkspaceId::from_bytes([7; 16]) }
+}
+
+/// The Automation Endpoint invokes intents by these names (ADR 0014): they
+/// are the contract.
+#[test]
+fn intents_have_stable_distinct_names() {
+    let (o, p, t) = (owner(), PanelId(1), "text#1".to_string());
+    let intents: Vec<Intent<View>> = vec![
+        Intent::SelectTab { owner: o, panel: p, tab: None },
+        Intent::MoveTab { owner: o, tab: t.clone(), to: p, after: None },
+        Intent::CloseTab { owner: o, tab: t.clone() },
+        Intent::DropTab { owner: o, tab: t, to: p, dir: None, after: None },
+        Intent::SplitPanel { owner: o, panel: p, dir: Dir::Left },
+        Intent::ClosePanel { owner: o, panel: p },
+        Intent::ReorderPanel { owner: o, panel: p, after: None },
+        Intent::ResizePanel { owner: o, panel: p, delta: 0.0, floor: 0.0 },
+        Intent::EqualizePanel { owner: o, panel: p },
+    ];
+    let names: Vec<&str> = intents.iter().map(Intent::name).collect();
+    assert_eq!(
+        names,
+        [
+            "select-tab",
+            "move-tab",
+            "close-tab",
+            "drop-tab",
+            "split-panel",
+            "close-panel",
+            "reorder-panel",
+            "resize-panel",
+            "equalize-panel"
+        ]
+    );
+    assert!(intents.iter().all(|i| i.owner() == o));
+}
+
+/// close-tab removes the tab, and closes its panel when that leaves it
+/// empty and unnamed, reporting the heir; a named panel, and the root, stay.
+#[test]
+fn close_tab_closes_an_emptied_unnamed_panel() {
+    let mut f = build("split_x panels:{0.3:{text:{selected}} 0.3:{terminal} 0.4:{jackstay binary}}");
+    let (first, second) = (child(&f.a, 0).id, child(&f.a, 1).id);
+    let (text, terminal, jackstay) = (child(&f.a, 0).tabs[0].clone(), child(&f.a, 1).tabs[0].clone(), last(&f.a).tabs[0].clone());
+    f.a.panel_mut(second).expect("there").named = Some("files".into());
+    let hide = |_: &View| false;
+    let out = apply_intent(&mut f.a, &Intent::CloseTab { owner: owner(), tab: text.clone() }, None, &hide).outcome;
+    assert!(out.applied && out.heir == Some(second) && f.a.panel(first).is_none() && out.removed == [text]);
+    let out = apply_intent(&mut f.a, &Intent::CloseTab { owner: owner(), tab: terminal.clone() }, None, &hide).outcome;
+    assert!(out.applied && out.heir.is_none() && f.a.panel(second).is_some_and(|p| p.tabs.is_empty()));
+    let out = apply_intent(&mut f.a, &Intent::CloseTab { owner: owner(), tab: jackstay.clone() }, None, &hide).outcome;
+    assert!(out.applied && out.heir.is_none() && last(&f.a).tabs.len() == 1, "a panel with tabs left stays");
+    assert!(!apply_intent(&mut f.a, &Intent::CloseTab { owner: owner(), tab: jackstay }, None, &hide).outcome.applied);
+    let mut single = build("panels:{text}");
+    let only = root(&single.a).tabs[0].clone();
+    let out = apply_intent(&mut single.a, &Intent::CloseTab { owner: owner(), tab: only }, None, &hide).outcome;
+    assert!(out.applied && out.heir.is_none() && root(&single.a).tabs.is_empty(), "the root stays");
+    valid(&f.a);
 }

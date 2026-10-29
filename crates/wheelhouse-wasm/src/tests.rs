@@ -230,9 +230,10 @@ fn an_arrangement_edit_through_the_binding_is_the_cores(tc: TestCase) {
     let page_edit: ArrangementEdit = serde_json::from_value(edit_json(&edit)).expect("a page's edit");
     assert_eq!(Edit::from(&page_edit), edit);
     let doc: EditDoc = serde_json::from_str(&serde_json::to_string(&EditDoc::from(&a)).unwrap()).unwrap();
+    assert_eq!(Arrangement::from(&doc), a, "a document crosses and comes back");
     let result = apply_edit(&doc, &page_edit, &hidden);
     let out = apply(&mut a, &edit, &|t| hidden.contains(t));
-    assert_eq!(result.doc, EditDoc::from(&a));
+    assert_eq!(Arrangement::from(&result.doc), a);
     assert_eq!(
         result.outcome,
         EditOutcome {
