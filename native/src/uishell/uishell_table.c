@@ -404,7 +404,8 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   }
 
   // The frame: the core answers and fills, then the Grid lays out.
-  U64 wake = wheelhouse_table_frame(state->table, dim.x, dim.y, now_time_us());
+  U64 now = now_time_us();
+  U64 wake = wheelhouse_table_frame(state->table, dim.x, dim.y, now);
   UIShell_TableDraw *draw = push_array(ui_build_arena(), UIShell_TableDraw, 1);
   draw->table = state->table;
   // Effects for the host: nothing acts on them yet (#506 has no actions),
@@ -413,7 +414,10 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   for(BinnacleEffect effect; binnacle_grid_poll_effect(grid, &effect);) {}
   binnacle_grid_snapshot(grid, &draw->snap);
   ui_box_equip_custom_draw(box, uishell_table_draw, draw);
-  if(wake != WHEELHOUSE_TABLE_NEVER || draw->snap.capturing || draw->snap.view_pending) { rd_request_frame(); }
+  // A drag can autoscroll and a pending view fills next frame; a live
+  // table only changes at its next tick.
+  if(draw->snap.capturing || draw->snap.view_pending) { rd_request_frame(); }
+  else if(wake != WHEELHOUSE_TABLE_NEVER) { rd_request_frame_at(now + wake); }
   if(uishell_table_screenshot_hook != 0)
   {
     uishell_table_screenshot_frames += 1;

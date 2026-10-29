@@ -1409,7 +1409,10 @@ wm_get_events(Arena *arena, B32 wait)
   // Read per event pump, on the main thread: it changes with the setting
   // and as a mouse comes and goes.
   mac_wm_state->gfx_info.scroll_bars_always_shown = [NSScroller preferredScrollerStyle] == NSScrollerStyleLegacy;
-  NSDate *limit = wait ? [NSDate distantFuture] : [NSDate distantPast];
+  U64 timeout_us = wait ? wm_take_wait_timeout_us() : 0;
+  NSDate *limit = !wait ? [NSDate distantPast] :
+                  timeout_us == max_U64 ? [NSDate distantFuture] :
+                  [NSDate dateWithTimeIntervalSinceNow:(F64)timeout_us/1000000.0];
   B32 blocking = wait;
   for(;;)
   {

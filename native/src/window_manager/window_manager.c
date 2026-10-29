@@ -33,6 +33,30 @@ wm_monitor_match(WM_Monitor a, WM_Monitor b)
 ////////////////////////////////
 //~ rjf: Event Functions (Helpers, Implemented Once)
 
+// The latest the next blocking wm_get_events waits, on now_time_us's clock,
+// or 0 to wait for an event. Main thread only.
+global U64 wm_wait_deadline_us = 0;
+
+// Bounds the next blocking wm_get_events: it returns, with or without events,
+// by until_us. 0 clears the bound.
+internal void
+wm_set_wait_deadline(U64 until_us)
+{
+  wm_wait_deadline_us = until_us;
+}
+
+// For a platform's blocking wait: the microseconds it may wait, or max_U64
+// for no bound. The bound applies to one wait.
+internal U64
+wm_take_wait_timeout_us(void)
+{
+  U64 until = wm_wait_deadline_us;
+  wm_wait_deadline_us = 0;
+  if(until == 0) { return max_U64; }
+  U64 now = now_time_us();
+  return until > now ? until - now : 0;
+}
+
 internal String8
 wm_string_from_event_kind(WM_EventKind kind)
 {

@@ -170,7 +170,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
     CFG_Node *window = cfg_node_from_id(ws->cfg_id);
     CFG_Node *host = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
     RD_PanelAddress panel = rd_fixture_leaf(rd_fixture_owner(host));
-    String8 names[] = {str8_lit("records"), str8_lit("huge")};
+    String8 names[] = {str8_lit("records"), str8_lit("huge"), str8_lit("live")};
     UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc();
     ui_select_state(test_ui);
     for EachElement(n, names)
@@ -181,6 +181,8 @@ uishell_table_diagnostics(RD_WindowState *ws)
       // reach the Grid and sort the column.
       Vec2F32 header_pos = {0}, cell_pos = {0};
       B32 sorted = 0;
+      U64 requested_after = 0, deadline_after = 0, built_at = 0;
+      U64 saved_requested = rd_state->num_frames_requested, saved_deadline = rd_state->frame_deadline_us;
       U64 clicked_row = 0, focused_row = 0;
       UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = rd_view_address_from_cfg(view), .view = rd_view_address_from_cfg(view))
       for(U32 frame = 0; frame < 10; frame += 1)
@@ -203,6 +205,8 @@ uishell_table_diagnostics(RD_WindowState *ws)
           events.first = events.last = &click;
           events.count = 1;
         }
+        // Frame 9 has no input: what the View asks for then is its own.
+        if(frame == 9) { rd_state->num_frames_requested = 0; rd_state->frame_deadline_us = 0; built_at = now_time_us(); }
         UI_AnimationInfo animation = {0};
         ui_begin_build(ws->os, &events, &ws->ui->icon_info, ws->theme, &animation, 1.f/60, 1.f/60);
         if(clicking) { ui_state->mouse = pos; }
@@ -211,6 +215,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
           wh_view_ui_direct(wh_renderer_from_name(str8_lit("table")), rd_view_address_from_cfg(view), r2f32p(0, 0, 900, 600));
         }
         ui_end_build();
+        if(frame == 9) { requested_after = rd_state->num_frames_requested; deadline_after = rd_state->frame_deadline_us; }
         UI_Box *grid_box = &ui_nil_box;
         for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
         {
@@ -252,6 +257,17 @@ uishell_table_diagnostics(RD_WindowState *ws)
           drawn = uishell_table_cells_drawn;
         }
       }
+      rd_state->num_frames_requested = saved_requested;
+      rd_state->frame_deadline_us = saved_deadline;
+      if(str8_match(names[n], str8_lit("live"), 0))
+      {
+        TableCheck(requested_after == 0 && deadline_after > built_at && deadline_after <= now_time_us() + 250000,
+                   "a live table asks for one frame at its next tick, not every frame");
+      }
+      else
+      {
+        TableCheck(requested_after == 0 && deadline_after == 0, "a still table asks for no frames");
+      }
       if(n == 0)
       {
         TableCheck(sorted, "a click on a header, through the View, sorts its column");
@@ -262,6 +278,26 @@ uishell_table_diagnostics(RD_WindowState *ws)
       printf("TABLE_PAINT table=%.*s drawn=%llu visible=%llu\n", str8_varg(names[n]), (unsigned long long)drawn, (unsigned long long)visible);
     }
     ui_select_state(saved_ui);
+  }
+
+  // A timed frame request bounds the event wait: a blocking wait returns by
+  // its deadline, and the bound applies to one wait.
+  {
+    wm_get_events(scratch.arena, 0);
+    U64 begin = now_time_us(), deadline = begin + 40000;
+    U64 waits = 0, empty = 0;
+    while(now_time_us() < deadline && now_time_us() < begin + 1000000)
+    {
+      wm_set_wait_deadline(deadline);
+      WM_EventList got = wm_get_events(scratch.arena, 1);
+      waits += 1; empty += got.count == 0;
+    }
+    U64 end = now_time_us();
+    printf("TABLE_WAIT waits=%llu empty=%llu us=%llu\n", (unsigned long long)waits, (unsigned long long)empty, (unsigned long long)(end-begin));
+    TableCheck(end >= deadline && end < deadline + 50000, "a blocking wait returns at its deadline");
+    wm_set_wait_deadline(end + 1000);
+    wm_take_wait_timeout_us();
+    TableCheck(wm_take_wait_timeout_us() == max_U64, "a wait deadline bounds one wait");
   }
 
   // Frame cost: the 10^15-row table costs about what 1,000 rows do.

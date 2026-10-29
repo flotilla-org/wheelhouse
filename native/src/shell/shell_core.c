@@ -11330,6 +11330,19 @@ rd_request_frame(void)
   rd_state->num_frames_requested = 4;
 }
 
+// Asks for one frame at at_us on now_time_us's clock, without building the
+// frames before it: for work that changes on a clock (a live table's next
+// tick, a hold or open delay). The earliest request wins; a builder that
+// still wants its frame asks again as it builds.
+internal void
+rd_request_frame_at(U64 at_us)
+{
+  if(rd_state->frame_deadline_us == 0 || at_us < rd_state->frame_deadline_us)
+  {
+    rd_state->frame_deadline_us = Max(at_us, 1);
+  }
+}
+
 ////////////////////////////////
 //~ rjf: Main State Accessors
 
@@ -12533,6 +12546,11 @@ rd_frame(void)
     for(B32 pumped = 0;; pumped = 1)
     {
       B32 any_ready = 0, any_pending = 0;
+      if(rd_state->frame_deadline_us != 0 && now_time_us() >= rd_state->frame_deadline_us)
+      {
+        rd_state->frame_deadline_us = 0;
+        rd_state->num_frames_requested = Max(rd_state->num_frames_requested, 1);
+      }
       for(RD_WindowState *w = rd_state->first_window_state; w != &rd_nil_window_state; w = w->order_next)
       {
         B32 requested = rd_state->num_frames_requested != 0 || DEV_always_refresh || w->render_pending || events.count != 0;
@@ -12544,6 +12562,9 @@ rd_frame(void)
       if(pumped && (any_ready || !any_pending)) { break; }
       // Presentation callbacks wake the same pump as input.
       B32 wait = pumped || (rd_state->num_frames_requested == 0 && !DEV_always_refresh) || (any_pending && !any_ready);
+      // A timed request bounds the wait; when it comes due the next pass
+      // requests its frame.
+      if(wait && rd_state->frame_deadline_us != 0) { wm_set_wait_deadline(rd_state->frame_deadline_us); }
       WM_EventList batch = wm_get_events(scratch.arena, wait);
       events.frame_ready |= batch.frame_ready;
       wm_event_list_concat_in_place(&events, &batch);
