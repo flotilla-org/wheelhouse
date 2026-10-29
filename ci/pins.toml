@@ -6,12 +6,14 @@ format = 1
 [cleat]
 env = "CLEAT_REV"
 repo = "flotilla-org/cleat"
-rev = "c88692aa62c10fbeb10ecd22f6e637fb600ebd62"
+rev = "aa0458fb2d104a5d9432422dc9af3cd373d39d24"
 track = "manual"
-# Remote packet attach (cleat#379): `cleat proxy` and provider transports,
-# additive on provider ABI 11; packet protocol 15. Daemons on an older
-# protocol are rejected: coordinate the Cleat fleet and daily-driver
-# rollout (#97). Remote hosts need this Cleat for `cleat proxy` (#104).
+# Views within an attachment (cleat#399, cleat#400): one attachment per
+# session shared by every View of it (#417), additive on provider ABI 11;
+# packet protocol 16, which only a client asking for views gets. Attaching
+# with no default view fails against an older daemon: coordinate the Cleat
+# fleet and daily-driver rollout (#97). Remote hosts need this Cleat for
+# `cleat proxy` (#104).
 
 [jackstay]
 env = "JACKSTAY_REV"
