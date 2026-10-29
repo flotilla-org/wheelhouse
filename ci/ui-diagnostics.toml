@@ -1,0 +1,137 @@
+# UI diagnostics CI runs in the "Linux UI diagnostics" and "macOS UI
+# diagnostics" steps (ci/run-ui-diagnostics.py), and the default list for
+# tools/run-windows-diagnostics.ps1. Adding a diagnostic touches only this
+# file; see ci/README.md.
+#
+# Entries run in file order, each once per OS in `os` ("linux", "macos",
+# "windows"). An entry runs the app or a command:
+#
+#   flag     runs ./build/wheelhouse --<flag>_diagnostics, with
+#              --user:"$task_dir/<prefix>-user" --project:"$task_dir/<prefix>-project"
+#            before it; prefix = "" gives bare user and project. pre_args go
+#            between the directories and the flag, args after the flag.
+#            On Linux the app runs under `timeout 120s xvfb-run -a`.
+#   command  a shell-quoted command line, run as is (not under xvfb-run).
+#   env      variables set for that one run, written before the command.
+#
+# $task_dir is the one temporary directory the runner makes for the whole
+# run; it is expanded in commands, args, pre_args and env values. On Windows
+# only the flag name is used: the ps1 ignores prefix, args, pre_args and env,
+# makes its own directories and passes the shared_ui fixture directory itself.
+format = 1
+
+[[diagnostic]]
+flag = "shared_ui"
+prefix = "shared"
+args = ['--shared_ui_fixture_dir:"$task_dir"']
+os = ["linux", "macos", "windows"]
+
+[[diagnostic]]
+flag = "terminal_selection"
+prefix = "selection"
+os = ["linux", "macos", "windows"]
+
+[[diagnostic]]
+flag = "presentation"
+prefix = "presentation"
+os = ["macos"]
+
+[[diagnostic]]
+flag = "hosting"
+prefix = "hosting"
+os = ["linux", "macos"]
+
+# The remote-terminal check and managed_content stay macOS-only: they run real
+# terminal sessions, which ask Cleat for its Ghostty VT engine, and the Linux
+# job builds Cleat without one (vt: none). Running them there needs a
+# ghostty-vt build.
+[[diagnostic]]
+command = "bash tools/test-remote-terminal.sh ./build/wheelhouse ../cleat/target/debug/cleat"
+os = ["macos"]
+
+[[diagnostic]]
+flag = "skipped_frame"
+prefix = "skipped-frame"
+os = ["macos"]
+
+[[diagnostic]]
+flag = "live_resize"
+prefix = "resize"
+pre_args = ['--dashboard:"$task_dir/resize-dashboard"']
+os = ["macos"]
+
+[[diagnostic]]
+flag = "sidebar"
+prefix = ""
+os = ["linux", "macos", "windows"]
+
+[[diagnostic]]
+flag = "scroll_region"
+prefix = "scroll"
+os = ["linux", "macos", "windows"]
+
+[[diagnostic]]
+flag = "preview"
+prefix = "preview"
+os = ["linux", "macos", "windows"]
+
+[[diagnostic]]
+flag = "jackstay_input"
+prefix = "jackstay"
+os = ["linux", "macos", "windows"]
+
+[[diagnostic]]
+flag = "jackstay_input"
+prefix = "jackstay-generic"
+env = { WHEELHOUSE_INPUT_TEST_GENERIC = "1" }
+os = ["linux", "macos"]
+
+# Windows runs this one as `native\run_tests.bat -Diagnostics preview -NoPreviewBudget`.
+[[diagnostic]]
+flag = "preview"
+prefix = "preview-control"
+args = ["--no_preview_refresh_budget", "--no_preview_surface_budget", "--no_preview_render_budget"]
+os = ["linux", "macos"]
+
+[[diagnostic]]
+flag = "terminal_link"
+prefix = "link"
+os = ["linux", "macos", "windows"]
+
+[[diagnostic]]
+flag = "tooltip"
+prefix = "tooltip"
+os = ["linux", "macos", "windows"]
+
+[[diagnostic]]
+flag = "panel"
+prefix = "panel"
+os = ["linux", "macos", "windows"]
+
+[[diagnostic]]
+flag = "table"
+prefix = "table"
+os = ["linux", "macos"]
+
+# See the remote-terminal check above for why this is macOS-only.
+[[diagnostic]]
+flag = "managed_content"
+prefix = "managed"
+os = ["macos"]
+
+# Linux and macOS run this outside the display steps ("Headless terminal
+# clipboard effects" in build.yml).
+[[diagnostic]]
+flag = "terminal_clipboard"
+os = ["windows"]
+
+[[diagnostic]]
+flag = "terminal_glyph"
+prefix = "glyph"
+args = ['--terminal_glyph_fixture_ppm:"$task_dir/terminal.ppm"']
+os = ["macos", "windows"]
+
+# Reads the PPM terminal_glyph writes, so it must come after it.
+[[diagnostic]]
+command = 'python3 tools/validate-terminal-fixture-ppm.py "$task_dir/terminal.ppm"'
+os = ["macos"]

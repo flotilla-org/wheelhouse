@@ -1,6 +1,7 @@
 param(
-  # Diagnostics to run, by the name in their --<name>_diagnostics flag.
-  [string[]]$Diagnostics = @("shared_ui", "sidebar", "scroll_region", "preview", "tooltip", "panel", "jackstay_input", "terminal_link", "terminal_clipboard", "terminal_selection", "terminal_glyph"),
+  # Diagnostics to run, by the name in their --<name>_diagnostics flag. The
+  # default is the Windows list in ci/ui-diagnostics.toml.
+  [string[]]$Diagnostics = @(),
   [string]$Exe = "",
   [int]$TimeoutSeconds = 120,
   [switch]$NoPreviewBudget
@@ -11,9 +12,15 @@ param(
 # with `build wheelhouse`.
 
 $ErrorActionPreference = "Stop"
+$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+if(-not $PSBoundParameters.ContainsKey("Diagnostics")) {
+  $Diagnostics = @(& python (Join-Path (Join-Path $RepoRoot "ci") "run-ui-diagnostics.py") --os windows --names)
+  if($LASTEXITCODE -ne 0) {
+    throw "Could not read the Windows list from ci\ui-diagnostics.toml (needs python 3.11+ on PATH)"
+  }
+}
 # `powershell -File` passes "a,b" as one string; accept comma lists either way.
 $Diagnostics = @($Diagnostics | ForEach-Object { $_ -split "," } | Where-Object { $_ })
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 if([string]::IsNullOrWhiteSpace($Exe)) {
   $Exe = Join-Path $RepoRoot "build\wheelhouse.exe"
 }

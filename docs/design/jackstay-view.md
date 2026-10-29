@@ -256,7 +256,7 @@ Cargo output directory. `native/build.sh` and `native/build.bat` call locked Car
 library (`native/build.bat` with `backend-windows`); `native/build.bat` links
 `jackstay.dll.lib` and copies `jackstay.dll` beside `wheelhouse.exe`.
 Runtime admission requires an exact ABI match. CI pins Jackstay
-in `.github/workflows/build.yml`.
+in `ci/pins.toml`.
 
 ```sh
 WHEELHOUSE_JACKSTAY_DIR=/path/to/jackstay bash native/build.sh wheelhouse
