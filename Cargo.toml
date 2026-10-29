@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/wheelhouse-core",
+    "crates/wheelhouse-arrangement-oracle",
     "crates/wheelhouse-ffi",
     "crates/wheelhouse-git-watcher",
     "crates/wheelhouse-html",
