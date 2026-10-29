@@ -17,24 +17,25 @@ const core = new Core(config);
 let subscription = core.subscribe();
 const { model, apply, reset } = createModel();
 
-// Both calls throw for a subscription the core no longer knows. Uncaught,
-// that would stop the frame loop for good: follow again from a new
-// subscription, whose first delta rebuilds the model.
+// Both core calls throw for a subscription the core no longer knows.
+// Uncaught, that would stop the frame loop for good: follow again from a new
+// subscription, whose first delta rebuilds the model. Only the core calls are
+// caught, so a failure applying a delta still surfaces.
 function follow() {
+  let delta;
   try {
-    if (core.changedSince(subscription)) {
-      const delta = core.poll(subscription);
-      if (delta) apply(delta);
-    }
+    delta = core.changedSince(subscription) ? core.poll(subscription) : undefined;
   } catch (error) {
     console.warn("following the sidebar again:", error);
     subscription = core.subscribe();
-    const delta = core.poll(subscription);
+    const first = core.poll(subscription);
     batch(() => {
       reset();
-      if (delta) apply(delta);
+      if (first) apply(first);
     });
+    return;
   }
+  if (delta) apply(delta);
 }
 
 // The browser opens no workspaces yet: requests that would need one fail.
