@@ -1,9 +1,39 @@
+// The rule is the core's (crates/wheelhouse-core/src/dock.rs): these pass
+// the shell's registrations, hosts and counts to it.
+
+internal WheelhouseViewRegistration
+rd_dock_core_registration(RD_ViewRegistration *view)
+{
+  WheelhouseViewRegistration result = {{view->name.str, view->name.size}, view->traits, view->minimum_width, view->default_host};
+  return result;
+}
+
+internal WheelhouseDockHost
+rd_dock_core_host(RD_DockHost host)
+{
+  WheelhouseDockHost result = {(U32)host.kind < RD_DockHostKind_COUNT ? (U32)host.kind : WHEELHOUSE_DOCK_HOST_NONE,
+                               host.has_workspace_subject != 0, host.controlled_split, host.workspace_region, host.level, host.available_width};
+  return result;
+}
+
+internal RD_DockRule
+rd_dock_core_rule(U32 verdict, char *error)
+{
+  if(error)
+  {
+    fprintf(stderr, "Docking rule not applied: %s\n", error);
+    wheelhouse_string_free(error);
+  }
+  return (RD_DockRule)verdict;
+}
+
 internal RD_DockPresentation
 rd_dock_presentation(RD_DockHostKind host, U64 tab_count)
 {
   // A sidebar section's header holds all its panel's Views (sidebar-headers.md).
-  if(host == RD_DockHostKind_Sidebar) { return RD_DockPresentation_SectionHeader; }
-  return RD_DockPresentation_Tabs;
+  U32 kind = (U32)host < RD_DockHostKind_COUNT ? (U32)host : WHEELHOUSE_DOCK_HOST_NONE;
+  return wheelhouse_dock_presentation(kind, tab_count) == WHEELHOUSE_DOCK_PRESENTATION_SECTION_HEADER ?
+    RD_DockPresentation_SectionHeader : RD_DockPresentation_Tabs;
 }
 
 // One checker for drag feedback, command execution, and layout restore.
@@ -17,41 +47,22 @@ rd_dock_view_from_name(String8 name)
   return 0;
 }
 
-typedef struct RD_DockAcceptance RD_DockAcceptance;
-struct RD_DockAcceptance { RD_ViewTraits any_of, forbidden; };
-read_only global RD_DockAcceptance rd_dock_acceptance[RD_DockHostKind_COUNT] =
-{
-  {RD_ViewTrait_Section, 0},
-  {RD_ViewTrait_Content, 0},
-};
-
 internal RD_DockRule
 rd_dock_check(RD_ViewRegistration *view, RD_DockProposal p)
 {
-  // Unknown saved content can be removed, but has no placement traits.
-  if(view == 0) { return p.closing ? RD_DockRule_Valid : RD_DockRule_RegisteredView; }
-  RD_ViewTraits traits = view->traits;
-  if(p.closing && (traits & RD_ViewTrait_SelectsWorkspaces)) { return RD_DockRule_SelectorCannotClose; }
-  if(p.host.controlled_split && p.control_surfaces_after != 1) { return RD_DockRule_OneControlSurface; }
-  if(p.closing) { return RD_DockRule_Valid; }
-  if((traits & RD_ViewTrait_SelectsWorkspaces) && p.selected_workspace_region &&
-     p.selected_workspace_region == p.host.workspace_region) { return RD_DockRule_SelectorOutsideSelectedRegion; }
-  if((U32)p.host.kind >= RD_DockHostKind_COUNT) { return RD_DockRule_HostAcceptance; }
-  if(p.view_level != p.host.level) { return RD_DockRule_ControlSplitLevel; }
-  RD_DockAcceptance acceptance = rd_dock_acceptance[p.host.kind];
-  if((acceptance.any_of && !(traits & acceptance.any_of)) || (traits & acceptance.forbidden)) { return RD_DockRule_HostAcceptance; }
-  if((traits & RD_ViewTrait_NeedsWorkspaceSubject) && !p.host.has_workspace_subject) { return RD_DockRule_WorkspaceSubject; }
-  if(p.host.available_width < view->minimum_width) { return RD_DockRule_MinimumWidth; }
-  if((traits & RD_ViewTrait_Singleton) && p.instances_after != 1) { return RD_DockRule_Singleton; }
-  return RD_DockRule_Valid;
+  WheelhouseViewRegistration registration = view ? rd_dock_core_registration(view) : (WheelhouseViewRegistration){0};
+  WheelhouseDockProposal proposal = {rd_dock_core_host(p.host), p.selected_workspace_region, p.view_level,
+                                     p.instances_after, p.control_surfaces_after, p.closing != 0};
+  char *error = 0;
+  U32 verdict = wheelhouse_dock_check(view ? &registration : 0, &proposal, &error);
+  return rd_dock_core_rule(verdict, error);
 }
-
 
 internal RD_DockHostKind
 rd_dock_host_kind_from_panel_owner(RD_PanelOwner owner)
 {
-  if(owner.kind == RD_PanelOwnerKind_Sidebar) { return RD_DockHostKind_Sidebar; }
-  return RD_DockHostKind_WorkspaceRegion;
+  U32 kind = wheelhouse_dock_host_kind_from_owner(owner.kind == RD_PanelOwnerKind_Sidebar ? WHEELHOUSE_OWNER_SIDEBAR : WHEELHOUSE_OWNER_WORKSPACE);
+  return kind == WHEELHOUSE_DOCK_HOST_SIDEBAR ? RD_DockHostKind_Sidebar : RD_DockHostKind_WorkspaceRegion;
 }
 
 // These declarations use the root split's core state, not the subject
@@ -59,33 +70,36 @@ rd_dock_host_kind_from_panel_owner(RD_PanelOwner owner)
 internal CFG_ID
 rd_dock_view_level(RD_ViewRegistration *registration, RD_DockHost host)
 {
-  if(registration && (registration->traits & RD_ViewTrait_ControlSplitScope)) { return host.controlled_split; }
-  return host.level;
+  WheelhouseViewRegistration core = registration ? rd_dock_core_registration(registration) : (WheelhouseViewRegistration){0};
+  WheelhouseDockHost core_host = rd_dock_core_host(host);
+  return wheelhouse_dock_view_level(registration ? &core : 0, &core_host);
+}
+
+// rd_dock_instance_count, for the registration a placement or creation
+// checks.
+internal U32
+rd_dock_core_instances(void *context, U64 controlled_split)
+{
+  return rd_dock_instance_count(controlled_split, (RD_ViewRegistration *)context);
+}
+
+internal WheelhouseDockView
+rd_dock_core_view(RD_DockView view, WheelhouseViewRegistration *registration)
+{
+  if(view.registration) { *registration = rd_dock_core_registration(view.registration); }
+  WheelhouseDockView result = {view.exists != 0, view.registration ? registration : 0, rd_dock_core_host(view.source), view.level};
+  return result;
 }
 
 internal RD_DockRule
 rd_dock_placement(RD_DockView view, RD_DockHost destination)
 {
-  if(!view.exists || destination.kind >= RD_DockHostKind_COUNT) { return RD_DockRule_RegisteredView; }
-  RD_DockHost source = view.source;
-  RD_DockProposal p = {0};
-  p.host = destination;
-  p.selected_workspace_region = source.controlled_split;
-  RD_ViewRegistration *registration = view.registration;
-  p.view_level = view.level;
-  p.instances_after = 1;
-  p.control_surfaces_after = 1; // TODO(#164): derive counts from nested Controlled Splits.
-  // The current root Control Surface is implicit.
-  if(registration && (registration->traits & RD_ViewTrait_Singleton))
-  {
-    p.instances_after = rd_dock_instance_count ? rd_dock_instance_count(destination.controlled_split, registration) : 1;
-    if(source.controlled_split != p.host.controlled_split) { p.instances_after++; }
-  }
-  // Moving a selector to another Controlled Split would remove the source's
-  // only Control Surface and add a second to the destination.
-  if(registration && (registration->traits & RD_ViewTrait_SelectsWorkspaces) &&
-     source.controlled_split != p.host.controlled_split) { p.control_surfaces_after = 2; }
-  return rd_dock_check(registration, p);
+  WheelhouseViewRegistration registration = {0};
+  WheelhouseDockView core_view = rd_dock_core_view(view, &registration);
+  WheelhouseDockHost host = rd_dock_core_host(destination);
+  char *error = 0;
+  U32 verdict = wheelhouse_dock_placement(&core_view, &host, rd_dock_instance_count ? rd_dock_core_instances : 0, view.registration, &error);
+  return rd_dock_core_rule(verdict, error);
 }
 
 internal B32
@@ -98,28 +112,21 @@ internal RD_DockRule
 rd_dock_creation(String8 name, RD_DockHost destination)
 {
   RD_ViewRegistration *view = rd_dock_view_from_name(name);
-  if(!view) { return RD_DockRule_RegisteredView; }
-  RD_DockProposal p = {0};
-  p.host = destination;
-  p.view_level = (view->traits & RD_ViewTrait_ControlSplitScope) ? destination.controlled_split : p.host.level;
-  p.selected_workspace_region = p.host.controlled_split;
-  p.instances_after = (view->traits & RD_ViewTrait_Singleton) && rd_dock_instance_count ? rd_dock_instance_count(destination.controlled_split, view)+1 : 1;
-  // TODO(#164): derive this with placement/closure counts from nested splits.
-  // A creation must not add another selector to the implicit root surface.
-  p.control_surfaces_after = view && (view->traits & RD_ViewTrait_SelectsWorkspaces) ? 2 : 1;
-  return destination.kind < RD_DockHostKind_COUNT ? rd_dock_check(view, p) : RD_DockRule_HostAcceptance;
+  WheelhouseViewRegistration registration = view ? rd_dock_core_registration(view) : (WheelhouseViewRegistration){0};
+  WheelhouseDockHost host = rd_dock_core_host(destination);
+  char *error = 0;
+  U32 verdict = wheelhouse_dock_creation(view ? &registration : 0, &host, rd_dock_instance_count ? rd_dock_core_instances : 0, view, &error);
+  return rd_dock_core_rule(verdict, error);
 }
 
 internal RD_DockRule
 rd_dock_closure(RD_DockView view)
 {
-  if(!view.exists) { return RD_DockRule_RegisteredView; }
-  RD_DockProposal p = {0};
-  p.host = view.source;
-  p.closing = 1;
-  // TODO(#164): derive this with placement/creation counts from nested splits.
-  p.control_surfaces_after = 1;
-  return rd_dock_check(view.registration, p);
+  WheelhouseViewRegistration registration = {0};
+  WheelhouseDockView core_view = rd_dock_core_view(view, &registration);
+  char *error = 0;
+  U32 verdict = wheelhouse_dock_closure(&core_view, &error);
+  return rd_dock_core_rule(verdict, error);
 }
 
 internal B32
@@ -133,20 +140,8 @@ rd_dock_can_close(RD_DockView view)
 internal String8
 rd_dock_rule_message(RD_DockRule rule)
 {
-  switch(rule)
-  {
-    case RD_DockRule_Valid: return str8_lit("valid placement");
-    case RD_DockRule_RegisteredView: return str8_lit("the View type is not registered");
-    case RD_DockRule_HostAcceptance: return str8_lit("the host does not accept this View");
-    case RD_DockRule_WorkspaceSubject: return str8_lit("a Workspace Subject is required");
-    case RD_DockRule_MinimumWidth: return str8_lit("the target is narrower than the View's minimum width");
-    case RD_DockRule_Singleton: return str8_lit("only one instance of this View is allowed");
-    case RD_DockRule_OneControlSurface: return str8_lit("a Controlled Split must retain exactly one Control Surface");
-    case RD_DockRule_SelectorOutsideSelectedRegion: return str8_lit("a selector cannot occupy its selected Workspace Region");
-    case RD_DockRule_SelectorCannotClose: return str8_lit("the workspace selector cannot be closed");
-    case RD_DockRule_ControlSplitLevel: return str8_lit("the View belongs to a different Controlled Split level");
-  }
-  return str8_lit("invalid docking rule");
+  WheelhouseText message = wheelhouse_dock_rule_message(rule);
+  return message.len ? str8((U8 *)message.data, message.len) : str8_lit("invalid docking rule");
 }
 
 ////////////////////////////////
@@ -172,105 +167,62 @@ rd_dock_restore_leaf(RD_Arrangement *arrangement)
   return leaf;
 }
 
-// A View as restore found it: where it is, and whether it was its panel's
-// Selected View there.
-typedef struct RD_DockRestoreView RD_DockRestoreView;
-struct RD_DockRestoreView
-{
-  RD_DockRestoreView *next;
-  RD_ViewAddress view;
-  RD_ViewRegistration *registration;
-  RD_DockDocument *document;
-  RD_PanelID panel;
-  B32 selected;
-  B32 gone;
-};
-
-// Whether the checker accepts `view` where it is, assessed with one
-// instance so that duplicate cardinality does not mask validity.
-internal B32
-rd_dock_restore_valid(RD_DockRestoreView *view)
-{
-  RD_DockProposal p = {0};
-  p.host = view->document->host;
-  p.selected_workspace_region = p.host.controlled_split;
-  p.instances_after = p.control_surfaces_after = 1;
-  p.view_level = rd_dock_view_level(view->registration, p.host);
-  return rd_dock_check(view->registration, p) == RD_DockRule_Valid;
-}
-
+// Restore is the core's (dock::restore): each document goes as the core's
+// edit document with its tabs' registrations, and comes back edited.
 internal RD_ViewAddressList
 rd_dock_restore(RD_DockDocuments *documents, RD_DockRegistration *registration)
 {
   Arena *arena = documents->arena;
   RD_ViewAddressList pending = {0};
-  RD_DockRestoreView *first = 0, *last = 0;
-  for(RD_DockDocument *d = documents->first; d != 0; d = d->next)
+  Temp scratch = scratch_begin(&arena, 1);
+  U64 count = 0;
+  for(RD_DockDocument *d = documents->first; d != 0; d = d->next) { count += 1; }
+  WheelhouseDockDocument *core_documents = push_array(scratch.arena, WheelhouseDockDocument, count);
+  RD_DockDocument **list = push_array(scratch.arena, RD_DockDocument *, count);
+  U64 sidebar = WHEELHOUSE_NONE, workspace = WHEELHOUSE_NONE, i = 0;
+  for(RD_DockDocument *d = documents->first; d != 0; d = d->next, i += 1)
   {
-    RD_Arrangement *a = d->arrangement;
-    for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+    list[i] = d;
+    if(d == documents->sidebar) { sidebar = i; }
+    if(d == documents->workspace) { workspace = i; }
+    WheelhouseDockDocument *c = &core_documents[i];
+    c->doc = rd_core_doc_from_arrangement(scratch.arena, d->arrangement);
+    c->host = rd_dock_core_host(d->host);
+    U64 tabs = 0;
+    for(U64 p = 0; p < c->doc.panel_count; p++) { tabs += c->doc.panels[p].tab_count; }
+    size_t *kinds = push_array(scratch.arena, size_t, tabs);
+    U64 t = 0;
+    for(U64 p = 0; p < c->doc.panel_count; p++)
     {
-      for(RD_ArrangementTab *tab = p->first_tab; tab != 0; tab = tab->next)
+      for(U64 k = 0; k < c->doc.panels[p].tab_count; k++, t++)
       {
-        RD_DockRestoreView *v = push_array(arena, RD_DockRestoreView, 1);
-        v->view = tab->view;
-        v->registration = registration(tab->view);
-        v->document = d;
-        v->panel = p->id;
-        v->selected = rd_view_address_match(p->selected, tab->view);
-        SLLQueuePush(first, last, v);
+        RD_ViewRegistration *r = registration(rd_view_from_core_tab(&c->doc.panels[p].tabs[k]));
+        kinds[t] = r ? (size_t)(r - rd_view_registrations) : WHEELHOUSE_NONE;
       }
     }
+    c->tab_registrations = kinds;
   }
-
-  // One copy of each singleton: the first in tree order, unless a later one
-  // is where it is valid and the first is not.
-  RD_DockRestoreView *keepers[ArrayCount(rd_view_registrations)] = {0};
-  for(RD_DockRestoreView *v = first; v != 0; v = v->next)
+  WheelhouseViewRegistration registrations[ArrayCount(rd_view_registrations)];
+  for(U64 r = 0; r < ArrayCount(rd_view_registrations); r++) { registrations[r] = rd_dock_core_registration(&rd_view_registrations[r]); }
+  char *error = 0;
+  WheelhouseDockRestore *restored = wheelhouse_dock_restore(core_documents, count, sidebar, workspace, registrations, ArrayCount(registrations), &error);
+  if(restored)
   {
-    if(!v->registration || !(v->registration->traits & RD_ViewTrait_Singleton)) { continue; }
-    RD_DockRestoreView **keeper = &keepers[v->registration-rd_view_registrations];
-    if(!*keeper || (!rd_dock_restore_valid(*keeper) && rd_dock_restore_valid(v))) { *keeper = v; }
-  }
-  for(RD_DockRestoreView *v = first; v != 0; v = v->next)
-  {
-    if(!v->registration || !(v->registration->traits & RD_ViewTrait_Singleton) || keepers[v->registration-rd_view_registrations] == v) { continue; }
-    rd_arrangement_remove_tab(v->document->arrangement, v->view);
-    v->document->dirty = 1;
-    v->gone = 1;
-  }
-
-  // A View the checker refuses where it is moves to the end of its default
-  // host's first leaf, keeping its address. A sidebar section moved so is
-  // placed by its hints once the sidebar commits (`pending`), and the panel
-  // it leaves goes with it then.
-  for(RD_DockRestoreView *v = first; v != 0; v = v->next)
-  {
-    // Content that isn't a registered View has no default host: it stays.
-    if(v->gone || !v->registration || rd_dock_restore_valid(v)) { continue; }
-    RD_DockDocument *destination = v->registration->default_host == RD_DockHostKind_Sidebar ? documents->sidebar : documents->workspace;
-    if(destination == 0) { continue; }
-    if(str8_match(v->registration->name, str8_lit("sidebar_section"), 0))
+    for(U64 d = 0; d < count; d++)
     {
-      rd_view_address_list_push(arena, &pending, v->view);
-      RD_ArrangementPanel *source = rd_arrangement_panel_from_id(v->document->arrangement, v->panel);
-      if(source != &rd_nil_arrangement_panel && !source->restore_emptied) { source->restore_emptied = 1; v->document->dirty = 1; }
+      if(!restored->dirty[d]) { continue; }
+      list[d]->dirty = 1;
+      rd_arrangement_take(list[d]->arrangement, &restored->docs[d]);
     }
-    RD_ArrangementPanel *leaf = rd_dock_restore_leaf(destination->arrangement);
-    // A default can still lack context (for example a required subject).
-    // Moving a View already there would only reorder it.
-    if(v->document == destination && v->panel == leaf->id) { continue; }
-    if(v->document != destination)
-    {
-      rd_arrangement_detach_tab(v->document->arrangement, v->view);
-      v->document->dirty = 1;
-    }
-    // The destination keeps its Selected View unless this one was selected.
-    rd_arrangement_insert_tab(destination->arrangement, v->view, leaf->id, leaf->last_tab ? leaf->last_tab->view : rd_nil_view_address, v->selected);
-    destination->dirty = 1;
-    v->document = destination;
-    v->panel = leaf->id;
+    for(U64 m = 0; m < restored->moved_count; m++) { rd_view_address_list_push(arena, &pending, rd_view_from_core_tab(&restored->moved[m])); }
+    wheelhouse_dock_restore_free(restored);
   }
+  else
+  {
+    fprintf(stderr, "Dock restore not applied: %s\n", error ? error : "unknown error");
+    wheelhouse_string_free(error);
+  }
+  scratch_end(scratch);
   return pending;
 }
 

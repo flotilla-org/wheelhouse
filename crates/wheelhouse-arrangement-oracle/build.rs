@@ -18,6 +18,8 @@ fn main() {
     build
         .file(&source)
         .include(&native)
+        // shell_arrangement.h names the core's edit document.
+        .include(root.join("crates/wheelhouse-ffi/include"))
         .define("_GNU_SOURCE", None)
         // Its own `main` would be the test binary's.
         .define("main", "wh_oracle_base_main")

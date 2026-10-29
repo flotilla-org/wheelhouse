@@ -242,6 +242,44 @@ typedef struct BinnacleGrid BinnacleGrid;
 // No host (no such panel): any other value is the same.
 #define WHEELHOUSE_DOCK_HOST_NONE 2
 
+// A View kind's traits (core: dock::traits; the native RD_ViewTrait_*).
+#define WHEELHOUSE_VIEW_TRAIT_CONTENT (1 << 0)
+
+#define WHEELHOUSE_VIEW_TRAIT_SECTION (1 << 1)
+
+#define WHEELHOUSE_VIEW_TRAIT_SELECTS_WORKSPACES (1 << 2)
+
+#define WHEELHOUSE_VIEW_TRAIT_SINGLETON (1 << 3)
+
+#define WHEELHOUSE_VIEW_TRAIT_NEEDS_WORKSPACE_SUBJECT (1 << 4)
+
+// Content supplied by the root Controlled Split, not a child workspace.
+#define WHEELHOUSE_VIEW_TRAIT_CONTROL_SPLIT_SCOPE (1 << 6)
+
+// Its drag floater shows it live rather than as a texture (#253).
+#define WHEELHOUSE_VIEW_TRAIT_LIVE_DRAG_PREVIEW (1 << 7)
+
+// Draws a value: a Lens type of its name opens it.
+#define WHEELHOUSE_VIEW_TRAIT_VISUALIZER (1 << 8)
+
+// A dragged expression dropped on it becomes its expression.
+#define WHEELHOUSE_VIEW_TRAIT_EXPRESSION_DROP (1 << 9)
+
+// Draws its evaluated expression from `legacy_eval` (#313).
+#define WHEELHOUSE_VIEW_TRAIT_LEGACY_EVAL (1 << 10)
+
+// Declares a producer version: shape-only preservation is safe for it.
+#define WHEELHOUSE_VIEW_TRAIT_VERSIONED_SURFACE (1 << 11)
+
+// Offered by name where a View is made from an expression.
+#define WHEELHOUSE_VIEW_TRAIT_LISTED (1 << 12)
+
+// A control view: it shows the Dashboard's arrangement, not a Slot.
+#define WHEELHOUSE_VIEW_TRAIT_CONTROL (1 << 13)
+
+// One of the shell's own pages: presses keep focus on its query bar.
+#define WHEELHOUSE_VIEW_TRAIT_QUERY_FOCUS (1 << 14)
+
 // Verdicts (core: dock::Rule), in this order.
 #define WHEELHOUSE_DOCK_VALID 0
 
@@ -1530,6 +1568,10 @@ WheelhouseEditResult *wheelhouse_arrangement_apply_intent(const WheelhouseEditDo
 // An intent's stable name for the Automation Endpoint ("select-tab"),
 // static; empty for an unknown kind.
 WheelhouseText wheelhouse_arrangement_intent_name(uint32_t kind);
+
+// A weight as an edit writes it: the native config formatter's six
+// places, read back (core: arrangement::quantize).
+float wheelhouse_arrangement_quantize(float weight);
 
 // The card of `entity` as the core has it now: NULL without an error when
 // the catalog has no such entity. Release it with wheelhouse_card_release;

@@ -219,11 +219,21 @@ pub(crate) struct EditDoc {
 }
 
 impl EditDoc {
-    pub(crate) fn of(a: Arrangement<WheelhouseTab>) -> Self {
-        fn walk(panel: Panel<WheelhouseTab>, parent: usize, out: &mut EditDoc) {
+    pub(crate) fn of(mut a: Arrangement<WheelhouseTab>) -> Self {
+        let mut out = EditDoc {
+            panels: vec![],
+            _tabs: vec![],
+            _names: vec![],
+            removed: std::mem::take(&mut a.removed),
+            root_axis: if a.root_axis == Axis::Row { WHEELHOUSE_AXIS_ROW } else { WHEELHOUSE_AXIS_COLUMN },
+            next_id: a.next_id,
+        };
+        // Preorder, in a loop: a document may nest deeply.
+        let mut stack: Vec<(Panel<WheelhouseTab>, usize)> = a.root.take().into_iter().map(|root| (root, NONE)).collect();
+        while let Some((mut panel, parent)) = stack.pop() {
             let index = out.panels.len();
-            let tabs = panel.tabs;
-            let name = panel.named.unwrap_or_default();
+            let tabs = std::mem::take(&mut panel.tabs);
+            let name = panel.named.take().unwrap_or_default();
             out.panels.push(WheelhouseEditPanel {
                 parent,
                 id: panel.id.0,
@@ -238,20 +248,7 @@ impl EditDoc {
             });
             out._tabs.push(tabs);
             out._names.push(name);
-            for child in panel.children {
-                walk(child, index, out);
-            }
-        }
-        let mut out = EditDoc {
-            panels: vec![],
-            _tabs: vec![],
-            _names: vec![],
-            removed: a.removed,
-            root_axis: if a.root_axis == Axis::Row { WHEELHOUSE_AXIS_ROW } else { WHEELHOUSE_AXIS_COLUMN },
-            next_id: a.next_id,
-        };
-        if let Some(root) = a.root {
-            walk(root, NONE, &mut out);
+            stack.extend(std::mem::take(&mut panel.children).into_iter().rev().map(|child| (child, index)));
         }
         out
     }
@@ -359,18 +356,15 @@ fn result(
     out: Outcome<WheelhouseTab>,
     source: Option<(Arrangement<WheelhouseTab>, Outcome<WheelhouseTab>)>,
 ) -> *mut WheelhouseEditResult {
-    let owned = Owned {
-        doc: EditDoc::of(a),
-        removed: out.removed.clone(),
-        source: source.as_ref().map(|(s, o)| (EditDoc::of(s.clone()), o.removed.clone())),
-    };
+    let source_outcome = source.as_ref().map(|(_, o)| o.clone());
+    let owned = Owned { doc: EditDoc::of(a), removed: out.removed.clone(), source: source.map(|(s, o)| (EditDoc::of(s), o.removed)) };
     let value = WheelhouseEditResult {
         doc: owned.doc.doc(),
         outcome: outcome_view(&out, &owned.removed),
-        has_source: source.is_some() as u32,
+        has_source: owned.source.is_some() as u32,
         source_doc: owned.source.as_ref().map_or_else(empty_doc, |(d, _)| d.doc()),
-        source_outcome: match (&source, &owned.source) {
-            (Some((_, o)), Some((_, removed))) => outcome_view(o, removed),
+        source_outcome: match (&source_outcome, &owned.source) {
+            (Some(o), Some((_, removed))) => outcome_view(o, removed),
             _ => empty_outcome(),
         },
     };
@@ -569,4 +563,11 @@ pub extern "C" fn wheelhouse_arrangement_intent_name(kind: u32) -> Text {
         _ => None,
     };
     Text::borrowed(intent.map_or("", |i| i.name()))
+}
+
+/// A weight as an edit writes it: the native config formatter's six
+/// places, read back (core: arrangement::quantize).
+#[no_mangle]
+pub extern "C" fn wheelhouse_arrangement_quantize(weight: f32) -> f32 {
+    wheelhouse_core::arrangement::quantize(weight)
 }

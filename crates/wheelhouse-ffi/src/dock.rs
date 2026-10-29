@@ -15,30 +15,30 @@ pub const WHEELHOUSE_DOCK_HOST_WORKSPACE_REGION: u32 = 1;
 /// No host (no such panel): any other value is the same.
 pub const WHEELHOUSE_DOCK_HOST_NONE: u32 = 2;
 
-/// A View kind's traits (the native RD_ViewTrait_* bits).
-pub const WHEELHOUSE_VIEW_TRAIT_CONTENT: u32 = dock::traits::CONTENT;
-pub const WHEELHOUSE_VIEW_TRAIT_SECTION: u32 = dock::traits::SECTION;
-pub const WHEELHOUSE_VIEW_TRAIT_SELECTS_WORKSPACES: u32 = dock::traits::SELECTS_WORKSPACES;
-pub const WHEELHOUSE_VIEW_TRAIT_SINGLETON: u32 = dock::traits::SINGLETON;
-pub const WHEELHOUSE_VIEW_TRAIT_NEEDS_WORKSPACE_SUBJECT: u32 = dock::traits::NEEDS_WORKSPACE_SUBJECT;
+/// A View kind's traits (core: dock::traits; the native RD_ViewTrait_*).
+pub const WHEELHOUSE_VIEW_TRAIT_CONTENT: u32 = 1 << 0;
+pub const WHEELHOUSE_VIEW_TRAIT_SECTION: u32 = 1 << 1;
+pub const WHEELHOUSE_VIEW_TRAIT_SELECTS_WORKSPACES: u32 = 1 << 2;
+pub const WHEELHOUSE_VIEW_TRAIT_SINGLETON: u32 = 1 << 3;
+pub const WHEELHOUSE_VIEW_TRAIT_NEEDS_WORKSPACE_SUBJECT: u32 = 1 << 4;
 /// Content supplied by the root Controlled Split, not a child workspace.
-pub const WHEELHOUSE_VIEW_TRAIT_CONTROL_SPLIT_SCOPE: u32 = dock::traits::CONTROL_SPLIT_SCOPE;
+pub const WHEELHOUSE_VIEW_TRAIT_CONTROL_SPLIT_SCOPE: u32 = 1 << 6;
 /// Its drag floater shows it live rather than as a texture (#253).
-pub const WHEELHOUSE_VIEW_TRAIT_LIVE_DRAG_PREVIEW: u32 = dock::traits::LIVE_DRAG_PREVIEW;
+pub const WHEELHOUSE_VIEW_TRAIT_LIVE_DRAG_PREVIEW: u32 = 1 << 7;
 /// Draws a value: a Lens type of its name opens it.
-pub const WHEELHOUSE_VIEW_TRAIT_VISUALIZER: u32 = dock::traits::VISUALIZER;
+pub const WHEELHOUSE_VIEW_TRAIT_VISUALIZER: u32 = 1 << 8;
 /// A dragged expression dropped on it becomes its expression.
-pub const WHEELHOUSE_VIEW_TRAIT_EXPRESSION_DROP: u32 = dock::traits::EXPRESSION_DROP;
+pub const WHEELHOUSE_VIEW_TRAIT_EXPRESSION_DROP: u32 = 1 << 9;
 /// Draws its evaluated expression from `legacy_eval` (#313).
-pub const WHEELHOUSE_VIEW_TRAIT_LEGACY_EVAL: u32 = dock::traits::LEGACY_EVAL;
+pub const WHEELHOUSE_VIEW_TRAIT_LEGACY_EVAL: u32 = 1 << 10;
 /// Declares a producer version: shape-only preservation is safe for it.
-pub const WHEELHOUSE_VIEW_TRAIT_VERSIONED_SURFACE: u32 = dock::traits::VERSIONED_SURFACE;
+pub const WHEELHOUSE_VIEW_TRAIT_VERSIONED_SURFACE: u32 = 1 << 11;
 /// Offered by name where a View is made from an expression.
-pub const WHEELHOUSE_VIEW_TRAIT_LISTED: u32 = dock::traits::LISTED;
+pub const WHEELHOUSE_VIEW_TRAIT_LISTED: u32 = 1 << 12;
 /// A control view: it shows the Dashboard's arrangement, not a Slot.
-pub const WHEELHOUSE_VIEW_TRAIT_CONTROL: u32 = dock::traits::CONTROL;
+pub const WHEELHOUSE_VIEW_TRAIT_CONTROL: u32 = 1 << 13;
 /// One of the shell's own pages: presses keep focus on its query bar.
-pub const WHEELHOUSE_VIEW_TRAIT_QUERY_FOCUS: u32 = dock::traits::QUERY_FOCUS;
+pub const WHEELHOUSE_VIEW_TRAIT_QUERY_FOCUS: u32 = 1 << 14;
 
 /// Verdicts (core: dock::Rule), in this order.
 pub const WHEELHOUSE_DOCK_VALID: u32 = 0;
@@ -362,4 +362,45 @@ pub unsafe extern "C" fn wheelhouse_dock_restore(
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_dock_restore_free(restore: *mut WheelhouseDockRestore) {
     take::<WheelhouseDockRestore, RestoreOwned>(restore);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The header's bits and verdicts are the core's.
+    #[test]
+    fn trait_bits_and_verdicts_are_the_cores() {
+        use dock::traits::*;
+        let pairs = [
+            (WHEELHOUSE_VIEW_TRAIT_CONTENT, CONTENT),
+            (WHEELHOUSE_VIEW_TRAIT_SECTION, SECTION),
+            (WHEELHOUSE_VIEW_TRAIT_SELECTS_WORKSPACES, SELECTS_WORKSPACES),
+            (WHEELHOUSE_VIEW_TRAIT_SINGLETON, SINGLETON),
+            (WHEELHOUSE_VIEW_TRAIT_NEEDS_WORKSPACE_SUBJECT, NEEDS_WORKSPACE_SUBJECT),
+            (WHEELHOUSE_VIEW_TRAIT_CONTROL_SPLIT_SCOPE, CONTROL_SPLIT_SCOPE),
+            (WHEELHOUSE_VIEW_TRAIT_LIVE_DRAG_PREVIEW, LIVE_DRAG_PREVIEW),
+            (WHEELHOUSE_VIEW_TRAIT_VISUALIZER, VISUALIZER),
+            (WHEELHOUSE_VIEW_TRAIT_EXPRESSION_DROP, EXPRESSION_DROP),
+            (WHEELHOUSE_VIEW_TRAIT_LEGACY_EVAL, LEGACY_EVAL),
+            (WHEELHOUSE_VIEW_TRAIT_VERSIONED_SURFACE, VERSIONED_SURFACE),
+            (WHEELHOUSE_VIEW_TRAIT_LISTED, LISTED),
+            (WHEELHOUSE_VIEW_TRAIT_CONTROL, CONTROL),
+            (WHEELHOUSE_VIEW_TRAIT_QUERY_FOCUS, QUERY_FOCUS),
+        ];
+        assert!(pairs.iter().all(|(abi, core)| abi == core));
+        let verdicts = [
+            WHEELHOUSE_DOCK_VALID,
+            WHEELHOUSE_DOCK_REGISTERED_VIEW,
+            WHEELHOUSE_DOCK_HOST_ACCEPTANCE,
+            WHEELHOUSE_DOCK_WORKSPACE_SUBJECT,
+            WHEELHOUSE_DOCK_MINIMUM_WIDTH,
+            WHEELHOUSE_DOCK_SINGLETON,
+            WHEELHOUSE_DOCK_ONE_CONTROL_SURFACE,
+            WHEELHOUSE_DOCK_SELECTOR_OUTSIDE_SELECTED_REGION,
+            WHEELHOUSE_DOCK_SELECTOR_CANNOT_CLOSE,
+            WHEELHOUSE_DOCK_CONTROL_SPLIT_LEVEL,
+        ];
+        assert!(Rule::ALL.iter().zip(verdicts).all(|(r, v)| rule(*r) == v));
+    }
 }

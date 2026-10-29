@@ -705,3 +705,29 @@ fn weights_quantize_to_six_places_ties_up() {
     assert_eq!(quantize(0.0078125), 0.007813);
     assert_eq!(quantize(0.5), 0.5);
 }
+
+/// A hand-edited document may nest deeply (#206): edits, drops and the
+/// validity check walk it in loops, and dropping it doesn't recurse.
+#[test]
+fn a_deep_split_chain_edits_without_exhausting_the_stack() {
+    const DEPTH: u64 = 200_000;
+    let mut root: Panel<View> = Panel::new(PanelId(1));
+    root.weight = 1.0;
+    // Built from the leaf up, as a loaded document would be.
+    let mut chain = Panel::new(PanelId(DEPTH));
+    for id in (2..DEPTH).rev() {
+        let mut parent = Panel::new(PanelId(id));
+        parent.weight = 1.0;
+        chain.weight = 1.0;
+        parent.children.push(std::mem::replace(&mut chain, Panel::new(PanelId(0))));
+        chain = parent;
+    }
+    chain.weight = 1.0;
+    root.children.push(chain);
+    let mut a = Arrangement { root: Some(root), root_axis: Axis::Column, next_id: DEPTH + 1, removed: vec![] };
+    let leaf = PanelId(DEPTH);
+    assert!(ed(&mut a, Edit::InsertTab { tab: "text#1".into(), to: leaf, after: None, select: true }).applied);
+    assert!(ed(&mut a, Edit::Drop { tab: Some("text#1".into()), to: leaf, dir: Some(Dir::Right), after: None }).applied);
+    assert!(problem(&a).is_some(), "a chain of single children is not a valid arrangement");
+    assert_eq!(a.panel_with(&"text#1".to_string()).map(|p| p.id), Some(PanelId(DEPTH + 1)));
+}

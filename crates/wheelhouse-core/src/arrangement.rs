@@ -89,6 +89,17 @@ pub struct Panel<T> {
     pub restore_emptied: bool,
 }
 
+/// Dropping a panel takes its descendants in a loop, so a deep chain
+/// can't exhaust the stack.
+impl<T> Drop for Panel<T> {
+    fn drop(&mut self) {
+        let mut stack = std::mem::take(&mut self.children);
+        while let Some(mut panel) = stack.pop() {
+            stack.append(&mut panel.children);
+        }
+    }
+}
+
 impl<T> Panel<T> {
     pub fn new(id: PanelId) -> Self {
         Self { id, weight: 0.0, children: vec![], tabs: vec![], selected: None, named: None, options_from: None, restore_emptied: false }
@@ -322,18 +333,28 @@ impl<T: Clone + PartialEq> Arrangement<T> {
         path.iter().fold(self.root.as_mut().expect("a path is under the root"), |panel, &i| &mut panel.children[i])
     }
 
-    /// The first path in tree order whose panel matches.
+    /// The first path in tree order whose panel matches. Every walk here is
+    /// a loop, not a recursion: a hand-edited document may nest deeply
+    /// (#206).
     fn find(&self, matches: impl Fn(&Panel<T>) -> bool) -> Option<Path> {
         let root = self.root.as_ref()?;
-        let mut stack: Vec<(Path, &Panel<T>)> = vec![(vec![], root)];
-        while let Some((path, panel)) = stack.pop() {
-            if matches(panel) {
-                return Some(path);
-            }
-            for (i, child) in panel.children.iter().enumerate().rev() {
-                let mut child_path = path.clone();
-                child_path.push(i);
-                stack.push((child_path, child));
+        // The panels along the path, each with the index of its next child.
+        let mut path: Path = vec![];
+        let mut stack: Vec<(&Panel<T>, usize)> = vec![(root, 0)];
+        if matches(root) {
+            return Some(path);
+        }
+        while let Some((panel, next)) = stack.last_mut() {
+            if let Some(child) = panel.children.get(*next) {
+                path.push(*next);
+                *next += 1;
+                if matches(child) {
+                    return Some(path);
+                }
+                stack.push((child, 0));
+            } else {
+                stack.pop();
+                path.pop();
             }
         }
         None
@@ -361,15 +382,14 @@ impl<T: Clone + PartialEq> Arrangement<T> {
     /// Removes the tabs of the panel at `path` and those under it, in tree
     /// order, onto `removed`.
     fn remove_tabs(&mut self, path: &[usize], removed: &mut Vec<T>) {
-        fn walk<T>(panel: &mut Panel<T>, removed: &mut Vec<T>) {
+        if self.root.is_none() {
+            return;
+        }
+        let mut stack = vec![self.at_mut(path)];
+        while let Some(panel) = stack.pop() {
             removed.append(&mut panel.tabs);
             panel.selected = None;
-            for child in &mut panel.children {
-                walk(child, removed);
-            }
-        }
-        if self.root.is_some() {
-            walk(self.at_mut(path), removed);
+            stack.extend(panel.children.iter_mut().rev());
         }
     }
 
@@ -493,9 +513,8 @@ impl<T: Clone + PartialEq> Arrangement<T> {
                     self.root = Some(keep);
                 }
                 Some((&pi, grandparent)) => {
-                    let keep = self.at_mut(parent_path).children.remove(0);
+                    let mut keep = self.at_mut(parent_path).children.remove(0);
                     if keep.children.is_empty() {
-                        let mut keep = keep;
                         keep.weight = quantize(parent_weight);
                         self.at_mut(grandparent).children[pi] = keep;
                     } else {
@@ -504,7 +523,7 @@ impl<T: Clone + PartialEq> Arrangement<T> {
                         // place, sharing its weight.
                         let grandparent = self.at_mut(grandparent);
                         grandparent.children.remove(pi);
-                        for (k, mut child) in keep.children.into_iter().enumerate() {
+                        for (k, mut child) in std::mem::take(&mut keep.children).into_iter().enumerate() {
                             child.weight = quantize(child.weight * parent_weight);
                             grandparent.children.insert(pi + k, child);
                         }
@@ -640,23 +659,19 @@ impl<T: Clone + PartialEq> Arrangement<T> {
         if from == to {
             return false;
         }
-        fn walk<T: PartialEq + Clone>(panel: &mut Panel<T>, from: &T, to: &T, found: &mut bool) {
+        let mut found = false;
+        let mut stack: Vec<&mut Panel<T>> = self.root.iter_mut().collect();
+        while let Some(panel) = stack.pop() {
             for tab in &mut panel.tabs {
                 if tab == from {
                     *tab = to.clone();
-                    *found = true;
+                    found = true;
                 }
             }
             if panel.selected.as_ref() == Some(from) {
                 panel.selected = Some(to.clone());
             }
-            for child in &mut panel.children {
-                walk(child, from, to, found);
-            }
-        }
-        let mut found = false;
-        if let Some(root) = &mut self.root {
-            walk(root, from, to, &mut found);
+            stack.extend(panel.children.iter_mut().rev());
         }
         for tab in &mut self.removed {
             if tab == from {
