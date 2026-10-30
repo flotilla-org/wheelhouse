@@ -123,6 +123,37 @@ uishell_overview_rect(UIShell_Overview *o, WheelhouseOverviewRect r)
   return r2f32p((F32)((r.x0 - v.x0)*sx), (F32)((r.y0 - v.y0)*sy), (F32)((r.x1 - v.x0)*sx), (F32)((r.y1 - v.y0)*sy));
 }
 
+// Whether a tile, with its label, is in the region: the scene draws only
+// those.
+internal B32
+uishell_overview_tile_in_view(UIShell_Overview *o, const WheelhouseOverviewTile *tile)
+{
+  Vec2F32 dim = dim_2f32(o->region);
+  Rng2F32 rect = uishell_overview_rect(o, tile->rect);
+  Rng2F32 label = uishell_overview_rect(o, tile->label);
+  return !(rect.x1 < 0 || rect.x0 > dim.x || label.y1 < 0 || rect.y0 > dim.y);
+}
+
+// Whether the region shows a workspace this frame, so it needs building:
+// the current one always (it has the keyboard, also mid-flight), and
+// through the scene those whose tiles the camera sees. The others wait,
+// however many the window has.
+internal B32
+uishell_overview_shows(UIShell_Overview *o, CFG_Node *current, CFG_ID cfg_id)
+{
+  if(cfg_id == current->id) { return 1; }
+  WheelhouseOverviewFrame *f = o->frame;
+  if(f == 0 || !o->through_scene) { return 0; }
+  for(U64 i = 0; i < f->tile_count; i++)
+  {
+    if(uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_core(f->tiles[i].workspace_id)) == cfg_id)
+    {
+      return uishell_overview_tile_in_view(o, &f->tiles[i]);
+    }
+  }
+  return 0;
+}
+
 internal String8
 uishell_overview_text(Arena *arena, WheelhouseText text)
 {
@@ -207,9 +238,9 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
       {
         const WheelhouseOverviewTile *tile = &tiles[i];
         if((pass == 1) != (tile->current != 0)) { continue; }
+        if(!uishell_overview_tile_in_view(o, tile)) { continue; }
         Rng2F32 rect = uishell_overview_rect(o, tile->rect);
         Rng2F32 label_rect = uishell_overview_rect(o, tile->label);
-        if(rect.x1 < visible.x0 || rect.x0 > visible.x1 || label_rect.y1 < visible.y0 || rect.y0 > visible.y1) { continue; }
         CFG_ID cfg_id = uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_core(tile->workspace_id));
         UI_TagF("tab") UI_TagF(tile->current ? "" : "inactive")
         {

@@ -2,8 +2,10 @@
 // workspace at rest draws as itself; a switch is a flight drawn through the
 // scene that settles on the new workspace, or a cut without motion; the
 // toggle opens the overview; clicking a heading fits its group and Escape
-// backs out a level at a time; clicking a tile picks its workspace. Runs
-// after the workspace lifecycle diagnostics, on the overview's own clock.
+// backs out a level at a time; clicking a tile picks its workspace. Only
+// the workspaces the region shows build: the current one, and through the
+// scene those the camera sees. Runs after the workspace lifecycle
+// diagnostics, on the overview's own clock.
 
 #define OverviewCheck(cond, msg) do { if(!(cond)) { ok = 0; fprintf(stderr, "FAIL overview: %s\n", msg); } } while(0)
 
@@ -71,7 +73,7 @@ uishell_overview_diagnostics(CFG_Node *window)
   OverviewCheck(state && state->core, "sidebar fixture core");
   if(!ok) { scratch_end(scratch); return 0; }
   UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
-  for(U64 i = split.inventory.count; i < 2; i++)
+  for(U64 i = split.inventory.count; i < 3; i++)
   {
     uishell_new_workspace(window);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
@@ -79,22 +81,50 @@ uishell_overview_diagnostics(CFG_Node *window)
   uishell_sidebar_observe(state, &split);
   uishell_sidebar_refresh(state);
   CFG_Node *a = split.inventory.first ? cfg_node_from_id(split.inventory.first->id) : &cfg_nil_node;
-  CFG_Node *b = split.inventory.first && split.inventory.first->next ? cfg_node_from_id(split.inventory.first->next->id) : &cfg_nil_node;
-  OverviewCheck(a != &cfg_nil_node && b != &cfg_nil_node, "two open workspaces");
+  OverviewCheck(a != &cfg_nil_node && split.inventory.count >= 3, "three open workspaces");
   if(!ok) { scratch_end(scratch); return 0; }
   Rng2F32 region = r2f32p(320, 0, 1600, 800);
   B32 saved_toggle = ws->workspace_zoom_open;
   ws->workspace_zoom_open = 0;
   UIShell_Overview o = {0};
 
-  //- At rest on a workspace, it draws as itself.
+  //- At rest on a workspace, it draws as itself, and only it builds. Of the
+  // others, b's tile is nearest a's and c's farthest.
+  CFG_Node *b = &cfg_nil_node, *c = &cfg_nil_node;
   o = uishell_overview_diagnostic_step(ws, 0, a, region); uishell_overview_end(&o);
   o = uishell_overview_diagnostic_step(ws, 1000, a, region);
-  OverviewCheck(o.frame && o.frame->tile_count >= 2, "every open workspace has a tile");
+  OverviewCheck(o.frame && o.frame->tile_count >= 3, "every open workspace has a tile");
   OverviewCheck(!o.through_scene && o.frame && o.frame->settled, "a workspace at rest draws as itself");
+  if(o.frame)
+  {
+    const WheelhouseOverviewTile *home = 0;
+    for(U64 i = 0; i < o.frame->tile_count; i++) { if(o.frame->tiles[i].current) { home = &o.frame->tiles[i]; } }
+    F64 nearest = inf32(), farthest = -1;
+    for(U64 i = 0; home != 0 && i < o.frame->tile_count; i++)
+    {
+      const WheelhouseOverviewTile *tile = &o.frame->tiles[i];
+      if(tile == home) { continue; }
+      F64 dx = (tile->rect.x0 + tile->rect.x1 - home->rect.x0 - home->rect.x1)/2;
+      F64 dy = (tile->rect.y0 + tile->rect.y1 - home->rect.y0 - home->rect.y1)/2;
+      F64 d = dx*dx + dy*dy;
+      CFG_Node *node = cfg_node_from_id(uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_core(tile->workspace_id)));
+      if(d < nearest)  { nearest = d; b = node; }
+      if(d > farthest) { farthest = d; c = node; }
+    }
+  }
+  OverviewCheck(b != &cfg_nil_node && c != &cfg_nil_node && b != c, "tiles near and far from the current one");
+  if(!ok) { uishell_overview_end(&o); scratch_end(scratch); return 0; }
+  OverviewCheck(uishell_overview_shows(&o, a, a->id) && !uishell_overview_shows(&o, a, b->id) && !uishell_overview_shows(&o, a, c->id),
+                "at rest only the current workspace builds");
   uishell_overview_end(&o);
 
   //- A switch flies through the scene and settles on the new workspace.
+  // Leaving, the camera sees a and b but not yet c, so c doesn't build.
+  o = uishell_overview_diagnostic_step(ws, 1, b, region);
+  OverviewCheck(o.through_scene && uishell_overview_shows(&o, b, a->id) && uishell_overview_shows(&o, b, b->id),
+                "a switch builds the workspaces it flies between");
+  OverviewCheck(!uishell_overview_shows(&o, b, c->id), "a switch doesn't build a workspace out of view");
+  uishell_overview_end(&o);
   o = uishell_overview_diagnostic_step(ws, 16, b, region);
   OverviewCheck(o.through_scene && o.frame->flying, "a switch is a flight through the scene");
   OverviewCheck(o.frame->mode == WHEELHOUSE_OVERVIEW_WORKSPACE && !ws->workspace_zoom_open, "a switch leaves the overview closed");
@@ -111,6 +141,7 @@ uishell_overview_diagnostics(CFG_Node *window)
   o = uishell_overview_diagnostic_step(ws, 1000, b, region);
   OverviewCheck(o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW && !o.frame->flying && o.through_scene && ws->workspace_zoom_open,
                 "the overview stays open at rest");
+  OverviewCheck(uishell_overview_shows(&o, b, a->id) && uishell_overview_shows(&o, b, c->id), "the overview builds every tile it shows");
   uishell_overview_end(&o);
 
   //- A heading fits its group; Escape backs out a level at a time.

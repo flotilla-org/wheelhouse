@@ -9602,14 +9602,18 @@ rd_window_frame(void)
       //- build the other Materialized children as ordinary container children
       // (per ADR-0005): everything in them runs; they render into their own
       // reduced-res surfaces (never composited to the stage), input-inert &
-      // focus-off - not hidden, visible at preview scale (sidebar rows, zoom)
+      // focus-off - not hidden, visible at preview scale (sidebar rows, zoom).
+      // through the overview's scene, only those the camera sees build
       for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first;
           child != 0 && ws->workspace_surface_entry_count < root_controlled_split.inventory.count + 1;
           child = child->next)
       {
         if(child->mount.owner_cfg == &cfg_nil_node ||
            (!workspace_zoom_open && (child->mount.owner_cfg == workspace_mount->owner_cfg ||
-                                    !rd_workspace_preview_is_demanded(ws, child->id))))
+                                    !rd_workspace_preview_is_demanded(ws, child->id))) ||
+           (workspace_zoom_open && !DEV_coverflow_overview &&
+            !uishell_overview_shows(&overview, workspace_mount->owner_cfg, child->id) &&
+            !rd_workspace_preview_is_demanded(ws, child->id)))
         {
           continue;
         }
