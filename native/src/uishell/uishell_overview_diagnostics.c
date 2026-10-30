@@ -68,19 +68,43 @@ uishell_overview_diagnostic_input(RD_WindowState *ws, CFG_Node *window, CFG_Node
   return found;
 }
 
-// Builds the overview in a test UI state for four frames: finds the box
-// keyed `target`, presses it, moves the mouse `by` and releases there.
-// Returns whether the box was there.
+// Whether every tile label the last build drew reads its workspace's
+// title, as the overview has it now.
 internal B32
-uishell_overview_diagnostic_drag(RD_WindowState *ws, CFG_Node *window, CFG_Node *current, Rng2F32 region, Arena *arena, String8 target, Vec2F32 by)
+uishell_overview_diagnostic_labels_read(RD_WindowState *ws, CFG_Node *current, Rng2F32 region)
+{
+  B32 ok = 1;
+  UIShell_Overview o = uishell_overview_diagnostic_step(ws, 0, current, region);
+  for(U64 i = 0; o.frame != 0 && i < o.frame->tile_count; i++)
+  {
+    const WheelhouseOverviewTile *tile = &o.frame->tiles[i];
+    CFG_ID cfg_id = uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_core(tile->workspace_id));
+    UI_Box *label = ui_box_from_key(ui_key_from_stringf(ui_key_zero(), "###overview_tile_label_%I64u", cfg_id));
+    if(!ui_box_is_nil(label) && label->last_touched_build_index + 1 == ui_state->build_index &&
+       !str8_match(label->string, str8((U8 *)tile->title.data, tile->title.len), 0))
+    { ok = 0; }
+  }
+  uishell_overview_end(&o);
+  return ok;
+}
+
+// Builds the overview in a test UI state, a frame every 16ms of its
+// clock: finds the box keyed `target`, presses it, moves the mouse `by`,
+// holds it there `hold_ms` and releases, then builds `after` frames more.
+// Returns whether the box was there; `labels_read` whether every label
+// drawn while dragging read its workspace's title.
+internal B32
+uishell_overview_diagnostic_drag(RD_WindowState *ws, CFG_Node *window, CFG_Node *current, Rng2F32 region, Arena *arena, String8 target, Vec2F32 by,
+                                 F64 hold_ms, U32 after, B32 *labels_read)
 {
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
   ui_select_state(test);
   Vec2F32 at = {0};
   B32 found = 0;
-  for(U32 frame = 0; frame < 4; frame++)
+  *labels_read = 1;
+  for(U32 frame = 0; frame < 4 + after; frame++)
   {
-    UIShell_Overview o = uishell_overview_diagnostic_step(ws, 0, current, region);
+    UIShell_Overview o = uishell_overview_diagnostic_step(ws, frame == 0 ? 0 : frame == 3 ? 16 + hold_ms : 16, current, region);
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
     UI_IconInfo icons = ws->ui->icon_info;
     UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
@@ -102,6 +126,7 @@ uishell_overview_diagnostic_drag(RD_WindowState *ws, CFG_Node *window, CFG_Node 
       at = uishell_workspace_lifecycle_center(test, target);
       found = at.x != 0 || at.y != 0;
     }
+    if(frame == 2 && !uishell_overview_diagnostic_labels_read(ws, current, region)) { *labels_read = 0; }
   }
   ui_select_state(saved_ui); ui_state_release(test);
   return found;
@@ -296,13 +321,36 @@ uishell_overview_diagnostics(CFG_Node *window)
     }
     uishell_overview_end(&o);
     U64 picks = uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), shown_tile);
-    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena,
-                                                   push_str8f(scratch.arena, "###overview_tile_%I64u", shown_tile), v2f32(100, 0)),
+    String8 shown_key = push_str8f(scratch.arena, "###overview_tile_%I64u", shown_tile);
+    B32 labels_read = 0;
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(40, 0), 200, 0, &labels_read),
                   "a tile of the long row in view");
+    OverviewCheck(labels_read, "the labels drawn while a row slides read their workspaces' titles");
     o = uishell_overview_diagnostic_step(ws, 0, b, region);
-    OverviewCheck(o.frame->groups[long_row].slide > before, "dragging a long row slides it with the mouse");
+    F64 released = o.frame->groups[long_row].slide;
+    OverviewCheck(released > before, "dragging a long row slides it with the mouse");
     OverviewCheck(uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), shown_tile) == picks &&
                   o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW, "a drag doesn't pick the tile it started on");
+    uishell_overview_end(&o);
+    //- A row let go of while moving glides on; one held still first stays
+    // where it was let go.
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(40, 0), 0, 0, &labels_read),
+                  "a tile of the long row to drag on");
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    released = o.frame->groups[long_row].slide;
+    uishell_overview_end(&o);
+    uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 8, &labels_read);
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(o.frame->groups[long_row].slide > released, "a row let go of while moving glides on");
+    uishell_overview_end(&o);
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(-30, 0), 200, 0, &labels_read),
+                  "a tile of the long row to drag and hold");
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    released = o.frame->groups[long_row].slide;
+    uishell_overview_end(&o);
+    uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 8, &labels_read);
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(o.frame->groups[long_row].slide == released, "a row held still before it's let go doesn't glide");
     uishell_overview_end(&o);
     //- A click on a tile of a long row still picks it: the row under it
     // doesn't take the press.
