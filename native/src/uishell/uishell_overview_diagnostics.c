@@ -4,8 +4,9 @@
 // toggle opens the overview; clicking a heading fits its group and Escape
 // backs out a level at a time; clicking a tile picks its workspace. Only
 // the workspaces the region shows build: the current one, and through the
-// scene those the camera sees. Runs after the workspace lifecycle
-// diagnostics, on the overview's own clock.
+// scene those the camera sees. A local group is a row of its own under its
+// name, and scrolling over a row too long for the region slides it. Runs
+// after the workspace lifecycle diagnostics, on the overview's own clock.
 
 #define OverviewCheck(cond, msg) do { if(!(cond)) { ok = 0; fprintf(stderr, "FAIL overview: %s\n", msg); } } while(0)
 
@@ -26,10 +27,11 @@ uishell_overview_diagnostic_step(RD_WindowState *ws, F64 ms, CFG_Node *current, 
 }
 
 // Builds the overview in a test UI state for three frames, clicking the box
-// keyed `target` on the second and third (press, release). Returns whether
-// the box was there to click.
+// keyed `target` on the second and third (press, release), or, given a
+// `scroll`, scrolling over it on the second. Returns whether the box was
+// there.
 internal B32
-uishell_overview_diagnostic_click(RD_WindowState *ws, CFG_Node *window, CFG_Node *current, Rng2F32 region, Arena *arena, String8 target)
+uishell_overview_diagnostic_input(RD_WindowState *ws, CFG_Node *window, CFG_Node *current, Rng2F32 region, Arena *arena, String8 target, Vec2F32 scroll)
 {
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
   ui_select_state(test);
@@ -41,9 +43,11 @@ uishell_overview_diagnostic_click(RD_WindowState *ws, CFG_Node *window, CFG_Node
     UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
     UI_IconInfo icons = ws->ui->icon_info;
     UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
-    if(frame > 0 && found)
+    B32 scrolls = (scroll.x != 0 || scroll.y != 0);
+    if(frame > 0 && found && !(scrolls && frame == 2))
     {
-      event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release, .pos = at};
+      event.v = (scrolls ? (UI_Event){.kind = UI_EventKind_Scroll, .pos = at, .delta_2f32 = scroll, .scroll_is_precise = 1}
+                         : (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release, .pos = at});
       events.first = events.last = &event; events.count = 1;
     }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -61,6 +65,24 @@ uishell_overview_diagnostic_click(RD_WindowState *ws, CFG_Node *window, CFG_Node
   }
   ui_select_state(saved_ui); ui_state_release(test);
   return found;
+}
+
+internal B32
+uishell_overview_diagnostic_click(RD_WindowState *ws, CFG_Node *window, CFG_Node *current, Rng2F32 region, Arena *arena, String8 target)
+{
+  return uishell_overview_diagnostic_input(ws, window, current, region, arena, target, v2f32(0, 0));
+}
+
+// The group headed `heading` in the overview's frame, or -1.
+internal S64
+uishell_overview_diagnostic_group(UIShell_Overview *o, String8 heading)
+{
+  for(U64 i = 0; o->frame && i < o->frame->group_count; i++)
+  {
+    WheelhouseText text = o->frame->groups[i].heading;
+    if(str8_match(str8((U8 *)text.data, text.len), heading, 0)) { return (S64)i; }
+  }
+  return -1;
 }
 
 internal B32
@@ -185,6 +207,46 @@ uishell_overview_diagnostics(CFG_Node *window)
   OverviewCheck(!o.through_scene && o.frame->settled, "without motion a switch cuts");
   uishell_overview_end(&o);
 
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region); uishell_overview_end(&o);
+
+  //- A local group is a row of its own, headed by its name, beside the
+  // default group's in the same section.
+  String8 home_section = push_str8_copy(scratch.arena, uishell_local_groups_section_of(window, uishell_sidebar_default_local_id));
+  UIShell_LocalGroup *made_group = uishell_sidebar_local_add_group(window, home_section, str8_lit("Overview row"));
+  String8 made_group_id = push_str8_copy(scratch.arena, made_group->id);
+  uishell_sidebar_local_new_workspace(window, uishell_sidebar_local_group(window, made_group_id));
+  //- ...and enough workspaces in the default group to overflow its row.
+  for(U64 i = 0; i < 6; i++) { uishell_new_workspace(window); }
+  uishell_local_groups_publish(state, window, scratch.arena);
+  split = uishell_root_controlled_split_from_window(scratch.arena, window);
+  uishell_sidebar_observe(state, &split);
+  uishell_sidebar_refresh(state);
+  ws->workspace_zoom_open = 1;
+  o = uishell_overview_diagnostic_step(ws, 16, b, region); uishell_overview_end(&o);
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
+  S64 made_row = uishell_overview_diagnostic_group(&o, str8_lit("Overview row"));
+  OverviewCheck(made_row >= 0 && o.frame->group_count >= 2, "a local group is a row of its own, headed by its name");
+  S64 long_row = -1;
+  for(U64 i = 0; i < o.frame->group_count; i++) { if(o.frame->groups[i].slide_min < 0) { long_row = (S64)i; } }
+  OverviewCheck(long_row >= 0, "a row too long for the region can slide");
+  CFG_ID long_tile = 0;
+  for(U64 i = 0; long_row >= 0 && i < o.frame->tile_count; i++)
+  {
+    if(o.frame->tiles[i].group == (U64)long_row && long_tile == 0)
+    { long_tile = uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_core(o.frame->tiles[i].workspace_id)); }
+  }
+  uishell_overview_end(&o);
+  if(long_tile != 0)
+  {
+    OverviewCheck(uishell_overview_diagnostic_input(ws, window, b, region, scratch.arena,
+                                                    push_str8f(scratch.arena, "###overview_tile_%I64u", long_tile), v2f32(0, 200)),
+                  "a tile in the long row");
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(o.frame->groups[long_row].slide < 0, "scrolling over a long row slides it");
+    uishell_overview_end(&o);
+  }
+  uishell_sidebar_local_delete_group(window, made_group_id);
+  ws->workspace_zoom_open = 0;
   o = uishell_overview_diagnostic_step(ws, 1000, b, region); uishell_overview_end(&o);
   ws->workspace_zoom_open = saved_toggle;
   fprintf(stderr, "Overview diagnostics: %s\n", ok ? "passed" : "FAILED");

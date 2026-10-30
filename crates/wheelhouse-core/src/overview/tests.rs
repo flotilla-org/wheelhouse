@@ -242,8 +242,9 @@ fn entry(section: &str, segments: Vec<PlacementSegment>, workspace: u64) -> Over
 }
 
 /// A sidebar's worth of live workspaces: a tree of projects, convoys and
-/// vessels, some of whose nodes are open; some open workspaces also listed
-/// flat in an attention section; some nothing places.
+/// vessels, some of whose nodes are open, some projects under a local
+/// section as local groups are; some open workspaces also listed flat in an
+/// attention section; some nothing places.
 fn draw_entries(tc: &TestCase) -> Vec<OverviewEntry> {
     let mut next = 0;
     let mut open = || {
@@ -252,19 +253,22 @@ fn draw_entries(tc: &TestCase) -> Vec<OverviewEntry> {
     };
     let mut tree = vec![];
     for p in 0..tc.draw(gs::integers::<usize>().max_value(4)) {
+        let section =
+            tc.draw(gs::booleans()).then(|| segment("section", entity(LOCAL_SECTION_KIND, tc.draw(gs::integers::<usize>().max_value(1)))));
+        let path = |rest: Vec<PlacementSegment>| section.iter().cloned().chain(rest).collect::<Vec<_>>();
         let project = segment("project", entity("project", p));
         if tc.draw(gs::booleans()) {
-            tree.push(entry("tree", vec![project.clone()], open()));
+            tree.push(entry("tree", path(vec![project.clone()]), open()));
         }
         for c in 0..tc.draw(gs::integers::<usize>().max_value(4)) {
             let convoy = segment("convoy", entity("convoy", format!("{p}.{c}")));
             if tc.draw(gs::booleans()) {
-                tree.push(entry("tree", vec![project.clone(), convoy.clone()], open()));
+                tree.push(entry("tree", path(vec![project.clone(), convoy.clone()]), open()));
             }
             for v in 0..tc.draw(gs::integers::<usize>().max_value(3)) {
                 if tc.draw(gs::booleans()) {
                     let vessel = segment("vessel", entity("vessel", format!("{p}.{c}.{v}")));
-                    tree.push(entry("tree", vec![project.clone(), convoy.clone(), vessel], open()));
+                    tree.push(entry("tree", path(vec![project.clone(), convoy.clone(), vessel]), open()));
                 }
             }
         }
@@ -289,14 +293,20 @@ fn draw_entries(tc: &TestCase) -> Vec<OverviewEntry> {
     all
 }
 
+/// How many local sections a path starts with.
+fn sections(key: &PlacementKey) -> usize {
+    key.0.iter().take_while(|s| s.entity.kind == LOCAL_SECTION_KIND).count()
+}
+
 fn shown(layout: &LogicalLayout) -> Vec<WorkspaceId> {
     layout.groups.iter().flat_map(|g| g.clusters.iter()).flat_map(|c| c.tiles.iter()).map(|t| t.workspace_id).collect()
 }
 
 /// Every open workspace is in the layout once, shown or hidden, at its
-/// deepest place in the sidebar: its group is the top of that path and its
-/// cluster the path's first two steps. Workspaces nothing places are
-/// grouped together under one heading.
+/// deepest place in the sidebar: its group is the top of that path below
+/// any local sections, headed by that node's label, and its cluster the
+/// path's first two steps below them. Workspaces nothing places are grouped
+/// together under one heading.
 #[hegel::test(test_cases = 300)]
 fn each_workspace_is_placed_once_by_its_hierarchy(tc: TestCase) {
     let entries = draw_entries(&tc);
@@ -326,8 +336,11 @@ fn each_workspace_is_placed_once_by_its_hierarchy(tc: TestCase) {
             let heading = &layout.groups.iter().find(|g| g.key == group).unwrap().heading;
             assert_eq!(heading, OTHER_WORKSPACES);
         } else {
-            assert_eq!(group.head.as_ref(), deepest.key.0.first().map(|s| &s.entity));
-            assert_eq!(cluster.0, deepest.key.0[..deepest.key.0.len().min(2)]);
+            let start = sections(&deepest.key);
+            assert_eq!(group.head.as_ref(), deepest.key.0.get(start).map(|s| &s.entity));
+            assert_eq!(cluster.0, deepest.key.0[..deepest.key.0.len().min(start + 2)]);
+            let heading = &layout.groups.iter().find(|g| g.key == group).unwrap().heading;
+            assert_eq!(heading, &deepest.labels[start]);
         }
     }
     // A group head's own workspace is its own cluster; no two clusters share a key.
@@ -335,7 +348,7 @@ fn each_workspace_is_placed_once_by_its_hierarchy(tc: TestCase) {
         let keys: BTreeSet<_> = group.clusters.iter().map(|c| &c.key).collect();
         assert_eq!(keys.len(), group.clusters.len());
         for cluster in &group.clusters {
-            assert_eq!(cluster.is_group_head, group.key.head.is_some() && cluster.key.0.len() == 1);
+            assert_eq!(cluster.is_group_head, group.key.head.is_some() && cluster.key.0.len() == sections(&cluster.key) + 1);
         }
     }
 }
