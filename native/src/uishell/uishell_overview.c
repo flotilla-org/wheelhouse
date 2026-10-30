@@ -154,6 +154,29 @@ uishell_overview_shows(UIShell_Overview *o, CFG_Node *current, CFG_ID cfg_id)
   return 0;
 }
 
+// Dragging a row too long for the region slides it with the mouse, from
+// where it was when pressed, as far as its ends. A press only becomes a
+// drag past half a line, so a click on a tile still picks it.
+internal B32
+uishell_overview_drag_row(UIShell_Overview *o, UI_Signal sig, U64 group)
+{
+  WheelhouseOverviewFrame *f = o->frame;
+  UIShell_SidebarState *state = o->state;
+  B32 slides = (group < f->group_count && f->view_mode == WHEELHOUSE_OVERVIEW_ROWS && f->groups[group].slide_min < 0);
+  if(ui_pressed(sig))
+  {
+    state->overview_dragged = 0;
+    state->overview_drag_slide = slides ? f->groups[group].slide : 0;
+  }
+  if(!slides || !ui_dragging(sig)) { return 0; }
+  F32 dx = ui_drag_delta().x;
+  if(!state->overview_dragged && abs_f32(dx) < ui_top_font_size()*0.5f) { return 0; }
+  state->overview_dragged = 1;
+  F64 units = (f->view.x1 - f->view.x0)/Max(1.f, dim_2f32(o->region).x);
+  F64 by = state->overview_drag_slide + dx*units - f->groups[group].slide;
+  return by != 0 && wheelhouse_overview_slide(state->core, group, by, o->now_ms, 0);
+}
+
 internal String8
 uishell_overview_text(Arena *arena, WheelhouseText text)
 {
@@ -162,7 +185,8 @@ uishell_overview_text(Arena *arena, WheelhouseText text)
 
 // The region drawn through the scene: cluster washes, group headings and
 // the tiles, each showing its workspace's surface. Picking a tile and
-// fitting a group are flights; scrolling pans the overview or slides a row.
+// fitting a group are flights; scrolling pans the overview or slides a row,
+// as dragging a row does.
 // Input waits for the overview: a switch's flight is only drawn.
 internal void
 uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledSplit *split, CFG_Node *current)
@@ -195,6 +219,19 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
                                                 "###workspace_overview");
   UI_Parent(scene_box)
   {
+    //- rows too long for the region: dragging one, between its tiles or
+    // on them, slides it. A row lies under its tiles and takes input after
+    // them, so a press on a tile is the tile's.
+    UI_Box **rows = push_array(scratch.arena, UI_Box *, f->group_count);
+    for(U64 i = 0; interactive && f->view_mode == WHEELHOUSE_OVERVIEW_ROWS && i < f->group_count; i++)
+    {
+      if(groups[i].slide_min >= 0) { continue; }
+      Rng2F32 rect = uishell_overview_rect(o, groups[i].bounds);
+      if(rect.x1 < visible.x0 || rect.x0 > visible.x1 || rect.y1 < visible.y0 || rect.y0 > visible.y1) { continue; }
+      ui_set_next_rect(rect);
+      rows[i] = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "###overview_row_%I64u", i);
+    }
+
     //- clusters: a faint wash behind each, one hover step over the region
     Vec4F32 wash = ui_color_from_name(str8_lit("hover"));
     wash.w *= rd_hover_alpha(wash, ui_color_from_name(str8_lit("background")), RD_HoverBrightnessStep)*label_alpha;
@@ -264,7 +301,9 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
               ui_box_equip_custom_draw(box, rd_workspace_preview_box_draw, draw);
             }
           }
-          if(interactive && cfg_id != 0 && ui_clicked(ui_signal_from_box(box)))
+          UI_Signal sig = interactive ? ui_signal_from_box(box) : (UI_Signal){0};
+          moved = (interactive && uishell_overview_drag_row(o, sig, tile->group)) || moved;
+          if(interactive && cfg_id != 0 && ui_clicked(sig) && !o->state->overview_dragged)
           {
             moved = wheelhouse_overview_pick(o->state->core, tile->workspace_id, o->now_ms, 0);
             if(cfg_id != current->id)
@@ -283,6 +322,10 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
           }
         }
       }
+    }
+    for(U64 i = 0; i < f->group_count; i++)
+    {
+      if(rows[i] != 0) { moved = uishell_overview_drag_row(o, ui_signal_from_box(rows[i]), i) || moved; }
     }
   }
 

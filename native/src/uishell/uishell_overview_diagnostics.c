@@ -5,8 +5,9 @@
 // backs out a level at a time; clicking a tile picks its workspace. Only
 // the workspaces the region shows build: the current one, and through the
 // scene those the camera sees. A local group is a row of its own under its
-// name, and scrolling over a row too long for the region slides it. Runs
-// after the workspace lifecycle diagnostics, on the overview's own clock.
+// name, and scrolling over or dragging a row too long for the region
+// slides it. Runs after the workspace lifecycle diagnostics, on the
+// overview's own clock.
 
 #define OverviewCheck(cond, msg) do { if(!(cond)) { ok = 0; fprintf(stderr, "FAIL overview: %s\n", msg); } } while(0)
 
@@ -52,6 +53,45 @@ uishell_overview_diagnostic_input(RD_WindowState *ws, CFG_Node *window, CFG_Node
     }
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = at;
+    UIShell_RegsScope(.window = window->id)
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_overview_ui(ws, &o, &split, current); }
+    ui_end_build();
+    uishell_overview_end(&o);
+    if(frame == 0)
+    {
+      at = uishell_workspace_lifecycle_center(test, target);
+      found = at.x != 0 || at.y != 0;
+    }
+  }
+  ui_select_state(saved_ui); ui_state_release(test);
+  return found;
+}
+
+// Builds the overview in a test UI state for four frames: finds the box
+// keyed `target`, presses it, moves the mouse `by` and releases there.
+// Returns whether the box was there.
+internal B32
+uishell_overview_diagnostic_drag(RD_WindowState *ws, CFG_Node *window, CFG_Node *current, Rng2F32 region, Arena *arena, String8 target, Vec2F32 by)
+{
+  UI_State *saved_ui = ui_state, *test = ui_state_alloc();
+  ui_select_state(test);
+  Vec2F32 at = {0};
+  B32 found = 0;
+  for(U32 frame = 0; frame < 4; frame++)
+  {
+    UIShell_Overview o = uishell_overview_diagnostic_step(ws, 0, current, region);
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+    Vec2F32 mouse = frame >= 2 ? add_2f32(at, by) : at;
+    if(found && (frame == 1 || frame == 3))
+    {
+      event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_Release, .pos = mouse};
+      events.first = events.last = &event; events.count = 1;
+    }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = mouse;
     UIShell_RegsScope(.window = window->id)
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
     { uishell_overview_ui(ws, &o, &split, current); }
@@ -243,7 +283,34 @@ uishell_overview_diagnostics(CFG_Node *window)
                   "a tile in the long row");
     o = uishell_overview_diagnostic_step(ws, 0, b, region);
     OverviewCheck(o.frame->groups[long_row].slide < 0, "scrolling over a long row slides it");
+    //- Dragging a tile of the row slides it back, and releasing over the
+    // tile doesn't pick it.
+    F64 before = o.frame->groups[long_row].slide;
+    CFG_ID shown_tile = 0;
+    Vec2F32 dim = dim_2f32(region);
+    for(U64 i = 0; i < o.frame->tile_count; i++)
+    {
+      Vec2F32 at = center_2f32(uishell_overview_rect(&o, o.frame->tiles[i].rect));
+      if(o.frame->tiles[i].group == (U64)long_row && !o.frame->tiles[i].current && at.x > 0 && at.x < dim.x && shown_tile == 0)
+      { shown_tile = uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_core(o.frame->tiles[i].workspace_id)); }
+    }
     uishell_overview_end(&o);
+    U64 picks = uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), shown_tile);
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena,
+                                                   push_str8f(scratch.arena, "###overview_tile_%I64u", shown_tile), v2f32(100, 0)),
+                  "a tile of the long row in view");
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(o.frame->groups[long_row].slide > before, "dragging a long row slides it with the mouse");
+    OverviewCheck(uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), shown_tile) == picks &&
+                  o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW, "a drag doesn't pick the tile it started on");
+    uishell_overview_end(&o);
+    //- A click on a tile of a long row still picks it: the row under it
+    // doesn't take the press.
+    OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena,
+                                                    push_str8f(scratch.arena, "###overview_tile_%I64u", shown_tile)),
+                  "a tile of the long row to click");
+    OverviewCheck(uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), shown_tile) == picks + 1,
+                  "a click on a tile of a long row picks it");
   }
   uishell_sidebar_local_delete_group(window, made_group_id);
   ws->workspace_zoom_open = 0;
