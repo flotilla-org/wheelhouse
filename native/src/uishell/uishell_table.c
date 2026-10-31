@@ -282,6 +282,9 @@ uishell_table_key(BinnacleGrid *grid, UI_Event *evt)
     uishell_table_act(grid, a);
     return 1;
   }
+  // Delete and Backspace arrive as navigation that deletes (a text field's
+  // delete over a character or a word): nothing for a table's focus.
+  if(evt->kind == UI_EventKind_Navigate && (evt->flags & UI_EventFlag_Delete)) { return 0; }
   if(evt->kind == UI_EventKind_Navigate && (evt->delta_2s32.x != 0 || evt->delta_2s32.y != 0))
   {
     B32 extend = !!(evt->flags & UI_EventFlag_KeepMark);

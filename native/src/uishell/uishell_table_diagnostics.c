@@ -184,6 +184,12 @@ uishell_table_diagnostics(RD_WindowState *ws)
     snap = uishell_table_diag_frame(table, 1200, 800, 0);
     TableCheck(taken && uishell_table_diag_selected(&snap, BINNACLE_COLS, col) && !uishell_table_diag_selected(&snap, BINNACLE_ROWS, row),
                "Ctrl+Space selects the focused column");
+    // Cmd+Backspace, as its command sends it: a word's delete, not a move.
+    evt = uishell_table_diag_nav(-1, 0, UI_EventDeltaUnit_Word);
+    evt.flags |= UI_EventFlag_Delete;
+    taken = uishell_table_key(grid, &evt);
+    snap = uishell_table_diag_frame(table, 1200, 800, 0);
+    TableCheck(!taken && snap.axes[BINNACLE_COLS].focus.position == col, "Cmd+Backspace does not move focus");
     evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_F3};
     TableCheck(uishell_table_key(grid, &evt), "F3 steps find");
     evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_F3, .modifiers = WM_Modifier_Shift};
