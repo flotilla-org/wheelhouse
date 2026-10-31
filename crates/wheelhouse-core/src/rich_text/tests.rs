@@ -118,3 +118,35 @@ fn polls_need_a_live_subscription() {
     assert_eq!(rich.changed_since(id), Err(UnknownSubscription(id)));
     assert!(!rich.unsubscribe(id));
 }
+
+#[test]
+fn a_key_removed_and_made_again_between_polls_is_removed_then_upserted() {
+    let mut rich = RichText::open("alpha\n\nbravo\n");
+    let id = rich.subscribe();
+    rich.poll(id).unwrap();
+    let bravo = Key::ROOT.child(1);
+    rich.reload("alpha\n");
+    rich.reload("alpha\n\n- charlie\n");
+    let delta = rich.poll(id).unwrap().unwrap();
+    let at = |wanted: &dyn Fn(&Op) -> bool| delta.ops.iter().position(wanted).unwrap_or_else(|| panic!("{:?}", delta.ops));
+    let removed = at(&|op| *op == Op::Remove(bravo));
+    let made = at(&|op| matches!(op, Op::Upsert(c) if c.key == bravo && c.kind == Kind::List));
+    assert!(removed < made, "the old node goes before the new one comes");
+    assert!(delta.ops.iter().any(|op| matches!(op, Op::Children { parent, .. } if *parent == bravo)));
+}
+
+#[test]
+fn a_freed_slot_reused_under_another_key_still_removes_the_old_key() {
+    let mut rich = RichText::open("alpha\n\nbravo\n");
+    let id = rich.subscribe();
+    rich.poll(id).unwrap();
+    let bravo = Key::ROOT.child(1);
+    let slot = rich.doc().get(bravo).unwrap();
+    rich.reload("alpha\n");
+    rich.reload("> alpha\n");
+    let quoted = Key::ROOT.child(0).child(0);
+    assert_eq!(rich.doc().get(quoted), Some(slot), "the quote's paragraph took bravo's slot");
+    let delta = rich.poll(id).unwrap().unwrap();
+    assert!(delta.ops.contains(&Op::Remove(bravo)), "{:?}", delta.ops);
+    assert!(delta.ops.iter().any(|op| matches!(op, Op::Upsert(c) if c.key == quoted)));
+}

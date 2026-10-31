@@ -59,10 +59,11 @@ impl RichText {
     }
 
     /// Nodes whose key and content are unchanged keep their versions.
-    /// Returns whether anything changed.
+    /// Returns whether anything changed. Offsets are `u32`, so markdown is
+    /// under 4 GiB.
     pub fn reload(&mut self, markdown: &str) -> bool {
-        let staged = ingest::parse(markdown.to_owned());
-        let changed = self.doc.reconcile(staged, &mut self.ring, self.generation + 1);
+        let staged = ingest::parse(markdown);
+        let changed = self.doc.reconcile(staged, markdown, &mut self.ring, self.generation + 1);
         if changed {
             self.generation += 1;
         }

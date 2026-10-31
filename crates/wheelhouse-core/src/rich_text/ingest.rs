@@ -72,7 +72,6 @@ pub(crate) struct Staged {
     /// In document order: a parent before its children.
     pub nodes: Vec<StagedNode>,
     texts: String,
-    pub source: String,
 }
 
 impl Staged {
@@ -477,24 +476,17 @@ fn marker(src: &str, at: usize) -> String {
     rest[..end + spaces].to_owned()
 }
 
-pub(crate) fn parse(source: String) -> Staged {
-    let mut builder = Builder {
-        src: &source,
-        staged: Staged { nodes: vec![], texts: String::new(), source: String::new() },
-        stack: vec![],
-        leaf: None,
-        keys: HashSet::new(),
-    };
+pub(crate) fn parse(source: &str) -> Staged {
+    let mut builder =
+        Builder { src: source, staged: Staged { nodes: vec![], texts: String::new() }, stack: vec![], leaf: None, keys: HashSet::new() };
     let all = 0..source.len();
     builder.open_container(Kind::Root, Detail::None, &all);
-    for (event, range) in Parser::new_ext(&source, options()).into_offset_iter() {
+    for (event, range) in Parser::new_ext(source, options()).into_offset_iter() {
         builder.event(event, range);
     }
     builder.close_leaf();
     while !builder.stack.is_empty() {
         builder.close_container();
     }
-    let mut staged = builder.staged;
-    staged.source = source;
-    staged
+    builder.staged
 }

@@ -36,7 +36,8 @@ impl Pages {
         let text = &mut self.pages[page];
         let start = text.len();
         text.push_str(s);
-        TextRange { page: page as u32, start: start as u32, len: s.len() as u32 }
+        let offset = |n: usize| u32::try_from(n).expect("text under 4 GiB");
+        TextRange { page: offset(page), start: offset(start), len: offset(s.len()) }
     }
 
     pub fn get(&self, range: TextRange) -> &str {

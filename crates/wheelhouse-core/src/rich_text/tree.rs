@@ -508,7 +508,7 @@ impl Tree {
 
     /// Keeps each node whose key and content hash match. Returns whether
     /// anything changed.
-    pub(crate) fn reconcile(&mut self, staged: Staged, ring: &mut Ring, generation: u64) -> bool {
+    pub(crate) fn reconcile(&mut self, staged: Staged, source: &str, ring: &mut Ring, generation: u64) -> bool {
         let mut changed = false;
         let mut ids = Vec::with_capacity(staged.nodes.len());
         let mut seen = vec![false; self.nodes.len()];
@@ -575,12 +575,14 @@ impl Tree {
         if let Some(&root) = ids.first() {
             self.nodes[root as usize].next_sibling = NIL;
         }
-        let Staged { nodes, source, .. } = staged;
-        for (s, node) in nodes.into_iter().enumerate() {
+        for (s, node) in staged.nodes.into_iter().enumerate() {
             self.sources[ids[s] as usize] = node.source;
         }
-        self.source = Source::new(&source);
-        self.flatten();
+        // Offsets into the source move even when no node changed.
+        self.source = Source::new(source);
+        if changed {
+            self.flatten();
+        }
         if self.text.written() > 2 * self.live_text + PAGE {
             self.compact();
         }
