@@ -6,14 +6,15 @@ format = 1
 [cleat]
 env = "CLEAT_REV"
 repo = "flotilla-org/cleat"
-rev = "aa0458fb2d104a5d9432422dc9af3cd373d39d24"
+rev = "32c255eacb708feccd5a104925ca1517e4c23e54"
 track = "manual"
 # Views within an attachment (cleat#399, cleat#400): one attachment per
 # session shared by every View of it (#417), additive on provider ABI 11;
 # packet protocol 16, which only a client asking for views gets. Attaching
 # with no default view fails against an older daemon: coordinate the Cleat
 # fleet and daily-driver rollout (#97). Remote hosts need this Cleat for
-# `cleat proxy` (#104).
+# `cleat proxy` (#104). An exited session keeps its screen through resizes
+# and reports how its program exited (cleat#406), shown in the View's pill.
 
 [jackstay]
 env = "JACKSTAY_REV"
