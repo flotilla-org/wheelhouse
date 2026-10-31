@@ -22,6 +22,26 @@ uishell_table_diag_click(BinnacleGrid *grid, F32 x, F32 y)
   binnacle_grid_pointer(grid, (BinnaclePointerEvent){BINNACLE_POINTER_UP, x, y, BINNACLE_BUTTON_PRIMARY, 0, 0});
 }
 
+// Whether the drawn item at `position` on `axis` is selected whole.
+internal B32
+uishell_table_diag_selected(BinnacleSnapshot *snap, U32 axis, U64 position)
+{
+  BinnacleAxisSnapshot *a = &snap->axes[axis];
+  for(size_t i = 0; i < a->strip_len; i += 1)
+  {
+    if(a->strip[i].position == position) { return !!(a->headers[i].flags & BINNACLE_HEADER_SELECTED); }
+  }
+  return 0;
+}
+
+// A key as the window hands it to the View: a navigation command's event,
+// or a press or typed text with modifiers.
+internal UI_Event
+uishell_table_diag_nav(S32 x, S32 y, UI_EventDeltaUnit unit)
+{
+  return (UI_Event){.kind = UI_EventKind_Navigate, .delta_unit = unit, .delta_2s32 = v2s32(x, y)};
+}
+
 internal String8
 uishell_table_diag_cell(Arena *arena, WheelhouseTable *table, U64 row, U64 col)
 {
@@ -125,6 +145,49 @@ uishell_table_diagnostics(RD_WindowState *ws)
     binnacle_grid_action(grid, &down);
     snap = uishell_table_diag_frame(table, 1200, 800, 0);
     TableCheck(snap.axes[BINNACLE_ROWS].focus.position == focused+1, "moving focus down moves it one row");
+
+    // The View's keys, as binnacle's web host binds them.
+    U64 row = snap.axes[BINNACLE_ROWS].focus.position, row_count = snap.axes[BINNACLE_ROWS].count;
+    UI_Event evt = uishell_table_diag_nav(0, 1, UI_EventDeltaUnit_Word);
+    B32 taken = uishell_table_key(grid, &evt);
+    snap = uishell_table_diag_frame(table, 1200, 800, 0);
+    TableCheck(taken && snap.axes[BINNACLE_ROWS].focus.position == row_count-1, "Cmd+Down goes to the last row");
+    evt = uishell_table_diag_nav(1, 0, UI_EventDeltaUnit_Word);
+    uishell_table_key(grid, &evt);
+    snap = uishell_table_diag_frame(table, 1200, 800, 0);
+    U64 last_col = snap.axes[BINNACLE_COLS].focus.position;
+    TableCheck(last_col == snap.axes[BINNACLE_COLS].count-1, "Cmd+Right goes to the last column");
+    evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_PageUp, .modifiers = WM_Modifier_Alt};
+    taken = uishell_table_key(grid, &evt);
+    snap = uishell_table_diag_frame(table, 1200, 800, 0);
+    TableCheck(taken && snap.axes[BINNACLE_COLS].focus.position < last_col && snap.axes[BINNACLE_ROWS].focus.position == row_count-1,
+               "Alt+Page Up pages back along the columns");
+    evt = uishell_table_diag_nav(0, -1, UI_EventDeltaUnit_Word);
+    uishell_table_key(grid, &evt);
+    snap = uishell_table_diag_frame(table, 1200, 800, 0);
+    row = snap.axes[BINNACLE_ROWS].focus.position;
+    U64 col = snap.axes[BINNACLE_COLS].focus.position;
+    TableCheck(row == 0, "Cmd+Up goes to the first row");
+    evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Space, .modifiers = WM_Modifier_Shift};
+    taken = uishell_table_key(grid, &evt);
+    UI_Event space = {.kind = UI_EventKind_Text, .string = str8_lit(" "), .modifiers = WM_Modifier_Shift};
+    B32 space_taken = uishell_table_key(grid, &space);
+    B32 typed = 0;
+    for(BinnacleEffect effect; binnacle_grid_poll_effect(grid, &effect);) { typed |= effect.kind == BINNACLE_EFFECT_TEXT_TYPED; }
+    snap = uishell_table_diag_frame(table, 1200, 800, 0);
+    TableCheck(taken && uishell_table_diag_selected(&snap, BINNACLE_ROWS, row) && !uishell_table_diag_selected(&snap, BINNACLE_COLS, col),
+               "Shift+Space selects the focused row");
+    TableCheck(space_taken && !typed,
+               "the space Shift+Space types is not text for the cell");
+    evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Space, .modifiers = WM_Modifier_Ctrl};
+    taken = uishell_table_key(grid, &evt);
+    snap = uishell_table_diag_frame(table, 1200, 800, 0);
+    TableCheck(taken && uishell_table_diag_selected(&snap, BINNACLE_COLS, col) && !uishell_table_diag_selected(&snap, BINNACLE_ROWS, row),
+               "Ctrl+Space selects the focused column");
+    evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_F3};
+    TableCheck(uishell_table_key(grid, &evt), "F3 steps find");
+    evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_F3, .modifiers = WM_Modifier_Shift};
+    TableCheck(uishell_table_key(grid, &evt), "Shift+F3 steps find back");
     wheelhouse_table_free(table);
   }
 
