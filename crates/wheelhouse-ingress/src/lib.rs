@@ -343,7 +343,8 @@ mod transport {
             extern "C" fn wake() {
                 WAKES.fetch_add(1, Ordering::SeqCst);
             }
-            let dir = std::env::temp_dir().join(format!("wheelhouse-ticks-{}", crate::address::instance_uuid()));
+            // Short, as macOS's temporary directory leaves no room for a socket.
+            let dir = std::path::PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
             std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
             let path = dir.join("socket");
             let server = Ingress::start(path.clone(), wake, None).unwrap();
@@ -355,8 +356,11 @@ mod transport {
             write!(stream, "POST /v1/metadata/patch HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
             stream.write_all(body).unwrap();
             // Nothing polls, so the request waits; its wake and then the ticks follow.
-            thread::sleep(Duration::from_millis(700));
-            assert!(WAKES.load(Ordering::SeqCst) >= 3, "{} wakes", WAKES.load(Ordering::SeqCst));
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while WAKES.load(Ordering::SeqCst) < 3 {
+                assert!(std::time::Instant::now() < deadline, "{} wakes", WAKES.load(Ordering::SeqCst));
+                thread::sleep(Duration::from_millis(50));
+            }
             drop(stream);
             drop(server);
             std::fs::remove_dir_all(&dir).unwrap();

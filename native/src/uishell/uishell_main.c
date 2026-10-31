@@ -195,6 +195,9 @@ uishell_automation_enabled(void)
   MD_Node *root = md_tree_from_string(scratch.arena, text);
   String8 value = raw_from_escaped_str8(scratch.arena, md_child_from_string(root, str8_lit("automation"), 0)->first->string);
   B32 enabled = !str8_match(value, str8_lit("off"), StringMatchFlag_CaseInsensitive);
+  if(value.size && enabled && !str8_match(value, str8_lit("observe"), StringMatchFlag_CaseInsensitive) &&
+     !str8_match(value, str8_lit("full"), StringMatchFlag_CaseInsensitive))
+  { fprintf(stderr, "Unknown automation setting \"%.*s\" (off, observe or full); taking it as full\n", str8_varg(value)); }
   scratch_end(scratch);
   return enabled;
 }
@@ -347,6 +350,7 @@ entry_point(CmdLine *cmd_line)
         if(!wheelhouse_ingress_write_address_file((WheelhouseIngressText){endpoint_file.str, endpoint_file.size},
                                                   (WheelhouseIngressText){endpoint.str, endpoint.size}, error, sizeof(error)))
         { fprintf(stderr, "--automation_socket_file: %s\n", error); abort_self(1); }
+        endpoint_file = push_str8_copy(rd_state->arena, endpoint_file);
       }
       // The Dashboard gains the Flotilla subscription a launcher asks for
       // (for its daemon, or Flotilla's default) unless it has one already.
@@ -483,6 +487,8 @@ entry_point(CmdLine *cmd_line)
       uishell_subscriptions_close();
       wheelhouse_ingress_stop(uishell_ingress);
       uishell_ingress = 0;
+      // The address is good only while Wheelhouse runs.
+      if(endpoint_file.size != 0) { remove((char *)endpoint_file.str); }
 #if OS_MAC
       // A logout or shutdown that asked Wheelhouse to quit waits for this.
       mac_wm_quit_finished();

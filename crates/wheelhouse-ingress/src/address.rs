@@ -27,15 +27,22 @@ pub fn instance_uuid() -> String {
     format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
 }
 
+/// The longest Unix socket path, NUL excluded (`sun_path` is 104 bytes on
+/// macOS and the BSDs, 108 on Linux).
+#[cfg(unix)]
+const SOCKET_PATH_MAX: usize = if cfg!(any(target_os = "linux", target_os = "android")) { 107 } else { 103 };
+
 /// The directory this user's instances listen in: `$XDG_RUNTIME_DIR/wheelhouse`,
 /// or, without a runtime directory, `wheelhouse-<uid>` in the temporary
-/// directory, which other users share.
+/// directory, which other users share; `/tmp` when the temporary directory's
+/// path leaves no room for a socket in it (a long macOS `$TMPDIR`).
 #[cfg(unix)]
 fn runtime_dir(runtime: Option<std::ffi::OsString>, temp: PathBuf, uid: u32) -> PathBuf {
-    match runtime.map(PathBuf::from).filter(|dir| dir.is_absolute()) {
-        Some(dir) => dir.join("wheelhouse"),
-        None => temp.join(format!("wheelhouse-{uid}")),
-    }
+    // Room for the slash and the UUID after it.
+    let fits = |dir: &PathBuf| dir.as_os_str().len() + 37 <= SOCKET_PATH_MAX;
+    let runtime = runtime.map(PathBuf::from).filter(|dir| dir.is_absolute()).map(|dir| dir.join("wheelhouse"));
+    let temp = temp.join(format!("wheelhouse-{uid}"));
+    runtime.into_iter().chain([temp]).find(fits).unwrap_or_else(|| PathBuf::from(format!("/tmp/wheelhouse-{uid}")))
 }
 
 /// Creates `dir` private to this user (mode 0700), or checks that it already
@@ -102,11 +109,28 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_runtime_directory_is_preferred_and_the_shared_temporary_one_is_per_user() {
-        let temp = PathBuf::from("/tmp");
-        assert_eq!(runtime_dir(Some("/run/user/7".into()), temp.clone(), 7), PathBuf::from("/run/user/7/wheelhouse"));
-        assert_eq!(runtime_dir(None, temp.clone(), 7), PathBuf::from("/tmp/wheelhouse-7"));
+        let temp = PathBuf::from("/var/folders/xy/T");
+        let dir = |runtime: Option<&str>| runtime_dir(runtime.map(Into::into), temp.clone(), 7);
+        assert_eq!(dir(Some("/run/user/7")), PathBuf::from("/run/user/7/wheelhouse"));
+        assert_eq!(dir(None), PathBuf::from("/var/folders/xy/T/wheelhouse-7"));
         // A relative runtime directory is ignored, as the XDG spec requires.
-        assert_eq!(runtime_dir(Some("relative".into()), temp, 7), PathBuf::from("/tmp/wheelhouse-7"));
+        assert_eq!(dir(Some("relative")), PathBuf::from("/var/folders/xy/T/wheelhouse-7"));
+    }
+
+    // A socket path is at most 104 bytes on macOS: a directory that leaves
+    // no room for the address is passed over, ending at /tmp, rather than
+    // failing to bind.
+    #[cfg(unix)]
+    #[test]
+    fn a_default_address_fits_a_socket_path() {
+        let long = PathBuf::from(format!("/{}", "t".repeat(SOCKET_PATH_MAX - 40)));
+        assert_eq!(runtime_dir(Some(long.clone().into()), long.clone(), 7), PathBuf::from("/tmp/wheelhouse-7"));
+        let mac = PathBuf::from("/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T/");
+        assert_eq!(runtime_dir(Some(long.into()), mac.clone(), 501), mac.join("wheelhouse-501"));
+        for temp in [mac, std::env::temp_dir()] {
+            let address = runtime_dir(None, temp, u32::MAX).join(instance_uuid());
+            assert!(address.as_os_str().len() <= SOCKET_PATH_MAX, "{}", address.display());
+        }
     }
 
     #[cfg(unix)]
