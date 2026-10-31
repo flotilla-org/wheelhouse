@@ -246,12 +246,18 @@ pub fn respond(request: &Request, tree: &[Value], generation: u64, limit: usize)
                 value
             };
             let mut body = encode(&wrap(&nodes, false));
-            // Terminal text goes first, then whole workspaces from the end.
+            // Terminal text goes first, then the last node at a time, deepest
+            // first, so a root keeps what fits under it. Each node is encoded
+            // once as it goes, to estimate what is left.
             if body.len() > limit && nodes.iter_mut().fold(false, |dropped, node| drop_terminal_text(node) | dropped) {
                 body = encode(&wrap(&nodes, true));
             }
             while body.len() > limit && !nodes.is_empty() {
-                nodes.pop();
+                let mut left = body.len();
+                while left > limit {
+                    let Some(gone) = pop_last(&mut nodes) else { break };
+                    left = left.saturating_sub(encode(&gone).len());
+                }
                 body = encode(&wrap(&nodes, true));
             }
             body
@@ -262,6 +268,21 @@ pub fn respond(request: &Request, tree: &[Value], generation: u64, limit: usize)
         Encoding::Cbor => "application/cbor",
     };
     Reply { status: 200, content_type, body }
+}
+
+/// Remove and return the last node in document order: the deepest last
+/// descendant of the last node, or a childless last node itself.
+fn pop_last(nodes: &mut Vec<Value>) -> Option<Value> {
+    let last = nodes.last_mut()?;
+    if let Some(Value::Array(children)) = last.get_mut("children") {
+        if let Some(gone) = pop_last(children) {
+            if children.is_empty() {
+                last.as_object_mut().expect("a node is an object").remove("children");
+            }
+            return Some(gone);
+        }
+    }
+    nodes.pop()
 }
 
 /// The largest integer JSON readers keep exactly.

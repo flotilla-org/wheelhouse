@@ -337,10 +337,56 @@ fn the_size_cap_drops_terminal_text_first() {
     assert!(!capped.to_string().contains("xxxx") && !capped.to_string().contains("cursor"));
     assert_eq!(capped["nodes"].as_array().unwrap().len(), 2);
     assert_eq!(capped["nodes"][0]["children"][0]["children"][0]["children"][0]["props"]["terminal"]["session"], "s1");
-    // Still over: whole workspaces from the end.
+    // Still over: nodes from the end, deepest first, so the first workspace
+    // keeps what fits.
     let tiny = body(&respond(&asked, &tree, 1, 700));
     assert_eq!(tiny["truncated"], true);
-    assert!(tiny["nodes"].as_array().unwrap().len() < 2);
+    assert!(tiny.to_string().len() <= 700);
+    assert_eq!(tiny["nodes"][0]["id"], tree[0]["id"]);
+    // A root too large keeps itself and what fits under it, never nothing.
+    let root = format!("include=terminal_text&root={}", tree[0]["id"].as_str().unwrap());
+    let rooted = body(&respond(&request(Route::Semantic, &root), &tree, 1, 500));
+    assert_eq!(rooted["truncated"], true);
+    assert_eq!(rooted["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(rooted["nodes"][0]["id"], tree[0]["id"]);
+    assert!(rooted.to_string().len() <= 500);
+}
+
+// Truncating takes nodes from the end of the document, deepest first, and
+// keeps the tree well formed: no empty `children`, and every response
+// within its cap.
+#[hegel::test(test_cases = 200)]
+fn truncation_keeps_a_prefix_of_the_tree_within_the_cap(tc: TestCase) {
+    let mut tree = tree();
+    let wide = tc.draw(gs::integers::<usize>().max_value(30));
+    let second = tree[1]["id"].as_str().unwrap().to_owned();
+    for n in 0..wide {
+        tree[1]["children"].as_array_mut().unwrap().push(node(&format!("{second}/view/n{n}"), "view", vec![]));
+    }
+    // Read without terminal text.
+    tree.iter_mut().for_each(|node| {
+        drop_terminal_text(node);
+    });
+    let limit = tc.draw(gs::integers::<usize>().min_value(60).max_value(4000));
+    let reply = body(&respond(&request(Route::Semantic, ""), &tree, 1, limit));
+    let whole = serde_json::to_vec(&json!({"schema": 1, "generation": 1, "nodes": tree})).unwrap();
+    let text = reply.to_string();
+    if whole.len() > limit {
+        assert_eq!(reply["truncated"], true);
+    }
+    assert!(text.len() <= limit || reply["nodes"].as_array().unwrap().is_empty(), "{} > {limit}", text.len());
+    assert!(!text.contains("\"children\":[]"));
+    // What is kept is the start of the tree, in order.
+    fn ids(nodes: &[Value], out: &mut Vec<String>) {
+        for node in nodes {
+            out.push(node["id"].as_str().unwrap().to_owned());
+            ids(node.get("children").and_then(Value::as_array).map_or(&[][..], Vec::as_slice), out);
+        }
+    }
+    let (mut kept, mut all) = (Vec::new(), Vec::new());
+    ids(reply["nodes"].as_array().unwrap(), &mut kept);
+    ids(&tree, &mut all);
+    assert_eq!(kept[..], all[..kept.len()]);
 }
 
 #[hegel::test(test_cases = 200)]

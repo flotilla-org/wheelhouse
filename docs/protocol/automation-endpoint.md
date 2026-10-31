@@ -108,7 +108,8 @@ Both take:
 - `include=terminal_text`: terminals' screens, where the setting allows.
 
 Values are percent-decoded; a `+` is a `+`, not a space. Of a repeated
-parameter, the last counts, and unknown parameters are ignored.
+parameter, the last counts. Unknown parameters, and `include` values other
+than `terminal_text`, are ignored.
 
 400 is a malformed query (or `self` without a session), 404 the routes when
 automation is off, and 503 when the UI couldn't answer in time or too many
@@ -123,14 +124,16 @@ reads (256) are already waiting for a change.
 
 `schema` is 1 for both routes. Adding fields keeps it, and removing or
 changing one bumps it. A response over 4 MiB drops terminal text first, then
-whole workspaces from the end, and says `"truncated": true`.
+nodes from the end of the tree, deepest first (so a `root` keeps itself and
+what fits under it), and says `"truncated": true`.
 
 **Encoding.** JSON by default. With `Accept: application/cbor`, the same value
 as CBOR in [flotilla ADR 0063](https://github.com/flotilla-org/flotilla)'s
 profile: deterministic (shortest integer and float forms, map keys in the
 bytewise order of their encodings, definite lengths), text map keys, and no
-tags. In JSON, an integer beyond ±2^53 is `{"u64": "<decimal>"}`, since
-JSON readers can't keep it exactly. CBOR carries it as an integer.
+tags. In JSON, an integer beyond ±2^53 is `{"u64": "<decimal>"}`, a
+negative one too (`{"u64": "-…"}`), since JSON readers can't keep it
+exactly. CBOR carries it as an integer.
 
 **Change detection.** One `generation` counter, which the Placement Tree will
 share when it lands. At each frame's end, while a client is waiting or has
@@ -170,6 +173,10 @@ A terminal View carries `props.terminal`:
 | `process` | the command it runs |
 | `cols`, `rows` | its size, once it has been drawn |
 | `text`, `cursor` | with `automation_terminal_text: screen` and `include=terminal_text` only: the visible rows, trailing blanks trimmed, and `{row, col, visible}`. Never scrollback. |
+
+Screen text can hold anything a terminal shows. Who may read it is who may
+reach the endpoint: the user, through the socket's private directory and
+mode 0600, or the pipe's DACL on Windows (ADR 0011).
 
 ### Example: the Semantic Tree
 
