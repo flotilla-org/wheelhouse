@@ -541,6 +541,7 @@ uishell_overview_diagnostics(CFG_Node *window)
   o = uishell_overview_diagnostic_step(ws, 16, b, region); uishell_overview_end(&o);
   o = uishell_overview_diagnostic_step(ws, 1000, b, region);
   OverviewCheck(o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW && o.frame->view_mode == WHEELHOUSE_OVERVIEW_ROWS, "the overview opens in rows");
+  WheelhouseOverviewTile in_rows = o.frame->tile_count ? o.frame->tiles[o.frame->tile_count - 1] : (WheelhouseOverviewTile){0};
   uishell_overview_end(&o);
   OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_view_mode_1")), "the overview's Grid switch");
   o = uishell_overview_diagnostic_step(ws, 0, b, region);
@@ -550,6 +551,21 @@ uishell_overview_diagnostics(CFG_Node *window)
   B32 grid_slides = 0;
   for(U64 i = 0; i < o.frame->group_count; i++) { if(uishell_overview_slides(o.frame, i)) { grid_slides = 1; } }
   OverviewCheck(!grid_slides, "a grid has no rows to slide");
+  uishell_overview_end(&o);
+  //- A new view mode is drawn moving: each tile goes from its place in rows
+  // to its place in the grid, and the host draws until it gets there.
+  o = uishell_overview_diagnostic_step(ws, 100, b, region);
+  B32 moving_flies = o.frame->flying;
+  WheelhouseOverviewTile moving = o.frame->tile_count ? o.frame->tiles[o.frame->tile_count - 1] : (WheelhouseOverviewTile){0};
+  uishell_overview_end(&o);
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
+  WheelhouseOverviewTile in_grid = o.frame->tile_count ? o.frame->tiles[o.frame->tile_count - 1] : (WheelhouseOverviewTile){0};
+  OverviewCheck(moving_flies && !o.frame->flying, "a new view mode draws until its tiles arrive");
+  OverviewCheck(MemoryMatchStruct(&in_rows.workspace_id, &moving.workspace_id) &&
+                MemoryMatchStruct(&moving.workspace_id, &in_grid.workspace_id) &&
+                !MemoryMatchStruct(&moving.rect, &in_rows.rect) && !MemoryMatchStruct(&moving.rect, &in_grid.rect) &&
+                !MemoryMatchStruct(&in_rows.rect, &in_grid.rect),
+                "a new view mode moves each tile from its place in rows to its place in the grid");
   uishell_overview_end(&o);
   OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_heading_0")), "a group heading in the grid");
   o = uishell_overview_diagnostic_step(ws, 1000, b, region);
@@ -565,16 +581,21 @@ uishell_overview_diagnostics(CFG_Node *window)
   uishell_overview_set_view_mode_setting(WHEELHOUSE_OVERVIEW_GRID);
   o = uishell_overview_diagnostic_step(ws, 0, b, region);
   OverviewCheck(o.frame->view_mode == WHEELHOUSE_OVERVIEW_GRID, "the overview follows the user's setting");
+  uishell_overview_end(&o);
+  // Each setting below applies as a frame begins, and its tiles move there.
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
   WheelhouseOverviewRect shelved = o.frame->tile_count ? o.frame->tiles[o.frame->tile_count - 1].rect : (WheelhouseOverviewRect){0};
   uishell_overview_end(&o);
   //- The grid's packing follows the user's setting.
   uishell_overview_diagnostic_set_user(str8_lit("overview_grid_packing"), str8_lit("treemap"));
+  o = uishell_overview_diagnostic_step(ws, 0, b, region); uishell_overview_end(&o);
   o = uishell_overview_diagnostic_step(ws, 1000, b, region);
   OverviewCheck(o.frame->tile_count > 0 && o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW &&
                 MemoryCompare(&shelved, &o.frame->tiles[o.frame->tile_count - 1].rect, sizeof(shelved)) != 0,
                 "the treemap setting packs the grid differently");
   uishell_overview_end(&o);
   uishell_overview_diagnostic_set_user(str8_lit("overview_grid_packing"), str8_zero());
+  o = uishell_overview_diagnostic_step(ws, 0, b, region); uishell_overview_end(&o);
   //- A tile too narrow to read zooms the grid in on it, and then dragging or
   // scrolling sideways pans across the grid.
   uishell_overview_diagnostic_set_user(str8_lit("overview_readable_tile_width"), str8_lit("2000"));

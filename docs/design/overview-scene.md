@@ -114,6 +114,26 @@ Settled with the prototype:
 - **Off:** a setting turns transitions off, and so does the system's reduce
   motion option. A switch is then a cut.
 
+### Changes of layout
+
+Every tile is the same workspace before and after a change of layout, so a
+change is drawn as movement: each tile moves from where it was drawn to its
+new place, over about 350ms, eased out. Its label and its cluster's shading
+move with it, and a heading with its group. A workspace new to the scene
+grows from the middle of its place; one that has gone is simply gone. This
+is one mechanism in core for a new view mode or packing, workspaces coming
+and going, and a convoy collapsing.
+
+- **A new view mode or packing** also flies the camera to the same place in
+  the new layout, since the two frame the overview differently.
+- **Otherwise the camera stays on what it shows** as that moves. An open
+  workspace stays open and is drawn as itself throughout, so workspaces
+  arriving elsewhere never interrupt it. If the camera was off what it shows
+  when a change began (an earlier change still under way), it eases onto it.
+- **A move during a change** (a switch, opening the overview, a group) flies
+  from where the camera is drawn, and the tiles carry on to their places.
+- **Off:** without motion, a change of layout is a cut, as a switch is.
+
 Mid-flight, the tiles are previews at their own resolution, so they may look
 soft until the camera lands. The full-resolution surface takes over when it
 does, as the overview's zoom does today.
@@ -144,13 +164,10 @@ click outside a fitted group also backs out.
 Next:
 
 - **The grid's layout rule**, below.
-- **Animating a change of layout.** Every tile is the same workspace before
-  and after, so a change of view mode can move each tile from its old place
-  to its new one while the camera flies to the same place in the new scene;
-  headings move with their groups and cluster shading fades across. This
-  belongs in core, keeping the old scene for the length of the flight, and
-  the same mechanism then animates workspaces coming and going, a convoy
-  collapsing, and regrouping.
+- **Animating a change of layout**, as in
+  [Changes of layout](#changes-of-layout). Built: core keeps the scene as it
+  was drawn when a change began and draws the way between it and the new
+  one; the host draws whatever the frame gives it until it stops moving.
 
 ## The grid's layout rule
 
