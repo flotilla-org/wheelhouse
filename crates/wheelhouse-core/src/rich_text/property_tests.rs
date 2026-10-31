@@ -4,6 +4,7 @@ use hegel::generators as gs;
 use hegel::TestCase;
 
 use super::generate::{self, Choose};
+use super::heights::{Entry as Row, HeightIndex};
 use super::*;
 use crate::stream::apply_list;
 
@@ -131,6 +132,120 @@ fn unchanged_blocks_keep_their_versions(tc: TestCase) {
                 }
                 _ => assert!(after.version > newest, "a new or changed node kept an old version"),
             }
+        }
+    }
+}
+
+#[hegel::test(test_cases = 300)]
+fn the_height_index_agrees_with_a_prefix_sum(tc: TestCase) {
+    let mut index = HeightIndex::default();
+    let mut naive: Vec<Row> = vec![];
+    // Whole heights keep every sum exact.
+    let height = |tc: &TestCase| tc.draw(gs::integers::<u32>().max_value(40)) as f32;
+    for _ in 0..tc.draw(gs::integers::<usize>().max_value(40)) {
+        let len = naive.len();
+        match tc.draw(gs::integers::<u8>().max_value(6)) {
+            0 | 1 => {
+                let at = tc.draw(gs::integers::<usize>().max_value(len));
+                let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(if tc.draw(gs::booleans()) { 3 } else { 700 }));
+                let rows: Vec<Row> = (0..count).map(|_| Row::estimated(height(&tc), 0)).collect();
+                index.insert(at, &rows);
+                naive.splice(at..at, rows);
+            }
+            2 if len > 0 => {
+                let start = tc.draw(gs::integers::<usize>().max_value(len - 1));
+                let end = tc.draw(gs::integers::<usize>().min_value(start).max_value(len.min(start + 600)));
+                index.remove(start..end);
+                naive.drain(start..end);
+            }
+            3 if len > 0 => {
+                let at = tc.draw(gs::integers::<usize>().max_value(len - 1));
+                let row = Row::measured(height(&tc), 1).with_hidden(naive[at].hidden());
+                index.set(at, row);
+                naive[at] = row;
+            }
+            4 if len > 0 => {
+                let start = tc.draw(gs::integers::<usize>().max_value(len - 1));
+                let end = tc.draw(gs::integers::<usize>().min_value(start).max_value(len.min(start + 300)));
+                let hide = tc.draw(gs::booleans());
+                for (at, row) in naive.iter_mut().enumerate().take(end).skip(start) {
+                    *row = row.with_hidden(hide);
+                    index.set(at, *row);
+                }
+            }
+            _ => index.push({
+                let row = Row::estimated(height(&tc), 0);
+                naive.push(row);
+                row
+            }),
+        }
+        assert_eq!(index.len(), naive.len());
+        let total: f64 = naive.iter().map(Row::size).sum();
+        assert_eq!(index.total(), total);
+        for _ in 0..4 {
+            if naive.is_empty() {
+                break;
+            }
+            let at = tc.draw(gs::integers::<usize>().max_value(naive.len()));
+            let offset: f64 = naive[..at].iter().map(Row::size).sum();
+            assert_eq!(index.offset_of(at), offset, "offset of entry {at}");
+            if at < naive.len() {
+                assert_eq!(index.get(at), naive[at]);
+            }
+            let probe = tc.draw(gs::integers::<u32>().max_value(total as u32 + 2)) as f64 + if tc.draw(gs::booleans()) { 0.5 } else { 0.0 };
+            let mut expected = None;
+            let mut sum = 0.0;
+            for (i, row) in naive.iter().enumerate() {
+                if row.size() > 0.0 && probe >= sum && probe < sum + row.size() {
+                    expected = Some((i, probe - sum));
+                    break;
+                }
+                sum += row.size();
+            }
+            assert_eq!(index.entry_at(probe), expected, "entry at {probe}");
+        }
+    }
+}
+
+#[hegel::test(test_cases = 200)]
+fn the_anchor_holds_when_heights_above_it_change(tc: TestCase) {
+    let mut c = Draws(&tc);
+    let blocks = generate::document(&mut c, 30);
+    let mut rich = RichText::open(&generate::render(&blocks));
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.set_metrics(doc, Metrics { width: 400.0, line_height: 10.0, chars_per_line: 40.0 });
+    view.set_viewport(120.0);
+    let blocks: Vec<usize> = (0..doc.entries().len()).filter(|&i| doc.entries()[i].part == Part::Block).collect();
+    let entry = blocks[c.below(blocks.len())];
+    let (key, part) = doc.entry_key(entry).unwrap();
+    let text = doc.text(doc.get(key).unwrap()).len() as u32;
+    let byte = c.below(text as usize + 1) as u32;
+    let viewport_offset = c.below(120) as f64;
+    let position = if doc.kind(doc.get(key).unwrap()) == Kind::Embed {
+        Position::Fraction(c.below(10) as f32 / 10.0)
+    } else {
+        Position::Text { byte, line_offset: c.below(5) as f32 }
+    };
+    view.scroll_to(doc, Anchor { key, part, position, viewport_offset }).unwrap();
+    // The anchored Block's top, from the viewport's top, and whether the
+    // scroll position is pinned at either end.
+    let on_screen = |doc: &Tree, view: &View| {
+        let top = view.top(doc);
+        let max = (view.heights().total() - view.viewport()).max(0.0);
+        (view.heights().offset_of(entry) - top, top == 0.0 || top == max)
+    };
+    let (before, clamped) = on_screen(doc, view);
+    for _ in 0..c.below(10) + 1 {
+        if entry == 0 {
+            break;
+        }
+        let above = c.below(entry);
+        let (k, p) = doc.entry_key(above).unwrap();
+        view.set_height(doc, k, p, c.below(200) as f32, 400.0).unwrap();
+        let (after, clamped_now) = on_screen(doc, view);
+        if !clamped && !clamped_now {
+            assert!((after - before).abs() < 1e-6, "the anchor moved from {before} to {after}");
         }
     }
 }
