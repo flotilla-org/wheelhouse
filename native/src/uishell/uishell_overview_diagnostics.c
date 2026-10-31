@@ -1,8 +1,9 @@
 // The overview (#450, uishell_overview.c) on the sidebar fixture window: a
 // workspace at rest draws as itself; a switch is a flight drawn through the
 // scene that settles on the new workspace, or a cut without motion; the
-// toggle opens the overview; clicking a heading fits its group and Escape
-// backs out a level at a time; clicking a tile picks its workspace. Only
+// toggle opens the overview; clicking a heading fits its group, and Escape,
+// the back button or a click outside the group backs out, a level at a
+// time; clicking a tile picks its workspace. Only
 // the workspaces the region shows build: the current one, and through the
 // scene those the camera sees. A local group is a row of its own under its
 // name, and scrolling over or dragging a row too long for the region
@@ -133,6 +134,37 @@ uishell_overview_diagnostic_drag(RD_WindowState *ws, CFG_Node *window, CFG_Node 
   return found;
 }
 
+// A place in the region (absolute) that is bare background, inside the
+// fitted group's bounds or outside them as `inside` says, or zero: no tile,
+// label, heading or control there.
+internal Vec2F32
+uishell_overview_diagnostic_bare(UIShell_Overview *o, B32 inside)
+{
+  WheelhouseOverviewFrame *f = o->frame;
+  Vec2F32 dim = dim_2f32(o->region);
+  Rng2F32 group = uishell_overview_drawn_rect(o, f->groups[f->group].bounds, f->group);
+  for(F32 y = 4; y < dim.y; y += 6)
+  {
+    for(F32 x = 4; x < dim.x*0.6f; x += 6)
+    {
+      Vec2F32 at = v2f32(x, y);
+      B32 bare = (contains_2f32(group, at) == !!inside);
+      for(U64 i = 0; bare && i < f->tile_count; i++)
+      {
+        Rng2F32 tile = uishell_overview_drawn_rect(o, f->tiles[i].rect, f->tiles[i].group);
+        Rng2F32 label = uishell_overview_drawn_rect(o, f->tiles[i].label, f->tiles[i].group);
+        if(contains_2f32(pad_2f32(tile, 4), at) || contains_2f32(pad_2f32(label, 4), at)) { bare = 0; }
+      }
+      for(U64 i = 0; bare && i < f->group_count; i++)
+      {
+        if(contains_2f32(pad_2f32(uishell_overview_drawn_rect(o, f->groups[i].heading_rect, max_U64), 4), at)) { bare = 0; }
+      }
+      if(bare) { return add_2f32(at, o->region.p0); }
+    }
+  }
+  return v2f32(0, 0);
+}
+
 internal B32
 uishell_overview_diagnostic_click(RD_WindowState *ws, CFG_Node *window, CFG_Node *current, Rng2F32 region, Arena *arena, String8 target)
 {
@@ -236,6 +268,30 @@ uishell_overview_diagnostics(CFG_Node *window)
   OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_heading_0")), "a group heading");
   o = uishell_overview_diagnostic_step(ws, 1000, b, region);
   OverviewCheck(o.frame->mode == WHEELHOUSE_OVERVIEW_GROUP && o.frame->group == 0 && ws->workspace_zoom_open, "clicking a heading fits its group");
+  Vec2F32 bare_inside = uishell_overview_diagnostic_bare(&o, 1), bare_outside = uishell_overview_diagnostic_bare(&o, 0);
+  uishell_overview_end(&o);
+  //- Out of a fitted group: its back button, or a click outside it, shows
+  // the whole overview; a click on bare background inside it doesn't.
+  B32 unused_labels = 0;
+  OverviewCheck(bare_inside.x != 0 && bare_outside.x != 0, "bare background inside and outside a fitted group");
+  uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_zero(), v2f32(0, 0), 0, 0, &unused_labels, bare_inside);
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
+  OverviewCheck(o.frame->mode == WHEELHOUSE_OVERVIEW_GROUP, "a click inside a fitted group keeps it fitted");
+  uishell_overview_end(&o);
+  uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_zero(), v2f32(0, 0), 0, 0, &unused_labels, bare_outside);
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
+  OverviewCheck(o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW && ws->workspace_zoom_open, "a click outside a fitted group shows the overview");
+  uishell_overview_end(&o);
+  OverviewCheck(!uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_back")),
+                "no back button without a fitted group");
+  OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_heading_0")), "a group heading, again");
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region); uishell_overview_end(&o);
+  OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_back")), "a fitted group's back button");
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
+  OverviewCheck(o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW && ws->workspace_zoom_open, "a fitted group's back button shows the overview");
+  uishell_overview_end(&o);
+  OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_heading_0")), "a group heading, to Escape from");
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
   uishell_overview_end(&o);
   uishell_overview_back(ws);
   o = uishell_overview_diagnostic_step(ws, 1000, b, region);

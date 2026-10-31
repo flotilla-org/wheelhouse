@@ -218,6 +218,7 @@ struct UIShell_OverviewMove
   CFG_ID pick_cfg;
   B32 sets_view_mode;
   U32 view_mode;
+  B32 backs;
 };
 
 // What a drag moves, chosen as it starts: mostly sideways over a row too
@@ -481,8 +482,8 @@ uishell_overview_text(Arena *arena, WheelhouseText text)
 }
 
 // The region drawn through the scene: cluster washes, group headings and
-// the tiles, each showing its workspace's surface. Picking a tile and
-// fitting a group are flights; scrolling pans the overview or slides a row,
+// the tiles, each showing its workspace's surface, and the controls. Picking
+// a tile, fitting a group and backing out of one are flights; scrolling pans the overview or slides a row,
 // as dragging a row does.
 // Input waits for the overview: a switch's flight is only drawn.
 internal void
@@ -517,14 +518,19 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
                                                 "###workspace_overview");
   UI_Parent(scene_box)
   {
-    //- the view mode switch, Rows and Grid, in the top right: the first
-    // control the overview has. It reads input before anything under it and
-    // is drawn last, over the scene.
+    //- the overview's controls, in the top right: back out of a fitted
+    // group (shown only then), and the view mode switch, Rows and Grid. They
+    // read input before anything under them and are drawn last, over the
+    // scene.
     F32 switch_size = floor_f32(ui_top_font_size()*2.2f);
     F32 switch_margin = floor_f32(ui_top_font_size()*0.6f);
+    F32 switch_gap = floor_f32(ui_top_font_size()*0.4f);
+    B32 fitted = (f->mode == WHEELHOUSE_OVERVIEW_GROUP);
     U32 switch_modes[2] = {WHEELHOUSE_OVERVIEW_ROWS, WHEELHOUSE_OVERVIEW_GRID};
     UI_Signal switch_sigs[2] = {0};
     Rng2F32 switch_rects[2] = {0};
+    UI_Signal back_sig = {0};
+    Rng2F32 back_rect = {0};
     for(U64 i = 0; interactive && i < 2; i++)
     {
       F32 x1 = dim.x - switch_margin - (1 - i)*switch_size;
@@ -538,6 +544,16 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
         move.sets_view_mode = 1;
         move.view_mode = switch_modes[i];
       }
+    }
+    if(interactive && fitted)
+    {
+      F32 x1 = switch_rects[0].x0 - switch_gap;
+      back_rect = r2f32p(x1 - switch_size, switch_margin, x1, switch_margin + switch_size);
+      ui_set_next_rect(back_rect);
+      UI_Box *hit = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "###overview_back");
+      back_sig = ui_signal_from_box(hit);
+      uishell_tool_strip_tooltip(back_sig, str8_lit("All groups (Esc)"));
+      if(ui_clicked(back_sig)) { move.backs = 1; }
     }
 
     //- rows too long for the region: dragging one, between its tiles or
@@ -648,30 +664,37 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
       if(rows[i] != 0) { uishell_overview_drag(o, ui_signal_from_box(rows[i]), i, &move); }
     }
 
-    //- the view mode switch, drawn over the scene: a plate behind its two
-    // flat buttons, the current mode's marked with a faint wash
+    //- the controls, drawn over the scene: a plate behind each set of flat
+    // buttons, the current mode's marked with a faint wash
     if(interactive)
     {
       F32 pad = floor_f32(ui_top_font_size()*0.2f);
-      ui_set_next_rect(r2f32p(switch_rects[0].x0 - pad, switch_rects[0].y0 - pad, switch_rects[1].x1 + pad, switch_rects[1].y1 + pad));
-      UI_CornerRadius(floor_f32(ui_top_font_size()*0.4f)) UI_TagF("floating")
+      for(U64 plate = 0; plate < (fitted ? 2 : 1); plate++)
       {
-        ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawDropShadow, "###overview_view_mode_plate");
+        Rng2F32 rect = plate == 0 ? r2f32p(switch_rects[0].x0, switch_rects[0].y0, switch_rects[1].x1, switch_rects[1].y1) : back_rect;
+        ui_set_next_rect(pad_2f32(rect, pad));
+        UI_CornerRadius(floor_f32(ui_top_font_size()*0.4f)) UI_TagF("floating")
+        {
+          ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawDropShadow, "###overview_controls_plate_%I64u", plate);
+        }
       }
-      for(U64 i = 0; i < 2; i++)
+      for(U64 i = 0; i < (fitted ? 3 : 2); i++)
       {
-        B32 marked = (f->view_mode == switch_modes[i]);
+        B32 back = (i == 2);
+        B32 marked = !back && (f->view_mode == switch_modes[i]);
+        UI_Signal sig = back ? back_sig : switch_sigs[i];
         Vec4F32 wash = ui_color_from_name(str8_lit("hover"));
-        F32 steps = (marked ? 1.f : 0.f) + (ui_hovering(switch_sigs[i]) ? 1.f : 0.f);
+        F32 steps = (marked ? 1.f : 0.f) + (ui_hovering(sig) ? 1.f : 0.f);
         wash.w *= rd_hover_alpha(wash, ui_color_from_name(str8_lit("background")), RD_HoverBrightnessStep)*steps;
-        ui_set_next_rect(switch_rects[i]);
+        ui_set_next_rect(back ? back_rect : switch_rects[i]);
         ui_set_next_background_color(wash);
         UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(ui_top_font_size()*0.25f) RD_Font(RD_FontSlot_Icons)
-          UI_TagF(marked ? "" : "weak")
+          UI_TagF(marked || back ? "" : "weak")
         {
           UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc,
-                                                  "###overview_view_mode_icon_%I64u", i);
-          ui_box_equip_display_string(box, rd_icon_kind_text_table[i == 0 ? RD_IconKind_List : RD_IconKind_Grid]);
+                                                  "###overview_control_icon_%I64u", i);
+          RD_IconKind icon = back ? RD_IconKind_LeftArrow : i == 0 ? RD_IconKind_List : RD_IconKind_Grid;
+          ui_box_equip_display_string(box, rd_icon_kind_text_table[icon]);
         }
       }
     }
@@ -684,6 +707,13 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   {
     UI_Signal sig = ui_signal_from_box(scene_box);
     uishell_overview_drag(o, sig, f->group_count, &move);
+    // A click outside a fitted group, where nothing else took it, backs out
+    // to the whole overview.
+    if(f->mode == WHEELHOUSE_OVERVIEW_GROUP && f->group < f->group_count && ui_clicked(sig) && !o->state->overview_dragged)
+    {
+      Rng2F32 group_rect = uishell_overview_drawn_rect(o, groups[f->group].bounds, f->group);
+      if(!contains_2f32(group_rect, sub_2f32(ui_mouse(), o->region.p0))) { move.backs = 1; }
+    }
     Vec2F32 px = add_2f32(sig.scroll_px, v2f32(sig.scroll.x*30.f, sig.scroll.y*30.f));
     if(px.x != 0 || px.y != 0)
     {
@@ -720,6 +750,11 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   if(move.pans && move.pan_by != 0)
   {
     moved = wheelhouse_overview_pan(o->state->core, move.pan_by, 0) || moved;
+  }
+  if(move.backs)
+  {
+    o->state->overview_glide_v = 0;
+    moved = wheelhouse_overview_back(o->state->core, o->now_ms, 0) || moved;
   }
   if(move.sets_view_mode)
   {
