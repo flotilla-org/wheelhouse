@@ -41,6 +41,8 @@ a file, never from the environment:
   that file once the listener is up: exactly the address, with no newline, or
   an empty file when it listens nowhere. The file is replaced whole, so a
   reader never sees part of it, and removed when Wheelhouse exits cleanly.
+  After a crash it may name a dead endpoint, so check `GET /v1/health`
+  (204) before trusting it.
 
 **Environment.** At startup, before any terminal opens, Wheelhouse replaces
 `WHEELHOUSE_SOCKET` in its own environment with its own address, or removes it
