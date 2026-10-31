@@ -41,6 +41,17 @@ extern void wheelhouse_ingress_poll_observed(WheelhouseIngress *,
   uint32_t (*)(void *, const uint8_t *, size_t), uint32_t (*)(void *),
   uint32_t (*)(void *, WheelhouseIngressWorkdirEmit, void *), void *);
 extern void wheelhouse_ingress_stop(WheelhouseIngress *);
+// The Automation Endpoint's default address for this instance,
+// wheelhouse/<instance UUID> under the runtime directory (address.rs):
+// $XDG_RUNTIME_DIR/wheelhouse/<UUID>, else <temp>/wheelhouse-<uid>/<UUID>, its
+// private directory made; \\.\pipe\wheelhouse\<UUID> on Windows. Writes it
+// NUL-terminated and returns 1, or returns 0 with why in the buffer.
+extern uint32_t wheelhouse_ingress_default_address(uint8_t *address, size_t capacity);
+// Replaces the file at path with exactly address (empty: no endpoint), so a
+// launcher reading it never sees part of it. 1, or 0 with a NUL-terminated
+// error.
+extern uint32_t wheelhouse_ingress_write_address_file(WheelhouseIngressText path, WheelhouseIngressText address,
+  uint8_t *error, size_t capacity);
 extern uint64_t wheelhouse_ingress_now_ms(void);
 
 // A connector: a command supervised on a thread of its own (connector.rs).
