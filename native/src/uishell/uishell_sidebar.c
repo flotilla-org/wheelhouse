@@ -362,6 +362,14 @@ struct UIShell_SidebarState
   U64 overview_glide_group;
   F64 overview_glide_v;
   F64 overview_glide_ms;
+  // Past an end: the axis and row stretched, how far as drawn (pixels) and
+  // its speed (pixels a millisecond), springing back once let go of.
+  U32 overview_over_axis;
+  U64 overview_over_group;
+  F64 overview_over_px;
+  F64 overview_over_v;
+  F64 overview_over_ms;
+  B32 overview_springing;
   B32 card_escape_down;
   WheelhouseEntity card_action_target;
   String8 card_action_intent;

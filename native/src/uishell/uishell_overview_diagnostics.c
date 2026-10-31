@@ -353,6 +353,44 @@ uishell_overview_diagnostics(CFG_Node *window)
     o = uishell_overview_diagnostic_step(ws, 0, b, region);
     OverviewCheck(o.frame->groups[long_row].slide == released, "a row held still before it's let go doesn't glide");
     uishell_overview_end(&o);
+    //- Dragged past its end, a row stretches, less than the mouse moved, and
+    // springs back when let go of.
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(2000, 0), 200, 0, &labels_read, v2f32(0, 0)),
+                  "a tile of the long row to drag past its end");
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(o.frame->groups[long_row].slide == 0, "a row dragged past its end stops there");
+    OverviewCheck(o.over.x > 1 && o.over.x < 1000 && o.over_group == (U64)long_row && o.over.y == 0,
+                  "a row dragged past its end stretches, less than the mouse moved");
+    for(U64 i = 0; i < o.frame->tile_count; i++)
+    {
+      if(o.frame->tiles[i].group != (U64)long_row) { continue; }
+      Rng2F32 plain = uishell_overview_rect(&o, o.frame->tiles[i].rect);
+      Rng2F32 drawn = uishell_overview_drawn_rect(&o, o.frame->tiles[i].rect, o.frame->tiles[i].group);
+      OverviewCheck(drawn.x0 - plain.x0 == o.over.x && drawn.y0 == plain.y0, "a stretched row's tiles are drawn stretched");
+      break;
+    }
+    uishell_overview_end(&o);
+    uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 60, &labels_read, v2f32(0, 0));
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(o.over.x == 0 && o.frame->groups[long_row].slide == 0, "a stretched row springs back to its end");
+    uishell_overview_end(&o);
+    //- A row gliding into its end carries past it, then springs back.
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(-60, 0), 200, 0, &labels_read, v2f32(0, 0)),
+                  "a tile of the long row to drag from its end");
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(30, 0), 0, 0, &labels_read, v2f32(0, 0)),
+                  "a tile of the long row to flick at its end");
+    F32 carried = 0;
+    for(U32 i = 0; i < 12; i++)
+    {
+      uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 0, &labels_read, v2f32(0, 0));
+      o = uishell_overview_diagnostic_step(ws, 0, b, region);
+      carried = Max(carried, o.over.x);
+      uishell_overview_end(&o);
+    }
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(carried > 1, "a row gliding into its end carries past it");
+    OverviewCheck(o.over.x == 0 && o.frame->groups[long_row].slide == 0, "a row carried past its end springs back to it");
+    uishell_overview_end(&o);
     //- In a region too short for the overview, dragging up or down pans it,
     // over a tile or between rows, and what's let go of while moving glides
     // on. A drag goes the way there's room: down shows what is above.
@@ -405,6 +443,16 @@ uishell_overview_diagnostics(CFG_Node *window)
     o = uishell_overview_diagnostic_step(ws, 0, b, short_region);
     F64 glided_cy = (o.frame->view.y0 + o.frame->view.y1)/2;
     OverviewCheck(drag_y > 0 ? glided_cy < released_cy : glided_cy > released_cy, "a pan let go of while moving glides on");
+    uishell_overview_end(&o);
+    //- Dragged past its top or bottom, the overview stretches and springs
+    // back.
+    uishell_overview_diagnostic_drag(ws, window, b, short_region, scratch.arena, str8_zero(), v2f32(0, drag_y*20), 200, 0, &labels_read, between);
+    o = uishell_overview_diagnostic_step(ws, 0, b, short_region);
+    OverviewCheck(drag_y > 0 ? o.over.y > 1 : o.over.y < -1, "an overview dragged past its end stretches");
+    uishell_overview_end(&o);
+    uishell_overview_diagnostic_drag(ws, window, b, short_region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 60, &labels_read, v2f32(0, 0));
+    o = uishell_overview_diagnostic_step(ws, 0, b, short_region);
+    OverviewCheck(o.over.y == 0, "a stretched overview springs back");
     uishell_overview_end(&o);
     o = uishell_overview_diagnostic_step(ws, 0, b, region); uishell_overview_end(&o);
     o = uishell_overview_diagnostic_step(ws, 1000, b, region); uishell_overview_end(&o);
