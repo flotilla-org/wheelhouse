@@ -50,3 +50,19 @@ The **Automation Endpoint** may invoke **named commands**, the same
   so a recorded agent session can be replayed as a test.
 - `pm-connect.md` will be updated when this is implemented. Until then it
   describes today's endpoint.
+
+## Amendment: intents (2026-10-31)
+
+The Core now changes logical state only through **intents**, with
+`apply(intent) → receipt`: accepted with a request ID, or refused with a reason
+(`docs/design/change-stream.md`). Agreed in
+[Define command invocation over the Automation Endpoint](https://github.com/flotilla-org/wheelhouse/issues/349):
+
+- The endpoint also applies intents, through `POST /v1/intents/apply`, by
+  stable intent name and with an **Automation ID** owner. It returns the
+  Core's receipt and the generation, so a client learns whether a logical
+  change worked. A command's 200 only says that it ran.
+- `commands/invoke` stays for UI-only actions: the palette, focus, opening
+  views. A command that wraps an intent passes on the intent's refusal as 422,
+  with its reason.
+- The trust boundary and the gating are unchanged.

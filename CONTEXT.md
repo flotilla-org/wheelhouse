@@ -359,6 +359,10 @@ _Avoid_: Visual tree, layout dump, accessibility tree
 The per-element tree published to the platform's assistive-technology APIs (UIA, AX, AT-SPI) for screen readers and other assistive tools. Finer-grained than the **Placement Tree**, and shares **Automation IDs** with it where nodes correspond.
 _Avoid_: Semantic tree, a11y dump
 
+**Foreign Subtree**:
+An **Accessibility Tree** subtree supplied by something other than the toolkit's own boxes and grafted under a **View**'s node: a Jackstay plugin view, a web page, a porthole-exported window or app, or a recogniser's description of a terminal's regions. Its source answers actions on its nodes.
+_Avoid_: Alien tree, embedded tree, iframe
+
 **Automation ID**:
 A locale-independent identifier for a **Semantic Tree** node, an **Accessibility Tree** node or a command. It is stable for as long as its node exists. A durable ID also survives relaunch; one for a window or overlay lasts only while the app runs. It is stored with its node, never recovered from a UI key, and never derived from display text.
 _Avoid_: Label, display name, UI key
