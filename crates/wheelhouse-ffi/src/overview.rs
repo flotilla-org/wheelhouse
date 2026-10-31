@@ -283,7 +283,15 @@ pub unsafe extern "C" fn wheelhouse_overview_frame(
             .tiles
             .iter()
             .filter_map(|t| {
-                let tile = layout.groups.get(t.group)?.clusters.get(t.cluster)?.tiles.iter().find(|x| x.workspace_id == t.workspace_id)?;
+                let tile = layout
+                    .groups
+                    .get(t.group)
+                    .and_then(|g| g.clusters.get(t.cluster))
+                    .and_then(|c| c.tiles.iter().find(|x| x.workspace_id == t.workspace_id));
+                // The scene is placed from this layout, so every tile is in
+                // it; a release build drops a tile rather than crash if not.
+                debug_assert!(tile.is_some(), "scene tile {t:?} isn't in the layout it was placed from");
+                let tile = tile?;
                 Some(WheelhouseOverviewTile {
                     workspace_id: t.workspace_id.into(),
                     group: t.group,

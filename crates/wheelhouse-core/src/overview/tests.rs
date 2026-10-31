@@ -605,6 +605,7 @@ fn switching_flies_between_tiles_unless_motion_is_off() {
 /// - at rest it is where the mode says, and the host draws the workspace as
 ///   itself exactly when it is open and still;
 /// - every flight ends within the longest flight's time;
+/// - panning the overview and changing the view mode cut, even mid-flight;
 /// - going back from the overview opens the current workspace, and back
 ///   from an open workspace does nothing.
 #[hegel::test(test_cases = 300)]
@@ -621,7 +622,7 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
     for _ in 0..tc.draw(gs::integers::<usize>().max_value(25)) {
         now += tc.draw(gs::sampled_from(&[0.0, 16.0, 100.0, 300.0, 1000.0][..]));
         let before = window.camera(now);
-        let flies = match tc.draw(gs::integers::<u8>().max_value(10)) {
+        let flies = match tc.draw(gs::integers::<u8>().max_value(11)) {
             0 => {
                 let current = pick(&tc, &window).or_else(|| entries.first().map(|e| e.workspace_id));
                 let switched = current != window.current();
@@ -668,7 +669,20 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
                 false
             }
             7 => {
+                // An overview with nothing to show has nowhere to pan to.
+                let overview = *window.mode() == OverviewMode::Overview && window.target().is_some();
                 window.pan(tc.draw(gs::floats::<f64>().min_value(-10.0).max_value(10.0).allow_nan(false).allow_infinity(false)));
+                // Panning the overview is a cut, even mid-flight.
+                assert!(!overview || !window.flying(now));
+                false
+            }
+            10 => {
+                let mode = if tc.draw(gs::booleans()) { ViewMode::Rows } else { ViewMode::Grid };
+                let changes = window.scene().options.mode != mode && window.target().is_some();
+                window.set_view_mode(mode);
+                assert_eq!(window.scene().options.mode, mode);
+                // A new view mode is a cut, even mid-flight.
+                assert!(!changes || !window.flying(now));
                 false
             }
             8 if !window.layout().groups.is_empty() => {

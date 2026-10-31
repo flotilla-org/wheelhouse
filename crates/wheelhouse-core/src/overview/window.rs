@@ -184,7 +184,9 @@ impl OverviewWindow {
     }
 
     /// Open `workspace` from the overview: the camera flies into its tile.
-    /// The host also makes it the window's current workspace.
+    /// The host also makes it the window's current workspace. If the host
+    /// doesn't, its next `update` passes the old current workspace, which
+    /// reads as a switch, and the camera flies back to it.
     pub fn pick(&mut self, workspace: WorkspaceId, now_ms: f64) {
         if self.scene.tile(workspace).is_none() {
             return;
