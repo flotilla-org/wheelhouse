@@ -43,6 +43,9 @@ impl ZoomPath {
         let (dx, dy) = (to.cx - from.cx, to.cy - from.cy);
         let d2 = dx * dx + dy * dy;
         let (rho2, rho4) = (rho * rho, rho * rho * rho * rho);
+        // The cutoff is absolute, in scene units, because the scene's units
+        // are fixed: a tile is 1 high at any window size, so 1e-6 of a tile
+        // is too close to pan at every zoom the overview reaches.
         let shape = if d2 < 1e-12 {
             Shape::Zoom { s: (to.w / from.w).ln() / rho }
         } else {
@@ -121,15 +124,20 @@ pub struct Flight {
 
 impl Flight {
     /// A flight from `from` to `to` starting at `now_ms`, or none when the
-    /// two are the same camera. `interrupted` flights take a share of the
-    /// time, so switching fast never chains full-length flights.
+    /// two are the same camera or `timing` gives it no time: then the
+    /// camera cuts. `interrupted` flights take a share of the time, so
+    /// switching fast never chains full-length flights.
     pub fn new(from: Camera, to: Camera, now_ms: f64, timing: &FlightTiming, interrupted: bool) -> Option<Self> {
         let path = ZoomPath::new(from, to, timing.rho);
         if path.length < 1e-9 {
             return None;
         }
-        let full = (path.length * timing.ms_per_unit).clamp(timing.min_ms, timing.max_ms);
+        let full = (path.length * timing.ms_per_unit).max(timing.min_ms).min(timing.max_ms);
         let duration_ms = if interrupted { (full * timing.interrupted_share).max(timing.interrupted_min_ms).min(full) } else { full };
+        // A zero, negative or NaN duration would make `camera` divide by it.
+        if duration_ms.is_nan() || duration_ms <= 0.0 {
+            return None;
+        }
         Some(Self { path, start_ms: now_ms, duration_ms })
     }
 

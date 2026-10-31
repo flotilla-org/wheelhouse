@@ -173,6 +173,26 @@ fn the_camera_flies_from_where_it_is_and_nothing_queues(tc: TestCase) {
     assert_eq!(rig.camera(now + FlightTiming::default().max_ms), rig.destination());
 }
 
+/// Timing that gives a flight no time, or a NaN of it, cuts instead of
+/// flying, and timing whose shortest is past its longest doesn't panic.
+#[test]
+fn timing_without_time_cuts() {
+    let (from, to) = (Camera { cx: 0.0, cy: 0.0, w: 1.6 }, Camera { cx: 20.0, cy: -3.0, w: 1.6 });
+    let base = FlightTiming::default();
+    for timing in [
+        FlightTiming { min_ms: 0.0, max_ms: 0.0, ..base },
+        FlightTiming { max_ms: -5.0, min_ms: -10.0, ..base },
+        FlightTiming { ms_per_unit: f64::NAN, min_ms: f64::NAN, max_ms: f64::NAN, ..base },
+    ] {
+        assert_eq!(Flight::new(from, to, 0.0, &timing, false), None, "{timing:?}");
+        let mut rig = CameraRig::new(from);
+        rig.fly_to(to, 0.0, &timing);
+        assert!(!rig.flying(0.0) && rig.camera(0.0) == to);
+    }
+    let inverted = FlightTiming { min_ms: 900.0, max_ms: 100.0, ..base };
+    assert_eq!(Flight::new(from, to, 0.0, &inverted, false).unwrap().duration_ms, 100.0);
+}
+
 /// Flights ease out: halfway through its time, a flight is seven eighths of
 /// the way along its path.
 #[test]
@@ -441,6 +461,33 @@ fn scenes_place_every_shown_workspace_once_without_overlaps(tc: TestCase) {
         for b in &boxes[i + 1..] {
             assert!(!a.overlaps(b), "{a:?} overlaps {b:?}");
         }
+    }
+}
+
+/// Sizes that can't make a scene (a zero, negative or NaN aspect) take
+/// their defaults and no columns is one, so every tile and camera stays
+/// finite.
+#[hegel::test(test_cases = 100)]
+fn unusable_sizes_take_their_defaults(tc: TestCase) {
+    let entries = draw_entries(&tc);
+    let layout = logical_layout(&entries, None, &BTreeSet::new());
+    let bad = || tc.draw(gs::sampled_from(vec![0.0, -1.0, f64::NAN, f64::INFINITY]));
+    let options = SceneOptions {
+        aspect: bad(),
+        row_window_tiles: bad(),
+        max_tiles_across: bad(),
+        grid_columns: 0,
+        grid_block_columns: 0,
+        ..draw_options(&tc)
+    };
+    let scene = scene(&layout, &options, &BTreeMap::new());
+    let defaults = SceneOptions::default();
+    assert_eq!(SceneOptions { mode: defaults.mode, ..scene.options }, SceneOptions { grid_columns: 1, grid_block_columns: 1, ..defaults });
+    let finite = |c: Camera| c.cx.is_finite() && c.cy.is_finite() && c.w.is_finite() && c.w > 0.0;
+    assert!(finite(scene.overview_camera(None, None)));
+    for tile in &scene.tiles {
+        assert!(close(tile.rect.width(), defaults.aspect));
+        assert!(finite(scene.rest_camera(tile.workspace_id).unwrap()));
     }
 }
 

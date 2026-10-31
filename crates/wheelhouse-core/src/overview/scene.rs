@@ -38,6 +38,24 @@ impl Default for SceneOptions {
     }
 }
 
+impl SceneOptions {
+    /// These options with every size usable: a measure that isn't finite
+    /// and positive takes its default, and a count is at least 1. A zero
+    /// aspect would make every tile 0 wide and every camera divide by it.
+    fn usable(&self) -> SceneOptions {
+        let defaults = SceneOptions::default();
+        let usable = |value: f64, default: f64| if value.is_finite() && value > 0.0 { value } else { default };
+        SceneOptions {
+            mode: self.mode,
+            aspect: usable(self.aspect, defaults.aspect),
+            row_window_tiles: usable(self.row_window_tiles, defaults.row_window_tiles),
+            grid_columns: self.grid_columns.max(1),
+            grid_block_columns: self.grid_block_columns.max(1),
+            max_tiles_across: usable(self.max_tiles_across, defaults.max_tiles_across),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SceneRect {
     pub x0: f64,
@@ -125,8 +143,10 @@ const BLOCK_GAP_H: f64 = 0.25;
 const GROUP_MARGIN: f64 = 1.08;
 
 /// Place `layout` for `options`. `slides` holds how far each row has been
-/// slid; each is kept within its row's range.
+/// slid; each is kept within its row's range. Unusable sizes in `options`
+/// take their defaults, and the scene keeps the options it used.
 pub fn scene(layout: &LogicalLayout, options: &SceneOptions, slides: &BTreeMap<GroupKey, f64>) -> Scene {
+    let options = &options.usable();
     let tw = options.aspect;
     let mut out = Scene { options: *options, tiles: vec![], groups: vec![], bounds: SceneRect::default() };
     match options.mode {
@@ -179,10 +199,10 @@ pub fn scene(layout: &LogicalLayout, options: &SceneOptions, slides: &BTreeMap<G
         }
         ViewMode::Grid => {
             let gap = GAP_W * tw;
-            let columns = options.grid_columns.max(1);
+            let columns = options.grid_columns;
             let (cell_w, cell_h, block_pad) = (tw + gap, 1.0 + LABEL_H + gap, BLOCK_PAD_W * tw);
             let block_w = columns as f64 * cell_w - gap + 2.0 * block_pad;
-            let mut column_y = vec![0.0f64; options.grid_block_columns.max(1)];
+            let mut column_y = vec![0.0f64; options.grid_block_columns];
             for (gi, group) in layout.groups.iter().enumerate() {
                 let column = (0..column_y.len()).min_by(|&a, &b| column_y[a].total_cmp(&column_y[b])).unwrap_or(0);
                 let (bx, by) = (column as f64 * (block_w + BLOCK_GAP_W * tw), column_y[column]);
