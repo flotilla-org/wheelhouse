@@ -444,7 +444,7 @@ entry_point(CmdLine *cmd_line)
                                     "Add a Flotilla subscription for this daemon (default: Flotilla's own) to the Dashboard unless it has one; "
                                     "connectors run this Flotilla (default: $FLOTILLA_BIN, else flotilla).\n\n"
                                     "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
-                                    "--table[:<name>]\nOpen a table tab over a canned table: records, huge or live.\n\n"
+                                    "--table[:<name>]\nOpen a table tab over a canned table (records, huge or live), or a described table by its link (http://host:port/tables/<table>?namespace=<ns>).\n\n"
                                     "--managed_content_diagnostics\nRun managed terminal reconciliation checks and exit (Unix).\n\n"
                                     "--shared_ui_diagnostics --shared_ui_fixture_dir:DIR\nRun config, file-picker and Metal blur regressions using an empty temporary directory.\n\n"
                                     "--panel_diagnostics\nRun panel drop and layout checks and exit.\n\n"

@@ -2202,10 +2202,19 @@ size_t wheelhouse_table_count(void);
 // the count.
 WheelhouseText wheelhouse_table_name(size_t index);
 
-// Opens the canned table named name, sized for text line pixels high
-// whose digits are digit pixels wide, or returns NULL for an unknown name.
+// Opens the table name names, sized for text line pixels high whose
+// digits are digit pixels wide: a canned table's name, or a described
+// table's link (http://host:port/tables/{table}?namespace=…, or
+// http+unix://{socket path, percent-encoded}/tables/{table}?…), its dates
+// drawn utc_offset seconds east of UTC. A described table calls wake (if
+// not NULL) from another thread whenever data comes, for the host to draw
+// a frame. Returns NULL for an unknown name or a link that does not parse.
 // Free it with wheelhouse_table_free.
-WheelhouseTable *wheelhouse_table_open(WheelhouseText name, float line, float digit);
+WheelhouseTable *wheelhouse_table_open(WheelhouseText name,
+                                       float line,
+                                       float digit,
+                                       int32_t utc_offset,
+                                       void (*wake)(void));
 
 // The table's Grid, for binnacle.h's calls, live until wheelhouse_table_free.
 // Don't free it with binnacle_grid_free.
@@ -2218,6 +2227,11 @@ BinnacleGrid *wheelhouse_table_grid(WheelhouseTable *table);
 // binnacle_grid_snapshot after it. Returns the microseconds until the
 // table changes by itself, or WHEELHOUSE_TABLE_NEVER.
 uint64_t wheelhouse_table_frame(WheelhouseTable *table, float width, float height, uint64_t now_us);
+
+// What to show about the table above it (a described table connecting,
+// retrying, failed or partly shown), valid until the next call on table;
+// empty when there is nothing to say.
+WheelhouseText wheelhouse_table_status(WheelhouseTable *table);
 
 // The text of the cell at the row and column Keys, valid until the next
 // call on table, and its WHEELHOUSE_TABLE_ALIGN_* in align_out (if not NULL).

@@ -36,7 +36,7 @@ sibling repository at the same commit (`WHEELHOUSE_CLEAT_DIR`,
 `WHEELHOUSE_JACKSTAY_DIR`) and build. No workflow changes.
 
 Binnacle is not pinned here. Cargo pins it: `binnacle-core`, `binnacle-ffi`
-and `binnacle-memory` are git dependencies by `rev` in `Cargo.toml`, locked in
+and `binnacle-memory` (with the `binnacle-described*`, `binnacle-format` and `binnacle-testkit` crates) are git dependencies by `rev` in `Cargo.toml`, locked in
 `Cargo.lock`. Bump it there. Tool versions (Zig, Python, Node) are still in the
 workflows.
 

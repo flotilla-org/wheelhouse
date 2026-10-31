@@ -1,7 +1,12 @@
-//! Canned tables for the native table control (#506): binnacle In-Memory
-//! Table Sources over data generated here, as binnacle's ratatui demo
-//! (`binnacle-demo`) has them. Each is a Table Source and the text its cells
-//! draw; the Grid over it is the host's, which pumps it each frame.
+//! Tables for the native table control: canned ones (#506), binnacle
+//! In-Memory Table Sources over data generated here, as binnacle's ratatui
+//! demo (`binnacle-demo`) has them, and described ones (#529), read live
+//! from a server by their link. Each is a Table Source and the text its
+//! cells draw; the Grid over it is the host's, which pumps it each frame.
+
+mod described;
+
+pub use described::{Link, Wake};
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -175,6 +180,7 @@ enum Kind {
     Records { rows: Vec<Record>, source: Box<MemorySource<Record>> },
     Huge(Huge),
     Live(Live),
+    Described(Box<described::Described>),
 }
 
 /// A canned table: its Table Source and the text its cells draw.
@@ -260,12 +266,37 @@ impl Table {
         }
     }
 
+    /// The described table at `link` and an empty Grid for it, sized in
+    /// `metrics`, its dates drawn `utc_offset` seconds east of UTC. `wake`
+    /// is called from another thread whenever data comes; the host then
+    /// draws a frame, which takes it in. `None` if no thread could start.
+    pub fn open_described(link: &Link, metrics: Metrics, utc_offset: i32, wake: Wake) -> Option<(Table, Grid)> {
+        let described = described::Described::open(link, utc_offset, wake).ok()?;
+        let grid = Grid::new(
+            AxisConfig::new(0, metrics.line).header(metrics.line),
+            AxisConfig::new(0, 14.0 * metrics.digit).header(5.0 * metrics.digit).gap(1.0),
+        );
+        Some((Table { kind: Kind::Described(Box::new(described)) }, grid))
+    }
+
+    /// What the host shows about the table above it, if anything: a
+    /// described table connecting, retrying or failed, or partly shown.
+    pub fn status(&self) -> Option<String> {
+        match &self.kind {
+            Kind::Described(d) => d.status(),
+            _ => None,
+        }
+    }
+
     /// Advances the table's own clock to `now` (the host's, from any fixed
     /// start), telling `grid` what changed. Returns how long until it
     /// changes again by itself, or `None` if it never does.
+    /// A described table takes in what came from its server.
     pub fn tick(&mut self, grid: &mut Grid, now: Duration) -> Option<Duration> {
-        let Kind::Live(live) = &mut self.kind else {
-            return None;
+        let live = match &mut self.kind {
+            Kind::Live(live) => live,
+            Kind::Described(d) => return d.tick(grid),
+            _ => return None,
         };
         // A first call, or one after a long gap (a hidden tab, a sleep),
         // starts the clock again rather than replaying every missed tick:
@@ -294,22 +325,24 @@ impl Table {
             Kind::Records { rows, source } => source.pump(rows, grid, &mut seen),
             Kind::Huge(huge) => pump(grid, huge, &mut seen),
             Kind::Live(Live { rows, source, .. }) => source.pump(rows, grid, &mut seen),
+            Kind::Described(d) => d.pump(grid, &mut seen),
         }
     }
 
     /// Starts `grid`'s frame for `viewport` and fills the Windows it asks for.
-    pub fn fill(&self, grid: &mut Grid, viewport: Viewport) {
+    pub fn fill(&mut self, grid: &mut Grid, viewport: Viewport) {
         for (axis, range) in grid.begin_frame(viewport) {
             let keys = self.window(axis, range.clone());
             grid.set_window(axis, range.start, &keys);
         }
     }
 
-    fn window(&self, axis: Axis, range: Range<u64>) -> Vec<Key> {
-        match &self.kind {
+    fn window(&mut self, axis: Axis, range: Range<u64>) -> Vec<Key> {
+        match &mut self.kind {
             Kind::Records { source, .. } => source.window(axis, range),
             Kind::Huge(huge) => huge.axis(axis).window(range),
             Kind::Live(live) => live.source.window(axis, range),
+            Kind::Described(d) => d.source.window(axis, range).keys,
         }
     }
 
@@ -332,6 +365,7 @@ impl Table {
                 }
             }
             Kind::Huge(_) => right(format!("r{}c{}", row.0, col.0)),
+            Kind::Described(d) => d.cell(row, col),
             Kind::Live(live) => {
                 let Some(t) = live.rows.get(row.0 as usize) else {
                     return left(String::new());
@@ -349,6 +383,7 @@ impl Table {
     /// name, or a row's number.
     pub fn header(&self, axis: Axis, key: Key, position: u64) -> String {
         match (axis, &self.kind) {
+            (_, Kind::Described(d)) => d.header(axis, key, position),
             (Axis::Cols, Kind::Records { .. }) => HEADERS.get(key.0 as usize).copied().unwrap_or_default().into(),
             (Axis::Cols, Kind::Huge(_)) => format!("col {}", key.0),
             (Axis::Cols, Kind::Live(_)) => TICKER_HEADERS.get(key.0 as usize).copied().unwrap_or_default().into(),
