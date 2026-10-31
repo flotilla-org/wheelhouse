@@ -3,8 +3,8 @@
 
 The core, its frontends and the ingress depend on neither: Flotilla reaches
 Wheelhouse over the facts stream, not as a library. Also links and runs real
-C clients against the exported ABI (the sidebar, and text layout with an arena
-allocator), with and without the FFI's default features.
+C clients against the exported ABI (the sidebar, text layout with an arena
+allocator, and Rich Text's deltas), with and without the FFI's default features.
 """
 import json
 import os
@@ -42,4 +42,11 @@ subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(root / "cra
                 "-L", str(library), "-lwheelhouse_ffi", "-o", str(text)], check=True)
 subprocess.run([str(text), str(root / "data")], env=dict(os.environ, LD_LIBRARY_PATH=str(library),
                DYLD_LIBRARY_PATH=str(library)), check=True)
+rich_text = target / "ffi-rich-text"
+subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(root / "crates/wheelhouse-ffi/tests/rich_text.c"),
+                "-I", str(root / "crates/wheelhouse-ffi/include"),
+                "-L", str(library), "-lwheelhouse_ffi", "-o", str(rich_text)], check=True)
+fixtures = root / "crates/wheelhouse-core/src/rich_text/fixtures"
+subprocess.run([str(rich_text)] + [str(fixtures / name) for name in ("blocks.md", "gfm.md", "extensions.md")],
+               env=dict(os.environ, LD_LIBRARY_PATH=str(library), DYLD_LIBRARY_PATH=str(library)), check=True)
 print("Workspace and C ABI verified without a Zellij or Flotilla dependency.")
