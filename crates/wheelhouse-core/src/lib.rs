@@ -16,6 +16,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 pub mod arrangement;
+pub mod automation;
 pub mod detail;
 pub mod dock;
 mod facts;

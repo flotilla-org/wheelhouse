@@ -589,6 +589,16 @@ pub unsafe extern "C" fn wheelhouse_workspace_content_revision(h: *mut Wheelhous
     run(h, error_out, |h| Ok(h.sidebar.content_revision())).unwrap_or(0)
 }
 
+/// The Semantic Tree of the core's registered workspaces, as a JSON array
+/// of workspace nodes (docs/protocol/automation-endpoint.md): each its panel
+/// tree as shown and the current Views of its Slots. The host adds what
+/// only it knows, such as terminals' sizes, by Automation ID. Free the bytes
+/// with wheelhouse_bytes_free.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_semantic_workspaces(h: *mut WheelhouseCore, out: *mut Bytes, error_out: *mut *mut c_char) -> u32 {
+    run(h, error_out, |h| write_bytes(out, wheelhouse_core::automation::to_json(&h.sidebar.semantic_workspaces()))).is_some() as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

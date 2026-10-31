@@ -399,7 +399,7 @@ Unix socket. A successful response is `200 application/json` with `Cache-Control
 no-store`:
 
 ```json
-{"workdirs":[{"workspace_id":42,"view_id":81,"entity_kind":"worktree","entity_id":"example","cwd":"/saved/root","live_cwd":null}]}
+{"workdirs":[{"workspace_id":42,"view_id":81,"view":"workspace/0192f1a2-3b4c-7d5e-8f60-718293a4b5c6/view/u:1","entity_kind":"worktree","entity_id":"example","cwd":"/saved/root","live_cwd":null}]}
 ```
 
 Each UI drain takes a fresh snapshot for queued reads (reusing it until an intervening
@@ -407,8 +407,10 @@ patch), including unselected views. `cwd` is the saved launch directory; `live_c
 reserved for a provider-reported current directory. Both are nullable, and views with
 neither are omitted. Prefer a nonempty `live_cwd`, falling back to `cwd`. The current
 Cleat provider API does not report live directories, so Wheelhouse currently returns
-null for `live_cwd`. Numeric host IDs remain stable while the workspace/view exists in
-this process; do not cache them across restarts. Directory matching and focus stay local
+null for `live_cwd`. `view` is the View's Automation ID
+([docs/protocol/automation-endpoint.md](docs/protocol/automation-endpoint.md)). The numeric
+host IDs remain stable only while the workspace/view exists in this process; `view_id` is
+deprecated for `view`. Directory matching and focus stay local
 to each window; discovery polls union all windows so producers can discover every
 repository. The nullable `entity_kind` and `entity_id` carry the persisted producer
 identity when the workspace has one. Empty inventory is `{"workdirs":[]}`; multiple

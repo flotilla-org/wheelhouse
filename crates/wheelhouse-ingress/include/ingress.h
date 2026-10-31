@@ -26,9 +26,24 @@ extern WheelhouseIngress *wheelhouse_ingress_start_recorded(const uint8_t *, siz
 extern void wheelhouse_ingress_poll(WheelhouseIngress *, uint32_t (*)(void *, const uint8_t *, size_t),
   uint32_t (*)(void *), void *);
 typedef struct { const uint8_t *data; size_t len; } WheelhouseIngressText;
+// A View by its View Address; Rust formats its Automation ID. owner is a
+// WHEELHOUSE_AUTOMATION_OWNER_*, id the owner's Workspace or Window ID, key
+// the View's key, previous nonzero for a kept previous instance.
+#define WHEELHOUSE_AUTOMATION_OWNER_NONE 0u
+#define WHEELHOUSE_AUTOMATION_OWNER_WORKSPACE 1u
+#define WHEELHOUSE_AUTOMATION_OWNER_WINDOW 2u
+typedef struct {
+  uint32_t owner;
+  uint8_t id[16];
+  WheelhouseIngressText key;
+  uint32_t previous;
+} WheelhouseIngressView;
+// view names the row by Automation ID; view_id is a session-local CFG_ID,
+// deprecated for it.
 typedef struct {
   uint64_t workspace_id, view_id;
   WheelhouseIngressText entity_kind, entity_id, cwd, live_cwd;
+  WheelhouseIngressView view;
 } WheelhouseIngressWorkdir;
 typedef void (*WheelhouseIngressWorkdirEmit)(void *, const WheelhouseIngressWorkdir *);
 // observe runs on the UI thread and synchronously emits borrowed records.
@@ -40,6 +55,38 @@ typedef void (*WheelhouseIngressWorkdirEmit)(void *, const WheelhouseIngressWork
 extern void wheelhouse_ingress_poll_observed(WheelhouseIngress *,
   uint32_t (*)(void *, const uint8_t *, size_t), uint32_t (*)(void *),
   uint32_t (*)(void *, WheelhouseIngressWorkdirEmit, void *), void *);
+// The Automation Endpoint's reads (GET /v1/observed/semantic, /self and
+// /events; docs/protocol/automation-endpoint.md). At each frame's end,
+// wheelhouse_ingress_automation takes the host's automation setting (mode:
+// off serves none of them, 404), and while a client wants the Semantic Tree
+// calls observe on the UI thread, which gives out, synchronously, each core's
+// workspaces (a JSON array from wheelhouse_semantic_workspaces), the
+// workspaces windows show, and what it knows of terminals; then returns 1,
+// or 0 when it can't now.
+#define WHEELHOUSE_AUTOMATION_OFF 0u
+#define WHEELHOUSE_AUTOMATION_OBSERVE 1u
+#define WHEELHOUSE_AUTOMATION_FULL 2u
+typedef struct WheelhouseIngressAutomationBuild WheelhouseIngressAutomationBuild;
+// A terminal View: its Cleat session (empty: none), its size (0 before it
+// is drawn), and when its screen may be read, screen_rows visible rows,
+// trailing blanks trimmed, and the cursor; screen is NULL otherwise.
+typedef struct {
+  WheelhouseIngressView view;
+  WheelhouseIngressText session;
+  uint32_t cols, rows;
+  const WheelhouseIngressText *screen;
+  size_t screen_rows;
+  uint32_t cursor_row, cursor_col, cursor_visible;
+} WheelhouseIngressTerminal;
+extern void wheelhouse_ingress_automation_workspaces(WheelhouseIngressAutomationBuild *, WheelhouseIngressText json);
+extern void wheelhouse_ingress_automation_selected(WheelhouseIngressAutomationBuild *, const uint8_t (*workspace_id)[16]);
+extern void wheelhouse_ingress_automation_terminal(WheelhouseIngressAutomationBuild *, const WheelhouseIngressTerminal *);
+typedef struct {
+  uint32_t mode;
+  uint32_t (*observe)(void *context, WheelhouseIngressAutomationBuild *out);
+  void *context;
+} WheelhouseIngressAutomationHost;
+extern void wheelhouse_ingress_automation(WheelhouseIngress *, const WheelhouseIngressAutomationHost *);
 extern void wheelhouse_ingress_stop(WheelhouseIngress *);
 // The Automation Endpoint's default address for this instance,
 // wheelhouse/<instance UUID> under the runtime directory (address.rs):
