@@ -257,3 +257,103 @@ fn the_anchor_holds_when_heights_above_it_change(tc: TestCase) {
         }
     }
 }
+
+/// Collapse whitespace runs, and blank-line runs to one, for comparing
+/// copies: a copy's edges may differ in whitespace that markdown drops.
+pub(crate) fn normalize(text: &str) -> String {
+    let mut out: Vec<String> = vec![];
+    for line in text.lines() {
+        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if line.is_empty() && out.last().is_none_or(|l| l.is_empty()) {
+            continue;
+        }
+        out.push(line);
+    }
+    while out.last().is_some_and(|l| l.is_empty()) {
+        out.pop();
+    }
+    out.join("\n")
+}
+
+#[hegel::test(test_cases = 500)]
+fn copy_as_markdown_parses_to_the_plain_copy(tc: TestCase) {
+    let mut c = Draws(&tc);
+    let size = c.below(8) + 1;
+    let blocks = generate::document(&mut c, size);
+    let source = generate::render(&blocks);
+    let mut rich = RichText::open(&source);
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let blocks: Vec<NodeId> = doc.entries().iter().filter(|e| e.part == Part::Block).map(|e| e.node).collect();
+    if blocks.is_empty() {
+        return;
+    }
+    let point = |c: &mut Draws| {
+        let id = blocks[c.below(blocks.len())];
+        let len = select::extent(doc, id) as usize;
+        Point { key: doc.key(id), byte: c.below(len + 1) as u32 }
+    };
+    let anchor = point(&mut c);
+    let focus = point(&mut c);
+    view.select(doc, anchor, focus).unwrap();
+    let Some(plain) = view.copy(doc, Format::Plain) else { return };
+    let markdown = view.copy(doc, Format::Markdown).unwrap();
+    let parsed = RichText::open(&markdown);
+    assert_eq!(
+        normalize(&rendered(parsed.doc())),
+        normalize(&plain),
+        "\nsource:\n{source}\nselection {anchor:?} to {focus:?}\nmarkdown:\n{markdown}\n"
+    );
+}
+
+/// The text of HTML: tags dropped, entities decoded.
+fn html_text(html: &str) -> String {
+    let mut out = String::new();
+    let mut rest = html;
+    while let Some(at) = rest.find('<') {
+        out.push_str(&rest[..at]);
+        let end = rest[at..].find('>').expect("a tag ends") + at + 1;
+        // Elements that end a line of text.
+        if ["<br", "<p", "<h", "<li", "<tr", "<pre", "<hr", "<aside", "<blockquote", "<t"].iter().any(|t| rest[at..].starts_with(t)) {
+            out.push(' ');
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
+}
+
+/// The plain copy's words, less the list markers, task boxes and footnote
+/// labels it adds as text and HTML gives as markup.
+fn plain_words(plain: &str) -> Vec<String> {
+    let markers = regex::Regex::new(r"^ *((- |\d+\. |\[[ x]\] |\[\^[^\]]+\]: )+)").unwrap();
+    plain.lines().map(|line| markers.replace(line, "").into_owned()).flat_map(|line| words(&line)).collect()
+}
+
+fn words(text: &str) -> Vec<String> {
+    text.split(|c: char| c.is_whitespace() || c == '\t').filter(|w| !w.is_empty() && *w != "---").map(str::to_owned).collect()
+}
+
+#[hegel::test(test_cases = 300)]
+fn html_copy_has_the_plain_copys_text(tc: TestCase) {
+    let mut c = Draws(&tc);
+    let size = c.below(8) + 1;
+    let source = generate::render(&generate::document(&mut c, size));
+    let mut rich = RichText::open(&source);
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let blocks: Vec<NodeId> = doc.entries().iter().filter(|e| e.part == Part::Block).map(|e| e.node).collect();
+    if blocks.is_empty() {
+        return;
+    }
+    let point = |c: &mut Draws| {
+        let id = blocks[c.below(blocks.len())];
+        Point { key: doc.key(id), byte: c.below(select::extent(doc, id) as usize + 1) as u32 }
+    };
+    let (anchor, focus) = (point(&mut c), point(&mut c));
+    view.select(doc, anchor, focus).unwrap();
+    let Some(plain) = view.copy(doc, Format::Plain) else { return };
+    let html = view.copy(doc, Format::Html).unwrap();
+    assert!(!html.contains("class=") && !html.contains("style="), "{html}");
+    assert_eq!(words(&html_text(&html)), plain_words(&plain), "\nsource:\n{source}\nhtml:\n{html}\nplain:\n{plain}\n");
+}

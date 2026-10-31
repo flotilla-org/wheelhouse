@@ -60,6 +60,12 @@ fn find(doc: &Tree, text: &str) -> Key {
     doc.key(id)
 }
 
+fn at(doc: &Tree, text: &str, needle: &str) -> Point {
+    let key = find(doc, text);
+    let byte = doc.text(doc.get(key).unwrap()).find(needle).unwrap() as u32;
+    Point { key, byte }
+}
+
 #[test]
 fn keys_are_parent_and_ordinal_and_survive_a_reload() {
     let rich = RichText::open(BLOCKS);
@@ -81,6 +87,7 @@ fn front_matter_is_kept_but_hidden() {
     assert!(doc.hidden(front));
     assert_eq!(doc.text(front), "title: Extensions\ntags: [synthetic]");
     assert_eq!(doc.entry_of(doc.key(front), Part::Block), None, "a hidden Block has no index entry");
+    assert!(!rendered(doc).contains("title"));
 }
 
 #[test]
@@ -140,6 +147,165 @@ fn polls_need_a_live_subscription() {
 }
 
 #[test]
+fn plain_copy_keeps_list_markers_and_drops_fences() {
+    let mut rich = RichText::open(BLOCKS);
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.select_all(doc);
+    let plain = view.copy(doc, Format::Plain).unwrap();
+    for expected in [
+        "# The harbour log",
+        "- a tight item\n\n- another, with a nested list\n\n  1. first\n\n  2. second\n\n- last",
+        "3. a loose list starting at three\n\n4. with a second paragraph\n\n   in its item",
+        "A quote holds paragraphs\n\n- and lists",
+        "fn main() {\n    println!(\"fenced\");\n}",
+        "---",
+        "A hard break ends this line\nand an entity & an escape * sit here.",
+    ] {
+        let expected = expected.trim_start_matches("# ");
+        assert!(plain.contains(expected), "{expected:?} not in:\n{plain}");
+    }
+    assert!(!plain.contains("```"));
+    let mut rich = RichText::open(GFM);
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.select_all(doc);
+    let plain = view.copy(doc, Format::Plain).unwrap();
+    assert!(plain.contains("Vessel\tBerth\tTonnage\nKestrel\t4\t1200\nPlover\t7\t950\nTern\t2\t30"), "{plain}");
+    assert!(plain.contains("- [ ] check the moorings\n\n- [x] log the tide"), "{plain}");
+    assert!(plain.contains("[^tide]: High water at noon."), "{plain}");
+}
+
+#[test]
+fn html_copy_is_semantic() {
+    let mut rich = RichText::open(BLOCKS);
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.select_all(doc);
+    let html = view.copy(doc, Format::Html).unwrap();
+    for expected in [
+        "<h1>The harbour log</h1>",
+        "<em>emphasised</em>",
+        "<strong>strong</strong>",
+        "<code>coded</code>",
+        "<del>struck</del>",
+        "<a href=\"https://example.com/harbour\" title=\"a title\">linked</a>",
+        "this line<br />\nand an entity &amp; an escape * sit here.",
+        "<ul>\n<li>a tight item</li>",
+        "<ol>\n<li>first</li>",
+        "<ol start=\"3\">",
+        "<blockquote>\n<p>A quote holds paragraphs</p>",
+        "<pre><code>fn main() {",
+        "<hr />",
+        "<p>&lt;div&gt;an HTML block&lt;/div&gt;",
+        "<a href=\"https://example.com/picture.png\">a picture's alt text</a>",
+    ] {
+        assert!(html.contains(expected), "{expected:?} not in:\n{html}");
+    }
+    let mut rich = RichText::open(GFM);
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.select_all(doc);
+    let html = view.copy(doc, Format::Html).unwrap();
+    for expected in [
+        "<table><thead><tr><th>Vessel</th><th>Berth</th>",
+        "<td><em>Kestrel</em></td>",
+        "<blockquote>\n<p>Mind the gap.</p>",
+        "<sup>[^tide]</sup>",
+        "<aside>\n<p>High water at noon.</p>\n</aside>",
+    ] {
+        assert!(html.contains(expected), "{expected:?} not in:\n{html}");
+    }
+    assert!(!html.contains("class=") && !html.contains("style="), "{html}");
+}
+
+#[test]
+fn copy_as_markdown_moves_edges_out_of_markers_and_remakes_cut_ones() {
+    let mut rich = RichText::open(BLOCKS);
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let copy = |view: &mut View, anchor: Point, focus: Point| {
+        view.select(doc, anchor, focus).unwrap();
+        view.copy(doc, Format::Markdown).unwrap()
+    };
+    let start = at(doc, "Every Block", "phasised");
+    let end = Point { byte: at(doc, "Every Block", "strong").byte + 3, ..start };
+    assert_eq!(copy(view, start, end), "*phasised*, **str**");
+    // An edge just inside a marker moves out of it, so the marker comes too.
+    let start = at(doc, "Every Block", "emphasised");
+    let end = Point { byte: start.byte + "emphasised".len() as u32, ..start };
+    assert_eq!(copy(view, start, end), "*emphasised*");
+    // A cut code span is made again.
+    let start = at(doc, "Every Block", "oded");
+    let end = Point { byte: start.byte + 3, ..start };
+    assert_eq!(copy(view, start, end), "`ode`");
+    // Inside a list item: its marker comes with it.
+    let start = at(doc, "second", "cond");
+    let end = at(doc, "last", "st");
+    assert_eq!(copy(view, start, end), "- 2. cond\n- la", "a partly selected item keeps its marker");
+    // Across Blocks, the source between is raw.
+    let start = at(doc, "A quote holds", "quote");
+    let end = at(doc, "and lists", "lists");
+    assert_eq!(copy(view, start, end), "> quote holds paragraphs\n>\n> - and");
+    // A cut code block keeps its fences.
+    let start = at(doc, "fn main", "println");
+    let end = Point { byte: start.byte + 7, ..start };
+    assert_eq!(copy(view, start, end), "```rust\nprintln\n```");
+    // A reference link brings its definition.
+    let start = at(doc, "a reference link", "reference");
+    let end = Point { byte: start.byte + 9, ..start };
+    assert_eq!(copy(view, start, end), "[reference][ref]\n\n[ref]: <https://example.com/ref>");
+}
+
+#[test]
+fn copy_block_copies_a_whole_block_even_collapsed() {
+    let mut rich = RichText::open(BLOCKS);
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let code = find(doc, "fn main");
+    assert_eq!(copy_block(doc, code, Format::Plain).unwrap(), "fn main() {\n    println!(\"fenced\");\n}");
+    assert_eq!(copy_block(doc, code, Format::Markdown).unwrap(), "```rust\nfn main() {\n    println!(\"fenced\");\n}\n```");
+    let item = find(doc, "first");
+    let list = doc.parent(doc.parent(doc.get(item).unwrap()).unwrap()).unwrap();
+    view.set_collapsed(doc, doc.key(list), true).unwrap();
+    assert_eq!(copy_block(doc, item, Format::Plain).unwrap(), "first");
+    // A selection across the collapsed list leaves it out.
+    view.select(doc, at(doc, "another", "another"), at(doc, "last", "st")).unwrap();
+    assert_eq!(view.copy(doc, Format::Plain).unwrap(), "- another, with a nested list\n\n- la");
+    assert_eq!(view.copy(doc, Format::Markdown).unwrap(), "- another, with a nested list\n- la");
+}
+
+#[test]
+fn endpoints_clamp_when_their_block_shrinks_or_goes() {
+    let mut rich = RichText::open("one two three\n\nfour five\n\nsix\n");
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let anchor = at(doc, "one", "three");
+    let focus = Point { byte: 4, ..at(doc, "four", "four") };
+    view.select(doc, anchor, focus).unwrap();
+    rich.reload("one two\n\nsix\n");
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let selection = view.selection().unwrap();
+    assert_eq!(selection.anchor, Point { key: find(doc, "one"), byte: 7 }, "the shortened Block's endpoint clamps to its end");
+    assert_eq!(selection.focus, Point { key: find(doc, "six"), byte: 3 }, "the next Block took over the removed key");
+    rich.reload("one two\n");
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let selection = view.selection().unwrap();
+    assert_eq!(selection.focus, Point { key: find(doc, "one"), byte: 7 }, "with nothing after, the end of the one before");
+}
+
+#[test]
+fn an_embed_is_selected_whole() {
+    let mut rich = RichText::open(GFM);
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let table = find(doc, "Vessel");
+    view.select(doc, Point { key: table, byte: 3 }, Point { key: table, byte: 40 }).unwrap();
+    let selection = view.selection().unwrap();
+    assert_eq!((selection.anchor.byte, selection.focus.byte), (0, doc.text(doc.get(table).unwrap()).len() as u32));
+}
+
+#[test]
 fn find_is_literal_and_case_insensitive_by_default_and_runs_in_slices() {
     let source: String = (0..200).map(|i| format!("Paragraph {i} mentions the Harbour and the harbour.\n\n")).collect();
     let mut rich = RichText::open(&source);
@@ -189,6 +355,7 @@ fn find_moves_to_a_match_and_reveals_it() {
     assert!(!view.is_collapsed(doc.key(nested)), "revealing a match expands what hides it");
     let anchor = view.anchor().unwrap();
     assert_eq!((anchor.key, anchor.viewport_offset), (m.key, 10.0), "a third of the way down");
+    assert_eq!(view.copy(doc, Format::Plain).unwrap(), "- 2. second", "the match is selected");
     assert_eq!(view.find_state().unwrap().status().current, Some(0));
     let m = view.find_next(doc, true).unwrap();
     assert_eq!(doc.text(doc.get(m.key).unwrap()), "with a second paragraph");

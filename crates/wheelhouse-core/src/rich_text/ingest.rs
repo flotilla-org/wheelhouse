@@ -33,6 +33,16 @@ pub(crate) struct Segment {
     pub atomic: bool,
 }
 
+impl Segment {
+    pub fn text_end(&self) -> u32 {
+        self.text + self.text_len
+    }
+
+    pub fn source_end(&self) -> u32 {
+        self.source + self.source_len
+    }
+}
+
 /// Where a span's markup is: `outer` from its opening marker to its closing
 /// one, `inner` its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
