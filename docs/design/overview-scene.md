@@ -53,7 +53,9 @@ tests; the native host draws the scene through the camera it is given.
 
 ### Groups, clusters and titles
 
-- A **group** is a project. Its heading is the project's name.
+- A **group** is a project, or a local group someone made in the sidebar. Its
+  heading is the project's or group's name. The local sections that hold
+  local groups only arrange the sidebar, so they aren't a level here.
 - A convoy's workspace and its vessels' workspaces sit together as a
   **cluster** in the group, convoy first, then vessels in sidebar order.
 - A workspace's **title** says what distinguishes it within its group, such as
@@ -140,3 +142,7 @@ In order, each step usable on its own:
   never been materialized) appear in the scene, and how.
 - How the overview and the sidebar relate when both show the same hierarchy
   (#190's third direction).
+- Projects, local groups and sections need thinking through together.
+  Projects and local groups are most alike, and in the end the hierarchy is
+  probably a generic tree. Grouping that is a query over workspaces and their
+  facts has to be reconciled with groups people drag things between.

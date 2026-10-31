@@ -46,8 +46,13 @@ pub fn entries(surface: &SurfaceSnapshot) -> Vec<OverviewEntry> {
     out
 }
 
+/// The kind of a local section's entity. It holds groups, so a path through
+/// one is grouped by what comes after it.
+pub const LOCAL_SECTION_KIND: &str = crate::presentation::system::SECTION;
+
 /// What a group is: the entity at the top of a workspace's placement path,
-/// whichever section places it, or none for workspaces nothing places.
+/// below any local sections, whichever section places it, or none for
+/// workspaces nothing places.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GroupKey {
     pub head: Option<EntityRef>,
@@ -89,7 +94,9 @@ pub struct Tile {
     pub current: bool,
 }
 
-/// Group `entries` into the overview's logical layout. Each workspace
+/// Group `entries` into the overview's logical layout. A local group is a
+/// group, like a project: the local sections above it only arrange the
+/// sidebar. Each workspace
 /// appears once, at its deepest place (the first, among equals), so a
 /// workspace the sidebar also lists flat, under attention say, is grouped
 /// by its hierarchy. Groups, clusters and tiles keep sidebar order.
@@ -113,13 +120,17 @@ pub fn logical_layout(entries: &[OverviewEntry], current: Option<WorkspaceId>, c
         let segments = &entry.key.0;
         let unplaced =
             entry.section == UNPLACED_WORKSPACES_SECTION || segments.first().is_some_and(|s| s.loop_name == UNPLACED_WORKSPACES_SECTION);
-        let (key, heading, cluster_key) = if unplaced || segments.is_empty() {
+        let start = segments.iter().take_while(|s| s.entity.kind == LOCAL_SECTION_KIND).count();
+        let (key, heading, cluster_key) = if unplaced || segments.len() == start {
             (GroupKey { head: None }, OTHER_WORKSPACES.to_owned(), entry.key.clone())
         } else {
-            let heading = entry.labels.first().cloned().unwrap_or_default();
-            (GroupKey { head: Some(segments[0].entity.clone()) }, heading, PlacementKey(segments[..segments.len().min(2)].to_vec()))
+            let heading = entry.labels.get(start).cloned().unwrap_or_default();
+            // The cluster keeps the sections, so it is the sidebar node's own
+            // key, the one collapsing goes by.
+            let cluster = PlacementKey(segments[..segments.len().min(start + 2)].to_vec());
+            (GroupKey { head: Some(segments[start].entity.clone()) }, heading, cluster)
         };
-        let is_group_head = key.head.is_some() && segments.len() == 1;
+        let is_group_head = key.head.is_some() && segments.len() == start + 1;
         let tile = Tile {
             workspace_id: entry.workspace_id,
             title: entry.labels.last().cloned().unwrap_or_default(),

@@ -17,9 +17,17 @@ struct UIShell_Overview
   WheelhouseOverviewFrame *frame;
   Rng2F32 region;
   F64 now_ms;
+  // Whether the overview moves smoothly (uishell_overview_motion) or cuts.
+  B32 motion;
   // Draw the region through the scene, not the current workspace as itself.
   B32 through_scene;
+  // A drag or glide past an end, as drawn: the region's content shifts by
+  // `over` (across only for row `over_group`).
+  Vec2F32 over;
+  U64 over_group;
 };
+
+internal void uishell_overview_spring(UIShell_Overview *o);
 
 // The overview's clock: frame time, at the animation speed setting, so a
 // slowed-down flight can be inspected and a replayed one is deterministic.
@@ -78,6 +86,7 @@ uishell_overview_begin(RD_WindowState *ws, CFG_Node *current, Rng2F32 region, B3
   if(state->core == 0) { return o; }
   o.state = state;
   o.now_ms = uishell_overview_clock_ms(state);
+  o.motion = motion;
   WheelhouseWorkspaceId id = {0};
   if(current != &cfg_nil_node) { id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(current)); }
   Vec2F32 dim = dim_2f32(region);
@@ -88,6 +97,7 @@ uishell_overview_begin(RD_WindowState *ws, CFG_Node *current, Rng2F32 region, B3
     else                        { wheelhouse_overview_close(state->core, o.now_ms, 0); }
   }
   uishell_overview_refresh(ws, &o);
+  uishell_overview_spring(&o);
   return o;
 }
 
@@ -123,6 +133,320 @@ uishell_overview_rect(UIShell_Overview *o, WheelhouseOverviewRect r)
   return r2f32p((F32)((r.x0 - v.x0)*sx), (F32)((r.y0 - v.y0)*sy), (F32)((r.x1 - v.x0)*sx), (F32)((r.y1 - v.y0)*sy));
 }
 
+// A scene rectangle as drawn: with a row's stretch past its end, and a
+// pan's. `group` is the row it slides with, if any.
+internal Rng2F32
+uishell_overview_drawn_rect(UIShell_Overview *o, WheelhouseOverviewRect r, U64 group)
+{
+  return shift_2f32(uishell_overview_rect(o, r), v2f32(group == o->over_group ? o->over.x : 0, o->over.y));
+}
+
+// Whether a tile, with its label, is in the region: the scene draws only
+// those. The label is under the tile, so it matters only at the top edge:
+// a tile scrolled off the top still shows while its label does.
+internal B32
+uishell_overview_tile_in_view(UIShell_Overview *o, const WheelhouseOverviewTile *tile)
+{
+  Vec2F32 dim = dim_2f32(o->region);
+  Rng2F32 rect = uishell_overview_drawn_rect(o, tile->rect, tile->group);
+  Rng2F32 label = uishell_overview_drawn_rect(o, tile->label, tile->group);
+  return !(rect.x1 < 0 || rect.x0 > dim.x || label.y1 < 0 || rect.y0 > dim.y);
+}
+
+// Whether the region shows a workspace this frame, so it needs building:
+// the current one always (it has the keyboard, also mid-flight), and
+// through the scene those whose tiles the camera sees. The others wait,
+// however many the window has.
+internal B32
+uishell_overview_shows(UIShell_Overview *o, CFG_Node *current, CFG_ID cfg_id)
+{
+  if(cfg_id == current->id) { return 1; }
+  WheelhouseOverviewFrame *f = o->frame;
+  // Defensive: at rest the camera fits the current tile, so no other tile
+  // is in view anyway; this keeps it so without the geometry's say.
+  if(f == 0 || !o->through_scene) { return 0; }
+  for(U64 i = 0; i < f->tile_count; i++)
+  {
+    if(uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_core(f->tiles[i].workspace_id)) == cfg_id)
+    {
+      return uishell_overview_tile_in_view(o, &f->tiles[i]);
+    }
+  }
+  return 0;
+}
+
+// What the user did to the overview this frame. It changes the overview
+// only once the region is drawn: the frame's text is borrowed from the
+// overview, and a change frees it under the tiles still to draw.
+typedef struct UIShell_OverviewMove UIShell_OverviewMove;
+struct UIShell_OverviewMove
+{
+  B32 slides;
+  U64 slide_group;
+  F64 slide_by;
+  B32 pans;
+  F64 pan_by;
+  B32 zooms;
+  U64 zoom_group;
+  B32 picks;
+  WheelhouseWorkspaceId pick;
+  CFG_ID pick_cfg;
+};
+
+// What a drag moves, chosen as it starts: mostly sideways over a row too
+// long for the region slides the row; mostly up or down, over a row or
+// between them, pans an overview taller than the region.
+typedef enum UIShell_OverviewDragAxis
+{
+  UIShell_OverviewDragAxis_None,
+  UIShell_OverviewDragAxis_Slide,
+  UIShell_OverviewDragAxis_Pan,
+}
+UIShell_OverviewDragAxis;
+
+// What's let go of mid-drag glides on at its speed then, slowing to a stop
+// over about a third of a second, or at its end.
+#define UIShell_OverviewGlideTauMs 325.0
+// A drag held still this long before its release doesn't glide. It is
+// also, deliberately, how long a gap between moves starts the drag's speed
+// afresh rather than smoothing it into the old one: both mean the mouse
+// stopped.
+#define UIShell_OverviewGlideHoldMs 60.0
+
+internal B32
+uishell_overview_slides(WheelhouseOverviewFrame *f, U64 group)
+{
+  return group < f->group_count && f->view_mode == WHEELHOUSE_OVERVIEW_ROWS && f->groups[group].slide_min < 0;
+}
+
+// Whether the overview is taller than the region, so it pans.
+internal B32
+uishell_overview_pans(WheelhouseOverviewFrame *f)
+{
+  return (f->mode == WHEELHOUSE_OVERVIEW_OVERVIEW &&
+          (f->bounds.y0 < f->view.y0 - 1e-6 || f->bounds.y1 > f->view.y1 + 1e-6));
+}
+
+// Scene units a pixel of the region, across or down.
+internal F64
+uishell_overview_units(UIShell_Overview *o, Axis2 axis)
+{
+  WheelhouseOverviewFrame *f = o->frame;
+  Vec2F32 dim = dim_2f32(o->region);
+  return axis == Axis2_X ? (f->view.x1 - f->view.x0)/Max(1.f, dim.x) : (f->view.y1 - f->view.y0)/Max(1.f, dim.y);
+}
+
+// Where a drag's axis is now: the row's slide, or the camera's height.
+internal F64
+uishell_overview_drag_place(WheelhouseOverviewFrame *f, UIShell_OverviewDragAxis axis, U64 group)
+{
+  return axis == UIShell_OverviewDragAxis_Slide ? f->groups[group].slide : (f->view.y0 + f->view.y1)/2;
+}
+
+// Where a drag's axis keeps to: a row from its slide_min to 0, the camera
+// within the overview.
+internal F64
+uishell_overview_drag_clamp(WheelhouseOverviewFrame *f, UIShell_OverviewDragAxis axis, U64 group, F64 place)
+{
+  if(axis == UIShell_OverviewDragAxis_Slide) { return Clamp(f->groups[group].slide_min, place, 0); }
+  F64 half = (f->view.y1 - f->view.y0)/2;
+  F64 lo = f->bounds.y0 + half;
+  return Clamp(lo, place, Max(lo, f->bounds.y1 - half));
+}
+
+internal void
+uishell_overview_move_by(UIShell_OverviewMove *move, UIShell_OverviewDragAxis axis, U64 group, F64 by)
+{
+  if(by == 0) { return; }
+  if(axis == UIShell_OverviewDragAxis_Slide && !move->slides) { move->slides = 1; move->slide_group = group; move->slide_by = by; }
+  if(axis == UIShell_OverviewDragAxis_Pan && !move->pans)     { move->pans = 1; move->pan_by = by; }
+}
+
+// Past an end, what's dragged stretches, less the further it goes, and
+// springs back when let go of; a glide that meets an end carries past it a
+// little and springs back too. The stretch is only drawn: the region's
+// content shifts by it, across for a row and down for a pan. This is the
+// spring's time constant, not its settling time: it settles in about seven
+// of them, half a second.
+#define UIShell_OverviewSpringMs 70.0
+
+// How far a drag `px` pixels past an end draws, in a region `dim` long.
+internal F64
+uishell_overview_stretch(F64 px, F64 dim)
+{
+  F64 d = Max(1.0, dim);
+  F64 s = (1.0 - 1.0/(abs_f64(px)*0.55/d + 1.0))*d;
+  return px < 0 ? -s : s;
+}
+
+// Which way the content moves, on screen, as an axis's place grows: a row
+// goes right as it slides; the content goes up as the camera goes down.
+internal F64
+uishell_overview_drawn_sign(UIShell_OverviewDragAxis axis)
+{
+  return axis == UIShell_OverviewDragAxis_Slide ? 1.0 : -1.0;
+}
+
+internal Axis2
+uishell_overview_drag_screen_axis(UIShell_OverviewDragAxis axis)
+{
+  return axis == UIShell_OverviewDragAxis_Slide ? Axis2_X : Axis2_Y;
+}
+
+internal void
+uishell_overview_spring_from(UIShell_Overview *o, UIShell_OverviewDragAxis axis, U64 group, F64 px, F64 v_px)
+{
+  UIShell_SidebarState *state = o->state;
+  state->overview_over_axis = axis;
+  state->overview_over_group = group;
+  state->overview_over_px = o->motion ? px : 0;
+  state->overview_over_v = o->motion ? v_px : 0;
+  state->overview_over_ms = o->now_ms;
+  state->overview_springing = o->motion;
+  rd_request_frame();
+}
+
+// A stretch springing back, critically damped: exact for any frame time.
+// It sets what the region draws this frame.
+internal void
+uishell_overview_spring(UIShell_Overview *o)
+{
+  UIShell_SidebarState *state = o->state;
+  WheelhouseOverviewFrame *f = o->frame;
+  if(f == 0 || f->mode != WHEELHOUSE_OVERVIEW_OVERVIEW)
+  {
+    state->overview_over_px = state->overview_over_v = 0;
+    state->overview_springing = 0;
+  }
+  if(state->overview_springing)
+  {
+    F64 t = Max(0.0, o->now_ms - state->overview_over_ms);
+    F64 w = 1.0/UIShell_OverviewSpringMs;
+    F64 x0 = state->overview_over_px, v0 = state->overview_over_v;
+    F64 e = exp(-w*t);
+    state->overview_over_ms = o->now_ms;
+    state->overview_over_px = (x0 + (v0 + w*x0)*t)*e;
+    state->overview_over_v = (v0 - w*(v0 + w*x0)*t)*e;
+    if(abs_f64(state->overview_over_px) < 0.25 && abs_f64(state->overview_over_v) < 0.005)
+    {
+      state->overview_over_px = state->overview_over_v = 0;
+      state->overview_springing = 0;
+    }
+    else
+    {
+      rd_request_frame();
+    }
+  }
+  o->over = v2f32(0, 0);
+  o->over_group = state->overview_over_group;
+  if(state->overview_over_axis == UIShell_OverviewDragAxis_Slide) { o->over.x = (F32)state->overview_over_px; }
+  if(state->overview_over_axis == UIShell_OverviewDragAxis_Pan)   { o->over.y = (F32)state->overview_over_px; }
+}
+
+// Dragging the overview with the mouse slides a row or pans, following the
+// mouse from where it was when pressed, and stretching past the ends. A
+// press only becomes a drag past half a line, so a click on a tile still
+// picks it. `group` is the row under the press, or none between rows.
+internal void
+uishell_overview_drag(UIShell_Overview *o, UI_Signal sig, U64 group, UIShell_OverviewMove *move)
+{
+  WheelhouseOverviewFrame *f = o->frame;
+  UIShell_SidebarState *state = o->state;
+  if(ui_pressed(sig))
+  {
+    state->overview_dragged = 0;
+    state->overview_drag_axis = UIShell_OverviewDragAxis_None;
+    state->overview_drag_v = 0;
+    state->overview_drag_ms = o->now_ms;
+    state->overview_glide_v = 0;
+    state->overview_over_px = state->overview_over_v = 0;
+    state->overview_springing = 0;
+  }
+  UIShell_OverviewDragAxis axis = state->overview_drag_axis;
+  if(ui_released(sig) && axis != UIShell_OverviewDragAxis_None)
+  {
+    B32 held = (o->now_ms - state->overview_drag_ms > UIShell_OverviewGlideHoldMs);
+    state->overview_glide_axis = axis;
+    state->overview_glide_group = group;
+    state->overview_glide_v = (held || !o->motion || state->overview_over_px != 0) ? 0 : state->overview_drag_v;
+    state->overview_glide_ms = o->now_ms;
+    if(state->overview_over_px != 0) { uishell_overview_spring_from(o, axis, group, state->overview_over_px, 0); }
+  }
+  if(!ui_dragging(sig)) { return; }
+  Vec2F32 d = ui_drag_delta();
+  if(!state->overview_dragged)
+  {
+    if(Max(abs_f32(d.x), abs_f32(d.y)) < ui_top_font_size()*0.5f) { return; }
+    state->overview_dragged = 1;
+    axis = (abs_f32(d.x) >= abs_f32(d.y) ? (uishell_overview_slides(f, group) ? UIShell_OverviewDragAxis_Slide : UIShell_OverviewDragAxis_None)
+                                         : (uishell_overview_pans(f) ? UIShell_OverviewDragAxis_Pan : UIShell_OverviewDragAxis_None));
+    state->overview_drag_axis = axis;
+    if(axis != UIShell_OverviewDragAxis_None)
+    {
+      state->overview_drag_from = state->overview_drag_at = uishell_overview_drag_place(f, axis, group);
+    }
+  }
+  if(axis == UIShell_OverviewDragAxis_None) { return; }
+  Axis2 screen = uishell_overview_drag_screen_axis(axis);
+  F64 unit = uishell_overview_units(o, screen);
+  // Dragging down shows what is above.
+  F64 to = state->overview_drag_from + (axis == UIShell_OverviewDragAxis_Slide ? d.x : -d.y)*unit;
+  // Its speed, smoothed over the last few moves.
+  F64 dt = o->now_ms - state->overview_drag_ms;
+  if(to != state->overview_drag_at && dt > 0)
+  {
+    F64 v = (to - state->overview_drag_at)/dt;
+    state->overview_drag_v = (dt > UIShell_OverviewGlideHoldMs) ? v : mix_1f64(state->overview_drag_v, v, 0.6);
+    state->overview_drag_at = to;
+    state->overview_drag_ms = o->now_ms;
+  }
+  F64 kept = uishell_overview_drag_clamp(f, axis, group, to);
+  F64 past_px = (to - kept)/Max(1e-9, unit);
+  state->overview_over_axis = axis;
+  state->overview_over_group = group;
+  state->overview_over_px = uishell_overview_drawn_sign(axis)*uishell_overview_stretch(past_px, dim_2f32(o->region).v[screen]);
+  state->overview_springing = 0;
+  uishell_overview_move_by(move, axis, group, kept - uishell_overview_drag_place(f, axis, group));
+}
+
+// What's gliding, slowing: its move this frame, until it stops, or meets
+// its end and carries past it, springing back.
+internal void
+uishell_overview_glide(UIShell_Overview *o, UIShell_OverviewMove *move)
+{
+  WheelhouseOverviewFrame *f = o->frame;
+  UIShell_SidebarState *state = o->state;
+  UIShell_OverviewDragAxis axis = state->overview_glide_axis;
+  U64 group = state->overview_glide_group;
+  if(state->overview_glide_v == 0) { return; }
+  F64 dt = o->now_ms - state->overview_glide_ms;
+  state->overview_glide_ms = o->now_ms;
+  if(axis == UIShell_OverviewDragAxis_Slide ? !uishell_overview_slides(f, group) || f->mode != WHEELHOUSE_OVERVIEW_OVERVIEW
+                                            : !uishell_overview_pans(f))
+  {
+    state->overview_glide_v = 0;
+    return;
+  }
+  // Exact for a speed falling exponentially: v(t) = v·e^(-t/τ).
+  F64 decay = exp(-dt/UIShell_OverviewGlideTauMs);
+  F64 by = state->overview_glide_v*UIShell_OverviewGlideTauMs*(1 - decay);
+  state->overview_glide_v *= decay;
+  F64 place = uishell_overview_drag_place(f, axis, group);
+  F64 kept = uishell_overview_drag_clamp(f, axis, group, place + by);
+  B32 at_end = (by != 0 && kept != place + by);
+  Axis2 screen = uishell_overview_drag_screen_axis(axis);
+  F64 unit = uishell_overview_units(o, screen);
+  if(at_end)
+  {
+    F64 v_px = uishell_overview_drawn_sign(axis)*state->overview_glide_v/Max(1e-9, unit);
+    uishell_overview_spring_from(o, axis, group, 0, v_px);
+  }
+  // Stopped: slower than a pixel in a tenth of a second, or at its end.
+  if(abs_f64(state->overview_glide_v)*100.0 < unit || at_end) { state->overview_glide_v = 0; }
+  uishell_overview_move_by(move, axis, group, kept - place);
+  if(state->overview_glide_v != 0) { rd_request_frame(); }
+}
+
 internal String8
 uishell_overview_text(Arena *arena, WheelhouseText text)
 {
@@ -131,7 +455,8 @@ uishell_overview_text(Arena *arena, WheelhouseText text)
 
 // The region drawn through the scene: cluster washes, group headings and
 // the tiles, each showing its workspace's surface. Picking a tile and
-// fitting a group are flights; scrolling pans the overview or slides a row.
+// fitting a group are flights; scrolling pans the overview or slides a row,
+// as dragging a row does.
 // Input waits for the overview: a switch's flight is only drawn.
 internal void
 uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledSplit *split, CFG_Node *current)
@@ -141,6 +466,7 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   Temp scratch = scratch_begin(0, 0);
   B32 interactive = (f->mode != WHEELHOUSE_OVERVIEW_WORKSPACE);
   B32 moved = 0;
+  UIShell_OverviewMove move = {0};
   Vec2F32 dim = dim_2f32(o->region);
   Rng2F32 visible = r2f32p(0, 0, dim.x, dim.y);
   F32 label_alpha = 1.f;
@@ -160,16 +486,29 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
 
   ui_set_next_rect(o->region);
   UI_Box *scene_box = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground|
-                                                (interactive ? UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise : 0),
+                                                (interactive ? UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise : 0),
                                                 "###workspace_overview");
   UI_Parent(scene_box)
   {
+    //- rows too long for the region: dragging one, between its tiles or
+    // on them, slides it. A row lies under its tiles and takes input after
+    // them, so a press on a tile is the tile's.
+    UI_Box **rows = push_array(scratch.arena, UI_Box *, f->group_count);
+    for(U64 i = 0; interactive && f->view_mode == WHEELHOUSE_OVERVIEW_ROWS && i < f->group_count; i++)
+    {
+      if(groups[i].slide_min >= 0) { continue; }
+      Rng2F32 rect = uishell_overview_drawn_rect(o, groups[i].bounds, i);
+      if(rect.x1 < visible.x0 || rect.x0 > visible.x1 || rect.y1 < visible.y0 || rect.y0 > visible.y1) { continue; }
+      ui_set_next_rect(rect);
+      rows[i] = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "###overview_row_%I64u", i);
+    }
+
     //- clusters: a faint wash behind each, one hover step over the region
     Vec4F32 wash = ui_color_from_name(str8_lit("hover"));
     wash.w *= rd_hover_alpha(wash, ui_color_from_name(str8_lit("background")), RD_HoverBrightnessStep)*label_alpha;
     for(U64 i = 0; i < f->region_count; i++)
     {
-      Rng2F32 rect = uishell_overview_rect(o, regions[i].rect);
+      Rng2F32 rect = uishell_overview_drawn_rect(o, regions[i].rect, regions[i].group);
       if(rect.x1 < visible.x0 || rect.x0 > visible.x1 || rect.y1 < visible.y0 || rect.y0 > visible.y1) { continue; }
       ui_set_next_rect(rect);
       ui_set_next_background_color(wash);
@@ -182,7 +521,7 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
     //- group headings: clicking one fits the group
     for(U64 i = 0; i < f->group_count; i++)
     {
-      Rng2F32 rect = uishell_overview_rect(o, groups[i].heading_rect);
+      Rng2F32 rect = uishell_overview_drawn_rect(o, groups[i].heading_rect, max_U64);
       if(rect.x1 < visible.x0 || rect.x0 > visible.x1 || rect.y1 < visible.y0 || rect.y0 > visible.y1) { continue; }
       String8 heading = uishell_overview_text(scratch.arena, groups[i].heading);
       F32 text_w = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, heading).x + ui_top_font_size();
@@ -195,7 +534,8 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
         ui_box_equip_display_string(box, heading);
         if(interactive && ui_clicked(ui_signal_from_box(box)))
         {
-          moved = wheelhouse_overview_zoom_group(o->state->core, i, o->now_ms, 0);
+          move.zooms = 1;
+          move.zoom_group = i;
         }
       }
     }
@@ -207,9 +547,9 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
       {
         const WheelhouseOverviewTile *tile = &tiles[i];
         if((pass == 1) != (tile->current != 0)) { continue; }
-        Rng2F32 rect = uishell_overview_rect(o, tile->rect);
-        Rng2F32 label_rect = uishell_overview_rect(o, tile->label);
-        if(rect.x1 < visible.x0 || rect.x0 > visible.x1 || label_rect.y1 < visible.y0 || rect.y0 > visible.y1) { continue; }
+        if(!uishell_overview_tile_in_view(o, tile)) { continue; }
+        Rng2F32 rect = uishell_overview_drawn_rect(o, tile->rect, tile->group);
+        Rng2F32 label_rect = uishell_overview_drawn_rect(o, tile->label, tile->group);
         CFG_ID cfg_id = uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_core(tile->workspace_id));
         UI_TagF("tab") UI_TagF(tile->current ? "" : "inactive")
         {
@@ -233,13 +573,13 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
               ui_box_equip_custom_draw(box, rd_workspace_preview_box_draw, draw);
             }
           }
-          if(interactive && cfg_id != 0 && ui_clicked(ui_signal_from_box(box)))
+          UI_Signal sig = interactive ? ui_signal_from_box(box) : (UI_Signal){0};
+          if(interactive) { uishell_overview_drag(o, sig, tile->group, &move); }
+          if(interactive && cfg_id != 0 && ui_clicked(sig) && !o->state->overview_dragged)
           {
-            moved = wheelhouse_overview_pick(o->state->core, tile->workspace_id, o->now_ms, 0);
-            if(cfg_id != current->id)
-            {
-              uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = cfg_id);
-            }
+            move.picks = 1;
+            move.pick = tile->workspace_id;
+            move.pick_cfg = cfg_id;
           }
         }
         if(label_alpha > 0 && dim_2f32(label_rect).y >= ui_top_font_size())
@@ -253,31 +593,39 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
         }
       }
     }
+    for(U64 i = 0; i < f->group_count; i++)
+    {
+      if(rows[i] != 0) { uishell_overview_drag(o, ui_signal_from_box(rows[i]), i, &move); }
+    }
   }
+  if(interactive) { uishell_overview_glide(o, &move); }
 
   //- scrolling: down and up pan the overview when it is taller than the
   // region, else slide the row under the mouse, as sideways always does
   if(interactive)
   {
     UI_Signal sig = ui_signal_from_box(scene_box);
+    uishell_overview_drag(o, sig, f->group_count, &move);
     Vec2F32 px = add_2f32(sig.scroll_px, v2f32(sig.scroll.x*30.f, sig.scroll.y*30.f));
     if(px.x != 0 || px.y != 0)
     {
-      F64 units = (f->view.y1 - f->view.y0)/Max(1.f, dim.y);
-      B32 pans = (f->mode == WHEELHOUSE_OVERVIEW_OVERVIEW &&
-                  (f->bounds.y0 < f->view.y0 - 1e-6 || f->bounds.y1 > f->view.y1 + 1e-6));
+      F64 units = uishell_overview_units(o, Axis2_Y);
+      B32 pans = uishell_overview_pans(f);
       Vec2F32 mouse = sub_2f32(ui_mouse(), o->region.p0);
       F32 slide_px = px.x;
-      if(pans) { moved = wheelhouse_overview_pan(o->state->core, px.y*units, 0); }
+      o->state->overview_glide_v = 0;
+      if(pans) { move.pans = 1; move.pan_by = px.y*units; }
       else if(slide_px == 0) { slide_px = px.y; }
       if(slide_px != 0)
       {
         for(U64 i = 0; i < f->group_count; i++)
         {
-          Rng2F32 bounds = uishell_overview_rect(o, groups[i].bounds);
+          Rng2F32 bounds = uishell_overview_drawn_rect(o, groups[i].bounds, i);
           if(bounds.y0 <= mouse.y && mouse.y < bounds.y1)
           {
-            moved = wheelhouse_overview_slide(o->state->core, i, -slide_px*units, o->now_ms, 0) || moved;
+            move.slides = 1;
+            move.slide_group = i;
+            move.slide_by = -slide_px*units;
             break;
           }
         }
@@ -285,6 +633,29 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
     }
   }
   scratch_end(scratch);
+
+  //- the moves, now the region is drawn
+  if(move.slides && move.slide_by != 0)
+  {
+    moved = wheelhouse_overview_slide(o->state->core, move.slide_group, move.slide_by, o->now_ms, 0) || moved;
+  }
+  if(move.pans && move.pan_by != 0)
+  {
+    moved = wheelhouse_overview_pan(o->state->core, move.pan_by, 0) || moved;
+  }
+  if(move.zooms)
+  {
+    moved = wheelhouse_overview_zoom_group(o->state->core, move.zoom_group, o->now_ms, 0) || moved;
+  }
+  if(move.picks)
+  {
+    o->state->overview_glide_v = 0;
+    moved = wheelhouse_overview_pick(o->state->core, move.pick, o->now_ms, 0) || moved;
+    if(move.pick_cfg != current->id)
+    {
+      uishell_cmd("select_workspace", .window = split->owner_cfg->id, .cfg = move.pick_cfg);
+    }
+  }
 
   // A move this frame: draw what it did next frame, and keep the toggle in
   // step with the mode now rather than then.
