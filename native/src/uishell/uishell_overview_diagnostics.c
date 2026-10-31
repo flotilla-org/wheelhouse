@@ -7,8 +7,9 @@
 // shows build: the current one, and through the scene those the camera
 // sees. A local group is a row of its own under its name, and scrolling
 // over or dragging a row too long for the region slides it. A switch lays
-// the overview out as rows or a grid. Runs after the workspace lifecycle
-// diagnostics, on the overview's own clock.
+// the overview out as rows or a grid; the grid packs as the user's setting
+// says, and zoomed in on a tile too narrow to read, it pans across. Runs
+// after the workspace lifecycle diagnostics, on the overview's own clock.
 
 #define OverviewCheck(cond, msg) do { if(!(cond)) { ok = 0; fprintf(stderr, "FAIL overview: %s\n", msg); } } while(0)
 
@@ -163,6 +164,18 @@ uishell_overview_diagnostic_bare(UIShell_Overview *o, B32 inside)
     }
   }
   return v2f32(0, 0);
+}
+
+// Set (or, with an empty value, clear) a user setting, as the settings UI
+// would.
+internal void
+uishell_overview_diagnostic_set_user(String8 name, String8 value)
+{
+  CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+  if(user == &cfg_nil_node) { return; }
+  if(value.size == 0) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(user, name)); return; }
+  CFG_Node *node = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, name);
+  cfg_node_new_replacef(rd_state->cfg, node, "%S", value);
 }
 
 internal B32
@@ -454,7 +467,7 @@ uishell_overview_diagnostics(CFG_Node *window)
     Rng2F32 short_region = r2f32p(region.x0, region.y0, region.x1, region.y0 + 50);
     o = uishell_overview_diagnostic_step(ws, 0, b, short_region); uishell_overview_end(&o);
     o = uishell_overview_diagnostic_step(ws, 1000, b, short_region);
-    OverviewCheck(uishell_overview_pans(o.frame), "an overview taller than its region pans");
+    OverviewCheck(uishell_overview_pans(o.frame, Axis2_Y), "an overview taller than its region pans");
     // A third of the room there is on the roomier side, in pixels.
     F64 px_units = uishell_overview_units(&o, Axis2_Y);
     F64 room_above = (o.frame->view.y0 - o.frame->bounds.y0)/px_units, room_below = (o.frame->bounds.y1 - o.frame->view.y1)/px_units;
@@ -552,6 +565,47 @@ uishell_overview_diagnostics(CFG_Node *window)
   uishell_overview_set_view_mode_setting(WHEELHOUSE_OVERVIEW_GRID);
   o = uishell_overview_diagnostic_step(ws, 0, b, region);
   OverviewCheck(o.frame->view_mode == WHEELHOUSE_OVERVIEW_GRID, "the overview follows the user's setting");
+  WheelhouseOverviewRect shelved = o.frame->tile_count ? o.frame->tiles[o.frame->tile_count - 1].rect : (WheelhouseOverviewRect){0};
+  uishell_overview_end(&o);
+  //- The grid's packing follows the user's setting.
+  uishell_overview_diagnostic_set_user(str8_lit("overview_grid_packing"), str8_lit("treemap"));
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
+  OverviewCheck(o.frame->tile_count > 0 && o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW &&
+                MemoryCompare(&shelved, &o.frame->tiles[o.frame->tile_count - 1].rect, sizeof(shelved)) != 0,
+                "the treemap setting packs the grid differently");
+  uishell_overview_end(&o);
+  uishell_overview_diagnostic_set_user(str8_lit("overview_grid_packing"), str8_zero());
+  //- A tile too narrow to read zooms the grid in on it, and then dragging or
+  // scrolling sideways pans across the grid.
+  uishell_overview_diagnostic_set_user(str8_lit("overview_readable_tile_width"), str8_lit("2000"));
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
+  OverviewCheck(uishell_overview_pans(o.frame, Axis2_X), "a grid zoomed in on a tile too narrow to read pans across");
+  F64 x_units = uishell_overview_units(&o, Axis2_X);
+  F64 room_left = (o.frame->view.x0 - o.frame->bounds.x0)/x_units, room_right = (o.frame->bounds.x1 - o.frame->view.x1)/x_units;
+  // Dragging left shows what is to the right.
+  F32 drag_x = (F32)(room_right > room_left ? -room_right/3 : room_left/3);
+  F64 cx = (o.frame->view.x0 + o.frame->view.x1)/2;
+  uishell_overview_end(&o);
+  OverviewCheck(abs_f32(drag_x) >= 6, "room to pan the zoomed grid across");
+  B32 grid_labels_read = 0;
+  OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, push_str8f(scratch.arena, "###overview_tile_%I64u", b->id),
+                                                 v2f32(drag_x, 0), 200, 0, &grid_labels_read, v2f32(0, 0)),
+                "the current tile in the zoomed grid");
+  o = uishell_overview_diagnostic_step(ws, 0, b, region);
+  F64 dragged_cx = (o.frame->view.x0 + o.frame->view.x1)/2;
+  OverviewCheck(drag_x < 0 ? dragged_cx > cx : dragged_cx < cx, "dragging a zoomed grid sideways pans it across");
+  OverviewCheck(o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW, "a pan across doesn't pick the tile it started on");
+  uishell_overview_end(&o);
+  OverviewCheck(uishell_overview_diagnostic_input(ws, window, b, region, scratch.arena, str8_lit("###workspace_overview"),
+                                                  v2f32(drag_x < 0 ? 20.f : -20.f, 0)),
+                "the zoomed grid to scroll over");
+  o = uishell_overview_diagnostic_step(ws, 0, b, region);
+  F64 scrolled_cx = (o.frame->view.x0 + o.frame->view.x1)/2;
+  OverviewCheck(drag_x < 0 ? scrolled_cx > dragged_cx : scrolled_cx < dragged_cx, "scrolling sideways over a zoomed grid pans it across");
+  uishell_overview_end(&o);
+  uishell_overview_diagnostic_set_user(str8_lit("overview_readable_tile_width"), str8_zero());
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
+  OverviewCheck(!uishell_overview_pans(o.frame, Axis2_X), "a grid whose tiles read whole fits without panning across");
   uishell_overview_end(&o);
   uishell_overview_set_view_mode_setting(WHEELHOUSE_OVERVIEW_ROWS);
   o = uishell_overview_diagnostic_step(ws, 0, b, region); uishell_overview_end(&o);

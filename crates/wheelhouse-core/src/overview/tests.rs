@@ -446,6 +446,10 @@ fn draw_options(tc: &TestCase) -> SceneOptions {
     SceneOptions {
         mode: if tc.draw(gs::booleans()) { ViewMode::Rows } else { ViewMode::Grid },
         aspect: tc.draw(gs::floats::<f64>().min_value(0.5).max_value(3.5).allow_nan(false).allow_infinity(false)),
+        packing: if tc.draw(gs::booleans()) { GridPacking::Shelves } else { GridPacking::Treemap },
+        keep_clusters_whole: tc.draw(gs::booleans()),
+        size_limit: tc.draw(gs::floats::<f64>().min_value(1.0).max_value(3.0).allow_nan(false).allow_infinity(false)),
+        readable_share: tc.draw(gs::sampled_from(vec![0.0, 0.05, 0.12, 0.3, 1.0])),
         ..SceneOptions::default()
     }
 }
@@ -460,9 +464,10 @@ fn draw_slides(tc: &TestCase, layout: &LogicalLayout) -> BTreeMap<GroupKey, f64>
 }
 
 /// Every shown workspace has one tile, the viewport's shape, with its label
-/// under it; tiles, labels and headings never overlap one another; each
-/// cluster's region covers its tiles; everything is inside the scene's
-/// bounds and its group's.
+/// under it: 1 high in rows; in a grid, the same size within a group, the
+/// largest 1 high, and one size everywhere on shelves. Tiles, labels and
+/// headings never overlap one another; each cluster's region covers its
+/// tiles; everything is inside the scene's bounds and its group's.
 #[hegel::test(test_cases = 300)]
 fn scenes_place_every_shown_workspace_once_without_overlaps(tc: TestCase) {
     let entries = draw_entries(&tc);
@@ -472,8 +477,17 @@ fn scenes_place_every_shown_workspace_once_without_overlaps(tc: TestCase) {
     let ids: Vec<_> = scene.tiles.iter().map(|t| t.workspace_id).collect();
     assert_eq!(ids, shown(&layout));
     let mut boxes = vec![];
+    let grid = options.mode == ViewMode::Grid;
+    let tallest = scene.tiles.iter().map(|t| t.rect.height()).fold(0.0, f64::max);
+    if !scene.tiles.is_empty() {
+        assert!(close(tallest, 1.0), "the largest tiles are {tallest} high");
+    }
     for tile in &scene.tiles {
-        assert!(close(tile.rect.width(), options.aspect) && close(tile.rect.height(), 1.0));
+        assert!(close(tile.rect.width(), options.aspect * tile.rect.height()), "{tile:?} isn't the viewport's shape");
+        assert!(if grid { tile.rect.height() <= 1.0 + 1e-9 } else { close(tile.rect.height(), 1.0) });
+        let first = scene.tiles.iter().find(|t| t.group == tile.group).unwrap();
+        let shelves = options.packing == GridPacking::Shelves;
+        assert!(close(tile.rect.height(), if grid && !shelves { first.rect.height() } else { tallest }));
         assert!(tile.label.y0 >= tile.rect.y1 && close(tile.label.x0, tile.rect.x0));
         let group = &scene.groups[tile.group];
         assert!(group.bounds.contains(&tile.rect) && group.bounds.contains(&tile.label) && scene.bounds.contains(&group.bounds));
@@ -503,22 +517,18 @@ fn unusable_sizes_take_their_defaults(tc: TestCase) {
     let entries = draw_entries(&tc);
     let layout = logical_layout(&entries, None, &BTreeSet::new());
     let bad = || tc.draw(gs::sampled_from(vec![0.0, -1.0, f64::NAN, f64::INFINITY]));
-    let options = SceneOptions {
-        aspect: bad(),
-        row_window_tiles: bad(),
-        max_tiles_across: bad(),
-        grid_columns: 0,
-        grid_block_columns: 0,
-        ..draw_options(&tc)
-    };
+    let options = SceneOptions { aspect: bad(), row_window_tiles: bad(), size_limit: bad(), readable_share: bad(), ..draw_options(&tc) };
     let scene = scene(&layout, &options, &BTreeMap::new());
     let defaults = SceneOptions::default();
-    assert_eq!(SceneOptions { mode: defaults.mode, ..scene.options }, SceneOptions { grid_columns: 1, grid_block_columns: 1, ..defaults });
+    let chosen =
+        SceneOptions { mode: options.mode, packing: options.packing, keep_clusters_whole: options.keep_clusters_whole, ..defaults };
+    assert_eq!(scene.options, chosen);
     let finite = |c: Camera| c.cx.is_finite() && c.cy.is_finite() && c.w.is_finite() && c.w > 0.0;
     assert!(finite(scene.overview_camera(None, None)));
     for tile in &scene.tiles {
-        assert!(close(tile.rect.width(), defaults.aspect));
+        assert!(close(tile.rect.width(), defaults.aspect * tile.rect.height()) && tile.rect.height() > 0.0);
         assert!(finite(scene.rest_camera(tile.workspace_id).unwrap()));
+        assert!(finite(scene.overview_camera(Some(tile.workspace_id), None)));
     }
 }
 
@@ -547,6 +557,9 @@ fn rows_slide_within_their_range(tc: TestCase) {
 /// view puts it inside its row's window, and does nothing when it is
 /// already there. The overview's camera shows the current workspace's tile
 /// once its row has slid to it, and a group's camera shows the whole group.
+/// Grid: the overview fits the whole scene unless the current tile would
+/// be narrower than the readable share of it; then the tile is exactly that
+/// share, and the camera stays within the scene.
 #[hegel::test(test_cases = 300)]
 fn cameras_show_what_they_are_for(tc: TestCase) {
     let entries = draw_entries(&tc);
@@ -571,12 +584,184 @@ fn cameras_show_what_they_are_for(tc: TestCase) {
         assert!(scene.row_window(tile.group).unwrap().contains(&SceneRect { y0: tile.rect.y0, y1: tile.rect.y1, ..tile.rect }));
     }
     let overview = scene.overview_camera(Some(pick), None).view(options.aspect);
-    let fits_height = scene.bounds.height() <= overview.height() + 1e-9;
-    if options.mode == ViewMode::Rows || fits_height || scene.bounds.width() / options.aspect <= options.max_tiles_across {
-        assert!(overview.contains(&tile.rect), "the overview {overview:?} doesn't show {tile:?}");
+    assert!(overview.contains(&tile.rect), "the overview {overview:?} doesn't show {tile:?}");
+    if options.mode == ViewMode::Grid {
+        let fit = Camera::fit(&scene.bounds, options.aspect, 1.0);
+        if tile.rect.width() < options.readable_share * fit.w {
+            assert!(close(tile.rect.width() / overview.width(), options.readable_share));
+            let inside = |lo: f64, hi: f64, v0: f64, v1: f64| v0 >= lo - 1e-9 && v1 <= hi + 1e-9 || close((lo + hi) / 2.0, (v0 + v1) / 2.0);
+            let b = scene.bounds;
+            assert!(
+                inside(b.x0, b.x1, overview.x0, overview.x1) && inside(b.y0, b.y1, overview.y0, overview.y1),
+                "{overview:?} leaves {b:?}"
+            );
+        } else {
+            assert!(same(scene.overview_camera(Some(pick), None), fit));
+        }
     }
     let group = tc.draw(gs::integers::<usize>().max_value(scene.groups.len() - 1));
     assert!(scene.group_camera(group).unwrap().view(options.aspect).contains(&scene.groups[group].bounds));
+}
+
+// ---------- grid packings ----------
+
+fn tile_count(group: &Group) -> usize {
+    group.clusters.iter().map(|c| c.tiles.len()).sum()
+}
+
+fn block_rect(block: &grid::Block, aspect: f64) -> SceneRect {
+    let size = grid::Geometry { aspect };
+    SceneRect {
+        x0: block.x,
+        y0: block.y,
+        x1: block.x + size.width(block.columns) * block.t,
+        y1: block.y + size.height(block.rows) * block.t,
+    }
+}
+
+/// Both packings put every group's block inside the region (the viewport's
+/// shape, 1 high), in sidebar order, reading across then down, without
+/// overlapping; shelves give every tile one size. Each tile has its own
+/// cell, in order across its block's rows. Kept whole, a cluster no wider
+/// than a row is on one row.
+#[hegel::test(test_cases = 300)]
+fn grid_packings_fit_the_region_in_order(tc: TestCase) {
+    let groups = logical_layout(&draw_entries(&tc), None, &BTreeSet::new()).groups;
+    let aspect = tc.draw(gs::floats::<f64>().min_value(0.5).max_value(3.5).allow_nan(false).allow_infinity(false));
+    let keep_whole = tc.draw(gs::booleans());
+    let shelves = tc.draw(gs::booleans());
+    let limit = tc.draw(gs::floats::<f64>().min_value(1.0).max_value(3.0).allow_nan(false).allow_infinity(false));
+    let blocks = if shelves { grid::shelves(&groups, aspect, keep_whole) } else { grid::treemap(&groups, aspect, keep_whole, limit) };
+    assert_eq!(blocks.len(), groups.len());
+    let region = SceneRect { x0: 0.0, y0: 0.0, x1: aspect, y1: 1.0 };
+    let rects: Vec<_> = blocks.iter().map(|b| block_rect(b, aspect)).collect();
+    for ((block, group), rect) in blocks.iter().zip(&groups).zip(&rects) {
+        assert!(block.t > 0.0 && block.t.is_finite(), "{block:?}");
+        assert!(region.contains(rect), "{rect:?} is outside {region:?}");
+        if shelves {
+            assert!(close(block.t, blocks[0].t));
+        }
+        assert_eq!(block.cells.len(), tile_count(group));
+        assert!(block.cells.iter().all(|&(c, r)| c < block.columns && r < block.rows));
+        assert!(block.cells.windows(2).all(|p| (p[0].1, p[0].0) < (p[1].1, p[1].0)), "cells out of order: {:?}", block.cells);
+        let mut cells = block.cells.iter();
+        for cluster in &group.clusters {
+            let rows: BTreeSet<usize> = cluster.tiles.iter().map(|_| cells.next().unwrap().1).collect();
+            if keep_whole && cluster.tiles.len() <= block.columns {
+                assert_eq!(rows.len(), 1, "a cluster of {} split in {} columns", cluster.tiles.len(), block.columns);
+            }
+        }
+    }
+    for (i, a) in rects.iter().enumerate() {
+        for b in &rects[i + 1..] {
+            assert!(!a.overlaps(b), "{a:?} overlaps {b:?}");
+        }
+    }
+    for pair in rects.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        assert!(b.x0 >= a.x1 - 1e-9 || b.y0 >= a.y1 - 1e-9, "{b:?} comes before {a:?}");
+    }
+}
+
+/// The treemap's breaks give the most tile area of any breaks whose tile
+/// sizes keep within the limit, or of any breaks at all when none do.
+#[hegel::test(test_cases = 200)]
+fn the_treemap_picks_the_best_breaks(tc: TestCase) {
+    let groups = logical_layout(&draw_entries(&tc), None, &BTreeSet::new()).groups;
+    let g = groups.len();
+    if g == 0 {
+        return;
+    }
+    let aspect = tc.draw(gs::floats::<f64>().min_value(0.5).max_value(3.5).allow_nan(false).allow_infinity(false));
+    let keep_whole = tc.draw(gs::booleans());
+    let limit = tc.draw(gs::floats::<f64>().min_value(1.0).max_value(3.0).allow_nan(false).allow_infinity(false));
+    let area = |blocks: &[grid::Block]| blocks.iter().zip(&groups).map(|(b, g)| tile_count(g) as f64 * aspect * b.t * b.t).sum::<f64>();
+    let within = |blocks: &[grid::Block]| {
+        let ts = blocks.iter().map(|b| b.t);
+        ts.clone().fold(0.0, f64::max) <= ts.fold(f64::INFINITY, f64::min) * limit * (1.0 + 1e-9)
+    };
+    let chosen = grid::treemap(&groups, aspect, keep_whole, limit);
+    let others: Vec<_> = (0..1usize << (g - 1))
+        .map(|mask| {
+            let starts: Vec<usize> = std::iter::once(0).chain((1..g).filter(|k| mask & (1 << (k - 1)) != 0)).collect();
+            grid::treemap_with_breaks(&groups, aspect, keep_whole, &starts)
+        })
+        .collect();
+    let any_within = others.iter().any(|o| within(o));
+    assert_eq!(within(&chosen), any_within);
+    for other in others.iter().filter(|o| !any_within || within(o)) {
+        assert!(area(&chosen) >= area(other) * (1.0 - 1e-9), "{} beats the chosen {}", area(other), area(&chosen));
+    }
+}
+
+/// A one-tile group beside a hundred-tile one still gets tiles inside its
+/// rectangle: the margin never leaves it no room.
+#[test]
+fn a_tiny_group_beside_a_huge_one_fits() {
+    let mut entries = vec![entry("tree", vec![segment("project", entity("project", 0))], 1)];
+    for v in 0..100 {
+        entries.push(entry("tree", vec![segment("project", entity("project", 1)), segment("vessel", entity("vessel", v))], v + 2));
+    }
+    let groups = logical_layout(&entries, None, &BTreeSet::new()).groups;
+    assert_eq!(groups.iter().map(tile_count).collect::<Vec<_>>(), [1, 100]);
+    for aspect in [0.5, 1.6, 3.5] {
+        let region = SceneRect { x0: 0.0, y0: 0.0, x1: aspect, y1: 1.0 };
+        let blocks = grid::treemap(&groups, aspect, true, 2.0);
+        assert_eq!(blocks.len(), 2);
+        for block in &blocks {
+            assert!(block.t > 0.0 && block.t.is_finite(), "{block:?}");
+            assert!(region.contains(&block_rect(block, aspect)), "{block:?} is outside {region:?}");
+        }
+    }
+}
+
+/// A grid zoomed in on a tile too narrow to read pans both ways, as far as
+/// the scene goes; rows only pan down.
+#[test]
+fn a_zoomed_grid_pans_both_ways() {
+    let project = || segment("project", entity("project", 0));
+    let entries: Vec<_> = (1..=30).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
+    let mut window = OverviewWindow::default();
+    window.set_view_mode(ViewMode::Grid);
+    window.set_grid(GridPacking::Shelves, 0.4, 0.0);
+    window.update(entries, Some(tab_workspace_id(1)), 1.6, 0.0);
+    window.open(0.0);
+    let bounds = window.scene().bounds;
+    let start = window.target().unwrap();
+    assert!(start.w < bounds.width(), "the overview zooms in on the current tile");
+    window.pan(0.5, 0.5);
+    let moved = window.target().unwrap();
+    assert!(moved.cx > start.cx && moved.cy > start.cy, "{start:?} to {moved:?}");
+    window.pan(1e6, 1e6);
+    let far = window.target().unwrap().view(1.6);
+    assert!(close(far.x1, bounds.x1) && close(far.y1, bounds.y1), "{far:?} isn't at the end of {bounds:?}");
+    window.set_view_mode(ViewMode::Rows);
+    let rows = window.target().unwrap();
+    window.pan(5.0, 0.0);
+    assert_eq!(window.target().unwrap().cx, rows.cx);
+}
+
+/// A pan while the whole grid fits moves nothing, so when the grid later
+/// zooms in it does so on the current tile, not where that pan pointed.
+#[test]
+fn a_pan_while_the_grid_fits_is_forgotten() {
+    let project = || segment("project", entity("project", 0));
+    let entries: Vec<_> = (1..=30).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
+    let window = |pan: bool| {
+        let mut window = OverviewWindow::default();
+        window.set_view_mode(ViewMode::Grid);
+        window.set_grid(GridPacking::Shelves, 0.0, 0.0);
+        window.update(entries.clone(), Some(tab_workspace_id(1)), 1.6, 0.0);
+        window.open(0.0);
+        if pan {
+            let fit = window.target().unwrap();
+            window.pan(0.5, 0.5);
+            assert_eq!(window.target().unwrap(), fit, "the whole grid fits");
+        }
+        window.set_grid(GridPacking::Shelves, 0.4, 0.0);
+        window.target().unwrap()
+    };
+    assert_eq!(window(true), window(false));
 }
 
 // ---------- a window's overview ----------
@@ -618,7 +803,8 @@ fn switching_flies_between_tiles_unless_motion_is_off() {
 /// - at rest it is where the mode says, and the host draws the workspace as
 ///   itself exactly when it is open and still;
 /// - every flight ends within the longest flight's time;
-/// - panning the overview and changing the view mode cut, even mid-flight;
+/// - panning the overview and changing the view mode or the grid's packing
+///   cut, even mid-flight;
 /// - going back from the overview opens the current workspace, and back
 ///   from an open workspace does nothing.
 #[hegel::test(test_cases = 300)]
@@ -635,7 +821,7 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
     for _ in 0..tc.draw(gs::integers::<usize>().max_value(25)) {
         now += tc.draw(gs::sampled_from(&[0.0, 16.0, 100.0, 300.0, 1000.0][..]));
         let before = window.camera(now);
-        let flies = match tc.draw(gs::integers::<u8>().max_value(11)) {
+        let flies = match tc.draw(gs::integers::<u8>().max_value(12)) {
             0 => {
                 let current = pick(&tc, &window).or_else(|| entries.first().map(|e| e.workspace_id));
                 let switched = current != window.current();
@@ -684,9 +870,19 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
             7 => {
                 // An overview with nothing to show has nowhere to pan to.
                 let overview = *window.mode() == OverviewMode::Overview && window.target().is_some();
-                window.pan(tc.draw(gs::floats::<f64>().min_value(-10.0).max_value(10.0).allow_nan(false).allow_infinity(false)));
+                let by = || tc.draw(gs::floats::<f64>().min_value(-10.0).max_value(10.0).allow_nan(false).allow_infinity(false));
+                window.pan(by(), by());
                 // Panning the overview is a cut, even mid-flight.
                 assert!(!overview || !window.flying(now));
+                false
+            }
+            11 => {
+                let packing = if tc.draw(gs::booleans()) { GridPacking::Shelves } else { GridPacking::Treemap };
+                let changes = window.scene().options.packing != packing && window.target().is_some();
+                window.set_grid(packing, tc.draw(gs::sampled_from(vec![0.0, 0.1, 0.3, f64::NAN])), now);
+                assert_eq!(window.scene().options.packing, packing);
+                // A new packing is a cut, even mid-flight.
+                assert!(!changes || !window.flying(now));
                 false
             }
             10 => {

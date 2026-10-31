@@ -389,6 +389,12 @@ typedef struct BinnacleGrid BinnacleGrid;
 // A view mode: groups as blocks of a grid.
 #define WHEELHOUSE_OVERVIEW_GRID 1
 
+// A grid packing: one tile size everywhere, blocks on shelves.
+#define WHEELHOUSE_OVERVIEW_SHELVES 0
+
+// A grid packing: a treemap, a rectangle per group by its tile count.
+#define WHEELHOUSE_OVERVIEW_TREEMAP 1
+
 // A View Spec's content: a local command (argv when argc is nonzero, else
 // the shell line in command; optional cwd).
 #define WHEELHOUSE_SLOT_COMMAND 0
@@ -1970,8 +1976,10 @@ uint32_t wheelhouse_overview_slide(WheelhouseCore *h,
                                    double now_ms,
                                    char **error_out);
 
-// Scroll the overview down (or up) by `by` scene units.
-uint32_t wheelhouse_overview_pan(WheelhouseCore *h, double by, char **error_out);
+// Scroll the overview right and down (or left and up) by `dx` and `dy`
+// scene units, as far as it goes: rows only scroll down, and a grid only
+// when it is zoomed in on a tile too narrow to read whole.
+uint32_t wheelhouse_overview_pan(WheelhouseCore *h, double dx, double dy, char **error_out);
 
 // Collapse or expand a cluster (indexes into the frame's groups and the
 // group's clusters).
@@ -1983,6 +1991,18 @@ uint32_t wheelhouse_overview_toggle_cluster(WheelhouseCore *h,
 
 // WHEELHOUSE_OVERVIEW_ROWS or _GRID; the camera cuts to the same place.
 uint32_t wheelhouse_overview_set_view_mode(WheelhouseCore *h, uint32_t view_mode, char **error_out);
+
+// The grid's packing (WHEELHOUSE_OVERVIEW_SHELVES or _TREEMAP), and the
+// share of the region's width a tile needs to be readable: the smallest
+// readable tile width over the region's width, 0 to always fit the whole
+// grid. With the whole grid in view, a current tile narrower than that
+// zooms the overview in on it. Each frame, before reading it, as the
+// region's width changes; a new packing cuts to the same place.
+uint32_t wheelhouse_overview_set_grid(WheelhouseCore *h,
+                                      uint32_t packing,
+                                      double readable_share,
+                                      double now_ms,
+                                      char **error_out);
 
 // The region at `now_ms`. Its text is borrowed from the overview: free
 // it with wheelhouse_overview_frame_free before the next call that changes

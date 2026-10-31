@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use super::camera::Camera;
+use super::grid;
 use super::logical::{GroupKey, LogicalLayout};
 use crate::WorkspaceId;
 
@@ -12,8 +13,21 @@ pub enum ViewMode {
     /// Groups stacked, each a row that slides sideways when it overflows.
     #[default]
     Rows,
-    /// Groups as blocks, each a grid of tiles.
+    /// Groups as blocks, each a grid of tiles, packed into the viewport's
+    /// shape.
     Grid,
+}
+
+/// How the grid packs its groups' blocks into the viewport's shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GridPacking {
+    /// One tile size everywhere: blocks on shelves, the largest size that
+    /// fits.
+    #[default]
+    Shelves,
+    /// A rectangle per group by its tile count, in strips; tile sizes differ
+    /// between groups, within `size_limit`.
+    Treemap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,35 +37,47 @@ pub struct SceneOptions {
     pub aspect: f64,
     /// Rows: how many tiles the overview shows across.
     pub row_window_tiles: f64,
-    /// Grid: tiles across a group's block.
-    pub grid_columns: usize,
-    /// Grid: columns of blocks.
-    pub grid_block_columns: usize,
-    /// Grid: past this many tiles across the whole scene, the overview fits
-    /// the scene's width and pans down it instead of fitting all of it.
-    pub max_tiles_across: f64,
+    pub packing: GridPacking,
+    /// Grid: a cluster that doesn't fit in what's left of a row starts the
+    /// next, rather than wrapping.
+    pub keep_clusters_whole: bool,
+    /// Grid, treemap: the most one group's tiles may be wider than another's.
+    pub size_limit: f64,
+    /// Grid: the share of the viewport's width a tile needs to be readable.
+    /// When the current workspace's tile is narrower with the whole grid in
+    /// view, the overview zooms in on it until it isn't. 0 always fits the
+    /// whole grid.
+    pub readable_share: f64,
 }
 
 impl Default for SceneOptions {
     fn default() -> Self {
-        Self { mode: ViewMode::Rows, aspect: 1.6, row_window_tiles: 5.4, grid_columns: 3, grid_block_columns: 2, max_tiles_across: 8.0 }
+        Self {
+            mode: ViewMode::Rows,
+            aspect: 1.6,
+            row_window_tiles: 5.4,
+            packing: GridPacking::Shelves,
+            keep_clusters_whole: true,
+            size_limit: 1.5,
+            readable_share: 0.0,
+        }
     }
 }
 
 impl SceneOptions {
     /// These options with every size usable: a measure that isn't finite
-    /// and positive takes its default, and a count is at least 1. A zero
-    /// aspect would make every tile 0 wide and every camera divide by it.
+    /// and positive takes its default, a size limit is at least 1, and a
+    /// readable share is from 0 to 1. A zero aspect would make every tile 0
+    /// wide and every camera divide by it.
     fn usable(&self) -> SceneOptions {
         let defaults = SceneOptions::default();
         let usable = |value: f64, default: f64| if value.is_finite() && value > 0.0 { value } else { default };
         SceneOptions {
-            mode: self.mode,
             aspect: usable(self.aspect, defaults.aspect),
             row_window_tiles: usable(self.row_window_tiles, defaults.row_window_tiles),
-            grid_columns: self.grid_columns.max(1),
-            grid_block_columns: self.grid_block_columns.max(1),
-            max_tiles_across: usable(self.max_tiles_across, defaults.max_tiles_across),
+            size_limit: usable(self.size_limit, defaults.size_limit).max(1.0),
+            readable_share: if self.readable_share.is_finite() { self.readable_share.clamp(0.0, 1.0) } else { defaults.readable_share },
+            ..*self
         }
     }
 }
@@ -129,17 +155,17 @@ pub struct Scene {
 }
 
 // Spacing, as shares of a tile's width (W) or height (1), from the prototype.
-const GAP_W: f64 = 0.08;
+pub(super) const GAP_W: f64 = 0.08;
 const CLUSTER_GAP_W: f64 = 0.22;
-const HEADING_H: f64 = 0.22;
-const LABEL_H: f64 = 0.26;
+pub(super) const HEADING_H: f64 = 0.22;
+pub(super) const LABEL_H: f64 = 0.26;
 const LABEL_TOP_H: f64 = 0.03;
 const ROW_GAP_H: f64 = 0.16;
 const PAD_W: f64 = 0.12;
 const OUTLINE_W: f64 = 0.03;
-const BLOCK_PAD_W: f64 = 0.1;
-const BLOCK_GAP_W: f64 = 0.25;
-const BLOCK_GAP_H: f64 = 0.25;
+pub(super) const BLOCK_PAD_W: f64 = 0.1;
+pub(super) const BLOCK_GAP_W: f64 = 0.25;
+pub(super) const BLOCK_GAP_H: f64 = 0.25;
 const GROUP_MARGIN: f64 = 1.08;
 
 /// Place `layout` for `options`. `slides` holds how far each row has been
@@ -198,28 +224,31 @@ pub fn scene(layout: &LogicalLayout, options: &SceneOptions, slides: &BTreeMap<G
             }
         }
         ViewMode::Grid => {
-            let gap = GAP_W * tw;
-            let columns = options.grid_columns;
-            let (cell_w, cell_h, block_pad) = (tw + gap, 1.0 + LABEL_H + gap, BLOCK_PAD_W * tw);
-            let block_w = columns as f64 * cell_w - gap + 2.0 * block_pad;
-            let mut column_y = vec![0.0f64; options.grid_block_columns];
-            for (gi, group) in layout.groups.iter().enumerate() {
-                let column = (0..column_y.len()).min_by(|&a, &b| column_y[a].total_cmp(&column_y[b])).unwrap_or(0);
-                let (bx, by) = (column as f64 * (block_w + BLOCK_GAP_W * tw), column_y[column]);
-                let count: usize = group.clusters.iter().map(|c| c.tiles.len()).sum();
-                let rows = count.div_ceil(columns).max(1);
-                let bounds =
-                    SceneRect { x0: bx, y0: by, x1: bx + block_w, y1: by + HEADING_H + block_pad + rows as f64 * cell_h - gap + block_pad };
-                let heading = SceneRect { x0: bx + block_pad, y0: by, x1: bx + block_w, y1: by + HEADING_H };
+            let blocks = match options.packing {
+                GridPacking::Shelves => grid::shelves(&layout.groups, tw, options.keep_clusters_whole),
+                GridPacking::Treemap => grid::treemap(&layout.groups, tw, options.keep_clusters_whole, options.size_limit),
+            };
+            // Packed into a region 1 high; scaled so the largest tiles are 1
+            // high, as everywhere else.
+            let scale = 1.0 / blocks.iter().map(|b| b.t).fold(0.0, f64::max).max(1e-12);
+            for (gi, (group, block)) in layout.groups.iter().zip(&blocks).enumerate() {
+                let t = block.t * scale;
+                let (bx, by) = (block.x * scale, block.y * scale);
+                let (w, gap, block_pad) = (tw * t, GAP_W * tw * t, BLOCK_PAD_W * tw * t);
+                let (cell_w, cell_h) = (w + gap, (1.0 + LABEL_H) * t + gap);
+                let size = grid::Geometry { aspect: tw };
+                let bounds = SceneRect { x0: bx, y0: by, x1: bx + size.width(block.columns) * t, y1: by + size.height(block.rows) * t };
+                let heading = SceneRect { x0: bx + block_pad, y0: by, x1: bounds.x1, y1: by + HEADING_H * t };
                 let mut regions = vec![];
-                let mut cell = 0;
+                let mut cells = block.cells.iter();
                 for (ci, cluster) in group.clusters.iter().enumerate() {
                     let mut region = vec![];
                     for tile in &cluster.tiles {
-                        let x = bx + block_pad + (cell % columns) as f64 * cell_w;
-                        let y = by + HEADING_H + block_pad + (cell / columns) as f64 * cell_h;
-                        let rect = SceneRect { x0: x, y0: y, x1: x + tw, y1: y + 1.0 };
-                        let label = SceneRect { x0: x, y0: y + 1.0 + LABEL_TOP_H, x1: x + tw, y1: y + 1.0 + LABEL_H };
+                        let &(column, row) = cells.next().expect("a cell for every tile");
+                        let x = bx + block_pad + column as f64 * cell_w;
+                        let y = by + HEADING_H * t + block_pad + row as f64 * cell_h;
+                        let rect = SceneRect { x0: x, y0: y, x1: x + w, y1: y + t };
+                        let label = SceneRect { x0: x, y0: y + (1.0 + LABEL_TOP_H) * t, x1: x + w, y1: y + (1.0 + LABEL_H) * t };
                         out.tiles.push(SceneTile { workspace_id: tile.workspace_id, group: gi, cluster: ci, rect, label });
                         if !cluster.is_group_head {
                             region.push(SceneRect {
@@ -229,11 +258,9 @@ pub fn scene(layout: &LogicalLayout, options: &SceneOptions, slides: &BTreeMap<G
                                 y1: y + cell_h - gap / 2.0,
                             });
                         }
-                        cell += 1;
                     }
                     regions.push(region);
                 }
-                column_y[column] = bounds.y1 + BLOCK_GAP_H;
                 out.groups.push(SceneGroup { key: group.key.clone(), heading, bounds, regions, slide: 0.0, slide_min: 0.0 });
             }
         }
@@ -261,36 +288,37 @@ impl Scene {
     }
 
     /// The overview's camera. Rows: the left part of every row, as many
-    /// rows as fit, starting from `current`'s. Grid: the whole scene, or, when
-    /// it is too wide to read, its width around `current`. `pan_cy`, where the
-    /// overview has been scrolled to, overrides the starting row.
-    pub fn overview_camera(&self, current: Option<WorkspaceId>, pan_cy: Option<f64>) -> Camera {
+    /// rows as fit, starting from `current`'s. Grid: the whole scene, or,
+    /// when `current`'s tile would be too narrow to read, zoomed in on it
+    /// until it isn't. `pan`, the centre the overview has been scrolled to,
+    /// overrides where it starts; rows only scroll down.
+    pub fn overview_camera(&self, current: Option<WorkspaceId>, pan: Option<(f64, f64)>) -> Camera {
         let aspect = self.options.aspect;
         let b = self.bounds;
         let current = current.and_then(|id| self.tile(id));
-        let (w, cx, start) = match self.options.mode {
+        let centre = |r: &SceneRect| ((r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0);
+        // Along one axis: centred when the view spans the scene, else kept
+        // within it.
+        let keep =
+            |c: f64, span: f64, lo: f64, hi: f64| if hi - lo <= span { (lo + hi) / 2.0 } else { c.clamp(lo + span / 2.0, hi - span / 2.0) };
+        match self.options.mode {
             ViewMode::Rows => {
                 let w = row_window(&self.options) + 2.0 * PAD_W * aspect;
+                let h = w / aspect;
                 let top = current.map(|t| self.groups[t.group].bounds.y0 - PAD_W * aspect);
                 // Rows start at 0 however far any has slid.
-                (w, w / 2.0 - PAD_W * aspect, top.map(|top| top + w / aspect / 2.0))
+                let start = pan.map(|p| p.1).or(top.map(|top| top + h / 2.0)).unwrap_or(b.y0 + h / 2.0);
+                Camera { cx: w / 2.0 - PAD_W * aspect, cy: keep(start, h, b.y0, b.y1), w }
             }
             ViewMode::Grid => {
-                if b.width() / aspect > self.options.max_tiles_across {
-                    (b.width(), (b.x0 + b.x1) / 2.0, current.map(|t| (t.rect.y0 + t.rect.y1) / 2.0))
-                } else {
-                    let fit = Camera::fit(&b, aspect, 1.0);
-                    (fit.w, fit.cx, None)
-                }
+                let fit = Camera::fit(&b, aspect, 1.0);
+                let share = self.options.readable_share;
+                let Some(tile) = current.filter(|t| t.rect.width() < share * fit.w) else { return fit };
+                let w = tile.rect.width() / share;
+                let (cx, cy) = pan.unwrap_or_else(|| centre(&tile.rect));
+                Camera { cx: keep(cx, w, b.x0, b.x1), cy: keep(cy, w / aspect, b.y0, b.y1), w }
             }
-        };
-        let h = w / aspect;
-        let cy = if b.height() <= h {
-            (b.y0 + b.y1) / 2.0
-        } else {
-            pan_cy.or(start).unwrap_or(b.y0 + h / 2.0).clamp(b.y0 + h / 2.0, b.y1 - h / 2.0)
-        };
-        Camera { cx, cy, w }
+        }
     }
 
     /// The camera that fits group `group`, its heading included.
