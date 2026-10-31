@@ -166,6 +166,8 @@ struct UIShell_OverviewMove
   B32 slides;
   U64 slide_group;
   F64 slide_by;
+  B32 pans;
+  F64 pan_by;
   B32 zooms;
   U64 zoom_group;
   B32 picks;
@@ -173,43 +175,105 @@ struct UIShell_OverviewMove
   CFG_ID pick_cfg;
 };
 
-// A row let go of mid-drag glides on at its speed then, slowing to a stop
+// What a drag moves, chosen as it starts: mostly sideways over a row too
+// long for the region slides the row; mostly up or down, over a row or
+// between them, pans an overview taller than the region.
+typedef enum UIShell_OverviewDragAxis
+{
+  UIShell_OverviewDragAxis_None,
+  UIShell_OverviewDragAxis_Slide,
+  UIShell_OverviewDragAxis_Pan,
+}
+UIShell_OverviewDragAxis;
+
+// What's let go of mid-drag glides on at its speed then, slowing to a stop
 // over about a third of a second, or at its end.
 #define UIShell_OverviewGlideTauMs 325.0
 // A drag held still this long before its release doesn't glide.
 #define UIShell_OverviewGlideHoldMs 60.0
 
-// Dragging a row too long for the region slides it with the mouse, from
-// where it was when pressed, as far as its ends. A press only becomes a
-// drag past half a line, so a click on a tile still picks it.
+internal B32
+uishell_overview_slides(WheelhouseOverviewFrame *f, U64 group)
+{
+  return group < f->group_count && f->view_mode == WHEELHOUSE_OVERVIEW_ROWS && f->groups[group].slide_min < 0;
+}
+
+// Whether the overview is taller than the region, so it pans.
+internal B32
+uishell_overview_pans(WheelhouseOverviewFrame *f)
+{
+  return (f->mode == WHEELHOUSE_OVERVIEW_OVERVIEW &&
+          (f->bounds.y0 < f->view.y0 - 1e-6 || f->bounds.y1 > f->view.y1 + 1e-6));
+}
+
+// Scene units a pixel of the region, across or down.
+internal F64
+uishell_overview_units(UIShell_Overview *o, Axis2 axis)
+{
+  WheelhouseOverviewFrame *f = o->frame;
+  Vec2F32 dim = dim_2f32(o->region);
+  return axis == Axis2_X ? (f->view.x1 - f->view.x0)/Max(1.f, dim.x) : (f->view.y1 - f->view.y0)/Max(1.f, dim.y);
+}
+
+// Where a drag's axis is now: the row's slide, or the camera's height.
+internal F64
+uishell_overview_drag_place(WheelhouseOverviewFrame *f, UIShell_OverviewDragAxis axis, U64 group)
+{
+  return axis == UIShell_OverviewDragAxis_Slide ? f->groups[group].slide : (f->view.y0 + f->view.y1)/2;
+}
+
 internal void
-uishell_overview_drag_row(UIShell_Overview *o, UI_Signal sig, U64 group, UIShell_OverviewMove *move)
+uishell_overview_move_by(UIShell_OverviewMove *move, UIShell_OverviewDragAxis axis, U64 group, F64 by)
+{
+  if(by == 0) { return; }
+  if(axis == UIShell_OverviewDragAxis_Slide && !move->slides) { move->slides = 1; move->slide_group = group; move->slide_by = by; }
+  if(axis == UIShell_OverviewDragAxis_Pan && !move->pans)     { move->pans = 1; move->pan_by = by; }
+}
+
+// Dragging the overview with the mouse slides a row or pans, following the
+// mouse from where it was when pressed, as far as the ends. A press only
+// becomes a drag past half a line, so a click on a tile still picks it.
+// `group` is the row under the press, or none between rows.
+internal void
+uishell_overview_drag(UIShell_Overview *o, UI_Signal sig, U64 group, UIShell_OverviewMove *move)
 {
   WheelhouseOverviewFrame *f = o->frame;
   UIShell_SidebarState *state = o->state;
-  B32 slides = (group < f->group_count && f->view_mode == WHEELHOUSE_OVERVIEW_ROWS && f->groups[group].slide_min < 0);
   if(ui_pressed(sig))
   {
     state->overview_dragged = 0;
-    state->overview_drag_slide = slides ? f->groups[group].slide : 0;
-    state->overview_drag_at = state->overview_drag_slide;
+    state->overview_drag_axis = UIShell_OverviewDragAxis_None;
     state->overview_drag_v = 0;
     state->overview_drag_ms = o->now_ms;
     state->overview_glide_v = 0;
   }
-  if(slides && ui_released(sig) && state->overview_dragged)
+  UIShell_OverviewDragAxis axis = state->overview_drag_axis;
+  if(ui_released(sig) && axis != UIShell_OverviewDragAxis_None)
   {
     B32 held = (o->now_ms - state->overview_drag_ms > UIShell_OverviewGlideHoldMs);
+    state->overview_glide_axis = axis;
     state->overview_glide_group = group;
     state->overview_glide_v = (held || !o->motion) ? 0 : state->overview_drag_v;
     state->overview_glide_ms = o->now_ms;
   }
-  if(!slides || !ui_dragging(sig)) { return; }
-  F32 dx = ui_drag_delta().x;
-  if(!state->overview_dragged && abs_f32(dx) < ui_top_font_size()*0.5f) { return; }
-  state->overview_dragged = 1;
-  F64 units = (f->view.x1 - f->view.x0)/Max(1.f, dim_2f32(o->region).x);
-  F64 to = state->overview_drag_slide + dx*units;
+  if(!ui_dragging(sig)) { return; }
+  Vec2F32 d = ui_drag_delta();
+  if(!state->overview_dragged)
+  {
+    if(Max(abs_f32(d.x), abs_f32(d.y)) < ui_top_font_size()*0.5f) { return; }
+    state->overview_dragged = 1;
+    axis = (abs_f32(d.x) >= abs_f32(d.y) ? (uishell_overview_slides(f, group) ? UIShell_OverviewDragAxis_Slide : UIShell_OverviewDragAxis_None)
+                                         : (uishell_overview_pans(f) ? UIShell_OverviewDragAxis_Pan : UIShell_OverviewDragAxis_None));
+    state->overview_drag_axis = axis;
+    if(axis != UIShell_OverviewDragAxis_None)
+    {
+      state->overview_drag_from = state->overview_drag_at = uishell_overview_drag_place(f, axis, group);
+    }
+  }
+  if(axis == UIShell_OverviewDragAxis_None) { return; }
+  // Dragging down shows what is above.
+  F64 to = state->overview_drag_from + (axis == UIShell_OverviewDragAxis_Slide ? d.x*uishell_overview_units(o, Axis2_X)
+                                                                               : -d.y*uishell_overview_units(o, Axis2_Y));
   // Its speed, smoothed over the last few moves.
   F64 dt = o->now_ms - state->overview_drag_ms;
   if(to != state->overview_drag_at && dt > 0)
@@ -219,27 +283,23 @@ uishell_overview_drag_row(UIShell_Overview *o, UI_Signal sig, U64 group, UIShell
     state->overview_drag_at = to;
     state->overview_drag_ms = o->now_ms;
   }
-  F64 by = to - f->groups[group].slide;
-  if(by != 0)
-  {
-    move->slides = 1;
-    move->slide_group = group;
-    move->slide_by = by;
-  }
+  uishell_overview_move_by(move, axis, group, to - uishell_overview_drag_place(f, axis, group));
 }
 
-// A gliding row, slowing: its slide this frame, until it stops or meets
+// What's gliding, slowing: its move this frame, until it stops or meets
 // its end.
 internal void
 uishell_overview_glide(UIShell_Overview *o, UIShell_OverviewMove *move)
 {
   WheelhouseOverviewFrame *f = o->frame;
   UIShell_SidebarState *state = o->state;
+  UIShell_OverviewDragAxis axis = state->overview_glide_axis;
   U64 group = state->overview_glide_group;
   if(state->overview_glide_v == 0) { return; }
   F64 dt = o->now_ms - state->overview_glide_ms;
   state->overview_glide_ms = o->now_ms;
-  if(group >= f->group_count || f->view_mode != WHEELHOUSE_OVERVIEW_ROWS || f->mode != WHEELHOUSE_OVERVIEW_OVERVIEW)
+  if(axis == UIShell_OverviewDragAxis_Slide ? !uishell_overview_slides(f, group) || f->mode != WHEELHOUSE_OVERVIEW_OVERVIEW
+                                            : !uishell_overview_pans(f))
   {
     state->overview_glide_v = 0;
     return;
@@ -248,18 +308,22 @@ uishell_overview_glide(UIShell_Overview *o, UIShell_OverviewMove *move)
   F64 decay = exp(-dt/UIShell_OverviewGlideTauMs);
   F64 by = state->overview_glide_v*UIShell_OverviewGlideTauMs*(1 - decay);
   state->overview_glide_v *= decay;
-  const WheelhouseOverviewGroup *g = &f->groups[group];
-  F64 to = Clamp(g->slide_min, g->slide + by, 0);
-  // Stopped: slower than a pixel in a tenth of a second, or at its end.
-  F64 units = (f->view.x1 - f->view.x0)/Max(1.f, dim_2f32(o->region).x);
-  B32 at_end = (by < 0 ? to <= g->slide_min : by > 0 && to >= 0);
-  if(abs_f64(state->overview_glide_v)*100.0 < units || at_end) { state->overview_glide_v = 0; }
-  if(to != g->slide && !move->slides)
+  B32 at_end = 0;
+  if(axis == UIShell_OverviewDragAxis_Slide)
   {
-    move->slides = 1;
-    move->slide_group = group;
-    move->slide_by = to - g->slide;
+    const WheelhouseOverviewGroup *g = &f->groups[group];
+    F64 to = Clamp(g->slide_min, g->slide + by, 0);
+    at_end = (by < 0 ? to <= g->slide_min : by > 0 && to >= 0);
+    by = to - g->slide;
   }
+  else
+  {
+    at_end = (by < 0 ? f->view.y0 + by <= f->bounds.y0 : by > 0 && f->view.y1 + by >= f->bounds.y1);
+  }
+  // Stopped: slower than a pixel in a tenth of a second, or at its end.
+  F64 unit = uishell_overview_units(o, axis == UIShell_OverviewDragAxis_Slide ? Axis2_X : Axis2_Y);
+  if(abs_f64(state->overview_glide_v)*100.0 < unit || at_end) { state->overview_glide_v = 0; }
+  uishell_overview_move_by(move, axis, group, by);
   if(state->overview_glide_v != 0) { rd_request_frame(); }
 }
 
@@ -302,7 +366,7 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
 
   ui_set_next_rect(o->region);
   UI_Box *scene_box = ui_build_box_from_stringf(UI_BoxFlag_Clip|UI_BoxFlag_DrawBackground|
-                                                (interactive ? UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise : 0),
+                                                (interactive ? UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise : 0),
                                                 "###workspace_overview");
   UI_Parent(scene_box)
   {
@@ -390,7 +454,7 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
             }
           }
           UI_Signal sig = interactive ? ui_signal_from_box(box) : (UI_Signal){0};
-          if(interactive) { uishell_overview_drag_row(o, sig, tile->group, &move); }
+          if(interactive) { uishell_overview_drag(o, sig, tile->group, &move); }
           if(interactive && cfg_id != 0 && ui_clicked(sig) && !o->state->overview_dragged)
           {
             move.picks = 1;
@@ -411,7 +475,7 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
     }
     for(U64 i = 0; i < f->group_count; i++)
     {
-      if(rows[i] != 0) { uishell_overview_drag_row(o, ui_signal_from_box(rows[i]), i, &move); }
+      if(rows[i] != 0) { uishell_overview_drag(o, ui_signal_from_box(rows[i]), i, &move); }
     }
   }
   if(interactive) { uishell_overview_glide(o, &move); }
@@ -421,15 +485,16 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   if(interactive)
   {
     UI_Signal sig = ui_signal_from_box(scene_box);
+    uishell_overview_drag(o, sig, f->group_count, &move);
     Vec2F32 px = add_2f32(sig.scroll_px, v2f32(sig.scroll.x*30.f, sig.scroll.y*30.f));
     if(px.x != 0 || px.y != 0)
     {
-      F64 units = (f->view.y1 - f->view.y0)/Max(1.f, dim.y);
-      B32 pans = (f->mode == WHEELHOUSE_OVERVIEW_OVERVIEW &&
-                  (f->bounds.y0 < f->view.y0 - 1e-6 || f->bounds.y1 > f->view.y1 + 1e-6));
+      F64 units = uishell_overview_units(o, Axis2_Y);
+      B32 pans = uishell_overview_pans(f);
       Vec2F32 mouse = sub_2f32(ui_mouse(), o->region.p0);
       F32 slide_px = px.x;
-      if(pans) { moved = wheelhouse_overview_pan(o->state->core, px.y*units, 0); }
+      o->state->overview_glide_v = 0;
+      if(pans) { move.pans = 1; move.pan_by = px.y*units; }
       else if(slide_px == 0) { slide_px = px.y; }
       if(slide_px != 0)
       {
@@ -438,7 +503,6 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
           Rng2F32 bounds = uishell_overview_rect(o, groups[i].bounds);
           if(bounds.y0 <= mouse.y && mouse.y < bounds.y1)
           {
-            o->state->overview_glide_v = 0;
             move.slides = 1;
             move.slide_group = i;
             move.slide_by = -slide_px*units;
@@ -454,6 +518,10 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   if(move.slides && move.slide_by != 0)
   {
     moved = wheelhouse_overview_slide(o->state->core, move.slide_group, move.slide_by, o->now_ms, 0) || moved;
+  }
+  if(move.pans && move.pan_by != 0)
+  {
+    moved = wheelhouse_overview_pan(o->state->core, move.pan_by, 0) || moved;
   }
   if(move.zooms)
   {

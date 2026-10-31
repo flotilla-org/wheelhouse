@@ -89,13 +89,14 @@ uishell_overview_diagnostic_labels_read(RD_WindowState *ws, CFG_Node *current, R
 }
 
 // Builds the overview in a test UI state, a frame every 16ms of its
-// clock: finds the box keyed `target`, presses it, moves the mouse `by`,
+// clock: finds the box keyed `target` (or, with none, takes `point`),
+// presses it, moves the mouse `by`,
 // holds it there `hold_ms` and releases, then builds `after` frames more.
 // Returns whether the box was there; `labels_read` whether every label
 // drawn while dragging read its workspace's title.
 internal B32
 uishell_overview_diagnostic_drag(RD_WindowState *ws, CFG_Node *window, CFG_Node *current, Rng2F32 region, Arena *arena, String8 target, Vec2F32 by,
-                                 F64 hold_ms, U32 after, B32 *labels_read)
+                                 F64 hold_ms, U32 after, B32 *labels_read, Vec2F32 point)
 {
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
   ui_select_state(test);
@@ -123,7 +124,7 @@ uishell_overview_diagnostic_drag(RD_WindowState *ws, CFG_Node *window, CFG_Node 
     uishell_overview_end(&o);
     if(frame == 0)
     {
-      at = uishell_workspace_lifecycle_center(test, target);
+      at = target.size != 0 ? uishell_workspace_lifecycle_center(test, target) : point;
       found = at.x != 0 || at.y != 0;
     }
     if(frame == 2 && !uishell_overview_diagnostic_labels_read(ws, current, region)) { *labels_read = 0; }
@@ -323,7 +324,7 @@ uishell_overview_diagnostics(CFG_Node *window)
     U64 picks = uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), shown_tile);
     String8 shown_key = push_str8f(scratch.arena, "###overview_tile_%I64u", shown_tile);
     B32 labels_read = 0;
-    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(40, 0), 200, 0, &labels_read),
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(40, 0), 200, 0, &labels_read, v2f32(0, 0)),
                   "a tile of the long row in view");
     OverviewCheck(labels_read, "the labels drawn while a row slides read their workspaces' titles");
     o = uishell_overview_diagnostic_step(ws, 0, b, region);
@@ -334,24 +335,79 @@ uishell_overview_diagnostics(CFG_Node *window)
     uishell_overview_end(&o);
     //- A row let go of while moving glides on; one held still first stays
     // where it was let go.
-    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(40, 0), 0, 0, &labels_read),
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(40, 0), 0, 0, &labels_read, v2f32(0, 0)),
                   "a tile of the long row to drag on");
     o = uishell_overview_diagnostic_step(ws, 0, b, region);
     released = o.frame->groups[long_row].slide;
     uishell_overview_end(&o);
-    uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 8, &labels_read);
+    uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 8, &labels_read, v2f32(0, 0));
     o = uishell_overview_diagnostic_step(ws, 0, b, region);
     OverviewCheck(o.frame->groups[long_row].slide > released, "a row let go of while moving glides on");
     uishell_overview_end(&o);
-    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(-30, 0), 200, 0, &labels_read),
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(-30, 0), 200, 0, &labels_read, v2f32(0, 0)),
                   "a tile of the long row to drag and hold");
     o = uishell_overview_diagnostic_step(ws, 0, b, region);
     released = o.frame->groups[long_row].slide;
     uishell_overview_end(&o);
-    uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 8, &labels_read);
+    uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 8, &labels_read, v2f32(0, 0));
     o = uishell_overview_diagnostic_step(ws, 0, b, region);
     OverviewCheck(o.frame->groups[long_row].slide == released, "a row held still before it's let go doesn't glide");
     uishell_overview_end(&o);
+    //- In a region too short for the overview, dragging up or down pans it,
+    // over a tile or between rows, and what's let go of while moving glides
+    // on. A drag goes the way there's room: down shows what is above.
+    Rng2F32 short_region = r2f32p(region.x0, region.y0, region.x1, region.y0 + 50);
+    o = uishell_overview_diagnostic_step(ws, 0, b, short_region); uishell_overview_end(&o);
+    o = uishell_overview_diagnostic_step(ws, 1000, b, short_region);
+    OverviewCheck(uishell_overview_pans(o.frame), "an overview taller than its region pans");
+    // A third of the room there is on the roomier side, in pixels.
+    F64 px_units = uishell_overview_units(&o, Axis2_Y);
+    F64 room_above = (o.frame->view.y0 - o.frame->bounds.y0)/px_units, room_below = (o.frame->bounds.y1 - o.frame->view.y1)/px_units;
+    F32 drag_y = (F32)(room_above > room_below ? room_above/3 : -room_below/3);
+    OverviewCheck(abs_f32(drag_y) >= 6, "room to pan the short region");
+    F64 cy = (o.frame->view.y0 + o.frame->view.y1)/2;
+    CFG_ID pan_tile = 0;
+    Vec2F32 between = {0};
+    Vec2F32 short_dim = dim_2f32(short_region);
+    for(U64 i = 0; i < o.frame->tile_count; i++)
+    {
+      Rng2F32 rect = uishell_overview_rect(&o, o.frame->tiles[i].rect);
+      if(!o.frame->tiles[i].current && rect.x0 > 0 && rect.x1 < short_dim.x && rect.y0 > 0 && rect.y1 < short_dim.y && pan_tile == 0)
+      { pan_tile = uishell_workspace_cfg_id_from_id(uishell_workspace_id_from_core(o.frame->tiles[i].workspace_id)); }
+    }
+    for(U64 i = 0; i < o.frame->group_count; i++)
+    {
+      // The right end of a short row's heading line: no tile, heading,
+      // wash or long row to take the press.
+      Rng2F32 rect = uishell_overview_rect(&o, o.frame->groups[i].heading_rect);
+      Vec2F32 at = v2f32(short_dim.x - 4, (rect.y0 + rect.y1)/2);
+      if(o.frame->groups[i].slide_min >= 0 && at.y > 0 && at.y < short_dim.y && between.x == 0) { between = add_2f32(at, short_region.p0); }
+    }
+    uishell_overview_end(&o);
+    U64 pan_picks = uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), pan_tile);
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, short_region, scratch.arena,
+                                                   push_str8f(scratch.arena, "###overview_tile_%I64u", pan_tile), v2f32(0, drag_y), 200, 0,
+                                                   &labels_read, v2f32(0, 0)),
+                  "a tile in the short region");
+    o = uishell_overview_diagnostic_step(ws, 0, b, short_region);
+    F64 dragged_cy = (o.frame->view.y0 + o.frame->view.y1)/2;
+    OverviewCheck(drag_y > 0 ? dragged_cy < cy : dragged_cy > cy, "dragging a tile up or down pans the overview");
+    OverviewCheck(uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), pan_tile) == pan_picks &&
+                  o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW, "a pan doesn't pick the tile it started on");
+    uishell_overview_end(&o);
+    OverviewCheck(between.x != 0, "a place between rows in the short region");
+    uishell_overview_diagnostic_drag(ws, window, b, short_region, scratch.arena, str8_zero(), v2f32(0, drag_y), 0, 0, &labels_read, between);
+    o = uishell_overview_diagnostic_step(ws, 0, b, short_region);
+    F64 released_cy = (o.frame->view.y0 + o.frame->view.y1)/2;
+    OverviewCheck(drag_y > 0 ? released_cy < dragged_cy : released_cy > dragged_cy, "dragging between rows pans the overview");
+    uishell_overview_end(&o);
+    uishell_overview_diagnostic_drag(ws, window, b, short_region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 8, &labels_read, v2f32(0, 0));
+    o = uishell_overview_diagnostic_step(ws, 0, b, short_region);
+    F64 glided_cy = (o.frame->view.y0 + o.frame->view.y1)/2;
+    OverviewCheck(drag_y > 0 ? glided_cy < released_cy : glided_cy > released_cy, "a pan let go of while moving glides on");
+    uishell_overview_end(&o);
+    o = uishell_overview_diagnostic_step(ws, 0, b, region); uishell_overview_end(&o);
+    o = uishell_overview_diagnostic_step(ws, 1000, b, region); uishell_overview_end(&o);
     //- A click on a tile of a long row still picks it: the row under it
     // doesn't take the press.
     OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena,

@@ -345,18 +345,20 @@ struct UIShell_SidebarState
   Rng2F32 strip_rect;
   U64 strip_scroll[5];
   // The overview (uishell_overview.c): its clock, the frame it last moved
-  // on, and the overview toggle as it last saw it. A row being dragged:
-  // its slide when pressed, whether the press has become a drag, and its
-  // speed (scene units a millisecond) at the last move. A row let go of
-  // while moving glides on, slowing.
+  // on, and the overview toggle as it last saw it. A drag (a row's slide,
+  // or panning): whether the press has become one, what it moves, from
+  // where, and its speed (scene units a millisecond) at the last move.
+  // What's let go of while moving glides on, slowing.
   F64 overview_clock_ms;
   U64 overview_clock_frame;
   B32 overview_toggle_seen;
-  F64 overview_drag_slide;
   B32 overview_dragged;
+  U32 overview_drag_axis;
+  F64 overview_drag_from;
   F64 overview_drag_v;
   F64 overview_drag_ms;
   F64 overview_drag_at;
+  U32 overview_glide_axis;
   U64 overview_glide_group;
   F64 overview_glide_v;
   F64 overview_glide_ms;
