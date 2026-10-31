@@ -6,6 +6,12 @@ prototype. It answers part of the overview brainstorm (#190) and replaces the
 [subject-workspaces.md](subject-workspaces.md). The prototype is
 [overview-camera-prototype.html](overview-camera-prototype.html).
 
+Steps 1 to 3 of [Building it](#building-it) are built: the core's `overview`
+module (with `OverviewWindow`, a window's overview, behind ABI 16's
+`wheelhouse_overview_*`), and `native/src/uishell/uishell_overview.c`, which
+draws the region through the core's camera. Clicking a group's heading already
+fits the group. "Where we are" below describes the overview before them.
+
 ## Where we are
 
 The overview is a grid of workspace previews in creation order. Each is titled

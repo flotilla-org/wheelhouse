@@ -344,6 +344,11 @@ struct UIShell_SidebarState
   // each of its sections has scrolled by.
   Rng2F32 strip_rect;
   U64 strip_scroll[5];
+  // The overview (uishell_overview.c): its clock, the frame it last moved
+  // on, and the overview toggle as it last saw it.
+  F64 overview_clock_ms;
+  U64 overview_clock_frame;
+  B32 overview_toggle_seen;
   B32 card_escape_down;
   WheelhouseEntity card_action_target;
   String8 card_action_intent;
@@ -1999,10 +2004,10 @@ uishell_sidebar_init(RD_WindowState *ws)
     state->initialized = 1;
     char *error = 0;
     // A host requires exactly the ABI it was built against.
-    if(wheelhouse_abi_version() != 15)
+    if(wheelhouse_abi_version() != 16)
     {
       Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 15 is required; this library has ABI %u",
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 16 is required; this library has ABI %u",
         (U32)wheelhouse_abi_version()));
       scratch_end(scratch);
       return state;
@@ -6051,6 +6056,7 @@ uishell_sidebar_scroll_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *
 }
 
 #include "uishell/uishell_tool_strip.c"
+#include "uishell/uishell_overview.c"
 #include "uishell/uishell_git_diagnostics.c"
 #include "uishell/uishell_chip_diagnostics.c"
 

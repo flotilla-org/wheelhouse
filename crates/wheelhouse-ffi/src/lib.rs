@@ -26,6 +26,7 @@ pub mod card;
 pub mod dashboard;
 pub mod dock;
 pub mod documents;
+pub mod overview;
 pub mod slots;
 pub mod stream;
 pub mod strip;
@@ -35,6 +36,7 @@ pub use card::*;
 pub use dashboard::*;
 pub use dock::*;
 pub use documents::*;
+pub use overview::*;
 pub use slots::*;
 pub use stream::*;
 pub use strip::*;
@@ -119,6 +121,9 @@ pub struct WheelhouseCore {
     poisoned: bool,
     client: u64,
     effects: Vec<HostEffect>,
+    /// The window's overview, and the sidebar revision it last read.
+    overview: wheelhouse_core::overview::OverviewWindow,
+    overview_revision: Option<u64>,
 }
 unsafe fn run<T>(
     handle: *mut WheelhouseCore,
@@ -217,7 +222,7 @@ unsafe fn provider(provider: Text) -> Result<String, String> {
 /// was built against.
 #[no_mangle]
 pub extern "C" fn wheelhouse_abi_version() -> u32 {
-    15
+    16
 }
 /// A sidebar configured with a template catalog (KDL), or NULL with an
 /// error.
@@ -234,6 +239,8 @@ pub unsafe extern "C" fn wheelhouse_create(config_kdl: *const u8, len: usize, er
             poisoned: false,
             client: NEXT_CLIENT.fetch_add(1, Ordering::Relaxed),
             effects: vec![],
+            overview: Default::default(),
+            overview_revision: None,
         })),
         Err(message) => {
             if !error_out.is_null() {

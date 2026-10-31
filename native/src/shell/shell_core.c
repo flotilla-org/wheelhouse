@@ -9559,8 +9559,12 @@ rd_window_frame(void)
 
     ws->workspace_surface_entry_count = 0;
     ws->active_workspace_surface_entry = 0; // 0 = direct (non-surface) render; set per-entry below
-    //- animate the zoom transition; while open *or* in flight, children build
-    // as zoom-mode surfaces & the composites interpolate
+    //- the overview (uishell_overview.c): the core flies a camera over one
+    // scene of the window's workspaces. whenever it isn't at rest on the
+    // current workspace, children build as surfaces & the region draws
+    // through the scene. the cover flow keeps its own open/close easing
+    UIShell_Overview overview = uishell_overview_begin(ws, workspace_mount->owner_cfg, main_workspace_rect, uishell_overview_motion());
+    if(DEV_coverflow_overview)
     {
       F32 zoom_target = (F32)!!ws->workspace_zoom_open;
       ws->workspace_zoom_t += rd_state->menu_animation_rate*(zoom_target - ws->workspace_zoom_t);
@@ -9574,7 +9578,7 @@ rd_window_frame(void)
       }
     }
     F32 workspace_zoom_t = ws->workspace_zoom_t;
-    B32 workspace_zoom_open = (ws->workspace_zoom_open || workspace_zoom_t > 0.f);
+    B32 workspace_zoom_open = (DEV_coverflow_overview ? (ws->workspace_zoom_open || workspace_zoom_t > 0.f) : overview.through_scene);
 
     //- the workspace-content subrect of the (window-sized, padded) wrapper
     // surfaces; every consumer that presents a workspace preview crops with it,
@@ -9654,6 +9658,9 @@ rd_window_frame(void)
         // composite interpolates to/from the full workspace presentation, &
         // sharing the normal wrapper's texture size makes the handoff seamless
         B32 child_full_res = (workspace_zoom_open && child->mount.owner_cfg == workspace_mount->owner_cfg);
+        // a switch's flight is drawn through the scene, but the workspace it
+        // lands on already has the keyboard
+        B32 child_focused = (child_full_res && !ws->workspace_zoom_open && !DEV_coverflow_overview);
         ws->workspace_surface_entries[ws->workspace_surface_entry_count] = (RD_WorkspaceSurfaceEntry){child_key.u64[0], child->id, 0, child_full_res};
         ws->active_workspace_surface_entry = &ws->workspace_surface_entries[ws->workspace_surface_entry_count];
         ws->workspace_surface_entry_count += 1;
@@ -9665,14 +9672,14 @@ rd_window_frame(void)
                                                                       ws->theme);
         access_close(child_workspace_theme_access);
         rd_workspace_surface_contribute_version(child_workspace_theme != 0 ? child_workspace_theme->hash : 0);
-        UI_ThemeScope(child_workspace_theme) UI_Parent(child_wrapper) UI_Focus(UI_FocusKind_Off)
+        UI_ThemeScope(child_workspace_theme) UI_Parent(child_wrapper) UI_Focus(child_focused ? UI_FocusKind_Null : UI_FocusKind_Off)
         {
           // render the same layout as the visible workspace (raised tab strip +
           // insets when tabs-in-title-bar) so every workspace's preview matches
           // how it presents when active. degrades to the plain workspace_rect
           // layout when the setting is off (main_workspace_rect == workspace_rect,
           // insets 0). the content_uv crop (below) follows the same rect.
-          rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, &child->mount, 0, 0, main_tab_inset_left, main_tab_inset_right, tabs_in_title_bar);
+          rd_panel_area_ui(scratch, main_workspace_rect, window_rect, ws, &child->mount, child_focused && window_is_focused, 0, main_tab_inset_left, main_tab_inset_right, tabs_in_title_bar);
         }
         ws->active_workspace_surface_entry = 0;
       }
@@ -9900,110 +9907,9 @@ rd_window_frame(void)
             }
           }
         }
-        else if(tile_count != 0)
+        else if(!DEV_coverflow_overview)
         {
-          F32 pad = floor_f32(ui_top_font_size()*1.f);
-          F32 label_h = floor_f32(ui_top_font_size()*1.5f);
-          U64 grid_cols = 1;
-          for(; grid_cols*grid_cols < tile_count; grid_cols += 1) {}
-          U64 grid_rows = (tile_count + grid_cols - 1)/grid_cols;
-          Vec2F32 region_dim = dim_2f32(workspace_rect);
-          F32 cell_w = (region_dim.x - pad*(grid_cols+1))/(F32)grid_cols;
-          F32 cell_h = (region_dim.y - pad*(grid_rows+1))/(F32)grid_rows;
-          F32 aspect = (region_dim.y > 0 ? region_dim.x/region_dim.y : 1.6f);
-          //- two passes for z-order during the transition: the selected child's
-          // composite interpolates between the full window & its tile, & must
-          // draw over the others, which fade with zoom_t
-          for(U64 tile_pass = 0; tile_pass < 2; tile_pass += 1)
-          {
-            U64 tile_idx = 0;
-            for(UIShell_MaterializedWorkspace *child = root_controlled_split.inventory.first; child != 0; child = child->next)
-            {
-              if(child->mount.owner_cfg == &cfg_nil_node)
-              {
-                continue;
-              }
-              U64 col = tile_idx%grid_cols;
-              U64 row = tile_idx/grid_cols;
-              tile_idx += 1;
-              B32 selected = (child->mount.owner_cfg == workspace_mount->owner_cfg);
-              if((tile_pass == 1) != (selected != 0))
-              {
-                continue;
-              }
-              Vec2F32 cell_p0 =
-              {
-                .x = workspace_rect.x0 + pad + (F32)col*(cell_w + pad),
-                .y = workspace_rect.y0 + pad + (F32)row*(cell_h + pad),
-              };
-              F32 img_w = cell_w;
-              F32 img_h = floor_f32(img_w/aspect);
-              if(img_h > cell_h - label_h)
-              {
-                img_h = cell_h - label_h;
-                img_w = floor_f32(img_h*aspect);
-              }
-              Rng2F32 img_rect = r2f32p(cell_p0.x + floor_f32((cell_w - img_w)*0.5f),
-                                        cell_p0.y,
-                                        cell_p0.x + floor_f32((cell_w - img_w)*0.5f) + img_w,
-                                        cell_p0.y + img_h);
-              Rng2F32 tile_rect = img_rect;
-              if(selected && workspace_zoom_t < 1.f)
-              {
-                // tiles show the cropped workspace content (workspace_content_uv =
-                // main_workspace_rect), so the transition's full-zoom anchor must
-                // be that same region — which includes the raised tab band under
-                // tabs-in-title-bar. anchoring to workspace_rect (no band) drew the
-                // band tabs into the client area mid-zoom, momentarily reverting
-                // out of tabs-in-title-bar. (main_workspace_rect == workspace_rect
-                // when tabs-in-title-bar is off, so this degrades cleanly.)
-                tile_rect.p0 = mix_2f32(main_workspace_rect.p0, img_rect.p0, workspace_zoom_t);
-                tile_rect.p1 = mix_2f32(main_workspace_rect.p1, img_rect.p1, workspace_zoom_t);
-              }
-              Rng2F32 label_rect = r2f32p(img_rect.x0, img_rect.y1, img_rect.x1, img_rect.y1 + label_h);
-              rd_workspace_preview_demand_push(ws, child->id, img_w);
-              F32 tile_transparency = (selected ? 0.f : 1.f - workspace_zoom_t);
-              UI_TagF("tab") UI_TagF(!selected ? "inactive" : "") UI_Transparency(tile_transparency)
-              {
-                ui_set_next_rect(tile_rect);
-                UI_Box *tile_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|
-                                                             UI_BoxFlag_DrawBackground|
-                                                             UI_BoxFlag_DrawBorder|
-                                                             UI_BoxFlag_DrawHotEffects,
-                                                             "###workspace_tile_%I64u", child->id);
-                UI_Key wrapper_key = ui_key_from_stringf(ui_key_zero(), "###workspace_surface_%I64u", child->id);
-                RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, wrapper_key.u64[0]);
-                B32 workspace_surface = node != 0 && node->rendered_hash != 0;
-                if(!workspace_surface)
-                {
-                  node = rd_window_surface_node_lookup(ws, rd_workspace_preview_surface_key(child->id));
-                }
-                if(node != 0)
-                {
-                  RD_WorkspacePreviewDraw *tile_draw = push_array(ui_build_arena(), RD_WorkspacePreviewDraw, 1);
-                  tile_draw->node = node;
-                  tile_draw->workspace_surface = workspace_surface;
-                  tile_draw->src_uv = r2f32p(0, 0, 1, 1);
-                  ui_box_equip_custom_draw(tile_box, rd_workspace_preview_box_draw, tile_draw);
-                }
-                UI_Signal tile_sig = ui_signal_from_box(tile_box);
-                if(ui_clicked(tile_sig))
-                {
-                  if(!selected)
-                  {
-                    uishell_cmd("select_workspace", .window = root_controlled_split.owner_cfg->id, .cfg = child->id);
-                  }
-                  ws->workspace_zoom_open = 0;
-                }
-                ui_set_next_rect(label_rect);
-                UI_TextAlignment(UI_TextAlign_Center) UI_Transparency(1.f - workspace_zoom_t)
-                {
-                  UI_Box *label_box = ui_build_box_from_stringf(UI_BoxFlag_DrawText, "###workspace_tile_label_%I64u", child->id);
-                  ui_box_equip_display_string(label_box, child->display_name);
-                }
-              }
-            }
-          }
+          uishell_overview_ui(ws, &overview, &root_controlled_split, workspace_mount->owner_cfg);
         }
       }
     }
@@ -10017,6 +9923,8 @@ rd_window_frame(void)
       }
     }
     
+    uishell_overview_end(&overview);
+
     ////////////////////////////
     //- rjf: @window_ui_part drag/drop cancelling
     //
@@ -10031,7 +9939,8 @@ rd_window_frame(void)
     //
     if(ws->workspace_zoom_open && ui_slot_press(UI_EventActionSlot_Cancel))
     {
-      ws->workspace_zoom_open = 0;
+      if(DEV_coverflow_overview) { ws->workspace_zoom_open = 0; }
+      else                       { uishell_overview_back(ws); }
       rd_request_frame();
     }
     

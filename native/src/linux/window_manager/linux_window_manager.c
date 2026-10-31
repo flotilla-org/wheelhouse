@@ -931,3 +931,10 @@ wm_open_in_browser(String8 url)
   }
   scratch_end(scratch);
 }
+
+// No portable query; desktops differ.
+internal B32
+wm_reduce_motion(void)
+{
+  return 0;
+}

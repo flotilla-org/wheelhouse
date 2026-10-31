@@ -1,4 +1,4 @@
-# The host interface (ABI 15)
+# The host interface (ABI 16)
 
 What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
@@ -8,7 +8,7 @@ behind it is in [Slots and arrangements](slots-and-arrangements.md),
 [The sidebar arrangement](sidebar-arrangement.md) and the
 [Workspace Overlay](workspace-overlay.md).
 
-`wheelhouse_abi_version()` returns 15. Each call has one form: there is no
+`wheelhouse_abi_version()` returns 16. Each call has one form: there is no
 compatibility with earlier versions, and a host requires exactly the version
 it was built against.
 
@@ -118,6 +118,20 @@ ABI 4 is not imported.
 | `wheelhouse_layout_choose(h, ws, has_name, name)` | Show a layout, or (`has_name` 0) follow the default. The shown layout's edits are kept for when it is shown again; the arrangement's generation moves. Resetting a layout is `wheelhouse_arrangement_resolve` FOLLOW. |
 | `wheelhouse_strip_get(h, subject)` / `_free` | `WheelhouseStrip`: the subject's [tool strip](tool-strip.md), its related workspaces then its linked items, each an `WheelhouseStripEntry` with its `WHEELHOUSE_STRIP_*` section, entity, and what a chip of it presents (`status`, `attention`, `icon`). Read each entry's detail for its label and actions. It follows the catalog: read it again when the snapshot's revision moves. |
 
+## The overview
+
+A window's [overview](../../design/overview-scene.md) is a scene every live
+workspace in the sidebar sits in, and a camera on it that is the window's
+workspace region. Each core handle has one, as each window has one core.
+
+| Call | |
+|---|---|
+| `wheelhouse_overview_update(h, current, aspect, now_ms, motion)` | Each frame: the current workspace (zeroes for none), the region's width over height, the time, and 0 for a cut instead of every flight (a setting, or the system's reduce motion). A new current workspace flies from wherever the camera is. The sidebar's workspaces are read again when the snapshot's revision moves. |
+| `wheelhouse_overview_open` / `_close` / `_back` | Show the overview; open the current workspace; go back one level (a group to the overview, the overview to the workspace; 0 when already open). |
+| `wheelhouse_overview_zoom_group` / `_pick` | Fit a group (a heading's click); fly into a tile's workspace, which the host also makes current. |
+| `wheelhouse_overview_slide` / `_pan` / `_toggle_cluster` / `_set_view_mode` | Cuts: slide a row, scroll the overview, collapse a cluster, change the view mode (`WHEELHOUSE_OVERVIEW_ROWS`, `_GRID`). |
+| `wheelhouse_overview_frame(h, now_ms)` / `_free` | `WheelhouseOverviewFrame`: the mode, whether the camera is `flying` (draw again) or the workspace is `settled` (draw it as itself), the `view` (the part of the scene shown), and the tiles, groups and cluster regions in scene units. Its text is borrowed: free it before changing the overview. |
+
 ## Arrangements
 
 Both arrangements cross as the same document: an array of
@@ -192,6 +206,11 @@ Address).
   `wheelhouse_dock_restore` repairs a window's documents and returns them
   with dirty marks and the sidebar sections it moved
   (`wheelhouse_dock_restore_free`).
+
+## From ABI 15
+
+ABI 16 adds the [overview](#the-overview) (wheelhouse#450). Nothing else
+changes.
 
 ## From ABI 14
 

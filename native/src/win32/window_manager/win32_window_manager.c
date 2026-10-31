@@ -1822,3 +1822,10 @@ wm_open_in_browser(String8 url)
   ShellExecuteW(0, L"open", (WCHAR *)url16.str, 0, 0, SW_SHOWNORMAL);
   scratch_end(scratch);
 }
+
+internal B32
+wm_reduce_motion(void)
+{
+  BOOL animate = 1;
+  return SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animate, 0) && !animate;
+}

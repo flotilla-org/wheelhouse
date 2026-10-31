@@ -341,3 +341,9 @@ internal void
 wm_open_in_browser(String8 url)
 {
 }
+
+internal B32
+wm_reduce_motion(void)
+{
+  return 0;
+}
