@@ -22,6 +22,7 @@ mod facts;
 pub mod host;
 pub mod managed;
 mod metadata;
+pub mod overview;
 pub mod presentation;
 #[doc(hidden)]
 pub mod profile;
