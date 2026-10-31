@@ -51,7 +51,7 @@ jobs:
             vt: none
           - os: windows-2022
             vt: ghostty-vt
-          - os: macos-14
+          - os: macos-15
             vt: ghostty-vt
     env:
       WHEELHOUSE_CLEAT_FEATURES: ${{ matrix.vt }}
