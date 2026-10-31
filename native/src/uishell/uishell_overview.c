@@ -43,6 +43,25 @@ uishell_overview_clock_ms(UIShell_SidebarState *state)
   return state->overview_clock_ms;
 }
 
+// The overview's view mode, as the user's setting has it: rows unless it
+// says grid. Read from the user's settings, where the switch writes it, so
+// it needs no window to look from.
+internal U32
+uishell_overview_view_mode_setting(void)
+{
+  CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+  String8 value = cfg_node_child_from_string(user, str8_lit("overview_view_mode"))->first->string;
+  return str8_match(value, str8_lit("grid"), StringMatchFlag_CaseInsensitive) ? WHEELHOUSE_OVERVIEW_GRID : WHEELHOUSE_OVERVIEW_ROWS;
+}
+
+internal void
+uishell_overview_set_view_mode_setting(U32 view_mode)
+{
+  CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+  CFG_Node *node = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("overview_view_mode"));
+  cfg_node_new_replacef(rd_state->cfg, node, "%s", view_mode == WHEELHOUSE_OVERVIEW_GRID ? "grid" : "rows");
+}
+
 internal B32
 uishell_overview_motion(void)
 {
@@ -91,6 +110,12 @@ uishell_overview_begin(RD_WindowState *ws, CFG_Node *current, Rng2F32 region, B3
   if(current != &cfg_nil_node) { id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(current)); }
   Vec2F32 dim = dim_2f32(region);
   wheelhouse_overview_update(state->core, id, dim.y > 0 ? dim.x/dim.y : 0, o.now_ms, motion, 0);
+  U32 view_mode = uishell_overview_view_mode_setting();
+  if(view_mode != state->overview_view_mode_seen)
+  {
+    state->overview_view_mode_seen = view_mode;
+    wheelhouse_overview_set_view_mode(state->core, view_mode, 0);
+  }
   if(!!ws->workspace_zoom_open != state->overview_toggle_seen)
   {
     if(ws->workspace_zoom_open) { wheelhouse_overview_open(state->core, o.now_ms, 0); }
@@ -191,6 +216,8 @@ struct UIShell_OverviewMove
   B32 picks;
   WheelhouseWorkspaceId pick;
   CFG_ID pick_cfg;
+  B32 sets_view_mode;
+  U32 view_mode;
 };
 
 // What a drag moves, chosen as it starts: mostly sideways over a row too
@@ -490,6 +517,29 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
                                                 "###workspace_overview");
   UI_Parent(scene_box)
   {
+    //- the view mode switch, Rows and Grid, in the top right: the first
+    // control the overview has. It reads input before anything under it and
+    // is drawn last, over the scene.
+    F32 switch_size = floor_f32(ui_top_font_size()*2.2f);
+    F32 switch_margin = floor_f32(ui_top_font_size()*0.6f);
+    U32 switch_modes[2] = {WHEELHOUSE_OVERVIEW_ROWS, WHEELHOUSE_OVERVIEW_GRID};
+    UI_Signal switch_sigs[2] = {0};
+    Rng2F32 switch_rects[2] = {0};
+    for(U64 i = 0; interactive && i < 2; i++)
+    {
+      F32 x1 = dim.x - switch_margin - (1 - i)*switch_size;
+      switch_rects[i] = r2f32p(x1 - switch_size, switch_margin, x1, switch_margin + switch_size);
+      ui_set_next_rect(switch_rects[i]);
+      UI_Box *hit = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "###overview_view_mode_%I64u", i);
+      switch_sigs[i] = ui_signal_from_box(hit);
+      uishell_tool_strip_tooltip(switch_sigs[i], i == 0 ? str8_lit("Rows") : str8_lit("Grid"));
+      if(ui_clicked(switch_sigs[i]) && f->view_mode != switch_modes[i])
+      {
+        move.sets_view_mode = 1;
+        move.view_mode = switch_modes[i];
+      }
+    }
+
     //- rows too long for the region: dragging one, between its tiles or
     // on them, slides it. A row lies under its tiles and takes input after
     // them, so a press on a tile is the tile's.
@@ -512,7 +562,7 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
       if(rect.x1 < visible.x0 || rect.x0 > visible.x1 || rect.y1 < visible.y0 || rect.y0 > visible.y1) { continue; }
       ui_set_next_rect(rect);
       ui_set_next_background_color(wash);
-      UI_CornerRadius(floor_f32(ui_top_font_size()*0.4f))
+      UI_CornerRadius(f->view_mode == WHEELHOUSE_OVERVIEW_GRID ? 0 : floor_f32(ui_top_font_size()*0.4f))
       {
         ui_build_box_from_stringf(UI_BoxFlag_DrawBackground, "###overview_region_%I64u", i);
       }
@@ -597,6 +647,34 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
     {
       if(rows[i] != 0) { uishell_overview_drag(o, ui_signal_from_box(rows[i]), i, &move); }
     }
+
+    //- the view mode switch, drawn over the scene: a plate behind its two
+    // flat buttons, the current mode's marked with a faint wash
+    if(interactive)
+    {
+      F32 pad = floor_f32(ui_top_font_size()*0.2f);
+      ui_set_next_rect(r2f32p(switch_rects[0].x0 - pad, switch_rects[0].y0 - pad, switch_rects[1].x1 + pad, switch_rects[1].y1 + pad));
+      UI_CornerRadius(floor_f32(ui_top_font_size()*0.4f)) UI_TagF("floating")
+      {
+        ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawDropShadow, "###overview_view_mode_plate");
+      }
+      for(U64 i = 0; i < 2; i++)
+      {
+        B32 marked = (f->view_mode == switch_modes[i]);
+        Vec4F32 wash = ui_color_from_name(str8_lit("hover"));
+        F32 steps = (marked ? 1.f : 0.f) + (ui_hovering(switch_sigs[i]) ? 1.f : 0.f);
+        wash.w *= rd_hover_alpha(wash, ui_color_from_name(str8_lit("background")), RD_HoverBrightnessStep)*steps;
+        ui_set_next_rect(switch_rects[i]);
+        ui_set_next_background_color(wash);
+        UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(ui_top_font_size()*0.25f) RD_Font(RD_FontSlot_Icons)
+          UI_TagF(marked ? "" : "weak")
+        {
+          UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc,
+                                                  "###overview_view_mode_icon_%I64u", i);
+          ui_box_equip_display_string(box, rd_icon_kind_text_table[i == 0 ? RD_IconKind_List : RD_IconKind_Grid]);
+        }
+      }
+    }
   }
   if(interactive) { uishell_overview_glide(o, &move); }
 
@@ -642,6 +720,13 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   if(move.pans && move.pan_by != 0)
   {
     moved = wheelhouse_overview_pan(o->state->core, move.pan_by, 0) || moved;
+  }
+  if(move.sets_view_mode)
+  {
+    uishell_overview_set_view_mode_setting(move.view_mode);
+    o->state->overview_view_mode_seen = move.view_mode;
+    o->state->overview_glide_v = 0;
+    moved = wheelhouse_overview_set_view_mode(o->state->core, move.view_mode, 0) || moved;
   }
   if(move.zooms)
   {

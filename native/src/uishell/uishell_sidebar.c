@@ -352,6 +352,8 @@ struct UIShell_SidebarState
   F64 overview_clock_ms;
   U64 overview_clock_frame;
   B32 overview_toggle_seen;
+  // The view mode the overview was last given from the user's setting.
+  U32 overview_view_mode_seen;
   B32 overview_dragged;
   U32 overview_drag_axis;
   F64 overview_drag_from;

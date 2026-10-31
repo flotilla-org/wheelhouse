@@ -6,7 +6,7 @@
 // the workspaces the region shows build: the current one, and through the
 // scene those the camera sees. A local group is a row of its own under its
 // name, and scrolling over or dragging a row too long for the region
-// slides it. Runs after the workspace lifecycle diagnostics, on the
+// slides it. A switch lays the overview out as rows or a grid. Runs after the workspace lifecycle diagnostics, on the
 // overview's own clock.
 
 #define OverviewCheck(cond, msg) do { if(!(cond)) { ok = 0; fprintf(stderr, "FAIL overview: %s\n", msg); } } while(0)
@@ -464,6 +464,40 @@ uishell_overview_diagnostics(CFG_Node *window)
     OverviewCheck(uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), shown_tile) == picks + 1,
                   "a click on a tile of a long row picks it, though the mouse moved a little");
   }
+  //- The view mode switch: Grid lays the overview out in blocks and says so
+  // in the user's setting, and Rows goes back; the setting drives the mode
+  // too. In a grid, a heading still fits its group.
+  ws->workspace_zoom_open = 1;
+  o = uishell_overview_diagnostic_step(ws, 16, b, region); uishell_overview_end(&o);
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
+  OverviewCheck(o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW && o.frame->view_mode == WHEELHOUSE_OVERVIEW_ROWS, "the overview opens in rows");
+  uishell_overview_end(&o);
+  OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_view_mode_1")), "the overview's Grid switch");
+  o = uishell_overview_diagnostic_step(ws, 0, b, region);
+  OverviewCheck(o.frame->view_mode == WHEELHOUSE_OVERVIEW_GRID && o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW,
+                "clicking Grid lays the overview out as a grid, and only that");
+  OverviewCheck(uishell_overview_view_mode_setting() == WHEELHOUSE_OVERVIEW_GRID, "clicking Grid sets the user's setting");
+  B32 grid_slides = 0;
+  for(U64 i = 0; i < o.frame->group_count; i++) { if(uishell_overview_slides(o.frame, i)) { grid_slides = 1; } }
+  OverviewCheck(!grid_slides, "a grid has no rows to slide");
+  uishell_overview_end(&o);
+  OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_heading_0")), "a group heading in the grid");
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region);
+  OverviewCheck(o.frame->mode == WHEELHOUSE_OVERVIEW_GROUP && o.frame->group == 0, "in a grid, clicking a heading fits its group");
+  uishell_overview_end(&o);
+  uishell_overview_back(ws);
+  o = uishell_overview_diagnostic_step(ws, 1000, b, region); uishell_overview_end(&o);
+  OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_view_mode_0")), "the overview's Rows switch");
+  o = uishell_overview_diagnostic_step(ws, 0, b, region);
+  OverviewCheck(o.frame->view_mode == WHEELHOUSE_OVERVIEW_ROWS && uishell_overview_view_mode_setting() == WHEELHOUSE_OVERVIEW_ROWS,
+                "clicking Rows goes back to rows, and sets the setting");
+  uishell_overview_end(&o);
+  uishell_overview_set_view_mode_setting(WHEELHOUSE_OVERVIEW_GRID);
+  o = uishell_overview_diagnostic_step(ws, 0, b, region);
+  OverviewCheck(o.frame->view_mode == WHEELHOUSE_OVERVIEW_GRID, "the overview follows the user's setting");
+  uishell_overview_end(&o);
+  uishell_overview_set_view_mode_setting(WHEELHOUSE_OVERVIEW_ROWS);
+  o = uishell_overview_diagnostic_step(ws, 0, b, region); uishell_overview_end(&o);
   uishell_sidebar_local_delete_group(window, made_group_id);
   ws->workspace_zoom_open = 0;
   o = uishell_overview_diagnostic_step(ws, 1000, b, region); uishell_overview_end(&o);
