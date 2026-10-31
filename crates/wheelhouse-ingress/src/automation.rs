@@ -56,7 +56,8 @@ impl Request {
                     let ms: u64 = value.parse().map_err(|_| "wait must be milliseconds".to_owned())?;
                     request.wait = Duration::from_millis(ms).min(MAX_WAIT);
                 }
-                "include" => request.terminal_text = value.split(',').any(|item| item == "terminal_text"),
+                // Repeated, they add up.
+                "include" => request.terminal_text |= value.split(',').any(|item| item == "terminal_text"),
                 "session" => request.session = Some(value),
                 _ => {}
             }
@@ -67,7 +68,13 @@ impl Request {
         if route == Route::Caller && request.session.as_deref().is_none_or(str::is_empty) {
             return Err("session is required".into());
         }
-        if accept.is_some_and(|accept| accept.split(',').any(|item| item.split(';').next().map(str::trim) == Some("application/cbor"))) {
+        // CBOR when it is acceptable: listed, without q=0.
+        let cbor = |item: &str| {
+            let mut parts = item.split(';').map(str::trim);
+            parts.next() == Some("application/cbor")
+                && !parts.any(|param| param.split_once('=').is_some_and(|(k, v)| k.trim() == "q" && v.trim().parse::<f32>() == Ok(0.0)))
+        };
+        if accept.is_some_and(|accept| accept.split(',').any(cbor)) {
             request.encoding = Encoding::Cbor;
         }
         Ok(request)

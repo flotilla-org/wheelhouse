@@ -108,8 +108,9 @@ Both take:
 - `include=terminal_text`: terminals' screens, where the setting allows.
 
 Values are percent-decoded; a `+` is a `+`, not a space. Of a repeated
-parameter, the last counts. Unknown parameters, and `include` values other
-than `terminal_text`, are ignored.
+parameter, the last counts, except `include`, whose values add up. Unknown
+parameters, and `include` values other than `terminal_text`, are ignored.
+`Accept` honours `q=0`: `application/cbor;q=0` gets JSON.
 
 400 is a malformed query (or `self` without a session), 404 the routes when
 automation is off, and 503 when the UI couldn't answer in time or too many

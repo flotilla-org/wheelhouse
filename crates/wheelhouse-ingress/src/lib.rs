@@ -100,10 +100,36 @@ mod transport {
         pub request: crate::automation::Request,
         /// When a `since` read waiting for a change gives up.
         pub deadline: std::time::Instant,
-        /// Set once the UI has seen it, so a timeout means no change.
-        pub seen: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        /// Who answers it ([`Claim`]): the UI, or the handler when its wait
+        /// runs out while the UI holds it waiting.
+        pub claim: std::sync::Arc<Claim>,
         pub reply: oneshot::Sender<crate::automation::Reply>,
     }
+    /// Which side answers a read, so exactly one does: the UI claims it to
+    /// answer, or marks it waiting; the handler, whose wait ran out, may
+    /// expire only a waiting read, and otherwise takes the UI's answer.
+    #[derive(Default)]
+    pub struct Claim(std::sync::atomic::AtomicU8);
+    const UNSEEN: u8 = 0;
+    const WAITING: u8 = 1;
+    const ANSWERING: u8 = 2;
+    const EXPIRED: u8 = 3;
+    impl Claim {
+        /// The UI holds it for a change. False when the handler gave up.
+        pub fn wait(&self) -> bool {
+            self.0.compare_exchange(UNSEEN, WAITING, SeqCst, SeqCst).is_ok() || self.0.load(SeqCst) == WAITING
+        }
+        /// The UI answers it. False when the handler gave up.
+        pub fn answer(&self) -> bool {
+            [UNSEEN, WAITING].iter().any(|&from| self.0.compare_exchange(from, ANSWERING, SeqCst, SeqCst).is_ok())
+        }
+        /// The handler's wait ran out: true when it answers 204, false when
+        /// the UI hasn't seen it yet or is answering it.
+        fn expire(&self) -> bool {
+            self.0.compare_exchange(WAITING, EXPIRED, SeqCst, SeqCst).is_ok()
+        }
+    }
+    use std::sync::atomic::Ordering::SeqCst;
     pub struct Ingress {
         pub queue: mpsc::Receiver<Pending>,
         pub reads: mpsc::Receiver<Read>,
@@ -221,21 +247,19 @@ mod transport {
             Err(why) => return (StatusCode::BAD_REQUEST, why).into_response(),
         };
         let wait = if request.since.is_some() { request.wait } else { Duration::ZERO };
-        let seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let claim = std::sync::Arc::new(Claim::default());
         let (reply, mut response) = oneshot::channel();
-        let read = Read { request, deadline: std::time::Instant::now() + wait, seen: seen.clone(), reply };
+        let read = Read { request, deadline: std::time::Instant::now() + wait, claim: claim.clone(), reply };
         if state.reads.try_send(read).is_err() {
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
         (state.wake)();
         let reply = match tokio::time::timeout(wait, &mut response).await {
             Ok(reply) => reply.ok(),
-            // A reply sent as the wait ran out still counts.
-            Err(_) if seen.load(Ordering::SeqCst) => match response.try_recv() {
-                Ok(reply) => Some(reply),
-                Err(_) => return StatusCode::NO_CONTENT.into_response(),
-            },
-            // The UI hasn't seen it yet: give it time for one frame.
+            // Waiting for a change that didn't come.
+            Err(_) if claim.expire() => return StatusCode::NO_CONTENT.into_response(),
+            // The UI hasn't seen it yet, or is answering it: give it time for
+            // a frame.
             Err(_) => tokio::time::timeout(Duration::from_secs(5), response).await.ok().and_then(Result::ok),
         };
         match reply {
@@ -602,8 +626,7 @@ mod transport {
             let mut server = Ingress::new(mpsc::sync_channel(1).1, receiver, Default::default(), None, None);
             let (reply, response) = oneshot::channel();
             let request = crate::automation::Request::parse(crate::automation::Route::Semantic, None, None).unwrap();
-            let seen = Default::default();
-            reads.send(Read { request, deadline: std::time::Instant::now(), seen, reply }).unwrap();
+            reads.send(Read { request, deadline: std::time::Instant::now(), claim: Default::default(), reply }).unwrap();
             let host = AutomationHost { mode: crate::AUTOMATION_OFF, terminal_text: 0, observe: None, context: std::ptr::null_mut() };
             unsafe { wheelhouse_ingress_automation(&mut server, &host) };
             assert_eq!(response.blocking_recv().unwrap().status, 404);
@@ -627,7 +650,7 @@ mod transport {
                 let request =
                     crate::automation::Request::parse(crate::automation::Route::Semantic, Some("since=1&wait=60000"), None).unwrap();
                 let deadline = std::time::Instant::now() + Duration::from_secs(60);
-                reads.send(Read { request, deadline, seen: Default::default(), reply }).unwrap();
+                reads.send(Read { request, deadline, claim: Default::default(), reply }).unwrap();
                 response
             };
             // The first frame moves the generation to 1; these wait past it.
@@ -641,6 +664,28 @@ mod transport {
             responses.truncate(crate::automation::MAX_WAITING / 2);
             unsafe { wheelhouse_ingress_automation(&mut server, &host) };
             assert_eq!(server.waiting.len(), crate::automation::MAX_WAITING / 2);
+        }
+
+        // Exactly one side answers a read: once the UI claims it to answer,
+        // the handler's wait running out takes that answer rather than 204;
+        // once the handler has given up, the UI neither answers nor holds it.
+        #[test]
+        fn exactly_one_side_answers_a_read() {
+            // Unseen when the wait runs out: the handler waits for the UI.
+            let claim = Claim::default();
+            assert!(!claim.expire());
+            assert!(claim.answer());
+            // Being answered when the wait runs out: no 204.
+            let claim = Claim::default();
+            assert!(claim.wait());
+            assert!(claim.answer());
+            assert!(!claim.expire());
+            // Waiting when the wait runs out: 204, and the UI lets it go.
+            let claim = Claim::default();
+            assert!(claim.wait() && claim.wait());
+            assert!(claim.expire());
+            assert!(!claim.answer());
+            assert!(!claim.wait());
         }
 
         #[derive(Default)]
@@ -1192,22 +1237,26 @@ unsafe fn automation_frame_end(server: &mut Ingress, host: &AutomationHost, limi
     };
     let generation = server.generation.observe(&tree);
     for read in reads {
-        read.seen.store(true, Ordering::SeqCst);
-        match read.request.since {
-            Some(since) if generation <= since && now < read.deadline && server.waiting.len() < automation::MAX_WAITING => {
-                server.waiting.push(read)
+        let unchanged = read.request.since.is_some_and(|since| generation <= since);
+        if unchanged && now < read.deadline && server.waiting.len() < automation::MAX_WAITING {
+            // Unless its handler gave up as it came in.
+            if read.claim.wait() {
+                server.waiting.push(read);
             }
-            Some(since) if generation <= since && now < read.deadline => {
-                let _ = read.reply.send(Reply::status(503));
-            }
-            Some(since) if generation <= since => {
-                let _ = read.reply.send(Reply::status(204));
-            }
-            _ => {
-                server.generation.read(now);
-                let _ = read.reply.send(automation::respond(&read.request, &tree, generation, limit));
-            }
+            continue;
         }
+        if !read.claim.answer() {
+            continue;
+        }
+        let reply = match unchanged {
+            true if now < read.deadline => Reply::status(503),
+            true => Reply::status(204),
+            false => {
+                server.generation.read(now);
+                automation::respond(&read.request, &tree, generation, limit)
+            }
+        };
+        let _ = read.reply.send(reply);
     }
 }
 
@@ -1252,6 +1301,9 @@ unsafe fn observe_tree(host: &AutomationHost, text: bool) -> Option<Vec<serde_js
     let mut collected = Collected { valid: true, ..Default::default() };
     let flags = if text { AUTOMATION_TERMINAL_TEXT } else { 0 };
     let ok = observe(host.context, flags, emit, &mut collected as *mut Collected as *mut c_void) == 1;
+    if ok && !collected.valid {
+        eprintln!("wheelhouse ingress: the Semantic Tree's observer emitted malformed JSON or text; answering 503");
+    }
     (ok && collected.valid).then(|| automation::assemble(collected.workspaces, &collected.annotations))
 }
 

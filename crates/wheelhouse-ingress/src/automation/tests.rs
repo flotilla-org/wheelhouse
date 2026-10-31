@@ -448,6 +448,11 @@ fn queries_parse() {
     assert_eq!(parsed.root.as_deref(), Some("w/x"));
     assert_eq!(parsed.encoding, Encoding::Cbor);
     assert_eq!(Request::parse(Route::Semantic, None, Some("application/json")).unwrap().encoding, Encoding::Json);
+    let accept = |header| Request::parse(Route::Semantic, None, Some(header)).unwrap().encoding;
+    assert_eq!(accept("application/json, application/cbor;q=0.5"), Encoding::Cbor);
+    assert_eq!(accept("application/cbor; q=0, application/json"), Encoding::Json);
+    // Repeated includes add up.
+    assert!(Request::parse(Route::Semantic, Some("include=terminal_text&include=other"), None).unwrap().terminal_text);
     assert!(Request::parse(Route::Semantic, Some("since=x"), None).is_err());
     // A wait with nothing to wait past is a mistake.
     assert!(Request::parse(Route::Semantic, Some("wait=100"), None).is_err());
