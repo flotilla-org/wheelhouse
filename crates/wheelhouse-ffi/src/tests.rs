@@ -1362,8 +1362,21 @@ fn the_overview_reaches_c_and_flies_between_workspaces() {
         assert_eq!(wheelhouse_observe(h, workspaces.as_ptr(), 1, ptr::null(), 0, &mut error), 1);
         assert_eq!(wheelhouse_overview_update(h, first.into(), 1.6, 9500.0, 0, &mut error), 1);
         assert_eq!(frame(9500.0).5, vec![("one".to_owned(), 1)]);
-        assert_eq!(wheelhouse_overview_set_view_mode(h, WHEELHOUSE_OVERVIEW_GRID, &mut error), 1);
-        assert_eq!(wheelhouse_overview_set_view_mode(h, 7, &mut error), 0);
+        // A new view mode is drawn moving, and without motion cuts.
+        assert_eq!(wheelhouse_overview_set_view_mode(h, WHEELHOUSE_OVERVIEW_GRID, 9500.0, &mut error), 1);
+        assert_eq!(frame(9500.0).1, 0);
+        assert_eq!(wheelhouse_overview_update(h, first.into(), 1.6, 10000.0, 1, &mut error), 1);
+        assert_eq!(wheelhouse_overview_set_view_mode(h, WHEELHOUSE_OVERVIEW_ROWS, 10000.0, &mut error), 1);
+        assert_eq!(frame(10000.0).1, 1);
+        assert_eq!(frame(20000.0).1, 0);
+        // A workspace arriving moves the others while the open one stays
+        // open: drawn again until they arrive, and still drawn as itself.
+        assert_eq!(wheelhouse_overview_close(h, 20000.0, &mut error), 1);
+        assert_eq!(wheelhouse_observe(h, workspaces.as_ptr(), 2, ptr::null(), 0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_update(h, first.into(), 1.6, 30000.0, 1, &mut error), 1);
+        assert_eq!((frame(30100.0).1, frame(30100.0).2), (1, 1));
+        assert_eq!((frame(31000.0).1, frame(31000.0).2), (0, 1));
+        assert_eq!(wheelhouse_overview_set_view_mode(h, 7, 20000.0, &mut error), 0);
         assert!(!error.is_null());
         wheelhouse_string_free(error);
         error = ptr::null_mut();

@@ -1,4 +1,4 @@
-# The host interface (ABI 17)
+# The host interface (ABI 18)
 
 What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
@@ -8,7 +8,7 @@ behind it is in [Slots and arrangements](slots-and-arrangements.md),
 [The sidebar arrangement](sidebar-arrangement.md) and the
 [Workspace Overlay](workspace-overlay.md).
 
-`wheelhouse_abi_version()` returns 17. Each call has one form: there is no
+`wheelhouse_abi_version()` returns 18. Each call has one form: there is no
 compatibility with earlier versions, and a host requires exactly the version
 it was built against.
 
@@ -129,8 +129,9 @@ workspace region. Each core handle has one, as each window has one core.
 | `wheelhouse_overview_update(h, current, aspect, now_ms, motion)` | Each frame: the current workspace (zeroes for none), the region's width over height, the time, and 0 for a cut instead of every flight (a setting, or the system's reduce motion). A new current workspace flies from wherever the camera is. The sidebar's workspaces are read again when the snapshot's revision moves. |
 | `wheelhouse_overview_open` / `_close` / `_back` | Show the overview; open the current workspace; go back one level (a group to the overview, the overview to the workspace; 0 when already open). |
 | `wheelhouse_overview_zoom_group` / `_pick` | Fit a group (a heading's click); fly into a tile's workspace, which the host also makes current. |
-| `wheelhouse_overview_set_grid(h, packing, readable_share, now_ms)` | Each frame, before reading it: the grid's packing (`WHEELHOUSE_OVERVIEW_SHELVES`, `_TREEMAP`), and the smallest readable tile width over the region's width (0 always fits the whole grid). A current tile narrower than that with the whole grid in view zooms the overview in on it. A new packing cuts. |
-| `wheelhouse_overview_slide` / `_pan(h, dx, dy)` / `_toggle_cluster` / `_set_view_mode` | Cuts: slide a row, scroll the overview (rows only down; a grid both ways, when zoomed in), collapse a cluster, change the view mode (`WHEELHOUSE_OVERVIEW_ROWS`, `_GRID`). |
+| `wheelhouse_overview_set_grid(h, packing, readable_share, now_ms)` | Each frame, before reading it: the grid's packing (`WHEELHOUSE_OVERVIEW_SHELVES`, `_TREEMAP`), and the smallest readable tile width over the region's width (0 always fits the whole grid). A current tile narrower than that with the whole grid in view zooms the overview in on it. A new packing changes the layout as a new view mode does. |
+| `wheelhouse_overview_slide` / `_pan(h, dx, dy)` | Cuts: slide a row, scroll the overview (rows only down; a grid both ways, when zoomed in). |
+| `wheelhouse_overview_set_view_mode(h, view_mode, now_ms)` / `_toggle_cluster` | Change the layout: the view mode (`WHEELHOUSE_OVERVIEW_ROWS`, `_GRID`), or collapse a cluster. Each tile moves to its new place over a moment, and the camera flies to the same place in the new scene; without motion both cut. Workspaces coming and going move the same way. |
 | `wheelhouse_overview_frame(h, now_ms)` / `_free` | `WheelhouseOverviewFrame`: the mode, whether the camera is `flying` (draw again) or the workspace is `settled` (draw it as itself), the `view` (the part of the scene shown), and the tiles, groups and cluster regions in scene units. Its text is borrowed: free it before changing the overview. |
 
 ## Arrangements
@@ -207,6 +208,13 @@ Address).
   `wheelhouse_dock_restore` repairs a window's documents and returns them
   with dirty marks and the sidebar sections it moved
   (`wheelhouse_dock_restore_free`).
+
+## From ABI 17
+
+ABI 18 animates changes of layout (wheelhouse#450):
+`wheelhouse_overview_set_view_mode` takes the time, and a frame is `flying`
+while its tiles, groups and cluster regions are moving between layouts.
+Nothing else changes.
 
 ## From ABI 16
 
