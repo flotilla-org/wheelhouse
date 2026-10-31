@@ -2,9 +2,11 @@
 """Check the Cargo workspace stays free of Zellij and Flotilla crates.
 
 The core, its frontends and the ingress depend on neither: Flotilla reaches
-Wheelhouse over the facts stream, not as a library. Also links and runs real
-C clients against the exported ABI (the sidebar, text layout with an arena
-allocator, and Rich Text's deltas), with and without the FFI's default features.
+Wheelhouse over the facts stream, not as a library. Rigging's shared leaf
+crates (flotilla ADR 0068), such as flotilla-cbor, depend on no project crate
+and are allowed. Also links and runs real C clients against the exported ABI
+(the sidebar, text layout with an arena allocator, and Rich Text's deltas),
+with and without the FFI's default features.
 """
 import json
 import os
@@ -18,8 +20,10 @@ target = Path(os.environ.get("CARGO_TARGET_DIR", root / "target"))
 
 metadata = json.loads(subprocess.check_output(
     ["cargo", "metadata", "--format-version=1", "--locked"], cwd=root, text=True))
+rigging = "git+https://github.com/flotilla-org/rigging"
 forbidden = [package["name"] for package in metadata["packages"]
-             if "zellij" in package["name"] or package["name"].startswith("flotilla")]
+             if "zellij" in package["name"]
+             or package["name"].startswith("flotilla") and not (package["source"] or "").startswith(rigging)]
 assert not forbidden, forbidden
 
 subprocess.run(["cargo", "check", "-p", "wheelhouse-ffi", "--no-default-features",
