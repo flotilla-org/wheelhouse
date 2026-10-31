@@ -143,12 +143,7 @@ click outside a fitted group also backs out.
 
 Next:
 
-- **The grid's layout rule.** Today every group is a block three tiles wide,
-  in two columns, each block going into the shorter one: the prototype's
-  constants, whatever the region's shape or the group's size. Proposed: the
-  number of block columns comes from the region's shape and a smallest
-  readable tile; a block is only as wide as its group needs, up to a cap; and
-  blocks pack onto shelves, so small groups sit side by side.
+- **The grid's layout rule**, below.
 - **Animating a change of layout.** Every tile is the same workspace before
   and after, so a change of view mode can move each tile from its old place
   to its new one while the camera flies to the same place in the new scene;
@@ -156,6 +151,47 @@ Next:
   belongs in core, keeping the old scene for the length of the flight, and
   the same mechanism then animates workspaces coming and going, a convoy
   collapsing, and regrouping.
+
+## The grid's layout rule
+
+Worked through with Robert on 2026-10-31, with
+[overview-grid-prototype.html](overview-grid-prototype.html). Until now every
+group was a block three tiles wide in two block columns, whatever the
+region's shape or the group's size.
+
+- **What the grid is for:** every workspace at once, laid out in the region's
+  shape, like a disk-usage treemap. Zooming is the point: each level is a
+  rectangle the camera can fit. Rows stay the mode for scanning one group at
+  a time.
+- **Levels:** the layout walks the hierarchy, and each level has a policy.
+  It either *partitions* (its children get rectangles of their own) or
+  *flows* (its leaves go in one even grid, child nodes as contiguous runs).
+  For now the scene partitions into groups and each group flows its tiles.
+- **Packing**, the user's `overview_grid_packing` setting:
+  - **Shelves**, the default: one tile size everywhere. Each group's block
+    takes the columns that make it closest to the region's shape, blocks go
+    onto shelves in sidebar order, and the tile size is the largest at which
+    the shelves fit the region.
+  - **Treemap:** an ordered treemap. Groups go into horizontal strips in
+    sidebar order, each group's rectangle sized by its tile count, and its
+    grid fitted inside the rectangle, so tile sizes differ between groups.
+    The strip breaks are the ones that give the most tile area. Tile sizes
+    may differ by at most a limit (1.5×), so a one-workspace group doesn't
+    shrink to nothing.
+- **Clusters** are kept whole on a row when they fit in one: a convoy that
+  doesn't fit in what's left of a row starts the next. A cluster wider than a
+  row starts a row and wraps. Always flowing is the other policy.
+- **The layout never grows to fit.** It's always the region's shape. The
+  default camera fits it all when the current workspace's tile is at least a
+  readable width (a setting, about 160px); otherwise it zooms in until that
+  tile is, centred on it and kept within the scene. The overview then pans in
+  both directions. Zooming out to the whole grid by hand comes with #527's
+  input work.
+- **Sidebar order** is kept in both packings, so adding or removing a
+  workspace moves little.
+
+The prototype also has an ordered strip treemap with one tile size per strip,
+a choice for later.
 
 ## Later
 
@@ -173,8 +209,23 @@ The overview is a basis for more than workspace previews. Robert's directions
   in #505). Either the overview generalises, or other specialised views share
   its building blocks.
 
+- **Grouping within a project.** Convoys by mission or lane, for example. It
+  depends on the data the overview is fed, so what it uses for presentation
+  should stay generic.
+- **Vessels under their convoy.** A cluster could partition rather than flow:
+  the convoy's tile takes the lead cell and its vessels tile smaller beside or
+  under it, recursively, so a convoy takes one cell's worth of space until the
+  camera zooms down into it.
+- **Overview profiles.** The choices here compose: the arrangement (rows,
+  grid, later the carousel), the packing, the cluster policy, what tiles show
+  and how to group. A profile names a set of them, as card profiles do (#270),
+  and you move between profiles quickly. Some combinations need adapting: a
+  row that slides inside a treemap cell would fade at its edges.
+- **Facts on tiles.** With the cards' information per subject: where a
+  workspace runs, which model, as badges, or as another grouping.
+
 The controls grow with these: what tiles show, how to group, then filters and
-search.
+search. It comes together over several rounds as the data matures.
 
 ## Open questions
 
