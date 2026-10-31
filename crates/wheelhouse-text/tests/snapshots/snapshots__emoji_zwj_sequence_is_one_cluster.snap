@@ -1,0 +1,13 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "plain(\"a\\u{1F468}\\u{200D}\\u{1F469}\\u{200D}\\u{1F467}b\\u{1F1EB}\\u{1F1F7}\",\n1000.0)"
+---
+line 0 y=0.0 h=21.0 base=16.0 w=57.3 bytes=0..28 "a👨\u{200d}👩\u{200d}👧b🇫🇷"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[112]
+  run NotoColorEmoji.ttf size=16.0 x=8.4 glyphs=[1964]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=28.3 glyphs=[123]
+  run NotoColorEmoji.ttf size=16.0 x=37.4 glyphs=[1579]
+     0.00 +8.40   "a" word
+     8.40 +19.92  "👨\u{200d}👩\u{200d}👧" word
+    28.32 +9.06   "b" word
+    37.38 +19.92  "🇫🇷" word

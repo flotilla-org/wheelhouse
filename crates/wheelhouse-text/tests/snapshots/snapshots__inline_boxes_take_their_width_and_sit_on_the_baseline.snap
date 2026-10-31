@@ -1,0 +1,24 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "dump(&ctx, text, &p)"
+---
+line 0 y=0.0 h=30.0 base=24.0 w=150.3 bytes=0..14 "see  and  here"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[190,133,133,231]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=49.2 glyphs=[231,112,170,129,231]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=114.4 glyphs=[231,147,133,187,133]
+     0.00 +7.50   "s" word
+     7.50 +8.61   "e" 
+    16.11 +8.61   "e" 
+    24.72 +4.48   " " space word
+    49.20 +4.48   " " space
+    53.68 +8.40   "a" word
+    62.08 +8.80   "n" 
+    70.88 +9.02   "d" 
+    79.90 +4.48   " " space word
+   114.38 +4.48   " " space
+   118.86 +8.80   "h" word
+   127.66 +8.61   "e" 
+   136.27 +5.38   "r" 
+   141.65 +8.61   "e" 
+box 7 x=29.2 y=12.0 20x12 line 0
+box 8 x=84.4 y=0.0 30x30 line 0

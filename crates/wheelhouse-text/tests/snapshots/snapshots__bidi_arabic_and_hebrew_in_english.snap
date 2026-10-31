@@ -1,0 +1,36 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "plain(\"one \\u{5E9}\\u{5DC}\\u{5D5}\\u{5DD} two \\u{645}\\u{631}\\u{62D}\\u{628}\\u{627} three\",\n1000.0)"
+---
+line 0 y=0.0 h=24.0 base=17.0 w=182.9 bytes=0..33 "one שלום two مرحبا three"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[175,170,133,231]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=30.7 rtl glyphs=[0,0,0,0]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=64.4 glyphs=[231]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=68.9 glyphs=[196,210,175,231]
+  run NotoSansMath-Regular.ttf size=16.0 x=98.3 rtl glyphs=[544,546,550,554,570]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=141.8 glyphs=[231]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=146.3 glyphs=[196,147,187,133,133]
+     0.00 +8.77   "o" word
+     8.77 +8.80   "n" 
+    17.57 +8.61   "e" 
+    26.18 +4.48   " " space word
+    30.66 +8.43   "ם" rtl
+    39.09 +8.43   "ו" rtl
+    47.52 +8.43   "ל" rtl
+    55.95 +8.43   "ש" rtl word
+    64.38 +4.48   " " space word
+    68.86 +5.34   "t" word
+    74.21 +10.82  "w" 
+    85.02 +8.77   "o" 
+    93.79 +4.48   " " space word
+    98.27 +3.81   "ا" rtl
+   102.08 +15.89  "ب" rtl
+   117.97 +10.22  "ح" rtl
+   128.19 +5.87   "ر" rtl
+   134.06 +7.74   "م" rtl word
+   141.81 +4.48   " " space word
+   146.29 +5.22   "t" word
+   151.50 +8.80   "h" 
+   160.30 +5.38   "r" 
+   165.68 +8.61   "e" 
+   174.29 +8.61   "e"

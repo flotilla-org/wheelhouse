@@ -1,0 +1,27 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "plain(\"\\u{E2A}\\u{E27}\\u{E31}\\u{E2A}\\u{E14}\\u{E35}\\u{E04}\\u{E23}\\u{E31}\\u{E1A}\\u{E22}\\u{E34}\\u{E19}\\u{E14}\\u{E35}\\u{E15}\\u{E49}\\u{E2D}\\u{E19}\\u{E23}\\u{E31}\\u{E1A}\",\n60.0)"
+---
+line 0 y=0.0 h=21.0 base=16.0 w=50.6 bytes=0..18 "สว\u{e31}สด\u{e35}"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[0,0,0,0,0,0]
+     0.00 +8.43   "ส" word
+     8.43 +16.86  "ว\u{e31}" 
+    25.30 +8.43   "ส" 
+    33.73 +16.86  "ด\u{e35}" 
+line 1 y=21.0 h=21.0 base=37.0 w=33.7 bytes=18..30 "คร\u{e31}บ"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[0,0,0,0]
+     0.00 +8.43   "ค" word
+     8.43 +16.86  "ร\u{e31}" 
+    25.30 +8.43   "บ" 
+line 2 y=42.0 h=21.0 base=58.0 w=42.2 bytes=30..45 "ย\u{e34}นด\u{e35}"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[0,0,0,0,0]
+     0.00 +16.86  "ย\u{e34}" word
+    16.86 +8.43   "น" 
+    25.30 +16.86  "ด\u{e35}" 
+line 3 y=63.0 h=21.0 base=79.0 w=59.0 bytes=45..66 "ต\u{e49}อนร\u{e31}บ"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[0,0,0,0,0,0,0]
+     0.00 +16.86  "ต\u{e49}" word
+    16.86 +8.43   "อ" 
+    25.30 +8.43   "น" 
+    33.73 +16.86  "ร\u{e31}" 
+    50.59 +8.43   "บ"

@@ -10,6 +10,7 @@ members = [
     "crates/wheelhouse-ingress",
     "crates/wheelhouse-tables",
     "crates/wheelhouse-wasm",
+    "crates/wheelhouse-text",
 ]
 # tools/scenario is a workspace of its own: it pins Flotilla's crates by git
 # revision, which normal builds shouldn't fetch.
