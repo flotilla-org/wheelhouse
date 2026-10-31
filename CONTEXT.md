@@ -316,12 +316,16 @@ A frontend's rule for showing a kind of **View Spec** content: which **Renderer*
 _Avoid_: Plugin, opener, launcher (a Jackstay "launcher" in a **View Spec** is the setting that names an endpoint)
 
 **Rich Text**:
-The core's read-only model of styled, flowing content: a sequence of **Blocks** holding inline runs. Markdown, agent transcripts and logs are sources of it; each frontend draws it with its own text engine.
+The core's read-only model of styled, flowing content: a keyed tree of **Containers** whose leaves are **Blocks**. Markdown, agent conversations and logs are sources of it. It records what content is; each frontend chooses how to present it and draws it with its own text engine.
 _Avoid_: Document (the arrangement is a document), markdown view, prose
 
 **Block**:
-A keyed, top-level unit of **Rich Text**, such as a paragraph, heading, list, quote, code block, table, image or **Embedded View**. It is the unit that is measured, virtualized and replaced when content streams in.
+A leaf of **Rich Text**: text that Rich Text lays out itself (a paragraph, heading, code or log chunk), or an embed that a **View** presents by media type (a table, an image). It is the unit that is measured, virtualized and replaced when content streams in.
 _Avoid_: Node, element, line
+
+**Container**:
+A keyed, non-leaf node of **Rich Text**, such as a Turn, a Section (a tool call or reasoning), a list or a quote. It is drawn as decoration over its **Blocks**, and collapsing it hides them.
+_Avoid_: Group, wrapper, message (a Turn is one kind of Container)
 
 **Embedded View**:
 A **View** laid out inline inside another View's content, such as a table **Block** in **Rich Text** or a text View in a table cell. It resolves through the same **Handlers** by media type, and its state is part of its parent's, never a separate **Slot**.
