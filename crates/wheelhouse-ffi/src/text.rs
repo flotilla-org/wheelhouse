@@ -467,6 +467,7 @@ pub unsafe extern "C" fn wh_text_offset_at(layout: *const WhTextLayout, x: f32, 
     let p = unsafe {
         over(layout, |v| {
             let p = query::offset_at(v, x, y);
+            // Lossless: offsets come from u32 cluster and line fields, whose sums well_formed checked.
             Some(WhTextPosition { offset: p.offset as u32, affinity: affinity(p.affinity) })
         })
     };

@@ -26,6 +26,25 @@ static void *arena_alloc(void *user, size_t size, size_t align) {
 
 static WhTextAllocator allocator(Arena *a) { return (WhTextAllocator){arena_alloc, a}; }
 
+/* Breaks the rule that alloc must not call back into the library. */
+typedef struct {
+    Arena *arena;
+    const WhText *ctx;
+    const WhTextInput *input;
+    int calls, nested_failed;
+} Reentrant;
+
+static void *reentrant_alloc(void *user, size_t size, size_t align) {
+    Reentrant *r = user;
+    if (r->calls++ == 0) {
+        WhTextLayout inner;
+        char *error = NULL;
+        r->nested_failed = wh_text_layout(r->ctx, r->input, 200.0f, allocator(r->arena), &inner, &error) == 0 && error;
+        wheelhouse_string_free(error);
+    }
+    return arena_alloc(r->arena, size, align);
+}
+
 static unsigned char *read_file(const char *dir, const char *name, size_t *len) {
     char path[4096];
     snprintf(path, sizeof path, "%s/%s", dir, name);
@@ -133,6 +152,23 @@ int main(int argc, char **argv) {
     WhTextSegments segments;
     assert(wh_text_segments(&layout, allocator(&arena), &segments) == 1);
     assert(segments.count >= layout.line_count && segments.segments[segments.count - 1].style == 1);
+
+    /* Face and coordinates ids, and the bytes they name, outlive rebuilding the collection. */
+    const uint8_t *code_data = font.data;
+    wh_text_fonts_changed(ctx);
+    assert(wh_text_set_scale(ctx, 1.0f) == 1);
+    assert(wh_text_font(ctx, code->font, &font) == 1 && font.data == code_data && font.bytes_id == 102);
+    WhTextLayout relaid;
+    assert(wh_text_layout(ctx, &input, 200.0f, allocator(&arena), &relaid, &error) == 1);
+    assert(wh_text_font(ctx, code->font, &font) == 1 && font.data == code_data && font.bytes_id == 102);
+    assert(wh_text_set_scale(ctx, 2.0f) == 1);
+
+    /* A nested call from the allocator fails with an error instead of corrupting the outer one. */
+    Reentrant reentrant = {&arena, ctx, &input, 0, 0};
+    WhTextLayout outer;
+    assert(wh_text_layout(ctx, &input, 200.0f, (WhTextAllocator){reentrant_alloc, &reentrant}, &outer, &error) == 1);
+    assert(reentrant.nested_failed && reentrant.calls == 5);
+    assert(outer.line_count == layout.line_count && outer.glyph_count == layout.glyph_count);
 
     /* A corrupt layout is refused, not read past or overflowed. */
     WhTextLayout corrupt = layout;
