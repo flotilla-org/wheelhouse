@@ -267,7 +267,9 @@ uishell_table_key(BinnacleGrid *grid, UI_Event *evt)
   BinnacleAction a = {0};
   if(evt->flags & UI_EventFlag_Copy) { a.kind = BINNACLE_ACTION_COPY; uishell_table_act(grid, a); return 1; }
   // Shift+Space and Ctrl+Space select, on their press: the space they also
-  // type is not text for the cell.
+  // type is not text for the cell. There is no cell editor yet (F2 only
+  // asks for one); when there is, it takes the keys while open, as the web
+  // host's textarea does, and none of these reach the Grid.
   if(evt->kind == UI_EventKind_Text && str8_match(evt->string, str8_lit(" "), 0) &&
      (evt->modifiers & (WM_Modifier_Shift|WM_Modifier_Ctrl)))
   {

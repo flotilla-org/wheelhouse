@@ -186,6 +186,8 @@ uishell_table_diagnostics(RD_WindowState *ws)
                "Ctrl+Space selects the focused column");
     evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_F3};
     TableCheck(uishell_table_key(grid, &evt), "F3 steps find");
+    evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_F3, .modifiers = WM_Modifier_Shift};
+    TableCheck(uishell_table_key(grid, &evt), "Shift+F3 steps find back");
     wheelhouse_table_free(table);
   }
 
