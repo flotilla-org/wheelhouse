@@ -173,6 +173,9 @@ uishell_table_diagnostics(RD_WindowState *ws)
     String8 names[] = {str8_lit("records"), str8_lit("huge"), str8_lit("live")};
     UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc();
     ui_select_state(test_ui);
+    // The footer builds nothing without a sidebar state, which would leave
+    // the Down below passing for want of a footer; an empty one serves: no
+    // error, no notice, no sections, so the footer draws its bare row.
     UIShell_SidebarState *saved_sidebar = ws->sidebar, sidebar = {0};
     if(!ws->sidebar) { ws->sidebar = &sidebar; }
     for EachElement(n, names)
