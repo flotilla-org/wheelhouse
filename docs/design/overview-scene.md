@@ -134,6 +134,48 @@ In order, each step usable on its own:
    or a cycle key, is a flight. Add the setting and the reduce-motion check.
 4. **Grid view mode and group zoom**, with the overview's first control.
 
+Built so far (#523, #524, #525, #528): steps 1 to 4. Beyond the plan: only the
+workspaces the camera sees are built; rows and the overview can be dragged,
+glide when let go of, and stretch past their ends and spring back (#527 is
+about sharing that); the controls are a Rows/Grid switch, the user's
+`overview_view_mode` setting, and, while a group is fitted, a back button. A
+click outside a fitted group also backs out.
+
+Next:
+
+- **The grid's layout rule.** Today every group is a block three tiles wide,
+  in two columns, each block going into the shorter one: the prototype's
+  constants, whatever the region's shape or the group's size. Proposed: the
+  number of block columns comes from the region's shape and a smallest
+  readable tile; a block is only as wide as its group needs, up to a cap; and
+  blocks pack onto shelves, so small groups sit side by side.
+- **Animating a change of layout.** Every tile is the same workspace before
+  and after, so a change of view mode can move each tile from its old place
+  to its new one while the camera flies to the same place in the new scene;
+  headings move with their groups and cluster shading fades across. This
+  belongs in core, keeping the old scene for the length of the flight, and
+  the same mechanism then animates workspaces coming and going, a convoy
+  collapsing, and regrouping.
+
+## Later
+
+The overview is a basis for more than workspace previews. Robert's directions
+(2026-10-31):
+
+- **What each tile shows.** Not always the live preview: the same facts the
+  cards show (#270's profiles applied to tiles), stats such as a convoy's cost
+  over time, and eventually a summary, from the decision model, of what
+  matters in it.
+- **How to group.** By project, as now, or by status (active, waiting,
+  landed) and other facts: the grouping-as-a-query question below.
+- **What data it shows.** The same scene, camera and controls over other
+  data, such as the forge's issues and PRs (see the Presentations direction
+  in #505). Either the overview generalises, or other specialised views share
+  its building blocks.
+
+The controls grow with these: what tiles show, how to group, then filters and
+search.
+
 ## Open questions
 
 - How the camera reads the preview budget mid-flight: which tiles render, and
