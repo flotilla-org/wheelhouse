@@ -183,6 +183,22 @@ frame(void)
   return rd_state->quit && !uishell_jackstay_pending();
 }
 
+// The user's automation setting (`automation: off | observe | full`),
+// read from the user file itself: it loads in the first frame, and the
+// Automation Endpoint and WHEELHOUSE_SOCKET are settled before any terminal
+// opens. Only off turns it off.
+internal B32
+uishell_automation_enabled(void)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 text = uishell_launch_user_path.size ? data_from_file_path(scratch.arena, uishell_launch_user_path) : str8_zero();
+  MD_Node *root = md_tree_from_string(scratch.arena, text);
+  String8 value = raw_from_escaped_str8(scratch.arena, md_child_from_string(root, str8_lit("automation"), 0)->first->string);
+  B32 enabled = !str8_match(value, str8_lit("off"), StringMatchFlag_CaseInsensitive);
+  scratch_end(scratch);
+  return enabled;
+}
+
 ////////////////////////////////
 //~ rjf: Entry Point
 
@@ -244,13 +260,37 @@ entry_point(CmdLine *cmd_line)
       uishell_sidebar_fixture = uishell_sidebar_subject_fixture || cmd_line_has_flag(cmd_line, str8_lit("sidebar_fixture")) ||
         cmd_line_has_flag(cmd_line, str8_lit("sidebar_diagnostics"));
 
+      // The Local Endpoint, which is also the Automation Endpoint (#554):
+      // --automation_socket or --andamento_socket name it, else each instance
+      // listens at its own default address. With automation off there is no
+      // default listener, and terminals are told of none.
       String8 socket_path = cmd_line_string(cmd_line, str8_lit("andamento_socket"));
+      String8 endpoint = cmd_line_string(cmd_line, str8_lit("automation_socket"));
+      String8 endpoint_file = cmd_line_string(cmd_line, str8_lit("automation_socket_file"));
+      B32 automation = uishell_automation_enabled();
+      B32 default_endpoint = 0;
+      if(socket_path.size != 0 && endpoint.size != 0 && !str8_match(socket_path, endpoint, 0))
+      {
+        fprintf(stderr, "--andamento_socket and --automation_socket name different endpoints\n");
+        abort_self(1);
+      }
+      if(endpoint.size == 0) { endpoint = socket_path; }
+      if(endpoint.size == 0 && automation)
+      {
+        U8 address[512] = {0};
+        if(wheelhouse_ingress_default_address(address, sizeof(address)))
+        {
+          endpoint = push_str8_copy(rd_state->arena, str8_cstring((char *)address));
+          default_endpoint = 1;
+        }
+        else
+        { fprintf(stderr, "Automation Endpoint: %s; continuing without one\n", address); }
+      }
       if(socket_path.size != 0)
       {
         String8 config_path = cmd_line_string(cmd_line, str8_lit("andamento_config"));
         uishell_sidebar_live_config = data_from_file_path(rd_state->arena, config_path);
         uishell_sidebar_live = 1;
-        U8 error[512] = {0};
         if(uishell_sidebar_live_config.size == 0)
         {
           fprintf(stderr, "Live sidebar requires --andamento_config:<KDL file>\n");
@@ -266,6 +306,13 @@ entry_point(CmdLine *cmd_line)
           abort_self(1);
         }
         wheelhouse_destroy(probe);
+      }
+      // Before the listener's thread and any terminal: a terminal's shell
+      // inherits this instance's endpoint, never an enclosing one's.
+      if(!uishell_advertise_automation_endpoint(automation ? (char *)push_str8_copy(rd_state->arena, endpoint).str : 0)) { abort_self(1); }
+      if(endpoint.size != 0)
+      {
+        U8 error[512] = {0};
         String8 recording_path = str8_zero();
         U64 recording_bytes = 4*1024*1024, recording_files = 4;
         if(cmd_line_has_flag(cmd_line, str8_lit("ingress_record")))
@@ -276,13 +323,30 @@ entry_point(CmdLine *cmd_line)
           if(bytes.size) { recording_bytes = str8_is_integer(bytes, 10) ? u64_from_str8(bytes, 10) : 0; }
           if(files.size) { recording_files = str8_is_integer(files, 10) ? u64_from_str8(files, 10) : 0; }
         }
-        uishell_ingress = wheelhouse_ingress_start_recorded(socket_path.str, socket_path.size, wm_send_wakeup_event,
+        uishell_ingress = wheelhouse_ingress_start_recorded(endpoint.str, endpoint.size, wm_send_wakeup_event,
           recording_path.str, recording_path.size, recording_bytes, recording_files, error, sizeof(error));
-        if(uishell_ingress == 0) { fprintf(stderr, "Sidebar ingress: %s\n", error); abort_self(1); }
+        // A launcher that named the endpoint relies on it; the default one is
+        // a convenience.
+        if(uishell_ingress == 0 && !default_endpoint) { fprintf(stderr, "Sidebar ingress: %s\n", error); abort_self(1); }
+        if(uishell_ingress == 0)
+        {
+          fprintf(stderr, "Automation Endpoint: %s; continuing without one\n", error);
+          endpoint = str8_zero();
+          if(!uishell_advertise_automation_endpoint(0)) { abort_self(1); }
+        }
         // Subscriptions' endpoints record beside it.
         uishell_subscriptions.record = recording_path.size != 0;
         uishell_subscriptions.record_bytes = recording_bytes;
         uishell_subscriptions.record_files = recording_files;
+      }
+      // A launcher reads where this instance listens from the file it named:
+      // empty for nowhere.
+      if(endpoint_file.size != 0)
+      {
+        U8 error[512] = {0};
+        if(!wheelhouse_ingress_write_address_file((WheelhouseIngressText){endpoint_file.str, endpoint_file.size},
+                                                  (WheelhouseIngressText){endpoint.str, endpoint.size}, error, sizeof(error)))
+        { fprintf(stderr, "--automation_socket_file: %s\n", error); abort_self(1); }
       }
       // The Dashboard gains the Flotilla subscription a launcher asks for
       // (for its daemon, or Flotilla's default) unless it has one already.
@@ -440,6 +504,9 @@ entry_point(CmdLine *cmd_line)
                                     "--andamento_socket:<path> --andamento_config:<KDL path>\n"
                                     "Accept live metadata over HTTP/UDS using the specified sidebar template. Each of the Dashboard's "
                                     "subscriptions gets an endpoint of its own named after this one, and its connector is started.\n\n"
+                                    "--automation_socket:<path> --automation_socket_file:<path>\n"
+                                    "Listen at this Automation Endpoint (by default each instance has its own, under the runtime directory), "
+                                    "and write where it listens to the file, empty for nowhere. Terminals get it as WHEELHOUSE_SOCKET.\n\n"
                                     "--flotilla_subscription[:<daemon>] --flotilla_bin:<path>\n"
                                     "Add a Flotilla subscription for this daemon (default: Flotilla's own) to the Dashboard unless it has one; "
                                     "connectors run this Flotilla (default: $FLOTILLA_BIN, else flotilla).\n\n"
