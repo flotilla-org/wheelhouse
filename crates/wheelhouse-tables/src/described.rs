@@ -5,7 +5,8 @@
 //! arrives.
 
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -98,10 +99,14 @@ fn decode(text: &str) -> Option<String> {
 }
 
 /// The transport on a thread of its own: it serves the source's requests
-/// and sends back what comes, waking the host after each event.
+/// and sends back what comes, waking the host once for all the events that
+/// come before it next looks.
 struct Watcher {
     requests: Option<tokio::sync::mpsc::UnboundedSender<HostRequest>>,
     events: mpsc::Receiver<Event>,
+    /// A wake is on its way and the host has not looked since: a snapshot's
+    /// thousands of rows wake it once, not once each.
+    woken: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -111,16 +116,18 @@ impl Watcher {
         let (requests, mut incoming) = tokio::sync::mpsc::unbounded_channel::<HostRequest>();
         let (events, outgoing) = mpsc::channel();
         let transport = Transport::new(options);
-        let wake = std::sync::Arc::new(wake);
+        let wake = Arc::new(wake);
+        let woken = Arc::new(AtomicBool::new(false));
+        let pending = woken.clone();
         let thread = thread::Builder::new().name("wheelhouse-table".into()).spawn(move || {
             let local = tokio::task::LocalSet::new();
             local.block_on(&runtime, async move {
                 while let Some(request) = incoming.recv().await {
-                    let (transport, events, wake) = (transport.clone(), events.clone(), wake.clone());
+                    let (transport, events, wake, pending) = (transport.clone(), events.clone(), wake.clone(), pending.clone());
                     tokio::task::spawn_local(async move {
                         transport
                             .watch(&request, |event| {
-                                if events.send(event).is_ok() {
+                                if events.send(event).is_ok() && !pending.swap(true, Ordering::AcqRel) {
                                     wake();
                                 }
                             })
@@ -128,8 +135,19 @@ impl Watcher {
                     });
                 }
             });
+            // Not a plain drop, which waits out a name lookup still running
+            // on a blocking thread while the host, closing the table, waits
+            // on this one.
+            runtime.shutdown_background();
         })?;
-        Ok(Watcher { requests: Some(requests), events: outgoing, thread: Some(thread) })
+        Ok(Watcher { requests: Some(requests), events: outgoing, woken, thread: Some(thread) })
+    }
+
+    /// The events that came since the host last looked; any that come after
+    /// wake it again.
+    fn take(&self) -> mpsc::TryIter<'_, Event> {
+        self.woken.store(false, Ordering::Release);
+        self.events.try_iter()
     }
 
     fn open(&self, request: HostRequest) {
@@ -187,7 +205,7 @@ impl Described {
     /// what the source asks. Returns how long until the table needs drawing
     /// again by itself (relative dates), or `None`.
     pub fn tick(&mut self, grid: &mut Grid) -> Option<Duration> {
-        while let Ok(event) = self.watcher.events.try_recv() {
+        for event in self.watcher.take() {
             let received = match event {
                 Event::Message(message) => {
                     self.connection = Connection::Open;
@@ -198,6 +216,8 @@ impl Described {
                     self.connection = Connection::Retrying { attempt, status, body: text(&body) };
                     continue;
                 }
+                // The transport does not open a failed watch again, so this
+                // stands until the table is opened anew.
                 Event::Failed { status, body } => {
                     self.connection = Connection::Failed { status, body: text(&body) };
                     continue;

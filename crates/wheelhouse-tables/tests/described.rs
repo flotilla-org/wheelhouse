@@ -1,8 +1,8 @@
 //! A described table as a host drives it, against binnacle's fake table
 //! server in-process: its link parses back to what made it; rows arrive
-//! under their described headers and wake the host; live changes apply in
-//! place under the sort; an unknown table says so; and a stream that ends
-//! is read again.
+//! under their described headers and wake the host, once until it looks;
+//! live changes apply in place under the sort; an unknown table says so;
+//! and a stream that ends is read again.
 use binnacle_core::{Axis, Key, SortColumn, SortSpec, ViewSpec, Viewport};
 use binnacle_described::Wire;
 use binnacle_described_http::Endpoint;
@@ -119,6 +119,19 @@ fn rows_arrive_under_their_described_headers_and_wake_the_host() {
 }
 
 #[test]
+fn a_host_that_has_not_looked_is_woken_once() {
+    let fake = fake();
+    let mut host = Host::open(&link(&fake, "crews"));
+    host.frame();
+    host.woken.recv_timeout(WAIT).expect("a wake for the first message");
+    // The rest of the snapshot comes while the host does not look: it is
+    // not woken again for each.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(host.woken.try_recv().is_err(), "woken again before looking");
+    host.until("the rows", |h| h.ids().len() == 10);
+}
+
+#[test]
 fn live_changes_apply_in_place_under_the_sort() {
     let fake = fake();
     let mut host = Host::open(&link(&fake, "crews"));
@@ -210,7 +223,16 @@ fn what_is_no_table_link_parses_to_nothing() {
         "http://host/tables/a/b",
         "http+unix:///tables/crews",
         "http://host/tables/%zz",
+        "http://host/tables/crews%2",
+        "http://host/tables/%ff",
+        "http://host/tables/crews?where=%e2%82",
     ] {
         assert_eq!(Link::parse(text), None, "{text}");
     }
+}
+
+#[test]
+fn a_plus_in_a_query_is_a_space_and_an_escaped_one_is_a_plus() {
+    let link = Link::parse("http://host/tables/crews?where=a+%3E+1&where=b%2Bc").expect("parses");
+    assert_eq!(link.wheres, ["a > 1", "b+c"]);
 }
