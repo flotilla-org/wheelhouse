@@ -2,7 +2,8 @@
 // endpoint over its connection's ssh bridge, round-trips input and resize,
 // keeps the admission warning out of the content, re-attaches to the same
 // live session when a bridge that streamed dies, reconnects when asked, and
-// shows a bridge that never streams as disconnected with a reconnect.
+// shows a bridge that never streams as disconnected with a reconnect, and
+// keeps the last frame through a resize once its host is gone.
 //
 // It needs a running endpoint and a host ssh reaches, named by environment
 // (tools/test-remote-terminal.sh sets them up, with a PATH `ssh` shim when no
@@ -11,6 +12,9 @@
 //   WH_REMOTE_CLEAT    the Cleat binary there, also run here to inspect it
 //   WH_REMOTE_ROOT     its daemon's runtime root
 //   WH_REMOTE_SESSION  a live session in that daemon
+//   WH_REMOTE_DOWN     optional: a path whose existence makes the host
+//                      unreachable (the ssh shim's); without it the
+//                      host-gone check is skipped
 // Remote endpoints are Unix only, like Cleat's command transport.
 
 #if !OS_WINDOWS
@@ -29,6 +33,23 @@ uishell_remote_diag_run(Arena *arena, char *fmt, ...)
   for(size_t n = 0; (n = fread(buffer, 1, sizeof(buffer), pipe)) > 0;) { str8_list_push(arena, &out, push_str8_copy(arena, str8(buffer, n))); }
   pclose(pipe);
   return str8_list_join(arena, &out, 0);
+}
+
+// Whether `needle` is in the View's stored frame, read as ASCII row by row.
+internal B32
+uishell_remote_diag_frame_has(UIShell_TerminalCellCache *cache, String8 needle)
+{
+  if(cache->cells == 0) { return 0; }
+  Temp scratch = scratch_begin(0, 0);
+  U8 *text = push_array(scratch.arena, U8, cache->cell_count);
+  for(U64 i = 0; i < cache->cell_count; i++)
+  {
+    cleat_cell *cell = &cache->cells[i];
+    text[i] = cell->grapheme_count != 0 && cell->graphemes[0] < 128 ? (U8)cell->graphemes[0] : ' ';
+  }
+  B32 found = str8_find_needle(str8(text, cache->cell_count), 0, needle, 0) < cache->cell_count;
+  scratch_end(scratch);
+  return found;
 }
 
 // Builds `view` once at `size`, as the canvas would, and ends the frame;
@@ -179,6 +200,55 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
     }
     RemoteCheck(str8_find_needle(capture, 0, str8_lit("WH-AGAIN-48"), 0) < capture.size &&
                 str8_find_needle(capture, 0, str8_lit("WH-REMOTE-42"), 0) < capture.size, "reconnect reaches the same live session");
+
+    // The host goes away (a vessel shut down): the bridge dies and can't
+    // reopen, so the connection gives up. Shrinking and growing the View
+    // then has nothing to ask, and the last frame shows again in full.
+    char *env_down = getenv("WH_REMOTE_DOWN");
+    if(env_down != 0 && connection != 0)
+    {
+      deadline = now_time_us()+10*Million(1);
+      for(;;)
+      {
+        uishell_remote_diag_build(scratch.arena, ws, view, size);
+        if(uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-AGAIN-48")) || now_time_us() > deadline) { break; }
+        sleep_ms(20);
+      }
+      U16 cols_full = tv->cell_cache.cols, rows_full = tv->cell_cache.rows;
+      B32 shown = uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-AGAIN-48"));
+      // A host that's gone doesn't refuse: ssh hangs until it times out.
+      // Resize while it hangs, then again once it has given up.
+      uishell_remote_diag_run(scratch.arena, "echo 4 > '%s' ; pkill -f 'proxy --runtime-root=%S' ; pkill -f 'BatchMode=yes -- %S .*--runtime-root=%S' ; true",
+                              env_down, root, host, root);
+      for(U64 i = 0; i < 25; i++) { uishell_remote_diag_build(scratch.arena, ws, view, v2f32(size.x*0.5f, size.y*0.5f)); sleep_ms(20); }
+      fprintf(stderr, "note remote terminal: while hanging, shrunk: state %u, frame %ux%u, text %d\n", uishell_terminal_connection_state(tv),
+              tv->cell_cache.cols, tv->cell_cache.rows, uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-AGAIN-48")));
+      for(U64 i = 0; i < 25; i++) { uishell_remote_diag_build(scratch.arena, ws, view, size); sleep_ms(20); }
+      fprintf(stderr, "note remote terminal: while hanging, grown: state %u, frame %ux%u, text %d\n", uishell_terminal_connection_state(tv),
+              tv->cell_cache.cols, tv->cell_cache.rows, uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-AGAIN-48")));
+      deadline = now_time_us()+15*Million(1);
+      for(;;)
+      {
+        pill = uishell_remote_diag_build(scratch.arena, ws, view, size);
+        if(connection->given_up || now_time_us() > deadline) { break; }
+        sleep_ms(20);
+      }
+      // The frame that saw it give up built its pill before it did.
+      pill = uishell_remote_diag_build(scratch.arena, ws, view, size);
+      fprintf(stderr, "note remote terminal: shown %d, given up %d, opens %llu, state %u, pill '%.*s'\n", shown, connection->given_up,
+              (unsigned long long)connection->opens, uishell_terminal_connection_state(tv), (int)pill.size, pill.str);
+      RemoteCheck(shown && connection->given_up && str8_find_needle(pill, 0, str8_lit("click to reconnect"), 0) < pill.size,
+                  "a bridge whose host is gone gives up");
+      RemoteCheck(uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-AGAIN-48")), "a bridge that gave up keeps its last frame");
+      for(U64 i = 0; i < 10; i++) { uishell_remote_diag_build(scratch.arena, ws, view, v2f32(size.x*0.5f, size.y*0.5f)); sleep_ms(20); }
+      for(U64 i = 0; i < 10; i++) { uishell_remote_diag_build(scratch.arena, ws, view, size); sleep_ms(20); }
+      fprintf(stderr, "note remote terminal: frame %ux%u before, %ux%u after shrink and grow\n",
+              cols_full, rows_full, tv->cell_cache.cols, tv->cell_cache.rows);
+      RemoteCheck(tv->cell_cache.cols == cols_full && tv->cell_cache.rows == rows_full &&
+                  uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-AGAIN-48")),
+                  "a shrink and grow while given up keeps the last frame");
+      remove(env_down);
+    }
     uishell_terminal_runtime_release(tv);
   }
   // A bridge that fails before it ever streams (here, no Cleat at that
@@ -250,6 +320,41 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
     RemoteCheck(!tv->remote_backend && tv->shared && uishell_terminal_connection_state(tv) == CLEAT_SESSION_STREAMING &&
                 cleat_session_hosting(uishell_terminal_session(tv), &hosting) && str8_match(str8_prefix(str8((U8 *)hosting.ptr, hosting.len), 7), str8_lit("daemon:"), 0),
                 "a local endpoint attaches through its daemon");
+    uishell_terminal_runtime_release(tv);
+  }
+  // A terminal running a command (a subject's recipe, like `flotilla
+  // attach`) whose program exits: shrinking and growing the View keeps the
+  // last frame, including the parts the shrink hid.
+  CFG_Node *recipe = rd_fixture_view(panel, str8_lit("terminal"),
+    str8_lit("sh -c 'printf \"\\033[?1049h%60s\\n\" WH-RIGHT; i=0; while [ $i -lt 18 ]; do echo; i=$((i+1)); done; echo WH-BOTTOM; sleep 3'"), 1);
+  UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = rd_view_address_from_cfg(recipe), .view = rd_view_address_from_cfg(recipe))
+  {
+    UIShell_TerminalViewState *tv = rd_view_state(UIShell_TerminalViewState);
+    Vec2F32 size = v2f32(960, 600);
+    U64 deadline = now_time_us()+15*Million(1);
+    B32 shown = 0;
+    String8 recipe_pill = {0};
+    for(;;)
+    {
+      recipe_pill = uishell_remote_diag_build(scratch.arena, ws, recipe, size);
+      shown |= uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-BOTTOM")) && uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-RIGHT"));
+      if((shown && uishell_terminal_program_state(tv, 0) == CLEAT_PROGRAM_EXITED) || now_time_us() > deadline) { break; }
+      sleep_ms(20);
+    }
+    recipe_pill = uishell_remote_diag_build(scratch.arena, ws, recipe, size);
+    U16 cols_full = tv->cell_cache.cols, rows_full = tv->cell_cache.rows;
+    fprintf(stderr, "note remote terminal: recipe program %u, frame %ux%u, pill '%.*s'\n", uishell_terminal_program_state(tv, 0),
+            cols_full, rows_full, (int)recipe_pill.size, recipe_pill.str);
+    RemoteCheck(shown && uishell_terminal_program_state(tv, 0) == CLEAT_PROGRAM_EXITED, "a recipe's program shows its output and exits");
+    RemoteCheck(str8_match(recipe_pill, str8_lit("exited (status 0)"), 0), "an exited recipe says how its program exited");
+    for(U64 i = 0; i < 10; i++) { uishell_remote_diag_build(scratch.arena, ws, recipe, v2f32(size.x*0.4f, size.y*0.4f)); sleep_ms(20); }
+    fprintf(stderr, "note remote terminal: recipe shrunk: frame %ux%u, right %d, bottom %d\n", tv->cell_cache.cols, tv->cell_cache.rows,
+            uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-RIGHT")), uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-BOTTOM")));
+    for(U64 i = 0; i < 10; i++) { uishell_remote_diag_build(scratch.arena, ws, recipe, size); sleep_ms(20); }
+    fprintf(stderr, "note remote terminal: recipe grown: frame %ux%u\n", tv->cell_cache.cols, tv->cell_cache.rows);
+    RemoteCheck(tv->cell_cache.cols == cols_full && tv->cell_cache.rows == rows_full &&
+                uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-RIGHT")) && uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-BOTTOM")),
+                "an exited recipe keeps its last frame through a shrink and grow");
     uishell_terminal_runtime_release(tv);
   }
   ui_select_state(saved_ui);

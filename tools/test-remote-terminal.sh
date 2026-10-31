@@ -29,8 +29,11 @@ if [ -z "$host" ]; then
   host=shimmed-host
   mkdir -p "$work/bin"
   # ssh [options] -- HOST COMMAND: run COMMAND here, as sshd would there.
+  # While $WH_REMOTE_DOWN exists the host is unreachable, as ssh reports it.
+  export WH_REMOTE_DOWN="$work/down"
   cat >"$work/bin/ssh" <<'EOF'
 #!/bin/sh
+[ -e "$WH_REMOTE_DOWN" ] && { [ -s "$WH_REMOTE_DOWN" ] && sleep "$(cat "$WH_REMOTE_DOWN")"; echo "ssh: connect to host: Connection refused" >&2; exit 255; }
 while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
 shift 2
 exec sh -c "$1"

@@ -155,6 +155,15 @@ uishell_terminal_connection_state(UIShell_TerminalViewState *tv)
   return tv->session ? cleat_session_connection_state(tv->session) : CLEAT_SESSION_CLOSED;
 }
 
+// Whether the session's program still runs (CLEAT_PROGRAM_*), and its exit
+// status once it exited with one.
+internal U32
+uishell_terminal_program_state(UIShell_TerminalViewState *tv, S32 *exit_code)
+{
+  cleat_session *session = tv->shared != 0 ? tv->shared->attachment->session : tv->session;
+  return session ? cleat_session_program_state(session, exit_code) : CLEAT_PROGRAM_UNKNOWN;
+}
+
 internal U32
 uishell_terminal_role(UIShell_TerminalViewState *tv)
 {
@@ -4399,9 +4408,14 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
   // over. A remote connection that gave up doesn't heal: the pill says why
   // and reconnects it on a click, keeping the last frame until then.
   // A View whose connection never started, or whose attach failed, has no
-  // session to show; it offers the same reconnect.
+  // session to show; it offers the same reconnect. A program that exited is
+  // over, whatever the connection says (an in-process session keeps
+  // streaming its last frame): the pill says how it exited.
   B32 remote_unstarted = tv->remote_backend && tv->initialized && !session_ready && !fixture_mode;
-  if(tv->shared != 0 || daemon_hosted || remote_hosted || remote_unstarted)
+  S32 exit_code = 0;
+  U32 program = uishell_terminal_program_state(tv, &exit_code);
+  B32 exited = program == CLEAT_PROGRAM_EXITED || program == CLEAT_PROGRAM_EXITED_STATUS_UNKNOWN;
+  if(tv->shared != 0 || daemon_hosted || remote_hosted || remote_unstarted || exited)
   {
     U32 connection_state = remote_unstarted ? CLEAT_SESSION_DISCONNECTED : uishell_terminal_connection_state(tv);
     U32 role = remote_unstarted ? CLEAT_ROLE_WATCHER : uishell_terminal_role(tv);
@@ -4439,7 +4453,8 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     }
     // Waiting on a role grant, or on the connection to decide.
     if(role_pending || (tv->remote_backend && connection_state == CLEAT_SESSION_DISCONNECTED && !given_up)) { rd_request_frame(); }
-    if((connection_state != CLEAT_SESSION_STREAMING && (tv->shared == 0 || session_ready || given_up)) || watching)
+    if(exited) { watching = 0; given_up = 0; }
+    if((connection_state != CLEAT_SESSION_STREAMING && (tv->shared == 0 || session_ready || given_up)) || watching || exited)
     {
       String8 status_text = str8_lit("connecting…");
       switch(connection_state)
@@ -4463,6 +4478,10 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
       if(watching)
       {
         status_text = str8_lit("watching — click to take control");
+      }
+      if(exited)
+      {
+        status_text = program == CLEAT_PROGRAM_EXITED ? push_str8f(scratch.arena, "exited (status %i)", exit_code) : str8_lit("exited");
       }
       F32 status_height = floor_f32(ui_bottom_font_size()*1.8f);
       UI_Parent(terminal_root_box) UI_FontSize(ui_bottom_font_size()) UI_CornerRadius(status_height*0.5f)
@@ -4493,8 +4512,9 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
           rd_request_frame();
         }
       }
-      // A connection that gave up is stable until the user acts.
-      if(!watching && !given_up)
+      // A connection that gave up is stable until the user acts, and a
+      // program that exited for good.
+      if(!watching && !given_up && !exited)
       {
         // transient transport states animate toward resolution; watching is
         // stable and event-driven (role changes fire the provider wake)
