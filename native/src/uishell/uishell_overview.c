@@ -142,7 +142,8 @@ uishell_overview_drawn_rect(UIShell_Overview *o, WheelhouseOverviewRect r, U64 g
 }
 
 // Whether a tile, with its label, is in the region: the scene draws only
-// those.
+// those. The label is under the tile, so it matters only at the top edge:
+// a tile scrolled off the top still shows while its label does.
 internal B32
 uishell_overview_tile_in_view(UIShell_Overview *o, const WheelhouseOverviewTile *tile)
 {
@@ -161,6 +162,8 @@ uishell_overview_shows(UIShell_Overview *o, CFG_Node *current, CFG_ID cfg_id)
 {
   if(cfg_id == current->id) { return 1; }
   WheelhouseOverviewFrame *f = o->frame;
+  // Defensive: at rest the camera fits the current tile, so no other tile
+  // is in view anyway; this keeps it so without the geometry's say.
   if(f == 0 || !o->through_scene) { return 0; }
   for(U64 i = 0; i < f->tile_count; i++)
   {
@@ -204,7 +207,10 @@ UIShell_OverviewDragAxis;
 // What's let go of mid-drag glides on at its speed then, slowing to a stop
 // over about a third of a second, or at its end.
 #define UIShell_OverviewGlideTauMs 325.0
-// A drag held still this long before its release doesn't glide.
+// A drag held still this long before its release doesn't glide. It is
+// also, deliberately, how long a gap between moves starts the drag's speed
+// afresh rather than smoothing it into the old one: both mean the mouse
+// stopped.
 #define UIShell_OverviewGlideHoldMs 60.0
 
 internal B32
@@ -259,7 +265,9 @@ uishell_overview_move_by(UIShell_OverviewMove *move, UIShell_OverviewDragAxis ax
 // Past an end, what's dragged stretches, less the further it goes, and
 // springs back when let go of; a glide that meets an end carries past it a
 // little and springs back too. The stretch is only drawn: the region's
-// content shifts by it, across for a row and down for a pan.
+// content shifts by it, across for a row and down for a pan. This is the
+// spring's time constant, not its settling time: it settles in about seven
+// of them, half a second.
 #define UIShell_OverviewSpringMs 70.0
 
 // How far a drag `px` pixels past an end draws, in a region `dim` long.

@@ -456,13 +456,13 @@ uishell_overview_diagnostics(CFG_Node *window)
     uishell_overview_end(&o);
     o = uishell_overview_diagnostic_step(ws, 0, b, region); uishell_overview_end(&o);
     o = uishell_overview_diagnostic_step(ws, 1000, b, region); uishell_overview_end(&o);
-    //- A click on a tile of a long row still picks it: the row under it
-    // doesn't take the press.
-    OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena,
-                                                    push_str8f(scratch.arena, "###overview_tile_%I64u", shown_tile)),
+    //- A click on a tile of a long row still picks it, even if the mouse
+    // moves a little, short of a drag: the row under it doesn't take the
+    // press.
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(3, 0), 0, 0, &labels_read, v2f32(0, 0)),
                   "a tile of the long row to click");
     OverviewCheck(uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), shown_tile) == picks + 1,
-                  "a click on a tile of a long row picks it");
+                  "a click on a tile of a long row picks it, though the mouse moved a little");
   }
   uishell_sidebar_local_delete_group(window, made_group_id);
   ws->workspace_zoom_open = 0;
