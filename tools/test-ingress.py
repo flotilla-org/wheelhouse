@@ -628,6 +628,7 @@ class IngressTests(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+        self.assertFalse(address_file.exists(), 'the address file outlived Wheelhouse')
         if address:
             self.assertFalse(os.path.exists(address), 'the endpoint outlived Wheelhouse')
         return address, seen.read_text()

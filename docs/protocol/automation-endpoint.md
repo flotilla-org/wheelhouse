@@ -23,7 +23,7 @@ endpoint.
 | Platform | Address |
 | --- | --- |
 | Unix, with `XDG_RUNTIME_DIR` | `$XDG_RUNTIME_DIR/wheelhouse/<instance-uuid>` |
-| Unix, without it (macOS) | `$TMPDIR/wheelhouse-<uid>/<instance-uuid>`, `/tmp` when `TMPDIR` is unset |
+| Unix, without it (macOS) | `$TMPDIR/wheelhouse-<uid>/<instance-uuid>`; `/tmp/wheelhouse-<uid>/…` when `TMPDIR` is unset or too long for a socket path (104 bytes on macOS) |
 | Windows | `\\.\pipe\wheelhouse\<instance-uuid>` |
 
 On Unix the directory is made private to the user (mode 0700), and one that
@@ -40,7 +40,7 @@ a file, never from the environment:
 - `--automation_socket_file:<path>` makes Wheelhouse write where it listens to
   that file once the listener is up: exactly the address, with no newline, or
   an empty file when it listens nowhere. The file is replaced whole, so a
-  reader never sees part of it.
+  reader never sees part of it, and removed when Wheelhouse exits cleanly.
 
 **Environment.** At startup, before any terminal opens, Wheelhouse replaces
 `WHEELHOUSE_SOCKET` in its own environment with its own address, or removes it
@@ -51,7 +51,8 @@ an enclosing one: running Wheelhouse inside Wheelhouse is the everyday case.
 ## Gating
 
 The user setting `automation: off | observe | full` (default `full`) is read
-from the user file at launch.
+from the user file at launch. Any other value is taken as `full`, with a
+warning on stderr.
 
 - `off`: there is no default listener and terminals get no
   `WHEELHOUSE_SOCKET`. An address given on the command line is still served,
