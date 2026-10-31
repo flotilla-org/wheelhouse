@@ -196,7 +196,16 @@ int main(int argc, char **argv) {
     assert(memcmp(&untouched, &layout, sizeof layout) == 0);
     wheelhouse_string_free(error);
     error = NULL;
+    WhTextStyleRun unknown_style[] = {{0, 4, 2}};
+    input.runs = unknown_style;
+    assert(wh_text_layout(ctx, &input, 200.0f, allocator(&arena), &layout, &error) == 0 && error);
+    wheelhouse_string_free(error);
+    error = NULL;
     input.runs = runs;
+    assert(wh_text_layout(ctx, &input, 200.0f, (WhTextAllocator){NULL, NULL}, &layout, &error) == 0 && error);
+    assert(memcmp(&untouched, &layout, sizeof layout) == 0);
+    wheelhouse_string_free(error);
+    error = NULL;
     Arena tiny = {malloc(16), 0, 16, 0};
     assert(wh_text_layout(ctx, &input, 200.0f, allocator(&tiny), &layout, &error) == 0 && error);
     wheelhouse_string_free(error);
