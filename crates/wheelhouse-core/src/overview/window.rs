@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::camera::{Camera, CameraRig, FlightTiming};
 use super::logical::{logical_layout, GroupKey, LogicalLayout, OverviewEntry};
-use super::scene::{scene, Scene, SceneOptions, ViewMode};
+use super::scene::{scene, GridPacking, Scene, SceneOptions, ViewMode};
 use crate::{PlacementKey, WorkspaceId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -30,8 +30,8 @@ pub struct OverviewWindow {
     entries: Vec<OverviewEntry>,
     slides: BTreeMap<GroupKey, f64>,
     collapsed: BTreeSet<PlacementKey>,
-    /// Where the overview has been scrolled to, if it has.
-    pan_cy: Option<f64>,
+    /// The centre the overview has been scrolled to, if it has.
+    pan: Option<(f64, f64)>,
     layout: LogicalLayout,
     scene: Scene,
     rig: Option<CameraRig>,
@@ -56,7 +56,7 @@ impl OverviewWindow {
             entries: vec![],
             slides: BTreeMap::new(),
             collapsed: BTreeSet::new(),
-            pan_cy: None,
+            pan: None,
             layout,
             scene,
             rig: None,
@@ -78,12 +78,34 @@ impl OverviewWindow {
     pub fn set_view_mode(&mut self, mode: ViewMode) {
         if self.options.mode != mode {
             self.options.mode = mode;
-            self.pan_cy = None;
+            self.pan = None;
             if matches!(self.mode, OverviewMode::Group(_)) {
                 self.mode = OverviewMode::Overview;
             }
             self.rebuild();
             self.cut();
+        }
+    }
+
+    /// The grid's packing, and the share of the region's width a tile needs
+    /// to be readable (`SceneOptions::readable_share`). A new packing cuts to
+    /// the same place in the new scene, as a new view mode does; a new share
+    /// moves the overview's camera with it.
+    pub fn set_grid(&mut self, packing: GridPacking, readable_share: f64, now_ms: f64) {
+        let share = if readable_share.is_finite() { readable_share.clamp(0.0, 1.0) } else { 0.0 };
+        if self.options.packing != packing {
+            self.options.packing = packing;
+            self.options.readable_share = share;
+            self.pan = None;
+            if matches!(self.mode, OverviewMode::Group(_)) {
+                self.mode = OverviewMode::Overview;
+            }
+            self.rebuild();
+            self.cut();
+        } else if self.options.readable_share != share {
+            self.options.readable_share = share;
+            self.rebuild();
+            self.follow_scene(now_ms, true);
         }
     }
 
@@ -119,7 +141,7 @@ impl OverviewWindow {
         }
         if switched {
             self.mode = OverviewMode::Workspace;
-            self.pan_cy = None;
+            self.pan = None;
             self.go(now_ms);
         } else {
             self.follow_scene(now_ms, reshaped);
@@ -145,7 +167,7 @@ impl OverviewWindow {
             return;
         }
         self.mode = OverviewMode::Overview;
-        self.pan_cy = None;
+        self.pan = None;
         if let Some(current) = self.current {
             if let Some((key, slide)) = self.scene.slide_into(current) {
                 self.slides.insert(key, slide);
@@ -208,15 +230,21 @@ impl OverviewWindow {
         }
     }
 
-    /// Scroll the overview down (or up) by `by` scene units.
-    pub fn pan(&mut self, by: f64) {
+    /// Scroll the overview right and down (or left and up) by `dx` and `dy`
+    /// scene units, as far as it goes: rows only scroll down, and a grid
+    /// only when it is zoomed in.
+    pub fn pan(&mut self, dx: f64, dy: f64) {
         if self.mode != OverviewMode::Overview {
             return;
         }
-        let from = self.pan_cy.unwrap_or_else(|| self.scene.overview_camera(self.current, None).cy);
-        self.pan_cy = Some(from + by);
-        // Keep it within the scene, as the camera does.
-        self.pan_cy = Some(self.scene.overview_camera(self.current, self.pan_cy).cy);
+        let from = self.scene.overview_camera(self.current, self.pan);
+        // Kept within the scene, as the camera keeps itself. A pan that
+        // moves nothing (a grid that fits) isn't kept, or it would become
+        // where the grid later zooms in.
+        let to = self.scene.overview_camera(self.current, Some((from.cx + dx, from.cy + dy)));
+        if to != from {
+            self.pan = Some((to.cx, to.cy));
+        }
         self.cut();
     }
 
@@ -286,7 +314,7 @@ impl OverviewWindow {
     pub fn target(&self) -> Option<Camera> {
         match &self.mode {
             OverviewMode::Workspace => self.current.and_then(|id| self.scene.rest_camera(id)),
-            OverviewMode::Overview => (!self.scene.tiles.is_empty()).then(|| self.scene.overview_camera(self.current, self.pan_cy)),
+            OverviewMode::Overview => (!self.scene.tiles.is_empty()).then(|| self.scene.overview_camera(self.current, self.pan)),
             OverviewMode::Group(key) => self.scene.groups.iter().position(|g| &g.key == key).and_then(|i| self.scene.group_camera(i)),
         }
     }

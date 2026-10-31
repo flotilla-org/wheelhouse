@@ -1,0 +1,441 @@
+<meta charset="utf-8">
+<title>Overview Grid Prototype</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!--
+  PROTOTYPE - throwaway, non-normative, not part of the build (#450).
+  Question: what layout rule should the overview's grid use? The grid is a
+  treemap of every workspace in the window's shape; this compares ways of
+  packing groups into it, whether a convoy's cluster is kept whole on a row,
+  a limit on how far tile sizes may differ between strips, and the default
+  camera when tiles would be too small to read.
+  Packing (bottom bar): ordered strip treemap with one tile size per strip,
+  ordered proportional treemap, one tile size everywhere with shelves, and
+  today's fixed blocks (3 tiles wide, 2 block columns).
+  Workspaces are made up; resize the window to change its shape.
+  Run: open docs/design/overview-grid-prototype.html
+-->
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#0f1012; --panel:#202227; --block:#191b1f; --line:#33363d;
+  --text:#d7d9de; --dim:#8a8f99; --accent:#e0b34a;
+  --good:#8fdc9f; --bad:#f28b82; --run:#9ab8e8; --idle:#8a8f99;
+  --proto-bg:#f4f1e8; --proto-fg:#1f1f1f; --proto-dim:#5a564c; --proto-line:#d6d0c2;
+  --ui:system-ui,-apple-system,"Segoe UI",sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:13px var(--ui);overflow:hidden}
+#view{position:fixed;inset:0;overflow:hidden;cursor:grab;touch-action:none}
+#view.drag{cursor:grabbing}
+#world{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+
+/* scene pieces, positioned in scene units (about screen px when everything fits) */
+.block,.tile,.lbl,.ghead,.shade{position:absolute}
+.anim .block,.anim .tile,.anim .lbl,.anim .ghead,.anim .shade{transition:left .38s cubic-bezier(.3,.7,.3,1),top .38s cubic-bezier(.3,.7,.3,1),width .38s cubic-bezier(.3,.7,.3,1),height .38s cubic-bezier(.3,.7,.3,1),font-size .38s cubic-bezier(.3,.7,.3,1)}
+.block{background:var(--block)}
+.block.rect{background:#ffffff06;outline:1px dashed #ffffff14}
+.shade{background:hsl(var(--h) 45% 50% / .16)}
+.tile{background:var(--panel);overflow:hidden;cursor:pointer;display:flex;flex-direction:column;box-shadow:0 0 0 1px #00000080}
+.tile:hover{filter:brightness(1.15)}
+.tile.cur{box-shadow:0 0 0 .05em var(--accent),0 0 0 .1em #e0b34a55}
+.tile .bar{flex:none;height:1.6em;background:hsl(var(--h) 45% 32%);color:#fff;font-weight:600;padding:0 .5em;display:flex;align-items:center;white-space:nowrap;overflow:hidden}
+.tile .body{flex:1;display:flex;gap:.25em;padding:.5em;min-height:0}
+.tile .body i{display:block;height:.55em;border-radius:.2em;background:#ffffff14;margin-bottom:.45em}
+.tile .body i.h{background:hsl(var(--h) 55% 60% / .7)}
+.tile .term{flex:3;min-width:0} .tile .files{flex:1.2;min-width:0;background:#ffffff08}
+.lbl{line-height:1.25;overflow:hidden;pointer-events:none}
+.lbl .t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lbl .s{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.85em;display:flex;gap:.35em;align-items:center}
+.dot{width:.6em;height:.6em;border-radius:50%;flex:none;background:var(--idle)}
+.dot.done{background:var(--good)} .dot.run{background:var(--run)} .dot.fail{background:var(--bad)} .dot.home{background:var(--accent)}
+.ghead{color:#fff;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:zoom-in;display:flex;align-items:center}
+.ghead:hover{color:var(--accent)}
+.ghead small{font-weight:400;color:var(--dim);margin-left:.5em}
+
+/* prototype chrome: deliberately not Wheelhouse-styled */
+.proto{font:12px var(--ui);color:var(--proto-fg);color-scheme:light}
+.proto button,.proto select{color:var(--proto-fg)}
+#bar{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;display:flex;align-items:center;gap:6px;background:var(--proto-bg);border:1px solid var(--proto-line);border-radius:999px;padding:4px;box-shadow:0 6px 24px #0008;z-index:20;max-width:calc(100vw - 32px)}
+#bar button{border:0;background:none;font:inherit;font-size:16px;width:30px;height:28px;border-radius:999px;cursor:pointer;color:var(--proto-fg)}
+#bar button:hover{background:#0000000f}
+#plabel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 6px;font-weight:600}
+#tune{position:fixed;right:12px;top:12px;width:260px;max-width:calc(100vw - 32px);max-height:calc(100vh - 80px);overflow:auto;background:var(--proto-bg);border:1px solid var(--proto-line);border-radius:8px;box-shadow:0 6px 24px #0008;z-index:20}
+#tune summary{cursor:pointer;padding:8px 10px;font-weight:600;list-style:none}
+#tune summary::-webkit-details-marker{display:none}
+#tune .in{display:grid;gap:7px;padding:0 10px 10px}
+#tune label{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center;color:var(--proto-dim)}
+#tune label input[type=range]{grid-column:1 / -1;width:100%}
+#tune label output{font-variant-numeric:tabular-nums;color:var(--proto-fg)}
+#tune select{font:inherit;grid-column:1 / -1;width:100%}
+#tune .chk{display:flex;gap:6px;align-items:center}
+#tune .row{display:flex;gap:6px}
+#tune .row button{flex:1;font:inherit;padding:3px 6px;border:1px solid var(--proto-line);border-radius:4px;background:#fff;cursor:pointer}
+#tune h4{margin:6px 0 0;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--proto-dim)}
+#tune .help{color:var(--proto-dim);line-height:1.4;border-top:1px solid var(--proto-line);padding-top:7px}
+#tune kbd{font:11px var(--mono);background:#0000000d;border:1px solid var(--proto-line);border-radius:3px;padding:0 3px}
+#read{position:fixed;left:12px;bottom:14px;background:var(--proto-bg);border:1px solid var(--proto-line);border-radius:8px;padding:8px 10px;z-index:20;font:11px/1.5 var(--mono);color:var(--proto-fg);white-space:pre;max-width:calc(100vw - 32px);overflow:hidden;box-shadow:0 6px 24px #0008}
+@media (max-width:900px){#read{bottom:60px}}
+</style>
+
+<div id="view"><div id="world" class="anim"></div></div>
+
+<div id="bar" class="proto" role="toolbar" aria-label="Packing">
+  <button id="pprev" aria-label="Previous packing">&#x2039;</button>
+  <div id="plabel"></div>
+  <button id="pnext" aria-label="Next packing">&#x203a;</button>
+</div>
+
+<details id="tune" class="proto" open>
+  <summary>Grid layout</summary>
+  <div class="in">
+    <label>Clusters (a convoy and its vessels)
+      <select id="clus">
+        <option value="whole">Keep whole on a row when it fits</option>
+        <option value="flow">Always flow</option>
+      </select>
+    </label>
+    <label>Tile size limit between strips/groups <output id="limO"></output><input id="lim" type="range" min="1" max="3.1" step="0.05" value="1.5"></label>
+    <label>Readable tile width (px) <output id="floorO"></output><input id="floor" type="range" min="60" max="400" step="10" value="160"></label>
+    <label class="chk"><input id="anim" type="checkbox" checked> Animate layout changes</label>
+    <h4>Workspaces</h4>
+    <label>Fleet
+      <select id="fleet">
+        <option value="gen">Made up from the sliders</option>
+        <option value="example">The camera prototype's fleet</option>
+      </select>
+    </label>
+    <label>Groups <output id="gO"></output><input id="g" type="range" min="1" max="14" step="1" value="6"></label>
+    <label>Most convoys in a group <output id="mcO"></output><input id="mc" type="range" min="0" max="12" step="1" value="5"></label>
+    <label>Most vessels in a convoy <output id="mvO"></output><input id="mv" type="range" min="0" max="5" step="1" value="2"></label>
+    <div class="row"><button id="shuffle">Reshuffle</button><button id="fit">Fit all</button><button id="home">Default view</button></div>
+    <div class="help">
+      Drag or scroll to pan, <kbd>Ctrl</kbd>/pinch+scroll to zoom. Click a tile to make it current, a group heading to fit its group.
+      <kbd>Esc</kbd> default view, <kbd>F</kbd> fit all, <kbd>[</kbd> <kbd>]</kbd> packing. Resize the window to change its shape.
+    </div>
+  </div>
+</details>
+
+<div id="read" class="proto" aria-live="polite"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const view = $('view'), world = $('world');
+
+// ---------- workspaces ----------
+const EXAMPLE = [
+  ['wheelhouse', [['chip-icons-447','done',[['coder','done']]],['shared-cleat-attachment-417','done',[['coder','done']]],['splitter-skips-empty-486','run',[['coder','run']]],['overview-camera-450','run',[['coder','run'],['reviewer','idle']]],['sidebar-store-sync-475','idle',[['coder','idle']]],['strip-wide-mode-484','idle',[['coder','idle']]]]],
+  ['flotilla', [['vessel-delivery-access-layer-3964','run',[['coder','done'],['reviewer','run'],['shepherd','idle']]],['attach-exit-status-recoverable-397','fail',[['coder','fail']]],['replicator-backoff-4130','run',[['coder','run']]]]],
+  ['cleat', [['many-views-399','done',[['coder','done']]],['clipboard-poll-401','run',[['coder','run']]]]],
+  ['binnacle', [['table-explorer-pilot-506','run',[['coder','run'],['reviewer','idle']]]]],
+];
+const PROJECTS = ['wheelhouse','flotilla','cleat','binnacle','jackstay','luchs','andamento','halyard','capstan','bosun','gunwale','lanyard','sheave','thwart'];
+const WORDS = ['splitter','cleat','attach','overview','sidebar','store','sync','strip','camera','grid','replicator','backoff','clipboard','poll','ingress','preview','budget','chip','icons','layout','zoom','drag','glide','route','relay','shepherd','crew','ledger','table','pilot'];
+const ROLES = ['coder','reviewer','shepherd','tester','planner'];
+const STATUS = ['run','run','done','idle','fail'];
+function hueOf(s){ let h=0; for(const c of s) h=(h*31+c.charCodeAt(0))>>>0; return h%360; }
+function rng(seed){ return ()=>{ seed=seed+0x6D2B79F5|0; let t=Math.imul(seed^seed>>>15,1|seed); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+let seed = 7;
+
+// A group: {id, clusters:[{id, hue, head, tiles:[{id,title,sub,status,hue}]}], n}
+function group(id, convoys, hasHead){
+  const clusters = [];
+  if(hasHead) clusters.push({id:id+':home', hue:38, head:true, tiles:[{id:'p:'+id, title:id, sub:'project', status:'home', hue:38}]});
+  for(const [cid, st, vessels, collapsed] of convoys){
+    const hue = hueOf(cid);
+    const tiles = [{id:'c:'+cid, title:cid, sub:collapsed ? vessels.map(v=>v[0]).join(' → ') : 'convoy', status:st, hue}];
+    if(!collapsed) for(const [role, vs] of vessels) tiles.push({id:'v:'+cid+':'+role, title:role, sub:'vessel', status:vs, hue});
+    clusters.push({id:cid, hue, head:false, tiles});
+  }
+  return {id, clusters, n:clusters.reduce((s,c)=>s+c.tiles.length,0)};
+}
+function makeFleet(){
+  if($('fleet').value==='example') return EXAMPLE.map(([id, cs])=>group(id, cs.map(([c,s,v])=>[c,s,v,c.startsWith('vessel-delivery')]), true));
+  const r = rng(seed), out = [];
+  const g = +$('g').value, mc = +$('mc').value, mv = +$('mv').value;
+  for(let i=0;i<g;i++){
+    const id = PROJECTS[i];
+    const convoys = [];
+    const count = Math.round(Math.pow(r(), 1.4) * mc);
+    for(let k=0;k<count;k++){
+      const name = WORDS[Math.floor(r()*WORDS.length)]+'-'+WORDS[Math.floor(r()*WORDS.length)]+'-'+(100+Math.floor(r()*4000));
+      const nv = Math.floor(Math.pow(r(), 1.6) * (mv+1));
+      const vessels = []; for(let v=0; v<Math.max(nv, mv>0?1:0) && v<ROLES.length; v++) vessels.push([ROLES[v], STATUS[Math.floor(r()*STATUS.length)]]);
+      convoys.push([name, STATUS[Math.floor(r()*STATUS.length)], vessels, vessels.length>1 && r()<0.15]);
+    }
+    out.push(group(id, convoys, convoys.length===0 || r()<0.8));
+  }
+  return out;
+}
+
+// ---------- block geometry, in tile heights (a tile is A wide, 1 high) ----------
+let A = 1.6, W = 1, H = 1;           // tile aspect = the region's; W x H = the region
+const K = {gap:0.07, label:0.3, head:0.36, pad:0.08, ggap:0.24, sgap:0.24};
+const cellW = () => A + K.gap, cellH = () => 1 + K.label + K.gap;
+const gw = c => c*cellW() - K.gap + 2*K.pad;
+const gh = r => K.head + K.pad + r*cellH() - K.gap + K.pad;
+
+// Where each tile of `g` goes with `c` columns: [[col,row]], in sidebar order.
+const flowMemo = new Map();
+function flow(g, c){
+  const whole = $('clus').value==='whole';
+  const key = g.id+'|'+c+'|'+whole+'|'+g.n; if(flowMemo.has(key)) return flowMemo.get(key);
+  let col=0, row=0; const pos=[];
+  for(const cl of g.clusters){
+    const n = cl.tiles.length;
+    if(whole && col>0 && (n>c || col+n>c)){ col=0; row++; }
+    for(let i=0;i<n;i++){ if(col===c){ col=0; row++; } pos.push([col,row]); col++; }
+  }
+  const out = {rows:row+1, pos}; flowMemo.set(key, out); return out;
+}
+// Fewest columns that keep `g` within `R` rows.
+function colsFor(g, R){ for(let c=1;c<g.n;c++) if(flow(g,c).rows<=R) return c; return Math.max(1,g.n); }
+
+// ---------- packings: each returns [{g, x, y, t, c, rect?}] in region units ----------
+function limitOK(ts){ const lim=+$('lim').value; if(lim>3) return true; return Math.max(...ts)/Math.min(...ts) <= lim+1e-9; }
+function* partitions(n){ // contiguous splits of 0..n into strips: arrays of [i,j)
+  for(let m=0; m<(1<<(n-1)); m++){ const out=[]; let i=0; for(let k=1;k<n;k++) if(m&(1<<(k-1))){ out.push([i,k]); i=k; } out.push([i,n]); yield out; }
+}
+
+// Strip treemap: strips in sidebar order, each with one tile size, filling the width.
+function packStrip(G){
+  const cands = new Map();
+  const strip = (i,j) => {
+    const key=i+','+j; if(cands.has(key)) return cands.get(key);
+    const gs=G.slice(i,j), out=[]; let prev='';
+    for(let R=1; R<=Math.max(...gs.map(g=>g.n)); R++){
+      const cs=gs.map(g=>colsFor(g,R)), k=cs.join(','); if(k===prev) continue; prev=k;
+      const rows=Math.max(...gs.map((g,q)=>flow(g,cs[q]).rows));
+      const t=W/(cs.reduce((s,c)=>s+gw(c),0)+K.ggap*(gs.length-1));
+      out.push({cs, t, h:t*gh(rows), a:gs.reduce((s,g)=>s+g.n,0)*A*t*t});
+    }
+    cands.set(key,out); return out;
+  };
+  const score = ch => { // tile area once the whole thing is scaled to fit the region
+    let h=0, a=0; ch.forEach((c,q)=>{ h+=c.h + (q? c.t*K.sgap : 0); a+=c.a; });
+    const s=Math.min(1, H/h); return a*s*s;
+  };
+  let best=null, bestAny=null, tried=0;
+  for(const parts of partitions(G.length)){
+    tried++;
+    const cs=parts.map(([i,j])=>strip(i,j)), idx=parts.map(()=>0);
+    const pick=()=>idx.map((x,q)=>cs[q][x]);
+    // grow strips one row at a time while it helps
+    for(;;){
+      let bestQ=-1, bestS=score(pick());
+      for(let q=0;q<idx.length;q++){ if(idx[q]+1>=cs[q].length) continue; idx[q]++; const s=score(pick()); const ok=limitOK(pick().map(c=>c.t)); idx[q]--; if(s>bestS && (ok || !limitOK(pick().map(c=>c.t)))){ bestS=s; bestQ=q; } }
+      if(bestQ<0) break; idx[bestQ]++;
+    }
+    const ch=pick(), s=score(ch), ok=limitOK(ch.map(c=>c.t));
+    if(ok && (!best || s>best.s)) best={s, parts, ch};
+    if(!bestAny || s>bestAny.s) bestAny={s, parts, ch};
+  }
+  const b = best || bestAny, out=[]; let y=0;
+  b.parts.forEach(([i,j],q)=>{ const c=b.ch[q]; if(q) y+=c.t*K.sgap; let x=0;
+    for(let k=i;k<j;k++){ const cc=c.cs[k-i]; out.push({g:G[k], x, y, t:c.t, c:cc}); x+=c.t*(gw(cc)+K.ggap); }
+    y+=c.h; });
+  return {placed:out, tried, limited:!best};
+}
+
+// Proportional treemap: strips in sidebar order, each group's rectangle by its tile count, its grid fitted inside.
+function packProp(G){
+  const N=G.reduce((s,g)=>s+g.n,0), m=Math.min(W,H)*0.012;
+  const fit = (g, w, h) => { let bt=0, bc=1; for(let c=1;c<=g.n;c++){ const t=Math.min((w-m)/gw(c), (h-m)/gh(flow(g,c).rows)); if(t>bt){ bt=t; bc=c; } } return {t:bt, c:bc}; };
+  let best=null, bestAny=null, tried=0;
+  for(const parts of partitions(G.length)){
+    tried++; const out=[]; let y=0, a=0;
+    for(const [i,j] of parts){
+      const sn=G.slice(i,j).reduce((s,g)=>s+g.n,0), h=H*sn/N; let x=0;
+      for(let k=i;k<j;k++){ const w=W*G[k].n/sn, f=fit(G[k],w,h); out.push({g:G[k], x:x+m/2, y:y+m/2, t:f.t, c:f.c, rect:{x, y, w, h}}); a+=G[k].n*A*f.t*f.t; x+=w; }
+      y+=h;
+    }
+    const ok=limitOK(out.map(p=>p.t));
+    if(ok && (!best || a>best.a)) best={a, out};
+    if(!bestAny || a>bestAny.a) bestAny={a, out};
+  }
+  return {placed:(best||bestAny).out, tried, limited:!best};
+}
+
+// One tile size everywhere: each block shaped like the region, shelves in sidebar order, the largest size that fits.
+function packUniform(G){
+  const cs=G.map(g=>{ let bc=1, bd=1e9; for(let c=1;c<=g.n;c++){ const d=Math.abs(Math.log(gw(c)/gh(flow(g,c).rows)/A)); if(d<bd){ bd=d; bc=c; } } return bc; });
+  const pack = t => { const out=[]; let x=0, y=0, sh=0;
+    G.forEach((g,k)=>{ const w=t*gw(cs[k]), h=t*gh(flow(g,cs[k]).rows); if(x>0 && x+w>W+1e-6){ y+=sh+t*K.sgap; x=0; sh=0; } out.push({g, x, y, t, c:cs[k]}); x+=w+t*K.ggap; sh=Math.max(sh,h); });
+    return {out, h:y+sh, w:Math.max(...G.map((g,k)=>t*gw(cs[k])))}; };
+  let lo=0, hi=H; for(let i=0;i<40;i++){ const mid=(lo+hi)/2, p=pack(mid); if(p.h<=H && p.w<=W) lo=mid; else hi=mid; }
+  return {placed:pack(lo).out, tried:40, limited:false};
+}
+
+// Today's core: blocks 3 tiles wide, into the shorter of 2 block columns.
+function packFixed(G){
+  const t=1, colY=[0,0], out=[];
+  for(const g of G){ const col=colY[0]<=colY[1]?0:1; out.push({g, x:col*(gw(3)+K.ggap), y:colY[col], t, c:3}); colY[col]+=gh(flow(g,3).rows)+K.sgap; }
+  return {placed:out, tried:1, limited:false};
+}
+
+const PACKINGS = [
+  ['strip', 'Strip treemap, one tile size per strip', packStrip],
+  ['prop', 'Proportional treemap, a rectangle per group', packProp],
+  ['uniform', 'One tile size everywhere, shelves', packUniform],
+  ['fixed', "Today's fixed blocks (3 wide, 2 columns)", packFixed],
+];
+let packing = 0;
+
+// ---------- the scene ----------
+let G = [], scene = null, current = null;
+function layout(){
+  flowMemo.clear();
+  W = view.clientWidth; H = view.clientHeight; A = W/H;
+  const t0 = performance.now();
+  const r = PACKINGS[packing][2](G);
+  const ms = performance.now()-t0;
+  // scale to fit the region, then centre it
+  let bx=0, by=0;
+  for(const p of r.placed){ bx=Math.max(bx, p.rect ? p.rect.x+p.rect.w : p.x+p.t*gw(p.c)); by=Math.max(by, p.rect ? p.rect.y+p.rect.h : p.y+p.t*gh(flow(p.g,p.c).rows)); }
+  const f = Math.min(W/bx, H/by), ox=(W-bx*f)/2, oy=(H-by*f)/2;
+  const items = [];
+  for(const p of r.placed){
+    const t=p.t*f, x=ox+p.x*f, y=oy+p.y*f, fl=flow(p.g,p.c);
+    const blk = {x, y, w:t*gw(p.c), h:t*gh(fl.rows)};
+    const rect = p.rect ? {x:ox+p.rect.x*f, y:oy+p.rect.y*f, w:p.rect.w*f, h:p.rect.h*f} : null;
+    if(rect){ blk.x = rect.x + (rect.w-blk.w)/2; } // centre the block in its rectangle
+    const tiles=[]; let i=0;
+    for(const cl of p.g.clusters) for(const tl of cl.tiles){
+      const [col,row]=fl.pos[i++];
+      const tx=blk.x+t*(K.pad+col*cellW()), ty=blk.y+t*(K.head+K.pad+row*cellH());
+      tiles.push({tl, cl, t, x:tx, y:ty, w:A*t, h:t});
+    }
+    items.push({g:p.g, t, blk, rect, tiles});
+  }
+  const ts = items.map(it=>it.t);
+  scene = {items, bounds:{x0:ox, y0:oy, x1:ox+bx*f, y1:oy+by*f}, ms, tried:r.tried, limited:r.limited,
+           tmin:Math.min(...ts), tmax:Math.max(...ts),
+           filled: items.reduce((s,it)=>s+it.tiles.length*A*it.t*it.t,0)/(W*H)};
+  render();
+}
+
+const els = new Map(); let used;
+function el(key, cls, parent=world){
+  used.add(key); let e=els.get(key);
+  if(!e){ e=document.createElement('div'); e.className=cls; e.dataset.key=key; parent.appendChild(e); els.set(key,e); }
+  return e;
+}
+function place(e, x, y, w, h){ e.style.left=x+'px'; e.style.top=y+'px'; e.style.width=w+'px'; e.style.height=h+'px'; }
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function render(){
+  used = new Set();
+  world.classList.toggle('anim', $('anim').checked);
+  for(const it of scene.items){
+    const {g, t, blk, rect} = it;
+    if(rect){ const r=el('r:'+g.id,'block rect'); place(r, rect.x, rect.y, rect.w, rect.h); }
+    const b=el('b:'+g.id,'block'); place(b, blk.x, blk.y, blk.w, blk.h);
+    const h=el('h:'+g.id,'ghead'); h.dataset.group=g.id; place(h, blk.x+t*K.pad, blk.y, blk.w-2*t*K.pad, t*K.head);
+    h.style.fontSize=(t*0.2)+'px'; h.innerHTML=`${esc(g.id)}<small>${g.n}</small>`;
+    for(const p of it.tiles){
+      const {tl, cl} = p;
+      if(!cl.head){ const s=el('s:'+tl.id,'shade'); s.style.setProperty('--h', cl.hue); const gp=K.gap*t/2; place(s, p.x-gp, p.y-gp, p.w+2*gp, t*(1+K.label)+2*gp); }
+      const e=el('t:'+tl.id,'tile'); e.dataset.id=tl.id; e.style.setProperty('--h', tl.hue); e.style.fontSize=(t*0.075)+'px'; place(e, p.x, p.y, p.w, p.h);
+      e.classList.toggle('cur', tl.id===current);
+      if(!e.firstChild) e.innerHTML=`<div class="bar">${esc(tl.title)}</div><div class="body"><div class="term"><i class="h" style="width:60%"></i><i style="width:85%"></i><i style="width:70%"></i><i style="width:40%"></i></div><div class="files"></div></div>`;
+      const l=el('l:'+tl.id,'lbl'); place(l, p.x, p.y+t*1.03, p.w, t*(K.label-0.03)); l.style.fontSize=(t*0.11)+'px';
+      l.innerHTML=`<div class="t">${esc(tl.title)}</div><div class="s"><span class="dot ${tl.status}"></span>${esc(tl.sub)}</div>`;
+    }
+  }
+  // shades under tiles: keep z-order shade < tile by re-appending tiles last
+  for(const [k,e] of els) if(!used.has(k)){ e.remove(); els.delete(k); }
+  for(const e of world.querySelectorAll('.tile,.lbl,.ghead')) world.appendChild(e);
+}
+
+// ---------- camera ----------
+let cam = {cx:0, cy:0, z:1}, anim = null;
+function tileOf(id){ for(const it of scene.items) for(const p of it.tiles) if(p.tl.id===id) return p; return null; }
+function fitCam(r, m=1.0){ const w=(r.x1-r.x0)*m, h=(r.y1-r.y0)*m; return {cx:(r.x0+r.x1)/2, cy:(r.y0+r.y1)/2, z:Math.min(W/w, H/h)}; }
+function clampCam(c){
+  const b=scene.bounds, out={...c};
+  for(const [k, lo, hi, span] of [['cx', b.x0, b.x1, W], ['cy', b.y0, b.y1, H]]){
+    const half=span/2/c.z; out[k] = (hi-lo <= 2*half) ? (lo+hi)/2 : Math.min(hi-half, Math.max(lo+half, c[k]));
+  }
+  return out;
+}
+// Fit everything if the current tile is readable then; otherwise zoom in on it until it is.
+function defaultCam(){
+  const fit = fitCam(scene.bounds), p = current && tileOf(current), floor=+$('floor').value;
+  if(!p || p.w*fit.z >= floor) return {...fit, why:'fits: everything readable'};
+  const z = floor/p.w;
+  return {...clampCam({cx:p.x+p.w/2, cy:p.y+p.h/2, z}), why:`zoomed ×${(z/fit.z).toFixed(2)} on the current tile`};
+}
+let camWhy = '';
+function apply(c){ cam=c; world.style.transform=`translate(${W/2-c.cx*c.z}px,${H/2-c.cy*c.z}px) scale(${c.z})`; read(); }
+function flyTo(to, why){
+  if(why) camWhy=why;
+  const from={...cam}, t0=performance.now(), d=380;
+  const step = now => { if(anim!==step) return; const u=Math.min(1,(now-t0)/d), e=1-Math.pow(1-u,3);
+    apply({cx:from.cx+(to.cx-from.cx)*e, cy:from.cy+(to.cy-from.cy)*e, z:from.z*Math.pow(to.z/from.z,e)});
+    if(u<1) requestAnimationFrame(step); else anim=null; };
+  anim = step; requestAnimationFrame(step);
+}
+function home(animate=true){ const c=defaultCam(); if(animate) flyTo(c, c.why); else { camWhy=c.why; apply(c); } }
+
+// ---------- readout ----------
+function read(){
+  if(!scene) return;
+  const fit=fitCam(scene.bounds).z, n=G.reduce((s,g)=>s+g.n,0), p=current&&tileOf(current);
+  const lim=+$('lim').value;
+  $('read').textContent =
+`packing  ${PACKINGS[packing][1]}
+fleet    ${G.length} groups, ${n} workspaces; region ${W}×${H}
+fit all  tiles ${Math.round(scene.tmin*A*fit)}–${Math.round(scene.tmax*A*fit)} px wide (${(scene.tmax/scene.tmin).toFixed(2)}×), tiles fill ${Math.round(scene.filled*fit*fit*100)}% of the window
+limit    ${lim>3?'off':lim.toFixed(2)+'×'}${scene.limited?' — no arrangement met it; best ignoring it':''}
+camera   ${camWhy}; current tile ${p?Math.round(p.w*cam.z):'-'} px, view ×${(cam.z/fit).toFixed(2)}
+search   ${scene.tried} arrangement${scene.tried===1?'':'s'}, ${scene.ms.toFixed(1)} ms`;
+}
+
+// ---------- controls ----------
+function outputs(){ $('limO').textContent = +$('lim').value>3 ? 'off' : (+$('lim').value).toFixed(2)+'×'; $('floorO').textContent=$('floor').value; $('gO').textContent=$('g').value; $('mcO').textContent=$('mc').value; $('mvO').textContent=$('mv').value;
+  for(const id of ['g','mc','mv']) $(id).disabled = $('fleet').value==='example'; }
+function pickCurrent(){
+  if(current && G.some(g=>g.clusters.some(c=>c.tiles.some(t=>t.id===current)))) return;
+  const big=[...G].sort((a,b)=>b.n-a.n)[0]; const cl=big.clusters.find(c=>!c.head)||big.clusters[0]; current=cl.tiles[cl.tiles.length-1].id;
+}
+function refleet(){ G=makeFleet(); pickCurrent(); relayout(); }
+function relayout(){ layout(); home(true); }
+function setPacking(i){ packing=(i+PACKINGS.length)%PACKINGS.length; $('plabel').textContent=PACKINGS[packing][1]; relayout(); }
+for(const id of ['lim','floor','g','mc','mv']) $(id).addEventListener('input', ()=>{ outputs(); id==='floor' ? home(true) : (['g','mc','mv'].includes(id) ? refleet() : relayout()); });
+for(const id of ['clus']) $(id).addEventListener('change', relayout);
+$('fleet').addEventListener('change', ()=>{ outputs(); current=null; refleet(); });
+$('anim').addEventListener('change', render);
+$('shuffle').addEventListener('click', ()=>{ seed++; current=null; refleet(); });
+$('fit').addEventListener('click', ()=>flyTo(fitCam(scene.bounds), 'fit all'));
+$('home').addEventListener('click', ()=>home(true));
+$('pprev').addEventListener('click', ()=>setPacking(packing-1));
+$('pnext').addEventListener('click', ()=>setPacking(packing+1));
+let rz=null; addEventListener('resize', ()=>{ clearTimeout(rz); rz=setTimeout(()=>{ layout(); home(false); }, 80); });
+addEventListener('keydown', e=>{
+  if(e.target.closest && e.target.closest('select,input')) return;
+  if(e.key==='Escape') home(true);
+  else if(e.key==='f'||e.key==='F') flyTo(fitCam(scene.bounds), 'fit all');
+  else if(e.key==='[') setPacking(packing-1);
+  else if(e.key===']') setPacking(packing+1);
+});
+
+// pan and zoom
+let drag=null;
+view.addEventListener('pointerdown', e=>{ if(e.button!==0) return; anim=null; drag={x:e.clientX, y:e.clientY, cam:{...cam}, moved:false, target:e.target}; view.setPointerCapture(e.pointerId); });
+view.addEventListener('pointermove', e=>{ if(!drag) return; const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+  if(!drag.moved && Math.hypot(dx,dy)<5) return; drag.moved=true; view.classList.add('drag');
+  camWhy='panned'; apply(clampCam({cx:drag.cam.cx-dx/cam.z, cy:drag.cam.cy-dy/cam.z, z:cam.z})); });
+view.addEventListener('pointerup', e=>{ if(!drag) return; const d=drag; drag=null; view.classList.remove('drag'); if(d.moved) return;
+  const t=d.target.closest('.tile'), h=d.target.closest('.ghead');
+  if(t){ current=t.dataset.id; render(); home(true); }
+  else if(h){ const it=scene.items.find(i=>i.g.id===h.dataset.group); const b=it.rect||it.blk; flyTo(fitCam({x0:b.x, y0:b.y, x1:b.x+b.w, y1:b.y+b.h}, 1.06), 'fitted group '+it.g.id); }
+});
+view.addEventListener('wheel', e=>{ e.preventDefault(); anim=null;
+  if(e.ctrlKey){ const fit=fitCam(scene.bounds).z, z=Math.min(fit*40, Math.max(fit*0.6, cam.z*Math.exp(-e.deltaY*0.01)));
+    const mx=e.clientX-W/2, my=e.clientY-H/2, wx=cam.cx+mx/cam.z, wy=cam.cy+my/cam.z;
+    camWhy='zoomed'; apply(z<=fit ? {cx:(scene.bounds.x0+scene.bounds.x1)/2, cy:(scene.bounds.y0+scene.bounds.y1)/2, z} : clampCam({cx:wx-mx/z, cy:wy-my/z, z})); }
+  else { camWhy='panned'; apply(clampCam({cx:cam.cx+e.deltaX/cam.z, cy:cam.cy+e.deltaY/cam.z, z:cam.z})); }
+}, {passive:false});
+
+outputs(); $('plabel').textContent=PACKINGS[packing][1];
+G=makeFleet(); pickCurrent(); layout(); home(false);
+</script>

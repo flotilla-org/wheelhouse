@@ -22,7 +22,8 @@ struct UIShell_Overview
   // Draw the region through the scene, not the current workspace as itself.
   B32 through_scene;
   // A drag or glide past an end, as drawn: the region's content shifts by
-  // `over` (across only for row `over_group`).
+  // `over`, across only for row `over_group` when a row slides (max_U64
+  // when everything pans).
   Vec2F32 over;
   U64 over_group;
 };
@@ -69,6 +70,27 @@ uishell_overview_set_view_mode_setting(U32 view_mode)
   CFG_Node *node = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("overview_view_mode"));
   cfg_node_new_replacef(rd_state->cfg, node, "%s", view_mode == WHEELHOUSE_OVERVIEW_GRID ? "grid" : "rows");
   return 1;
+}
+
+// The grid's packing, as the user's setting has it: shelves unless it says
+// treemap.
+internal U32
+uishell_overview_grid_packing_setting(void)
+{
+  CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+  String8 value = cfg_node_child_from_string(user, str8_lit("overview_grid_packing"))->first->string;
+  return str8_match(value, str8_lit("treemap"), StringMatchFlag_CaseInsensitive) ? WHEELHOUSE_OVERVIEW_TREEMAP : WHEELHOUSE_OVERVIEW_SHELVES;
+}
+
+// How wide, in points, a grid's tile needs to be to read: the user's
+// setting, 160 without one.
+internal F64
+uishell_overview_readable_width_setting(void)
+{
+  CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+  String8 value = cfg_node_child_from_string(user, str8_lit("overview_readable_tile_width"))->first->string;
+  F64 width = value.size != 0 ? f64_from_str8(value) : 160.0;
+  return width > 0 ? width : 0;
 }
 
 internal B32
@@ -125,6 +147,10 @@ uishell_overview_begin(RD_WindowState *ws, CFG_Node *current, Rng2F32 region, B3
     state->overview_view_mode_seen = view_mode;
     wheelhouse_overview_set_view_mode(state->core, view_mode, 0);
   }
+  // The readable width is in points; the region is in pixels.
+  F32 scale = wm_layout_scale_from_window(ws->os);
+  F64 readable_px = uishell_overview_readable_width_setting()*(scale > 0 ? scale : 1.f);
+  wheelhouse_overview_set_grid(state->core, uishell_overview_grid_packing_setting(), dim.x > 0 ? readable_px/dim.x : 0, o.now_ms, 0);
   if(!!ws->workspace_zoom_open != state->overview_toggle_seen)
   {
     if(ws->workspace_zoom_open) { wheelhouse_overview_open(state->core, o.now_ms, 0); }
@@ -172,7 +198,8 @@ uishell_overview_rect(UIShell_Overview *o, WheelhouseOverviewRect r)
 internal Rng2F32
 uishell_overview_drawn_rect(UIShell_Overview *o, WheelhouseOverviewRect r, U64 group)
 {
-  return shift_2f32(uishell_overview_rect(o, r), v2f32(group == o->over_group ? o->over.x : 0, o->over.y));
+  B32 across = (o->over_group == max_U64 || group == o->over_group);
+  return shift_2f32(uishell_overview_rect(o, r), v2f32(across ? o->over.x : 0, o->over.y));
 }
 
 // Whether a tile, with its label, is in the region: the scene draws only
@@ -219,7 +246,8 @@ struct UIShell_OverviewMove
   U64 slide_group;
   F64 slide_by;
   B32 pans;
-  F64 pan_by;
+  F64 pan_dx;
+  F64 pan_dy;
   B32 zooms;
   U64 zoom_group;
   B32 picks;
@@ -231,13 +259,15 @@ struct UIShell_OverviewMove
 };
 
 // What a drag moves, chosen as it starts: mostly sideways over a row too
-// long for the region slides the row; mostly up or down, over a row or
-// between them, pans an overview taller than the region.
+// long for the region slides the row, else pans an overview wider than the
+// region; mostly up or down, over a row or between them, pans an overview
+// taller than the region.
 typedef enum UIShell_OverviewDragAxis
 {
   UIShell_OverviewDragAxis_None,
   UIShell_OverviewDragAxis_Slide,
   UIShell_OverviewDragAxis_Pan,
+  UIShell_OverviewDragAxis_PanAcross,
 }
 UIShell_OverviewDragAxis;
 
@@ -256,12 +286,15 @@ uishell_overview_slides(WheelhouseOverviewFrame *f, U64 group)
   return group < f->group_count && f->view_mode == WHEELHOUSE_OVERVIEW_ROWS && f->groups[group].slide_min < 0;
 }
 
-// Whether the overview is taller than the region, so it pans.
+// Whether the overview is taller than the region, so it pans down, or (on
+// Axis2_X) a grid wider than it, so it pans across; rows slide instead.
 internal B32
-uishell_overview_pans(WheelhouseOverviewFrame *f)
+uishell_overview_pans(WheelhouseOverviewFrame *f, Axis2 axis)
 {
-  return (f->mode == WHEELHOUSE_OVERVIEW_OVERVIEW &&
-          (f->bounds.y0 < f->view.y0 - 1e-6 || f->bounds.y1 > f->view.y1 + 1e-6));
+  if(f->mode != WHEELHOUSE_OVERVIEW_OVERVIEW) { return 0; }
+  if(axis == Axis2_X && f->view_mode != WHEELHOUSE_OVERVIEW_GRID) { return 0; }
+  return (axis == Axis2_X ? (f->bounds.x0 < f->view.x0 - 1e-6 || f->bounds.x1 > f->view.x1 + 1e-6)
+                          : (f->bounds.y0 < f->view.y0 - 1e-6 || f->bounds.y1 > f->view.y1 + 1e-6));
 }
 
 // Scene units a pixel of the region, across or down.
@@ -273,11 +306,17 @@ uishell_overview_units(UIShell_Overview *o, Axis2 axis)
   return axis == Axis2_X ? (f->view.x1 - f->view.x0)/Max(1.f, dim.x) : (f->view.y1 - f->view.y0)/Max(1.f, dim.y);
 }
 
-// Where a drag's axis is now: the row's slide, or the camera's height.
+// Where a drag's axis is now: the row's slide, or the camera's centre,
+// down or across.
 internal F64
 uishell_overview_drag_place(WheelhouseOverviewFrame *f, UIShell_OverviewDragAxis axis, U64 group)
 {
-  return axis == UIShell_OverviewDragAxis_Slide ? f->groups[group].slide : (f->view.y0 + f->view.y1)/2;
+  switch(axis)
+  {
+    case UIShell_OverviewDragAxis_Slide:     { return f->groups[group].slide; }
+    case UIShell_OverviewDragAxis_PanAcross: { return (f->view.x0 + f->view.x1)/2; }
+    default:                                 { return (f->view.y0 + f->view.y1)/2; }
+  }
 }
 
 // Where a drag's axis keeps to: a row from its slide_min to 0, the camera
@@ -286,9 +325,10 @@ internal F64
 uishell_overview_drag_clamp(WheelhouseOverviewFrame *f, UIShell_OverviewDragAxis axis, U64 group, F64 place)
 {
   if(axis == UIShell_OverviewDragAxis_Slide) { return Clamp(f->groups[group].slide_min, place, 0); }
-  F64 half = (f->view.y1 - f->view.y0)/2;
-  F64 lo = f->bounds.y0 + half;
-  return Clamp(lo, place, Max(lo, f->bounds.y1 - half));
+  B32 across = (axis == UIShell_OverviewDragAxis_PanAcross);
+  F64 half = across ? (f->view.x1 - f->view.x0)/2 : (f->view.y1 - f->view.y0)/2;
+  F64 lo = (across ? f->bounds.x0 : f->bounds.y0) + half;
+  return Clamp(lo, place, Max(lo, (across ? f->bounds.x1 : f->bounds.y1) - half));
 }
 
 internal void
@@ -296,7 +336,8 @@ uishell_overview_move_by(UIShell_OverviewMove *move, UIShell_OverviewDragAxis ax
 {
   if(by == 0) { return; }
   if(axis == UIShell_OverviewDragAxis_Slide && !move->slides) { move->slides = 1; move->slide_group = group; move->slide_by = by; }
-  if(axis == UIShell_OverviewDragAxis_Pan && !move->pans)     { move->pans = 1; move->pan_by = by; }
+  if(axis == UIShell_OverviewDragAxis_Pan && move->pan_dy == 0)       { move->pans = 1; move->pan_dy = by; }
+  if(axis == UIShell_OverviewDragAxis_PanAcross && move->pan_dx == 0) { move->pans = 1; move->pan_dx = by; }
 }
 
 // Past an end, what's dragged stretches, less the further it goes, and
@@ -317,7 +358,8 @@ uishell_overview_stretch(F64 px, F64 dim)
 }
 
 // Which way the content moves, on screen, as an axis's place grows: a row
-// goes right as it slides; the content goes up as the camera goes down.
+// goes right as it slides; the content goes up (or left) as the camera goes
+// down (or right).
 internal F64
 uishell_overview_drawn_sign(UIShell_OverviewDragAxis axis)
 {
@@ -327,7 +369,7 @@ uishell_overview_drawn_sign(UIShell_OverviewDragAxis axis)
 internal Axis2
 uishell_overview_drag_screen_axis(UIShell_OverviewDragAxis axis)
 {
-  return axis == UIShell_OverviewDragAxis_Slide ? Axis2_X : Axis2_Y;
+  return axis == UIShell_OverviewDragAxis_Pan ? Axis2_Y : Axis2_X;
 }
 
 internal void
@@ -375,9 +417,9 @@ uishell_overview_spring(UIShell_Overview *o)
     }
   }
   o->over = v2f32(0, 0);
-  o->over_group = state->overview_over_group;
-  if(state->overview_over_axis == UIShell_OverviewDragAxis_Slide) { o->over.x = (F32)state->overview_over_px; }
-  if(state->overview_over_axis == UIShell_OverviewDragAxis_Pan)   { o->over.y = (F32)state->overview_over_px; }
+  o->over_group = state->overview_over_axis == UIShell_OverviewDragAxis_Slide ? state->overview_over_group : max_U64;
+  if(state->overview_over_axis == UIShell_OverviewDragAxis_Pan) { o->over.y = (F32)state->overview_over_px; }
+  else                                                          { o->over.x = (F32)state->overview_over_px; }
 }
 
 // Dragging the overview with the mouse slides a row or pans, following the
@@ -415,8 +457,10 @@ uishell_overview_drag(UIShell_Overview *o, UI_Signal sig, U64 group, UIShell_Ove
   {
     if(Max(abs_f32(d.x), abs_f32(d.y)) < ui_top_font_size()*0.5f) { return; }
     state->overview_dragged = 1;
-    axis = (abs_f32(d.x) >= abs_f32(d.y) ? (uishell_overview_slides(f, group) ? UIShell_OverviewDragAxis_Slide : UIShell_OverviewDragAxis_None)
-                                         : (uishell_overview_pans(f) ? UIShell_OverviewDragAxis_Pan : UIShell_OverviewDragAxis_None));
+    axis = (abs_f32(d.x) >= abs_f32(d.y) ? (uishell_overview_slides(f, group)      ? UIShell_OverviewDragAxis_Slide :
+                                            uishell_overview_pans(f, Axis2_X)        ? UIShell_OverviewDragAxis_PanAcross :
+                                                                                       UIShell_OverviewDragAxis_None)
+                                         : (uishell_overview_pans(f, Axis2_Y) ? UIShell_OverviewDragAxis_Pan : UIShell_OverviewDragAxis_None));
     state->overview_drag_axis = axis;
     if(axis != UIShell_OverviewDragAxis_None)
     {
@@ -426,8 +470,8 @@ uishell_overview_drag(UIShell_Overview *o, UI_Signal sig, U64 group, UIShell_Ove
   if(axis == UIShell_OverviewDragAxis_None) { return; }
   Axis2 screen = uishell_overview_drag_screen_axis(axis);
   F64 unit = uishell_overview_units(o, screen);
-  // Dragging down shows what is above.
-  F64 to = state->overview_drag_from + (axis == UIShell_OverviewDragAxis_Slide ? d.x : -d.y)*unit;
+  // The content follows the mouse: dragging down shows what is above.
+  F64 to = state->overview_drag_from + uishell_overview_drawn_sign(axis)*d.v[screen]*unit;
   // Its speed, smoothed over the last few moves.
   F64 dt = o->now_ms - state->overview_drag_ms;
   if(to != state->overview_drag_at && dt > 0)
@@ -459,7 +503,7 @@ uishell_overview_glide(UIShell_Overview *o, UIShell_OverviewMove *move)
   F64 dt = o->now_ms - state->overview_glide_ms;
   state->overview_glide_ms = o->now_ms;
   if(axis == UIShell_OverviewDragAxis_Slide ? !uishell_overview_slides(f, group) || f->mode != WHEELHOUSE_OVERVIEW_OVERVIEW
-                                            : !uishell_overview_pans(f))
+                                            : !uishell_overview_pans(f, uishell_overview_drag_screen_axis(axis)))
   {
     state->overview_glide_v = 0;
     return;
@@ -711,7 +755,8 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   if(interactive) { uishell_overview_glide(o, &move); }
 
   //- scrolling: down and up pan the overview when it is taller than the
-  // region, else slide the row under the mouse, as sideways always does
+  // region, else slide the row under the mouse; sideways pans it when it is
+  // wider, else slides the row too
   if(interactive)
   {
     UI_Signal sig = ui_signal_from_box(scene_box);
@@ -727,12 +772,14 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
     if(px.x != 0 || px.y != 0)
     {
       F64 units = uishell_overview_units(o, Axis2_Y);
-      B32 pans = uishell_overview_pans(f);
+      B32 pans = uishell_overview_pans(f, Axis2_Y);
+      B32 pans_across = uishell_overview_pans(f, Axis2_X);
       Vec2F32 mouse = sub_2f32(ui_mouse(), o->region.p0);
-      F32 slide_px = px.x;
+      F32 slide_px = pans_across ? 0 : px.x;
       o->state->overview_glide_v = 0;
-      if(pans) { move.pans = 1; move.pan_by = px.y*units; }
-      else if(slide_px == 0) { slide_px = px.y; }
+      if(pans) { move.pans = 1; move.pan_dy = px.y*units; }
+      else if(slide_px == 0 && !pans_across) { slide_px = px.y; }
+      if(pans_across) { move.pans = 1; move.pan_dx = px.x*uishell_overview_units(o, Axis2_X); }
       if(slide_px != 0)
       {
         for(U64 i = 0; i < f->group_count; i++)
@@ -756,9 +803,9 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   {
     moved = wheelhouse_overview_slide(o->state->core, move.slide_group, move.slide_by, o->now_ms, 0) || moved;
   }
-  if(move.pans && move.pan_by != 0)
+  if(move.pans && (move.pan_dx != 0 || move.pan_dy != 0))
   {
-    moved = wheelhouse_overview_pan(o->state->core, move.pan_by, 0) || moved;
+    moved = wheelhouse_overview_pan(o->state->core, move.pan_dx, move.pan_dy, 0) || moved;
   }
   if(move.backs)
   {
