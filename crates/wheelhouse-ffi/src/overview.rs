@@ -6,12 +6,13 @@
 //! shape each frame (wheelhouse_overview_update), passes on the user's
 //! moves, and draws what wheelhouse_overview_frame gives through its camera.
 //!
-//! Scene units: a tile is 1 high and as wide as the region's width over its
-//! height, so a camera that fits a tile shows its workspace whole. A point
+//! Scene units: a tile is as wide as the region's width over its height
+//! times its height, so a camera that fits a tile shows its workspace whole.
+//! In rows every tile is 1 high; in a grid the largest are. A point
 //! (x, y) of the scene is at region.x0 + (x - view.x0) / (view.x1 - view.x0)
 //! * region width across, and likewise down.
 use super::*;
-use wheelhouse_core::overview::{entries, Camera, OverviewMode, SceneRect, ViewMode};
+use wheelhouse_core::overview::{entries, Camera, GridPacking, OverviewMode, SceneRect, ViewMode};
 
 /// The overview's mode: the current workspace is open.
 pub const WHEELHOUSE_OVERVIEW_WORKSPACE: u32 = 0;
@@ -24,6 +25,11 @@ pub const WHEELHOUSE_OVERVIEW_GROUP: u32 = 2;
 pub const WHEELHOUSE_OVERVIEW_ROWS: u32 = 0;
 /// A view mode: groups as blocks of a grid.
 pub const WHEELHOUSE_OVERVIEW_GRID: u32 = 1;
+
+/// A grid packing: one tile size everywhere, blocks on shelves.
+pub const WHEELHOUSE_OVERVIEW_SHELVES: u32 = 0;
+/// A grid packing: a treemap, a rectangle per group by its tile count.
+pub const WHEELHOUSE_OVERVIEW_TREEMAP: u32 = 1;
 
 /// A rectangle of the scene.
 #[repr(C)]
@@ -223,11 +229,14 @@ pub unsafe extern "C" fn wheelhouse_overview_slide(
     .is_some() as u32
 }
 
-/// Scroll the overview down (or up) by `by` scene units.
+/// Scroll the overview right and down (or left and up) by `dx` and `dy`
+/// scene units, as far as it goes: rows only scroll down, and a grid only
+/// when it is zoomed in on a tile too narrow to read whole.
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_overview_pan(h: *mut WheelhouseCore, by: f64, error_out: *mut *mut c_char) -> u32 {
+pub unsafe extern "C" fn wheelhouse_overview_pan(h: *mut WheelhouseCore, dx: f64, dy: f64, error_out: *mut *mut c_char) -> u32 {
     run(h, error_out, |h| {
-        h.overview.pan(if by.is_finite() { by } else { 0.0 });
+        let finite = |v: f64| if v.is_finite() { v } else { 0.0 };
+        h.overview.pan(finite(dx), finite(dy));
         Ok(())
     })
     .is_some() as u32
@@ -260,6 +269,32 @@ pub unsafe extern "C" fn wheelhouse_overview_set_view_mode(h: *mut WheelhouseCor
             other => return Err(format!("unknown overview view mode {other}")),
         };
         h.overview.set_view_mode(mode);
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// The grid's packing (WHEELHOUSE_OVERVIEW_SHELVES or _TREEMAP), and the
+/// share of the region's width a tile needs to be readable: the smallest
+/// readable tile width over the region's width, 0 to always fit the whole
+/// grid. With the whole grid in view, a current tile narrower than that
+/// zooms the overview in on it. Each frame, before reading it, as the
+/// region's width changes; a new packing cuts to the same place.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_overview_set_grid(
+    h: *mut WheelhouseCore,
+    packing: u32,
+    readable_share: f64,
+    now_ms: f64,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        let packing = match packing {
+            WHEELHOUSE_OVERVIEW_SHELVES => GridPacking::Shelves,
+            WHEELHOUSE_OVERVIEW_TREEMAP => GridPacking::Treemap,
+            other => return Err(format!("unknown overview grid packing {other}")),
+        };
+        h.overview.set_grid(packing, readable_share, now_ms);
         Ok(())
     })
     .is_some() as u32
