@@ -323,13 +323,6 @@ fn html_text(html: &str) -> String {
     out.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
 }
 
-/// The plain copy's words, less the list markers, task boxes and footnote
-/// labels it adds as text and HTML gives as markup.
-fn plain_words(plain: &str) -> Vec<String> {
-    let markers = regex::Regex::new(r"^ *((- |\d+\. |\[[ x]\] |\[\^[^\]]+\]: )+)").unwrap();
-    plain.lines().map(|line| markers.replace(line, "").into_owned()).flat_map(|line| words(&line)).collect()
-}
-
 fn words(text: &str) -> Vec<String> {
     text.split(|c: char| c.is_whitespace() || c == '\t').filter(|w| !w.is_empty() && *w != "---").map(str::to_owned).collect()
 }
@@ -355,5 +348,8 @@ fn html_copy_has_the_plain_copys_text(tc: TestCase) {
     let Some(plain) = view.copy(doc, Format::Plain) else { return };
     let html = view.copy(doc, Format::Html).unwrap();
     assert!(!html.contains("class=") && !html.contains("style="), "{html}");
-    assert_eq!(words(&html_text(&html)), plain_words(&plain), "\nsource:\n{source}\nhtml:\n{html}\nplain:\n{plain}\n");
+    // The plain copy's text without its list markers, task boxes and
+    // footnote labels, which HTML gives as markup.
+    let blocks: Vec<String> = view.copied_blocks(doc).iter().flat_map(|block| words(block)).collect();
+    assert_eq!(words(&html_text(&html)), blocks, "\nsource:\n{source}\nhtml:\n{html}\nplain:\n{plain}\n");
 }

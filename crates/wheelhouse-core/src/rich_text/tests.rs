@@ -556,3 +556,16 @@ fn a_freed_slot_reused_under_another_key_still_removes_the_old_key() {
     assert!(delta.ops.contains(&Op::Remove(bravo)), "{:?}", delta.ops);
     assert!(delta.ops.iter().any(|op| matches!(op, Op::Upsert(c) if c.key == quoted)));
 }
+
+#[test]
+fn a_widened_marker_moves_only_its_own_items_lines() {
+    let mut rich = RichText::open("9. alpha\n9. bravo\n\n   more\n\ncharlie\n\n- delta\n\n     *echo*\n");
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let echo = find(doc, "echo");
+    view.select(doc, at(doc, "bravo", "bravo"), Point { key: echo, byte: 4 }).unwrap();
+    let markdown = view.copy(doc, Format::Markdown).unwrap();
+    assert_eq!(markdown, "10. bravo\n\n    more\n\ncharlie\n\n- delta\n\n     *echo*");
+    let parsed = RichText::open(&markdown);
+    assert!(parsed.doc().preorder().iter().all(|&id| parsed.doc().kind(id) != Kind::Code), "echo stays a paragraph");
+}

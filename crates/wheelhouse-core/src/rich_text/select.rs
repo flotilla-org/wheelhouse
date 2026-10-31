@@ -183,6 +183,12 @@ impl View {
         out
     }
 
+    /// The plain copy's Blocks, without the markers it puts before them.
+    #[cfg(test)]
+    pub(crate) fn copied_blocks(&self, doc: &Tree) -> Vec<String> {
+        self.pieces(doc).iter().map(|piece| block_plain(doc, piece)).collect()
+    }
+
     /// What a collapsed Container hides is not copied.
     pub fn copy(&self, doc: &Tree, format: Format) -> Option<String> {
         let pieces = self.pieces(doc);
@@ -692,16 +698,25 @@ fn markdown(doc: &Tree, view: &View, pieces: &[Piece]) -> String {
         out.push_str(&between);
         out.push_str(&block_markdown(doc, &last, false, true));
     }
-    // Move the lines after the first right wherever an item's marker grew,
-    // rightmost first, if only containers' prefixes come before.
+    // Move the item's lines after the first right wherever its marker grew,
+    // rightmost first, if only containers' prefixes come before. A line
+    // less indented than the item's content leaves it, unless it is a
+    // paragraph's lazy continuation; the lines after it stay.
     let mut widened = markdown_prefix(doc, first.id).2;
     widened.sort_by_key(|w| Reverse(w.0));
     if !widened.is_empty() {
         let mut lines: Vec<String> = out.split('\n').map(str::to_owned).collect();
-        for line in lines.iter_mut().skip(1) {
-            for &(column, by) in &widened {
+        for &(column, by) in &widened {
+            let mut after_blank = false;
+            for line in lines.iter_mut().skip(1) {
                 let chars: Vec<char> = line.chars().collect();
-                if chars.len() >= column && chars[..column].iter().all(|&c| c == ' ' || c == '>') {
+                let indent = chars.iter().take_while(|&&c| c == ' ' || c == '>').count();
+                let rest: String = chars[indent..].iter().collect();
+                if indent < column && !rest.trim().is_empty() && (after_blank || escape_start(rest.clone()) != rest) {
+                    break;
+                }
+                after_blank = rest.trim().is_empty();
+                if chars.len() >= column && indent >= column {
                     let at: usize = chars[..column].iter().map(|c| c.len_utf8()).sum();
                     line.insert_str(at, &spaces(by));
                 }
