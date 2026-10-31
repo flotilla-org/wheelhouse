@@ -570,11 +570,12 @@ mod tests {
             wake,
         )
         .unwrap();
-        wait_for("the first run", || connector.starts() == 1 && connector.running());
-        connector.restart();
-        // The next run counts as running once spawned, before its echo reaches
-        // the log, so wait for the line too.
+        // A run counts as running once spawned, before its echo reaches the
+        // log, so wait for the line too: a restart before it ends the run
+        // without one.
         let started = || std::fs::read_to_string(&log).unwrap_or_default().matches("started\n").count();
+        wait_for("the first run", || connector.starts() == 1 && connector.running() && started() == 1);
+        connector.restart();
         wait_for("the next run", || connector.starts() == 2 && connector.running() && started() >= 2);
         let text = std::fs::read_to_string(&log).unwrap();
         assert!(text.contains("Connector restarted on request"), "{text}");
