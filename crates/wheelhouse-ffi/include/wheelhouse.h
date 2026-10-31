@@ -1563,7 +1563,8 @@ typedef struct {
   uint32_t ellipsis;
   // WH_TEXT_ALIGN_*.
   uint32_t align;
-  // Tab stops every this many spaces of the tab's own style; 0 for 4.
+  // Tab stops every this many spaces of the tab's own style; 0 for 4. Text
+  // with tabs is shaped twice: once to measure where each tab starts.
   uint32_t tab_size;
 } WhTextInput;
 

@@ -126,7 +126,8 @@ pub struct WhTextInput {
     pub ellipsis: u32,
     /// WH_TEXT_ALIGN_*.
     pub align: u32,
-    /// Tab stops every this many spaces of the tab's own style; 0 for 4.
+    /// Tab stops every this many spaces of the tab's own style; 0 for 4. Text
+    /// with tabs is shaped twice: once to measure where each tab starts.
     pub tab_size: u32,
 }
 
