@@ -723,7 +723,7 @@ fn a_zoomed_grid_pans_both_ways() {
     let entries: Vec<_> = (1..=30).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
     let mut window = OverviewWindow::default();
     window.set_view_mode(ViewMode::Grid, 0.0);
-    window.set_grid(GridPacking::Shelves, 0.4, 0.0);
+    window.set_grid(GridPacking::Shelves, 0.4, 1.0, 0.0);
     window.update(entries, Some(tab_workspace_id(1)), 1.6, 0.0);
     window.open(0.0);
     let bounds = window.scene().bounds;
@@ -750,7 +750,7 @@ fn a_pan_while_the_grid_fits_is_forgotten() {
     let window = |pan: bool| {
         let mut window = OverviewWindow::default();
         window.set_view_mode(ViewMode::Grid, 0.0);
-        window.set_grid(GridPacking::Shelves, 0.0, 0.0);
+        window.set_grid(GridPacking::Shelves, 0.0, 1.0, 0.0);
         window.update(entries.clone(), Some(tab_workspace_id(1)), 1.6, 0.0);
         window.open(0.0);
         if pan {
@@ -758,7 +758,7 @@ fn a_pan_while_the_grid_fits_is_forgotten() {
             window.pan(0.5, 0.5);
             assert_eq!(window.target().unwrap(), fit, "the whole grid fits");
         }
-        window.set_grid(GridPacking::Shelves, 0.4, 0.0);
+        window.set_grid(GridPacking::Shelves, 0.4, 1.0, 0.0);
         window.target().unwrap()
     };
     assert_eq!(window(true), window(false));
@@ -882,7 +882,12 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
             11 => {
                 let packing = if tc.draw(gs::booleans()) { GridPacking::Shelves } else { GridPacking::Treemap };
                 let changes = window.scene().options.packing != packing && window.target().is_some();
-                window.set_grid(packing, tc.draw(gs::sampled_from(vec![0.0, 0.1, 0.3, f64::NAN])), now);
+                window.set_grid(
+                    packing,
+                    tc.draw(gs::sampled_from(vec![0.0, 0.1, 0.3, f64::NAN])),
+                    tc.draw(gs::sampled_from(vec![1.0, 0.5, 0.0, f64::NAN])),
+                    now,
+                );
                 assert_eq!(window.scene().options.packing, packing);
                 // Without motion a new packing is a cut, even mid-flight.
                 assert!(motion || !changes || !window.flying(now));
@@ -1108,4 +1113,29 @@ fn a_new_view_mode_moves_the_tiles_and_flies() {
         }
         assert!(near(window.camera(20000.0).unwrap(), window.target().unwrap()));
     }
+}
+
+/// A scrolled grid stays scrolled when the region changes width, within the
+/// scene, and goes back to the current tile when the readable width changes.
+#[test]
+fn a_new_readable_width_forgets_the_scrolling_and_a_resize_keeps_it() {
+    let project = || segment("project", entity("project", 0));
+    let entries: Vec<_> = (1..=30).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
+    let mut window = OverviewWindow::default();
+    window.set_view_mode(ViewMode::Grid, 0.0);
+    window.set_grid(GridPacking::Shelves, 400.0, 1000.0, 0.0);
+    window.update(entries, Some(tab_workspace_id(1)), 1.6, 0.0);
+    window.open(0.0);
+    let home = window.target().unwrap();
+    window.pan(1.0, 1.0);
+    let scrolled = window.target().unwrap();
+    assert!(scrolled.cx > home.cx && scrolled.cy > home.cy, "{home:?} to {scrolled:?}");
+    // Wider by a fifth: the share shrinks, and the scrolling stays.
+    window.set_grid(GridPacking::Shelves, 400.0, 1200.0, 0.0);
+    let resized = window.target().unwrap();
+    let rest = window.scene().overview_camera(window.current(), None);
+    assert!(!near(resized, rest), "a resize went back to the current tile");
+    // A new readable width goes back to the current tile.
+    window.set_grid(GridPacking::Shelves, 300.0, 1200.0, 0.0);
+    assert!(near(window.target().unwrap(), window.scene().overview_camera(window.current(), None)));
 }

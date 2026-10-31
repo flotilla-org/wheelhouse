@@ -38,6 +38,8 @@ pub struct OverviewWindow {
     scene: Scene,
     rig: Option<CameraRig>,
     morph: Option<Morph>,
+    /// The smallest readable tile width the host last gave.
+    readable_width: f64,
 }
 
 /// A change of layout being drawn.
@@ -123,6 +125,7 @@ impl OverviewWindow {
             scene,
             rig: None,
             morph: None,
+            readable_width: 0.0,
         }
     }
 
@@ -146,17 +149,26 @@ impl OverviewWindow {
         }
     }
 
-    /// The grid's packing, and the share of the region's width a tile needs
-    /// to be readable (`SceneOptions::readable_share`). A new packing moves
-    /// to the new scene as a new view mode does; a new share moves the
-    /// overview's camera with it.
-    pub fn set_grid(&mut self, packing: GridPacking, readable_share: f64, now_ms: f64) {
-        let share = if readable_share.is_finite() { readable_share.clamp(0.0, 1.0) } else { 0.0 };
+    /// The grid's packing, the smallest width a tile is readable at, and the
+    /// region's width, in the same units; their ratio is the share of the
+    /// region a tile needs (`SceneOptions::readable_share`), and a readable
+    /// width of 0 always fits the whole grid. A new packing moves to the new
+    /// scene as a new view mode does. A new readable width goes back to the
+    /// current tile from wherever the overview was scrolled; a region that
+    /// changed width keeps its scrolling, within the scene.
+    pub fn set_grid(&mut self, packing: GridPacking, readable_width: f64, region_width: f64, now_ms: f64) {
+        let readable = if readable_width.is_finite() { readable_width.max(0.0) } else { 0.0 };
+        let share = if region_width.is_finite() && region_width > 0.0 { (readable / region_width).clamp(0.0, 1.0) } else { 0.0 };
+        let new_readable = readable != self.readable_width;
+        self.readable_width = readable;
         if self.options.packing != packing {
             self.options.packing = packing;
             self.options.readable_share = share;
             self.relayout(now_ms);
-        } else if self.options.readable_share != share {
+        } else if new_readable || self.options.readable_share != share {
+            if new_readable {
+                self.pan = None;
+            }
             self.options.readable_share = share;
             self.rebuild();
             self.follow_scene(now_ms, true);

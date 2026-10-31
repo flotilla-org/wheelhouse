@@ -1997,15 +1997,17 @@ uint32_t wheelhouse_overview_set_view_mode(WheelhouseCore *h,
                                            double now_ms,
                                            char **error_out);
 
-// The grid's packing (WHEELHOUSE_OVERVIEW_SHELVES or _TREEMAP), and the
-// share of the region's width a tile needs to be readable: the smallest
-// readable tile width over the region's width, 0 to always fit the whole
-// grid. With the whole grid in view, a current tile narrower than that
-// zooms the overview in on it. Each frame, before reading it, as the
-// region's width changes; a new packing cuts to the same place.
+// The grid's packing (WHEELHOUSE_OVERVIEW_SHELVES or _TREEMAP), the
+// smallest width a tile is readable at (0 always fits the whole grid) and
+// the region's width, in the same units. With the whole grid in view, a
+// current tile narrower than that zooms the overview in on it. Each frame,
+// before reading it. A new packing moves to the new layout as a new view
+// mode does; a new readable width goes back to the current tile from
+// wherever the overview was scrolled, and a resize keeps the scrolling.
 uint32_t wheelhouse_overview_set_grid(WheelhouseCore *h,
                                       uint32_t packing,
-                                      double readable_share,
+                                      double readable_width,
+                                      double region_width,
                                       double now_ms,
                                       char **error_out);
 
