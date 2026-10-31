@@ -15,3 +15,7 @@ read-fonts = "0.41"
 [dev-dependencies]
 hegeltest = "0.49.2"
 insta.workspace = true
+
+[[bench]]
+name = "layout"
+harness = false

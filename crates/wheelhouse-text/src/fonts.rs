@@ -53,7 +53,7 @@ pub enum FontSource {
     /// Bytes registered with [`TextContext::register_fonts`], by the id given there.
     Bytes(u64),
     /// A file fontique found on the system.
-    Path(String),
+    Path(Arc<str>),
     /// A face fontique loaded that could not be traced back to a file or a
     /// registration; [`TextContext::font`] still has its bytes.
     Unknown,
@@ -95,8 +95,8 @@ pub(crate) struct State {
     faces: Vec<FontFace>,
     face_ids: HashMap<(u64, u32), u32>,
     face_by_source: HashMap<(FontSource, u32), u32>,
-    coords: Vec<Vec<i16>>,
-    coord_ids: HashMap<Vec<i16>, u32>,
+    coords: Vec<Arc<[i16]>>,
+    coord_ids: HashMap<Arc<[i16]>, u32>,
 }
 
 static NEXT_CONTEXT: AtomicU64 = AtomicU64::new(1);
@@ -119,8 +119,8 @@ impl TextContext {
             faces: vec![],
             face_ids: HashMap::new(),
             face_by_source: HashMap::new(),
-            coords: vec![vec![]],
-            coord_ids: HashMap::from([(vec![], 0)]),
+            coords: vec![Arc::from([])],
+            coord_ids: HashMap::new(),
         };
         Self { id: NEXT_CONTEXT.fetch_add(1, Ordering::Relaxed), alive: Arc::new(()), epoch: AtomicU64::new(0), state: Mutex::new(state) }
     }
@@ -194,15 +194,16 @@ impl TextContext {
     }
 
     /// The face a run's `font` names, or `None` past the faces used so far.
-    /// Ids stay valid for the context's life.
+    /// Ids, and the path and bytes they name, stay valid for the context's
+    /// life.
     pub fn font(&self, id: u32) -> Option<FontFace> {
         self.lock().faces.get(id as usize).cloned()
     }
 
     /// The normalized variation coordinates a run's `coords` names (empty
-    /// for 0, or past the table).
-    pub fn coords(&self, id: u32) -> Vec<i16> {
-        self.lock().coords.get(id as usize).cloned().unwrap_or_default()
+    /// for 0, or past the table). They stay put for the context's life.
+    pub fn coords(&self, id: u32) -> Arc<[i16]> {
+        self.lock().coords.get(id as usize).cloned().unwrap_or_else(|| Arc::from([]))
     }
 
     /// Runs `f` with this thread's parley contexts for this context, made
@@ -303,10 +304,11 @@ impl State {
 
     /// The id of a run's variation coordinates (0 for none).
     pub(crate) fn coords_id(&mut self, coords: Vec<i16>) -> u32 {
-        if let Some(&id) = self.coord_ids.get(&coords) {
+        if let Some(&id) = self.coord_ids.get(coords.as_slice()) {
             return id;
         }
         let id = self.coords.len() as u32;
+        let coords = Arc::<[i16]>::from(coords);
         self.coords.push(coords.clone());
         self.coord_ids.insert(coords, id);
         id
@@ -316,7 +318,7 @@ impl State {
 /// The system file a face fontique chose came from: the faces of the family
 /// its name table names, loaded through the same source cache, are compared
 /// by blob, then every family's if that finds nothing.
-fn find_path(font: &FontData, fonts: &mut FontContext) -> Option<String> {
+fn find_path(font: &FontData, fonts: &mut FontContext) -> Option<Arc<str>> {
     let named = family_names(font).into_iter().filter_map(|name| fonts.collection.family_id(&name)).collect::<Vec<_>>();
     if let Some(path) = path_in(&named, font, fonts) {
         return Some(path);
@@ -325,7 +327,7 @@ fn find_path(font: &FontData, fonts: &mut FontContext) -> Option<String> {
     path_in(&every, font, fonts)
 }
 
-fn path_in(families: &[FamilyId], font: &FontData, fonts: &mut FontContext) -> Option<String> {
+fn path_in(families: &[FamilyId], font: &FontData, fonts: &mut FontContext) -> Option<Arc<str>> {
     for &family in families {
         let Some(info) = fonts.collection.family(family) else { continue };
         for face in info.fonts() {
@@ -341,8 +343,8 @@ fn path_in(families: &[FamilyId], font: &FontData, fonts: &mut FontContext) -> O
     None
 }
 
-fn path_string(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+fn path_string(path: &Path) -> Arc<str> {
+    path.to_string_lossy().into()
 }
 
 /// The family names a face's name table gives (typographic, then legacy).

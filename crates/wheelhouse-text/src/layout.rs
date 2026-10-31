@@ -196,9 +196,11 @@ impl TextContext {
                 );
                 let shape = Shape { text: &text, runs: &cut_runs, styles: &styles, boxes: &cut_boxes, base, scale };
                 shape.build(lcx, fonts, ellipsis);
-                ellipsis.break_all_lines(None);
+                // Broken at the width, so it aligns as the lines above do.
+                ellipsis.break_all_lines(Some(width));
                 ellipsis.align(Alignment::Start, AlignmentOptions::default());
-                let fits = ellipsis.get(0).is_none_or(|l| l.metrics().advance - l.metrics().hanging_advance <= width);
+                let fits =
+                    ellipsis.len() == 1 && ellipsis.get(0).is_some_and(|l| l.metrics().advance - l.metrics().hanging_advance <= width);
                 if fits || k == 0 {
                     let mut emit = Emit { state: self.lock(), fonts, out, shift: start, real: cut - start, y };
                     emit.lines(ellipsis, 0..1);

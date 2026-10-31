@@ -1,0 +1,18 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "dump(&ctx, text, &p)"
+---
+line 0 y=0.0 h=21.0 base=16.0 w=33.7 bytes=0..9 "שלום "
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=11.8 rtl glyphs=[231,0,0,0,0]
+    11.79 +4.48   " " rtl space word
+    16.27 +8.43   "ם" rtl
+    24.70 +8.43   "ו" rtl
+    33.14 +8.43   "ל" rtl
+    41.57 +8.43   "ש" rtl word
+line 1 y=21.0 h=21.0 base=37.0 w=44.4 bytes=9..17 "עולם"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=5.6 rtl glyphs=[238,0,0,0,0]
+     5.55 +10.72  "…" rtl word ellipsis
+    16.27 +8.43   "ם" rtl
+    24.70 +8.43   "ל" rtl
+    33.14 +8.43   "ו" rtl
+    41.57 +8.43   "ע" rtl word

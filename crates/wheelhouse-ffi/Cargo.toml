@@ -16,6 +16,7 @@ wheelhouse-core = { path = "../wheelhouse-core" }
 wheelhouse-tables.workspace = true
 binnacle-core.workspace = true
 binnacle-ffi.workspace = true
+wheelhouse-text.workspace = true
 serde_json = { version = "1", optional = true }
 
 [dev-dependencies]

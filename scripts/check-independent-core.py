@@ -2,8 +2,9 @@
 """Check the Cargo workspace stays free of Zellij and Flotilla crates.
 
 The core, its frontends and the ingress depend on neither: Flotilla reaches
-Wheelhouse over the facts stream, not as a library. Also links and runs a real
-C client against the exported ABI, with and without the FFI's default features.
+Wheelhouse over the facts stream, not as a library. Also links and runs real
+C clients against the exported ABI (the sidebar, and text layout with an arena
+allocator), with and without the FFI's default features.
 """
 import json
 import os
@@ -35,4 +36,10 @@ subprocess.run([str(smoke),
                 str(root / "crates/wheelhouse-core/tests/fixtures/sidebar.jsonl"),
                 ], env=dict(os.environ, LD_LIBRARY_PATH=str(library),
                             DYLD_LIBRARY_PATH=str(library)), check=True)
+text = target / "ffi-text"
+subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(root / "crates/wheelhouse-ffi/tests/text.c"),
+                "-I", str(root / "crates/wheelhouse-ffi/include"),
+                "-L", str(library), "-lwheelhouse_ffi", "-o", str(text)], check=True)
+subprocess.run([str(text), str(root / "data")], env=dict(os.environ, LD_LIBRARY_PATH=str(library),
+               DYLD_LIBRARY_PATH=str(library)), check=True)
 print("Workspace and C ABI verified without a Zellij or Flotilla dependency.")

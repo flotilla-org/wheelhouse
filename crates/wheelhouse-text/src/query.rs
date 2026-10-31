@@ -113,12 +113,23 @@ pub fn offset_at(view: &View<'_>, x: f32, y: f32) -> Position {
             None => return Position { offset: c.start as usize, affinity: Affinity::Upstream },
         }
     }
+    // Past a hard break is the next line: its far side is the text beside
+    // it, when parley left any on its line, or else the break itself.
+    if c.flags & CLUSTER_HARD_BREAK != 0 {
+        let at = clusters.iter().position(|o| std::ptr::eq(o, c)).unwrap_or(i);
+        let beside = match (left, rtl(c)) {
+            (false, false) => clusters.get(at + 1).map(|o| (o, true)),
+            (true, true) => at.checked_sub(1).map(|b| (&clusters[b], false)),
+            _ => None,
+        };
+        match beside {
+            Some(beside) if beside.0.flags & CLUSTER_HARD_BREAK == 0 => (c, left) = beside,
+            _ => return Position { offset: c.start as usize, affinity: Affinity::Downstream },
+        }
+    }
     let (start, end) = (c.start as usize, (c.start + c.len) as usize);
     let before = Position { offset: start, affinity: Affinity::Downstream };
     let after = Position { offset: end, affinity: Affinity::Upstream };
-    if c.flags & CLUSTER_HARD_BREAK != 0 {
-        return before;
-    }
     if left != rtl(c) {
         before
     } else {

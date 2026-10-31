@@ -42,4 +42,5 @@ unicode-width = "0.1.14"
 wheelhouse-core = { path = "crates/wheelhouse-core" }
 wheelhouse-tables = { path = "crates/wheelhouse-tables" }
 wheelhouse-terminal = { path = "crates/wheelhouse-terminal" }
+wheelhouse-text = { path = "crates/wheelhouse-text" }
 wheelhouse-tui = { path = "crates/wheelhouse-tui" }

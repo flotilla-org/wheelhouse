@@ -161,3 +161,13 @@ fn styles_pick_family_weight_and_italic() {
 fn hard_breaks_end_lines() {
     assert_snapshot!(plain("one\ntwo\n\nfour\n", 1000.0));
 }
+
+#[test]
+fn an_rtl_cut_line_aligns_with_the_lines_above() {
+    let ctx = context();
+    let styles = [Style::default()];
+    let text = "\u{5E9}\u{5DC}\u{5D5}\u{5DD} \u{5E2}\u{5D5}\u{5DC}\u{5DD} \u{5E9}\u{5DC}\u{5D5}\u{5DD} \u{5E2}\u{5D5}\u{5DC}\u{5DD}";
+    let input = Input { max_lines: 2, ellipsis: true, ..Input::plain(text, &styles) };
+    let p = ctx.layout(&input, 50.0).unwrap();
+    assert_snapshot!(dump(&ctx, text, &p));
+}

@@ -106,7 +106,7 @@ pub struct Cluster {
     pub line: u32,
     /// The input style it takes.
     pub style: u32,
-    /// CLUSTER_* bits.
+    /// CLUSTER_* bits (WH_TEXT_CLUSTER_* in C).
     pub flags: u32,
 }
 
