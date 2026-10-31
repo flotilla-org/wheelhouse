@@ -238,9 +238,13 @@ impl OverviewWindow {
             return;
         }
         let from = self.scene.overview_camera(self.current, self.pan);
-        // Kept within the scene, as the camera keeps itself.
+        // Kept within the scene, as the camera keeps itself. A pan that
+        // moves nothing (a grid that fits) isn't kept, or it would become
+        // where the grid later zooms in.
         let to = self.scene.overview_camera(self.current, Some((from.cx + dx, from.cy + dy)));
-        self.pan = Some((to.cx, to.cy));
+        if to != from {
+            self.pan = Some((to.cx, to.cy));
+        }
         self.cut();
     }
 
