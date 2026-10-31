@@ -1,12 +1,12 @@
 //! Tables for the native table control (#506): the core owns each table's
 //! source and its binnacle Grid, and the host draws and drives that Grid
-//! through binnacle.h. The tables are canned (wheelhouse-tables) until the
-//! described source over Flotilla's tables arrives.
+//! through binnacle.h. A table is a canned one (#506) or a described one
+//! read live from a server by its link (#529).
 use super::*;
 use binnacle_core::{Axis, Key, Viewport};
 use binnacle_ffi::BinnacleGrid;
 use std::time::Duration;
-use wheelhouse_tables::{Align, Metrics, Table, NAMES};
+use wheelhouse_tables::{Align, Link, Metrics, Table, NAMES};
 
 /// A cell's text sits at its leading edge.
 pub const WHEELHOUSE_TABLE_ALIGN_LEFT: u32 = 0;
@@ -37,16 +37,32 @@ pub extern "C" fn wheelhouse_table_name(index: usize) -> Text {
     Text::borrowed(NAMES.get(index).copied().unwrap_or(""))
 }
 
-/// Opens the canned table named name, sized for text line pixels high
-/// whose digits are digit pixels wide, or returns NULL for an unknown name.
+/// Opens the table name names, sized for text line pixels high whose
+/// digits are digit pixels wide: a canned table's name, or a described
+/// table's link (http://host:port/tables/{table}?namespace=…, or
+/// http+unix://{socket path, percent-encoded}/tables/{table}?…), its dates
+/// drawn utc_offset seconds east of UTC. A described table calls wake (if
+/// not NULL) from another thread whenever data comes, for the host to draw
+/// a frame. Returns NULL for an unknown name or a link that does not parse.
 /// Free it with wheelhouse_table_free.
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_table_open(name: Text, line: f32, digit: f32) -> *mut WheelhouseTable {
+pub unsafe extern "C" fn wheelhouse_table_open(
+    name: Text,
+    line: f32,
+    digit: f32,
+    utc_offset: i32,
+    wake: Option<extern "C" fn()>,
+) -> *mut WheelhouseTable {
     // SAFETY: the caller's contract.
     let Ok(name) = (unsafe { name.read() }) else {
         return ptr::null_mut();
     };
-    let Some((table, grid)) = Table::open(&name, Metrics { line, digit }) else {
+    let metrics = Metrics { line, digit };
+    let opened = match Link::parse(&name) {
+        Some(link) => Table::open_described(&link, metrics, utc_offset, Box::new(move || wake.map_or((), |wake| wake()))),
+        None => Table::open(&name, metrics),
+    };
+    let Some((table, grid)) = opened else {
         return ptr::null_mut();
     };
     let grid = Box::into_raw(BinnacleGrid::from_grid(grid));
@@ -85,6 +101,19 @@ pub unsafe extern "C" fn wheelhouse_table_frame(table: *mut WheelhouseTable, wid
         source.fill(grid, Viewport::new(width, height));
     });
     wake.map_or(WHEELHOUSE_TABLE_NEVER, |d| d.as_micros().min(u64::MAX as u128 - 1) as u64)
+}
+
+/// What to show about the table above it (a described table connecting,
+/// retrying, failed or partly shown), valid until the next call on table;
+/// empty when there is nothing to say.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_status(table: *mut WheelhouseTable) -> Text {
+    // SAFETY: the caller's contract.
+    let Some(t) = (unsafe { table.as_mut() }) else {
+        return Text::borrowed("");
+    };
+    t.text = t.table.status().unwrap_or_default();
+    Text::borrowed(&t.text)
 }
 
 /// The text of the cell at the row and column Keys, valid until the next

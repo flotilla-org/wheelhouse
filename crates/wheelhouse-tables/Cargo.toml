@@ -6,7 +6,12 @@ license.workspace = true
 
 [dependencies]
 binnacle-core.workspace = true
+binnacle-described.workspace = true
+binnacle-described-http.workspace = true
+binnacle-format.workspace = true
 binnacle-memory.workspace = true
+tokio = { version = "1", features = ["rt", "net", "time", "sync"] }
 
 [dev-dependencies]
+binnacle-testkit = { workspace = true, features = ["fake-tables"] }
 hegeltest = "0.49.2"

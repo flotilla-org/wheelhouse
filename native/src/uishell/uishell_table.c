@@ -2,8 +2,8 @@
 // core answers the Grid's source Effects and fills its Windows
 // (wheelhouse_table_frame); this View forwards input to the Grid through
 // binnacle.h and paints its Snapshot in one box, with no box per row or
-// cell. Its tables are canned until the described source over Flotilla's
-// tables arrives (#505).
+// cell. Its expression names a canned table (#506) or is a described
+// table's link, read live from its server (#529).
 
 #include "binnacle.h"
 
@@ -11,8 +11,8 @@ typedef struct UIShell_TableState UIShell_TableState;
 struct UIShell_TableState
 {
   WheelhouseTable *table;
-  // The canned table's name, as the View's expression has it.
-  U8 name[32];
+  // The table's name or link, as the View's expression has it.
+  U8 name[1024];
   U64 name_size;
   // The library's binnacle ABI isn't this header's: the View says so and
   // opens nothing.
@@ -21,7 +21,7 @@ struct UIShell_TableState
   Vec2F32 last_pointer;
   B32 pointer_inside;
   // The name a failed open was tried with, so it isn't retried each frame.
-  U8 failed[32];
+  U8 failed[1024];
   U64 failed_size;
 };
 
@@ -43,6 +43,26 @@ internal String8
 uishell_table_text(WheelhouseText text)
 {
   return str8((U8 *)text.data, text.len);
+}
+
+// Seconds east of UTC that local time is now, for a described table's
+// dates.
+internal S32
+uishell_table_utc_offset(void)
+{
+  DateTime utc = now_time_universal();
+  DateTime local = local_from_universal_time(&utc);
+  // The days differ by at most one, across a month's end too.
+  S32 days = (S32)local.day - (S32)utc.day;
+  if(days > 1) { days = -1; }
+  if(days < -1) { days = 1; }
+  return ((days*24 + ((S32)local.hour - (S32)utc.hour))*60 + ((S32)local.min - (S32)utc.min))*60;
+}
+
+internal WheelhouseTable *
+uishell_table_open(String8 name, F32 line, F32 digit)
+{
+  return wheelhouse_table_open((WheelhouseText){name.str, name.size}, line, digit, uishell_table_utc_offset(), wm_send_wakeup_event);
 }
 
 // Where strip item index of axis draws along that axis: its pinned Strip's
@@ -306,7 +326,7 @@ WH_VIEW_UI_FUNCTION_DEF(table)
     state->abi_mismatch = binnacle_abi_version() != BINNACLE_ABI_VERSION;
     if(!state->abi_mismatch)
     {
-      state->table = wheelhouse_table_open((WheelhouseText){name.str, name.size}, line, digit);
+      state->table = uishell_table_open(name, line, digit);
       MemoryCopy(state->name, name.str, name.size);
       state->name_size = name.size;
     }
@@ -336,7 +356,7 @@ WH_VIEW_UI_FUNCTION_DEF(table)
       {
         ui_labelf("No table named \"%S\"", name);
       }
-      ui_labelf("Open a table:");
+      ui_labelf("Open a table, or give a table's link as the View's expression:");
       for(size_t i = 0; i < wheelhouse_table_count(); i += 1)
       {
         String8 option = uishell_table_text(wheelhouse_table_name(i));
@@ -352,8 +372,17 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   }
 
   BinnacleGrid *grid = wheelhouse_table_grid(state->table);
+  // A described table's state (connecting, retrying, failed, partly shown)
+  // takes a line above the Grid, as of the last frame.
+  String8 status = push_str8_copy(scratch.arena, uishell_table_text(wheelhouse_table_status(state->table)));
+  F32 status_h = status.size != 0 ? line : 0;
+  Vec2F32 grid_dim = v2f32(dim.x, Max(dim.y - status_h, 0));
   UI_Box *box;
-  UI_Parent(root) UI_PrefWidth(ui_px(dim.x, 1)) UI_PrefHeight(ui_px(dim.y, 1))
+  if(status.size != 0) UI_Parent(root) UI_PrefWidth(ui_px(dim.x, 1)) UI_PrefHeight(ui_px(status_h, 1))
+  {
+    ui_label(status);
+  }
+  UI_Parent(root) UI_PrefWidth(ui_px(grid_dim.x, 1)) UI_PrefHeight(ui_px(grid_dim.y, 1))
   {
     box = ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise|UI_BoxFlag_Clip, str8_lit("table_grid"));
   }
@@ -405,7 +434,9 @@ WH_VIEW_UI_FUNCTION_DEF(table)
 
   // The frame: the core answers and fills, then the Grid lays out.
   U64 now = now_time_us();
-  U64 wake = wheelhouse_table_frame(state->table, dim.x, dim.y, now);
+  U64 wake = wheelhouse_table_frame(state->table, grid_dim.x, grid_dim.y, now);
+  // What came this frame can change the status line laid out above.
+  if(!str8_match(status, uishell_table_text(wheelhouse_table_status(state->table)), 0)) { rd_request_frame(); }
   UIShell_TableDraw *draw = push_array(ui_build_arena(), UIShell_TableDraw, 1);
   draw->table = state->table;
   // Effects for the host: nothing acts on them yet (#506 has no actions),

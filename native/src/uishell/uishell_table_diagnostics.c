@@ -40,7 +40,7 @@ uishell_table_diag_filled(BinnacleSnapshot *snap)
 internal F64
 uishell_table_diag_bench(String8 name, F32 line, F32 digit)
 {
-  WheelhouseTable *table = wheelhouse_table_open((WheelhouseText){name.str, name.size}, line, digit);
+  WheelhouseTable *table = wheelhouse_table_open((WheelhouseText){name.str, name.size}, line, digit, 0, 0);
   BinnacleGrid *grid = wheelhouse_table_grid(table);
   uishell_table_diag_frame(table, 1200, 800, 0);
   U64 frames = 2000, begin = now_time_us();
@@ -64,12 +64,12 @@ uishell_table_diagnostics(RD_WindowState *ws)
   U32 failures = 0;
   F32 line = 20.f, digit = 8.f;
   TableCheck(binnacle_abi_version() == BINNACLE_ABI_VERSION, "the library's binnacle ABI is the header's");
-  TableCheck(wheelhouse_table_open((WheelhouseText){(U8 *)"nope", 4}, line, digit) == 0, "an unknown table opens nothing");
+  TableCheck(wheelhouse_table_open((WheelhouseText){(U8 *)"nope", 4}, line, digit, 0, 0) == 0, "an unknown table opens nothing");
 
   // Every canned table fills its first frame, with headers named.
   for(size_t i = 0; i < wheelhouse_table_count(); i += 1)
   {
-    WheelhouseTable *table = wheelhouse_table_open(wheelhouse_table_name(i), line, digit);
+    WheelhouseTable *table = wheelhouse_table_open(wheelhouse_table_name(i), line, digit, 0, 0);
     BinnacleSnapshot snap = uishell_table_diag_frame(table, 800, 600, 0);
     TableCheck(table != 0 && uishell_table_diag_filled(&snap), "a canned table fills its first frame");
     BinnacleAxisSnapshot *cols = &snap.axes[BINNACLE_COLS];
@@ -85,7 +85,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
   // Records: a header click sorts the column; a cell click focuses it, and
   // the arrow keys' action moves focus.
   {
-    WheelhouseTable *table = wheelhouse_table_open((WheelhouseText){(U8 *)"records", 7}, line, digit);
+    WheelhouseTable *table = wheelhouse_table_open((WheelhouseText){(U8 *)"records", 7}, line, digit, 0, 0);
     BinnacleGrid *grid = wheelhouse_table_grid(table);
     BinnacleSnapshot snap = uishell_table_diag_frame(table, 1200, 800, 0);
     BinnacleAxisSnapshot *cols = &snap.axes[BINNACLE_COLS];
@@ -130,7 +130,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
 
   // Huge: scrolling to the end shows the last of 10^15 rows, filled.
   {
-    WheelhouseTable *table = wheelhouse_table_open((WheelhouseText){(U8 *)"huge", 4}, line, digit);
+    WheelhouseTable *table = wheelhouse_table_open((WheelhouseText){(U8 *)"huge", 4}, line, digit, 0, 0);
     BinnacleGrid *grid = wheelhouse_table_grid(table);
     uishell_table_diag_frame(table, 1200, 800, 0);
     BinnacleAction end = {sizeof(end), BINNACLE_ACTION_SCROLL_TO};
@@ -146,7 +146,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
   // Live: values change and new tickers are listed as its clock runs, and
   // the frame says when it next changes.
   {
-    WheelhouseTable *table = wheelhouse_table_open((WheelhouseText){(U8 *)"live", 4}, line, digit);
+    WheelhouseTable *table = wheelhouse_table_open((WheelhouseText){(U8 *)"live", 4}, line, digit, 0, 0);
     BinnacleSnapshot snap = uishell_table_diag_frame(table, 1200, 800, 1000000);
     U64 count = snap.axes[BINNACLE_ROWS].count;
     String8 before = uishell_table_diag_cell(scratch.arena, table, 0, 1);
