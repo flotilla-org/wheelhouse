@@ -1,6 +1,6 @@
 # Rich text: what Wheelhouse and binnacle have today
 
-Status: research notes, 31 October 2026. Nothing here is decided. Companion
+Status: research notes, 31 October 2026. Nothing here is decided. The decisions taken from it are recorded on [the Rich Text map](https://github.com/flotilla-org/wheelhouse/issues/537). Companion
 to [rich-text-prior-art.md](rich-text-prior-art.md).
 
 Wheelhouse paths are `native/src/...` on `main` at `3c4fafa`. The text-stack

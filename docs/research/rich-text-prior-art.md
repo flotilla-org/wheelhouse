@@ -3,7 +3,8 @@
 Scope: shaping/layout stacks, virtualized transcript UIs, streaming markdown, TUI markdown,
 "one core, many frontends" precedents, accessibility text model. Facts below were read from
 primary sources (repo source via `gh api`, docs.rs, project docs) on 2026-10-31 unless marked
-**[memory]** (my prior knowledge, not re-verified today).
+**[memory]** (my prior knowledge, not re-verified today). The decisions taken from it are recorded on
+[the Rich Text map](https://github.com/flotilla-org/wheelhouse/issues/537).
 
 ---
 

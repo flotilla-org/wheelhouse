@@ -1,6 +1,6 @@
 # Research: which sources feed Rich Text first, and their shapes
 
-Status: research notes, 31 October 2026. Nothing here is decided.
+Status: research notes, 31 October 2026. Nothing here is decided. The decisions taken from it are recorded on [the Rich Text map](https://github.com/flotilla-org/wheelhouse/issues/537).
 
 Question: [#539](https://github.com/flotilla-org/wheelhouse/issues/539), for the
 map [#537](https://github.com/flotilla-org/wheelhouse/issues/537). What do the

@@ -1,6 +1,6 @@
 # Rich text: what Copy puts on the clipboard
 
-Status: research notes, 31 October 2026. Nothing here is decided. Companion to
+Status: research notes, 31 October 2026. Nothing here is decided. The decisions taken from it are recorded on [the Rich Text map](https://github.com/flotilla-org/wheelhouse/issues/537). Companion to
 [rich-text-prior-art.md](rich-text-prior-art.md) and
 [rich-text-current-state.md](rich-text-current-state.md).
 
