@@ -315,6 +315,18 @@ _Avoid_: View kind, view rule, widget
 A frontend's rule for showing a kind of **View Spec** content: which **Renderer** shows it and, when another program produces it, how to launch that program and connect to what it publishes. A web page's Handler launches Luchs and connects to its Jackstay endpoint. Each frontend has its own Handlers, as it has its own Renderers.
 _Avoid_: Plugin, opener, launcher (a Jackstay "launcher" in a **View Spec** is the setting that names an endpoint)
 
+**Rich Text**:
+The core's read-only model of styled, flowing content: a sequence of **Blocks** holding inline runs. Markdown, agent transcripts and logs are sources of it; each frontend draws it with its own text engine.
+_Avoid_: Document (the arrangement is a document), markdown view, prose
+
+**Block**:
+A keyed, top-level unit of **Rich Text**, such as a paragraph, heading, list, quote, code block, table, image or **Embedded View**. It is the unit that is measured, virtualized and replaced when content streams in.
+_Avoid_: Node, element, line
+
+**Embedded View**:
+A **View** laid out inline inside another View's content, such as a table **Block** in **Rich Text** or a text View in a table cell. It resolves through the same **Handlers** by media type, and its state is part of its parent's, never a separate **Slot**.
+_Avoid_: Child view, widget, inline pane
+
 **Slot**:
 A **View**'s place in a **Workspace**. It is identified by a slot key: the provider's key for a View from a **Suggested Layout**, or a short generated key, in a separate namespace, for a View the user adds. It carries the View's **View Spec** and the progress of resolving it.
 _Avoid_: Tab, pane, panel
