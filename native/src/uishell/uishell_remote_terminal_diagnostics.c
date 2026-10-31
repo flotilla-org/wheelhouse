@@ -241,10 +241,13 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
                   "a bridge whose host is gone gives up");
       RemoteCheck(uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-AGAIN-48")), "a bridge that gave up keeps its last frame");
       for(U64 i = 0; i < 10; i++) { uishell_remote_diag_build(scratch.arena, ws, view, v2f32(size.x*0.5f, size.y*0.5f)); sleep_ms(20); }
+      // The View asked for the smaller size: the frame kept its size because
+      // nothing could resize it, not because no shrink came.
+      B32 asked_smaller = tv->cols < cols_full && tv->rows < rows_full;
       for(U64 i = 0; i < 10; i++) { uishell_remote_diag_build(scratch.arena, ws, view, size); sleep_ms(20); }
       fprintf(stderr, "note remote terminal: frame %ux%u before, %ux%u after shrink and grow\n",
               cols_full, rows_full, tv->cell_cache.cols, tv->cell_cache.rows);
-      RemoteCheck(tv->cell_cache.cols == cols_full && tv->cell_cache.rows == rows_full &&
+      RemoteCheck(asked_smaller && tv->cell_cache.cols == cols_full && tv->cell_cache.rows == rows_full &&
                   uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-AGAIN-48")),
                   "a shrink and grow while given up keeps the last frame");
       remove(env_down);
@@ -348,11 +351,14 @@ uishell_remote_terminal_diagnostics(RD_WindowState *ws)
     RemoteCheck(shown && uishell_terminal_program_state(tv, 0) == CLEAT_PROGRAM_EXITED, "a recipe's program shows its output and exits");
     RemoteCheck(str8_match(recipe_pill, str8_lit("exited (status 0)"), 0), "an exited recipe says how its program exited");
     for(U64 i = 0; i < 10; i++) { uishell_remote_diag_build(scratch.arena, ws, recipe, v2f32(size.x*0.4f, size.y*0.4f)); sleep_ms(20); }
+    // The View asked for the smaller size; Cleat keeps an exited program's
+    // frame as it was.
+    B32 recipe_asked_smaller = tv->cols < cols_full && tv->rows < rows_full;
     fprintf(stderr, "note remote terminal: recipe shrunk: frame %ux%u, right %d, bottom %d\n", tv->cell_cache.cols, tv->cell_cache.rows,
             uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-RIGHT")), uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-BOTTOM")));
     for(U64 i = 0; i < 10; i++) { uishell_remote_diag_build(scratch.arena, ws, recipe, size); sleep_ms(20); }
     fprintf(stderr, "note remote terminal: recipe grown: frame %ux%u\n", tv->cell_cache.cols, tv->cell_cache.rows);
-    RemoteCheck(tv->cell_cache.cols == cols_full && tv->cell_cache.rows == rows_full &&
+    RemoteCheck(recipe_asked_smaller && tv->cell_cache.cols == cols_full && tv->cell_cache.rows == rows_full &&
                 uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-RIGHT")) && uishell_remote_diag_frame_has(&tv->cell_cache, str8_lit("WH-BOTTOM")),
                 "an exited recipe keeps its last frame through a shrink and grow");
     uishell_terminal_runtime_release(tv);
