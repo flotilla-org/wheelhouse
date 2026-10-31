@@ -1,0 +1,21 @@
+---
+source: crates/wheelhouse-core/src/rich_text/tests.rs
+expression: "outline(RichText::open(GFM).doc())"
+---
+Root
+  Heading 1 "GFM"
+  Embed application/vnd.flotilla.table [Left, Center, Right] 4 rows "Vessel\tBerth\tTonnage\nKestrel\t4\t1200\nPlover\t7\t950\nTern\t2\t30" [Emphasis "Kestrel"] [Code "Plover"] [Strikethrough "Tern"]
+  List List { ordered: false, start: 1, tight: true }
+    ListItem Item { task: Some(false) }
+      Paragraph "check the moorings"
+    ListItem Item { task: Some(true) }
+      Paragraph "log the tide"
+  Quote Quote { alert: Some(Note) }
+    Paragraph "Alerts are quotes with a kind."
+  Quote Quote { alert: Some(Warning) }
+    Paragraph "Mind the gap."
+  Paragraph "A claim with a footnote[^tide] and another[^2]." [Footnote(tide) "[^tide]"] [Footnote(2) "[^2]"]
+  Footnote Footnote { label: "tide" }
+    Paragraph "High water at noon."
+  Footnote Footnote { label: "2" }
+    Paragraph "A second note, over two lines."

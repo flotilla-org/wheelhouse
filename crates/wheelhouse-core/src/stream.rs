@@ -23,11 +23,11 @@ use crate::sidebar::{ActivationError, Snapshot};
 use crate::template_config::TemplateVariableDefinition;
 use crate::{DisplayVariableValue, EntityRef, PlacementKey, PlacementLoopKey};
 
-/// A subscription to the sidebar's changes; see [`Sidebar::subscribe`](crate::sidebar::Sidebar::subscribe).
+/// A subscription to the sidebar's changes ([`Sidebar::subscribe`](crate::sidebar::Sidebar::subscribe)) or a Rich Text's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SubscriptionId(pub u64);
 
-/// A subscription this sidebar never gave, or one since unsubscribed.
+/// A subscription never given, or one since unsubscribed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownSubscription(pub SubscriptionId);
 

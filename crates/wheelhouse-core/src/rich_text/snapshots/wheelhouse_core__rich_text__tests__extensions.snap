@@ -1,0 +1,12 @@
+---
+source: crates/wheelhouse-core/src/rich_text/tests.rs
+expression: "outline(RichText::open(EXTENSIONS).doc())"
+---
+Root
+  Code hidden Code { language: "yaml" } "title: Extensions\ntags: [synthetic]"
+  Heading 1 "Front matter, wikilinks and math"
+  Paragraph "Links between notes: Harbour Master and the tables." [Link(Harbour Master) "Harbour Master"] [Link(Tide Tables) "the tables"]
+  Paragraph "Inline math e^{i\\pi} + 1 = 0 sits in a sentence." [Math "e^{i\\pi} + 1 = 0"]
+  Paragraph "\\int_0^1 x^2 \\, dx = \\frac{1}{3}" [DisplayMath "\\int_0^1 x^2 \\, dx = \\frac{1}{3}"]
+  Paragraph "Superscript ^off^ stays text, a single tilde strikes through, and definition lists are off." [Strikethrough "tilde"]
+  Paragraph "Term : not a definition"

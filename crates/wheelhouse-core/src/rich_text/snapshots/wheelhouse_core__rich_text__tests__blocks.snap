@@ -1,0 +1,38 @@
+---
+source: crates/wheelhouse-core/src/rich_text/tests.rs
+expression: "outline(RichText::open(BLOCKS).doc())"
+---
+Root
+  Heading 1 "The harbour log"
+  Paragraph "Every Block kind, once. Text is emphasised, strong, coded, struck and linked. A hard break ends this line\nand an entity & an escape * sit here." [Emphasis "emphasised"] [Strong "strong"] [Code "coded"] [Strikethrough "struck"] [Link(https://example.com/harbour) "linked"]
+  Heading 2 "Lists"
+  List List { ordered: false, start: 1, tight: true }
+    ListItem Item { task: None }
+      Paragraph "a tight item"
+    ListItem Item { task: None }
+      Paragraph "another, with a nested list"
+      List List { ordered: true, start: 1, tight: true }
+        ListItem Item { task: None }
+          Paragraph "first"
+        ListItem Item { task: None }
+          Paragraph "second"
+    ListItem Item { task: None }
+      Paragraph "last"
+  List List { ordered: true, start: 3, tight: false }
+    ListItem Item { task: None }
+      Paragraph "a loose list starting at three"
+    ListItem Item { task: None }
+      Paragraph "with a second paragraph"
+      Paragraph "in its item"
+  Heading 2 "Setext heading"
+  Quote Quote { alert: None }
+    Paragraph "A quote holds paragraphs"
+    List List { ordered: false, start: 1, tight: true }
+      ListItem Item { task: None }
+        Paragraph "and lists"
+  Code Code { language: "rust" } "fn main() {\n    println!(\"fenced\");\n}"
+  Code Code { language: "" } "indented code"
+  Rule
+  Paragraph "<div>an HTML block</div>"
+  Paragraph "a picture's alt text" [Link(https://example.com/picture.png) "a picture's alt text"]
+  Paragraph "a reference link" [Link(https://example.com/ref) "a reference link"]
