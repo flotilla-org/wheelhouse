@@ -1,34 +1,35 @@
-//! Laying out one paragraph: shaping, bidi and line breaking by parley, then
-//! a copy into flat arrays. No parley `Layout` outlives the call, so a width
-//! change shapes again.
-use std::borrow::Cow;
-
-use parley::{
-    Alignment, AlignmentOptions, BaseDirection, FontFeature, FontFeatures, FontStyle, FontWeight, InlineBox as ParleyBox, InlineBoxKind,
-    Layout, OverflowWrap, PositionedLayoutItem, TextStyle, VerticalAlign,
+use std::{
+    borrow::Cow,
+    error,
+    fmt::{self, Display, Formatter},
+    ops::Range,
+    sync::MutexGuard,
 };
 
-use crate::fonts::TextContext;
+use parley::{
+    setting::Tag, Alignment, AlignmentOptions, BaseDirection, Cluster as ParleyCluster, FontContext, FontFamily, FontFeature, FontFeatures,
+    FontStyle, FontWeight, InlineBox as ParleyBox, InlineBoxKind, Layout, LayoutContext, OverflowWrap, PositionedLayoutItem, TextStyle,
+    VerticalAlign,
+};
+
 use crate::{
-    fonts::{Family, Local, State},
+    fonts::{Family, Local, State, TextContext},
     Cluster, Glyph, Line, Paragraph, PlacedBox, Run, CLUSTER_ELLIPSIS, CLUSTER_HARD_BREAK, CLUSTER_LIGATURE_CONTINUATION, CLUSTER_RTL,
     CLUSTER_WHITESPACE, CLUSTER_WORD_START,
 };
 
-/// The ellipsis a cut line ends with.
 pub const ELLIPSIS: &str = "\u{2026}";
 
-/// One entry of a layout's style table.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Style<'a> {
     pub family: Family,
-    /// In points before the context's scale.
+    /// In points; the context's scale makes them pixels.
     pub size: f32,
-    /// CSS weight: 400 regular, 700 bold.
+    /// CSS weight.
     pub weight: f32,
     pub italic: bool,
     pub features: &'a [Feature],
-    /// Extra advance after each cluster, in points before scale.
+    /// In points.
     pub letter_spacing: f32,
 }
 
@@ -38,14 +39,12 @@ impl Default for Style<'_> {
     }
 }
 
-/// An OpenType feature setting, as `liga` = 0 turns ligatures off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Feature {
     pub tag: [u8; 4],
     pub value: u16,
 }
 
-/// Bytes `start..start + len` of the text take style `style`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StyleRun {
     pub start: usize,
@@ -53,7 +52,6 @@ pub struct StyleRun {
     pub style: usize,
 }
 
-/// A box the host draws inside the text, before byte `offset`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InlineBox {
     pub id: u64,
@@ -65,54 +63,42 @@ pub struct InlineBox {
     pub baseline: f32,
 }
 
-/// What to lay out. Bytes no run covers take style 0.
+/// Bytes no run covers take style 0.
 #[derive(Clone, Copy, Debug)]
 pub struct Input<'a> {
     pub text: &'a str,
     /// In order and not overlapping.
     pub runs: &'a [StyleRun],
-    /// At least one.
     pub styles: &'a [Style<'a>],
     /// In order of offset.
     pub boxes: &'a [InlineBox],
-    /// Lay out at most this many lines (0 for no limit).
+    /// 0 for no limit.
     pub max_lines: usize,
-    /// When `max_lines` cuts the text, end the last line with "…".
     pub ellipsis: bool,
 }
 
 impl<'a> Input<'a> {
-    /// Text in one style, with no limit.
     pub fn plain(text: &'a str, styles: &'a [Style<'a>]) -> Self {
         Self { text, runs: &[], styles, boxes: &[], max_lines: 0, ellipsis: false }
     }
 }
 
-/// Why an input can't be laid out.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
     NoStyles,
-    /// A run names a style past the table.
     UnknownStyle(usize),
-    /// A run ends past the text, or not on a character boundary.
     RunOutOfBounds(usize),
-    /// A run starts before the one before it ends.
     RunsOverlap(usize),
-    /// A box sits past the text, not on a character boundary, or before the box before it.
     BoxOutOfBounds(usize),
-    /// A style's size is not positive and finite.
     BadSize(usize),
-    /// A style's weight or letter spacing is not finite, or its weight not positive.
     BadStyle(usize),
-    /// A box's width, height or baseline is not finite, or its width or height is negative.
     BadBox(usize),
     BadWidth,
-    /// The text is longer than u32::MAX bytes, which the arrays' offsets can't hold.
     TextTooLong,
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Error::NoStyles => write!(f, "the style table is empty"),
             Error::UnknownStyle(i) => write!(f, "run {i} names a style past the table"),
@@ -130,18 +116,16 @@ impl std::fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl error::Error for Error {}
 
 impl TextContext {
-    /// Lays out a paragraph `width` wide.
     pub fn layout(&self, input: &Input<'_>, width: f32) -> Result<Paragraph, Error> {
         let mut out = Paragraph::default();
         self.layout_into(input, width, &mut out)?;
         Ok(out)
     }
 
-    /// Lays out a paragraph `width` wide into `out`, reusing its arrays.
-    /// `out` is cleared first, and left empty on error.
+    /// Reuses `out`'s arrays, and leaves it empty on error.
     pub fn layout_into(&self, input: &Input<'_>, width: f32, out: &mut Paragraph) -> Result<(), Error> {
         out.clear();
         let runs = validate(input, width)?;
@@ -170,8 +154,7 @@ impl TextContext {
             }
             emit.lines(paragraph, 0..kept - 1);
             drop(emit);
-            // Where the last kept line starts (one of inline boxes alone has
-            // no text range of its own).
+            // From the output: a line of boxes alone has no text range.
             let start = out.lines.last().map_or(0, |l| l.text_end as usize);
             let y = paragraph.get(kept - 1).expect("a kept line").metrics().block_min_coord;
             let base = if paragraph.is_rtl() { BaseDirection::Rtl } else { BaseDirection::Ltr };
@@ -226,9 +209,8 @@ impl TextContext {
     }
 }
 
-/// The line's cluster ends in logical order, up to any hard break: each
-/// one's end byte, and the advance of the line up to it (with the boxes
-/// before it).
+/// In logical order up to any hard break: each cluster's end byte, and the
+/// line's advance up to it.
 fn cut_candidates(layout: &Layout<()>, line: usize, boxes: &[InlineBox], scale: f32) -> Vec<(usize, f32)> {
     let line = layout.get(line).expect("a line");
     let mut ends = line
@@ -269,7 +251,7 @@ fn clip_runs(runs: &[StyleRun], start: usize, cut: usize, out: &mut Vec<StyleRun
     out.push(StyleRun { start: cut - start, len: ELLIPSIS.len(), style });
 }
 
-/// Checks the input, returning runs that cover the text exactly.
+/// Returns runs that cover the text exactly.
 fn validate(input: &Input<'_>, width: f32) -> Result<Vec<StyleRun>, Error> {
     if width.is_nan() {
         return Err(Error::BadWidth);
@@ -329,14 +311,14 @@ fn validate(input: &Input<'_>, width: f32) -> Result<Vec<StyleRun>, Error> {
     Ok(runs)
 }
 
-fn text_style<'a>(style: &Style<'a>, family: &parley::FontFamily<'static>) -> TextStyle<'static, 'a, ()> {
+fn text_style<'a>(style: &Style<'a>, family: &FontFamily<'static>) -> TextStyle<'static, 'a, ()> {
     TextStyle {
         font_family: family.clone(),
         font_size: style.size,
         font_weight: FontWeight::new(style.weight),
         font_style: if style.italic { FontStyle::Italic } else { FontStyle::Normal },
         font_features: FontFeatures::List(Cow::Owned(
-            style.features.iter().map(|f| FontFeature { tag: parley::setting::Tag::new(&f.tag), value: f.value }).collect(),
+            style.features.iter().map(|f| FontFeature { tag: Tag::new(&f.tag), value: f.value }).collect(),
         )),
         letter_spacing: style.letter_spacing,
         // A word wider than the line breaks between graphemes.
@@ -355,7 +337,7 @@ struct Shape<'s, 'a> {
 }
 
 impl Shape<'_, '_> {
-    fn build(&self, lcx: &mut parley::LayoutContext<()>, fonts: &mut parley::FontContext, into: &mut Layout<()>) {
+    fn build(&self, lcx: &mut LayoutContext<()>, fonts: &mut FontContext, into: &mut Layout<()>) {
         let mut builder = lcx.style_run_builder(fonts, self.text, self.scale, true);
         builder.reserve(self.styles.len(), self.runs.len());
         for style in self.styles {
@@ -380,12 +362,11 @@ impl Shape<'_, '_> {
     }
 }
 
-/// Copies lines of a parley layout into the output arrays. Bytes of the
-/// layout's text map to `shift` more in the input's; bytes from `real` on
-/// are the ellipsis.
+/// Bytes of the layout's text map to `shift` more in the input's; bytes from
+/// `real` on are the ellipsis.
 struct Emit<'s> {
-    state: std::sync::MutexGuard<'s, State>,
-    fonts: &'s mut parley::FontContext,
+    state: MutexGuard<'s, State>,
+    fonts: &'s mut FontContext,
     out: &'s mut Paragraph,
     shift: usize,
     real: usize,
@@ -393,7 +374,7 @@ struct Emit<'s> {
 }
 
 impl Emit<'_> {
-    fn lines(&mut self, layout: &Layout<()>, lines: std::ops::Range<usize>) {
+    fn lines(&mut self, layout: &Layout<()>, lines: Range<usize>) {
         let mut last_font = None;
         for index in lines {
             let line = layout.get(index).expect("a line in range");
@@ -504,8 +485,7 @@ impl Emit<'_> {
         }
     }
 
-    /// Copies a cluster at `x`, returning its advance.
-    fn cluster(&mut self, c: &parley::Cluster<'_, ()>, x: f32, glyphless: bool, line: u32) -> f32 {
+    fn cluster(&mut self, c: &ParleyCluster<'_, ()>, x: f32, glyphless: bool, line: u32) -> f32 {
         let range = c.text_range();
         let mut flags = 0;
         if c.is_rtl() {

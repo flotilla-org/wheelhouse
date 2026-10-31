@@ -1,69 +1,53 @@
-//! Native paragraph layout (wheelhouse-text, #559): a text context holds
-//! the fonts and settings, and wh_text_layout lays out one paragraph into
-//! arrays the host's allocator provides. The queries read those arrays
-//! wherever they live. Calls on one context may come from several threads;
-//! each thread gets its own layout state.
 use super::*;
-use std::{cell::RefCell, ffi::c_void, mem};
+use std::{cell::RefCell, ffi::c_void, mem, str};
 use wheelhouse_text::{
     query, Affinity, Cluster, Family, Feature, FontSource, Glyph, InlineBox, Input, Line, Paragraph, PlacedBox, Rect, Run, Segment, Style,
-    StyleRun, TextContext, View,
+    StyleRun, TextContext, View, CLUSTER_ELLIPSIS, CLUSTER_HARD_BREAK, CLUSTER_LIGATURE_CONTINUATION, CLUSTER_RTL, CLUSTER_WHITESPACE,
+    CLUSTER_WORD_START,
 };
 
-/// A family slot: prose.
 pub const WH_TEXT_FAMILY_MAIN: u32 = 0;
-/// A family slot: code.
 pub const WH_TEXT_FAMILY_CODE: u32 = 1;
-/// A family slot: icons.
 pub const WH_TEXT_FAMILY_ICONS: u32 = 2;
 
-/// A caret with the text after its offset.
+/// With the text after the offset.
 pub const WH_TEXT_DOWNSTREAM: u32 = 0;
-/// A caret with the text before its offset.
+/// With the text before the offset.
 pub const WH_TEXT_UPSTREAM: u32 = 1;
 
-/// A face from bytes the host registered, by its bytes id.
 pub const WH_TEXT_FONT_BYTES: u32 = 0;
-/// A face from a file fontique found.
 pub const WH_TEXT_FONT_PATH: u32 = 1;
-/// A face known only by its bytes.
+/// Known only by its bytes.
 pub const WH_TEXT_FONT_UNKNOWN: u32 = 2;
 
-/// The cluster's text runs right to left.
+// Literals, as cbindgen can't evaluate another crate's constants.
 pub const WH_TEXT_CLUSTER_RTL: u32 = 1;
-/// The cluster is a space, a no-break space or a hard line break.
+/// A space, a no-break space or a hard line break.
 pub const WH_TEXT_CLUSTER_WHITESPACE: u32 = 2;
-/// A word starts at the cluster.
 pub const WH_TEXT_CLUSTER_WORD_START: u32 = 4;
-/// The cluster continues a ligature an earlier cluster starts: it has no
-/// glyphs, and its advance is its share of the ligature's.
+/// No glyphs of its own; its advance is its share of the ligature's.
 pub const WH_TEXT_CLUSTER_LIGATURE_CONTINUATION: u32 = 8;
-/// The cluster is a hard line break.
 pub const WH_TEXT_CLUSTER_HARD_BREAK: u32 = 16;
-/// The cluster is the ellipsis a cut line ends with: it covers no bytes,
-/// and its start is where the text was cut.
+/// Covers no bytes; its start is where the text was cut.
 pub const WH_TEXT_CLUSTER_ELLIPSIS: u32 = 32;
 
 const _: () = assert!(
-    WH_TEXT_CLUSTER_RTL == wheelhouse_text::CLUSTER_RTL
-        && WH_TEXT_CLUSTER_WHITESPACE == wheelhouse_text::CLUSTER_WHITESPACE
-        && WH_TEXT_CLUSTER_WORD_START == wheelhouse_text::CLUSTER_WORD_START
-        && WH_TEXT_CLUSTER_LIGATURE_CONTINUATION == wheelhouse_text::CLUSTER_LIGATURE_CONTINUATION
-        && WH_TEXT_CLUSTER_HARD_BREAK == wheelhouse_text::CLUSTER_HARD_BREAK
-        && WH_TEXT_CLUSTER_ELLIPSIS == wheelhouse_text::CLUSTER_ELLIPSIS
+    WH_TEXT_CLUSTER_RTL == CLUSTER_RTL
+        && WH_TEXT_CLUSTER_WHITESPACE == CLUSTER_WHITESPACE
+        && WH_TEXT_CLUSTER_WORD_START == CLUSTER_WORD_START
+        && WH_TEXT_CLUSTER_LIGATURE_CONTINUATION == CLUSTER_LIGATURE_CONTINUATION
+        && WH_TEXT_CLUSTER_HARD_BREAK == CLUSTER_HARD_BREAK
+        && WH_TEXT_CLUSTER_ELLIPSIS == CLUSTER_ELLIPSIS
 );
 
-/// Fonts, family settings and the font epoch, shared by every thread that
-/// lays out with it. Free it with wh_text_free.
+/// Safe to use from several threads at once.
 pub struct WhText {
     ctx: TextContext,
 }
 
-/// Where output arrays go: alloc(user, size, align) returns size bytes
-/// aligned to align, or NULL on failure. The library never frees them;
-/// with an arena, free the arena. A call that fails part way can leave
-/// arrays it already allocated: a host whose allocator isn't an arena must
-/// track and free them. alloc must not call back into the library.
+/// alloc returns size bytes aligned to align, or NULL. The library never
+/// frees them, even when a call fails part way. alloc must not call back
+/// into the library.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextAllocator {
@@ -71,7 +55,6 @@ pub struct WhTextAllocator {
     pub user: *mut c_void,
 }
 
-/// An OpenType feature setting: tag "liga" value 0 turns ligatures off.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextFeature {
@@ -79,15 +62,14 @@ pub struct WhTextFeature {
     pub value: u32,
 }
 
-/// One entry of a layout's style table. Sizes are in points; the
-/// context's scale turns them into pixels.
+/// Sizes in points; the context's scale makes them pixels.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextStyle {
     /// WH_TEXT_FAMILY_*.
     pub family: u32,
     pub size: f32,
-    /// CSS weight: 400 regular, 700 bold.
+    /// CSS weight.
     pub weight: f32,
     pub italic: u32,
     pub features: *const WhTextFeature,
@@ -95,8 +77,7 @@ pub struct WhTextStyle {
     pub letter_spacing: f32,
 }
 
-/// Bytes start..start + len take style `style`. Runs are in order and
-/// don't overlap; bytes no run covers take style 0.
+/// In order and not overlapping; bytes no run covers take style 0.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextStyleRun {
@@ -105,9 +86,7 @@ pub struct WhTextStyleRun {
     pub style: u32,
 }
 
-/// A box the host draws inside the text, before byte `offset`, in points.
-/// Its baseline is that far down from its top: height sits it on the
-/// text's baseline.
+/// In points, placed before byte offset. baseline is down from its top.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextInlineBox {
@@ -118,7 +97,7 @@ pub struct WhTextInlineBox {
     pub baseline: f32,
 }
 
-/// What to lay out, borrowed for the call.
+/// Borrowed for the call.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextInput {
@@ -126,21 +105,18 @@ pub struct WhTextInput {
     pub text: Text,
     pub runs: *const WhTextStyleRun,
     pub run_count: usize,
-    /// At least one.
     pub styles: *const WhTextStyle,
     pub style_count: usize,
     /// In order of offset.
     pub boxes: *const WhTextInlineBox,
     pub box_count: usize,
-    /// At most this many lines (0 for no limit).
+    /// 0 for no limit.
     pub max_lines: u32,
-    /// When max_lines cuts the text, end the last line with "…".
+    /// End a cut last line with "…".
     pub ellipsis: u32,
 }
 
-/// A laid-out paragraph: arrays in the host's memory (NULL when empty), in
-/// pixels with y down from the paragraph's top. Lines run top to bottom;
-/// each line's clusters, runs and glyphs run left to right.
+/// Arrays are NULL when empty. In pixels, y down from the paragraph's top.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextLayout {
@@ -154,31 +130,26 @@ pub struct WhTextLayout {
     pub cluster_count: usize,
     pub boxes: *mut PlacedBox,
     pub box_count: usize,
-    /// The widest line's width.
     pub width: f32,
     pub height: f32,
-    /// The font epoch it was laid out at: stale when wh_text_epoch differs.
+    /// Stale when wh_text_epoch differs.
     pub epoch: u64,
 }
 
-/// A face a run names.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextFont {
     /// WH_TEXT_FONT_*.
     pub kind: u32,
-    /// For WH_TEXT_FONT_BYTES, the id it was registered with.
+    /// For WH_TEXT_FONT_BYTES.
     pub bytes_id: u64,
-    /// For WH_TEXT_FONT_PATH, the file.
+    /// For WH_TEXT_FONT_PATH.
     pub path: Text,
-    /// The face's index within its file.
     pub face_index: u32,
-    /// The file's bytes, as fontique loaded them.
     pub data: *const u8,
     pub data_len: usize,
 }
 
-/// A caret position.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextPosition {
@@ -187,7 +158,7 @@ pub struct WhTextPosition {
     pub affinity: u32,
 }
 
-/// Where a caret is drawn: x, from the line's top, its height.
+/// y is the line's top.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextCaret {
@@ -198,7 +169,6 @@ pub struct WhTextCaret {
     pub rtl: u32,
 }
 
-/// Rectangles of a selection, in the host's memory.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextRects {
@@ -206,7 +176,6 @@ pub struct WhTextRects {
     pub count: usize,
 }
 
-/// A layout's segments (what run ids name), in the host's memory.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextSegments {
@@ -214,9 +183,8 @@ pub struct WhTextSegments {
     pub count: usize,
 }
 
-/// A text context with no fonts registered. With system_fonts, fontique
-/// also finds the system's fonts (the app); without, only registered fonts
-/// are used (tests). Free it with wh_text_free.
+/// Without system_fonts, only registered fonts are used. Free it with
+/// wh_text_free.
 #[no_mangle]
 pub extern "C" fn wh_text_create(system_fonts: u32) -> *mut WhText {
     catch_unwind(|| Box::into_raw(Box::new(WhText { ctx: TextContext::new(system_fonts != 0) }))).unwrap_or(ptr::null_mut())
@@ -230,9 +198,7 @@ pub unsafe extern "C" fn wh_text_free(ctx: *mut WhText) {
     }
 }
 
-/// Registers every face in a font file's bytes (copied), which runs then
-/// name by bytes_id. Returns how many faces it registered: 0 for bytes
-/// that hold no font.
+/// Copies the bytes. Returns how many faces it registered.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_register_font(ctx: *mut WhText, data: *const u8, len: usize, bytes_id: u64) -> usize {
     // SAFETY: the caller's contract.
@@ -240,8 +206,7 @@ pub unsafe extern "C" fn wh_text_register_font(ctx: *mut WhText, data: *const u8
     catch_unwind(AssertUnwindSafe(|| t.ctx.register_fonts(bytes.to_vec(), bytes_id))).unwrap_or(0)
 }
 
-/// Sets the family a slot (WH_TEXT_FAMILY_*) names. Returns 0 for an
-/// unknown slot or a name that is not UTF-8.
+/// family is WH_TEXT_FAMILY_*. Returns 0 for an unknown slot or non-UTF-8 name.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_set_family(ctx: *mut WhText, family: u32, name: Text) -> u32 {
     // SAFETY: the caller's contract.
@@ -252,8 +217,8 @@ pub unsafe extern "C" fn wh_text_set_family(ctx: *mut WhText, family: u32, name:
     1
 }
 
-/// Sets the families every slot falls back to, in order, before fontique's
-/// own fallback. Returns 0, changing nothing, if a name is not UTF-8.
+/// Tried in order before fontique's own fallback. Returns 0, changing
+/// nothing, if a name is not UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_set_fallbacks(ctx: *mut WhText, names: *const Text, count: usize) -> u32 {
     // SAFETY: the caller's contract.
@@ -264,7 +229,6 @@ pub unsafe extern "C" fn wh_text_set_fallbacks(ctx: *mut WhText, names: *const T
     1
 }
 
-/// Sets the display scale: layouts are in pixels, sizes in points.
 /// Returns 0 for a scale that is not positive and finite.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_set_scale(ctx: *mut WhText, scale: f32) -> u32 {
@@ -278,7 +242,7 @@ pub unsafe extern "C" fn wh_text_set_scale(ctx: *mut WhText, scale: f32) -> u32 
     }
 }
 
-/// Installed fonts changed: finds the system's fonts again.
+/// Rescans the system's fonts.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_fonts_changed(ctx: *mut WhText) {
     // SAFETY: the caller's contract.
@@ -287,16 +251,14 @@ pub unsafe extern "C" fn wh_text_fonts_changed(ctx: *mut WhText) {
     }
 }
 
-/// Increments when font settings, installed fonts or scale change: a
-/// layout from another epoch is stale.
+/// Changes with font settings, installed fonts or scale.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_epoch(ctx: *const WhText) -> u64 {
     // SAFETY: the caller's contract.
     unsafe { ctx.as_ref() }.map_or(0, |t| t.ctx.epoch())
 }
 
-/// The face a run's font id names, into out; its path and bytes live as
-/// long as ctx. Returns 0 for an id no layout has named.
+/// Its path and bytes live as long as ctx. Returns 0 for an unknown id.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_font(ctx: *const WhText, font: u32, out: *mut WhTextFont) -> u32 {
     // SAFETY: the caller's contract.
@@ -304,7 +266,6 @@ pub unsafe extern "C" fn wh_text_font(ctx: *const WhText, font: u32, out: *mut W
     let Some(face) = t.ctx.font(font) else { return 0 };
     let (kind, bytes_id, path) = match &face.source {
         FontSource::Bytes(id) => (WH_TEXT_FONT_BYTES, *id, Text::borrowed("")),
-        // The context keeps the path for its life.
         FontSource::Path(path) => (WH_TEXT_FONT_PATH, 0, Text::borrowed(path)),
         FontSource::Unknown => (WH_TEXT_FONT_UNKNOWN, 0, Text::borrowed("")),
     };
@@ -313,33 +274,27 @@ pub unsafe extern "C" fn wh_text_font(ctx: *const WhText, font: u32, out: *mut W
     1
 }
 
-/// The normalized variation coordinates a run's coords id names, into
-/// out (live as long as ctx). Returns how many: 0 for id 0.
+/// Normalized coordinates, live as long as ctx. Returns how many.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_coords(ctx: *const WhText, coords: u32, out: *mut *const i16) -> usize {
     // SAFETY: the caller's contract.
     let (Some(t), Some(out)) = (unsafe { ctx.as_ref() }, unsafe { out.as_mut() }) else { return 0 };
-    // The context keeps every coordinates entry for its life.
+    // The context keeps every entry for its life, so the pointer outlives the Arc.
     let coords = t.ctx.coords(coords);
     *out = coords.as_ptr();
     coords.len()
 }
 
-/// Entries the scratch arrays keep between calls: about a 64 KB paragraph.
+/// About a 64 KB paragraph; larger scratch isn't kept between calls.
 const SCRATCH_KEEP: usize = 1 << 16;
 
 thread_local! {
-    /// The arrays a layout is built in before they are copied out.
     static SCRATCH: RefCell<Paragraph> = RefCell::default();
-    /// The input's runs and boxes, converted, reused between calls.
     static INPUTS: RefCell<(Vec<StyleRun>, Vec<InlineBox>)> = RefCell::default();
 }
 
-/// Lays out a paragraph width pixels wide (INFINITY for no wrapping),
-/// writing its arrays through alloc into out. No layout state survives the
-/// call: a width change lays out again. Returns 1, or 0 with an error for
-/// invalid input or a failed allocation (out is then untouched, though
-/// arrays allocated before the failure stay allocated).
+/// width INFINITY doesn't wrap. On failure, returns 0 with an error and
+/// leaves out untouched.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_layout(
     ctx: *const WhText,
@@ -355,7 +310,7 @@ pub unsafe extern "C" fn wh_text_layout(
             let t = ctx.as_ref().ok_or("null text context")?;
             let input = input.as_ref().ok_or("null input")?;
             let out = out.as_mut().ok_or("null output")?;
-            let text = std::str::from_utf8(slice(input.text.data, input.text.len)?).map_err(|e| e.to_string())?;
+            let text = str::from_utf8(slice(input.text.data, input.text.len)?).map_err(|e| e.to_string())?;
             let (mut runs, mut boxes) = INPUTS.with(|inputs| mem::take(&mut *inputs.borrow_mut()));
             runs.clear();
             runs.extend(slice(input.runs, input.run_count)?.iter().map(|r| StyleRun {
@@ -421,7 +376,6 @@ pub unsafe extern "C" fn wh_text_layout(
                     height: p.height,
                     epoch: p.epoch,
                 };
-                // A huge paragraph's arrays don't stay with the thread.
                 if p.glyphs.capacity() > SCRATCH_KEEP || p.clusters.capacity() > SCRATCH_KEEP {
                     *p = Paragraph::default();
                 }
@@ -434,7 +388,6 @@ pub unsafe extern "C" fn wh_text_layout(
     }
 }
 
-/// Copies an array into memory from the host's allocator: NULL when empty.
 unsafe fn copy_out<T: Copy>(alloc: &WhTextAllocator, items: &[T]) -> Result<*mut T, String> {
     if items.is_empty() {
         return Ok(ptr::null_mut());
@@ -454,7 +407,6 @@ unsafe fn copy_out<T: Copy>(alloc: &WhTextAllocator, items: &[T]) -> Result<*mut
     Ok(to)
 }
 
-/// The layout's arrays as slices.
 unsafe fn view<'a>(layout: *const WhTextLayout) -> Option<View<'a>> {
     // SAFETY: the caller's contract.
     unsafe {
@@ -469,10 +421,7 @@ unsafe fn view<'a>(layout: *const WhTextLayout) -> Option<View<'a>> {
     }
 }
 
-/// Whether the layout's ranges index within its arrays and its clusters'
-/// ends fit in u32, so the queries can't read past the arrays or overflow.
-/// A layout is meant to be wh_text_layout's output, unmodified; this keeps
-/// a corrupt one to a 0 return.
+/// A corrupt layout must return 0, not read past its arrays or overflow.
 fn well_formed(v: &View<'_>) -> bool {
     v.lines.iter().all(|l| {
         (l.cluster_start as usize).checked_add(l.cluster_count as usize).is_some_and(|end| end <= v.clusters.len())
@@ -480,8 +429,6 @@ fn well_formed(v: &View<'_>) -> bool {
     }) && v.clusters.iter().all(|c| c.start.checked_add(c.len).is_some())
 }
 
-/// Runs a query over a well-formed layout, catching any panic: None for a
-/// malformed layout, a failed query or a panic.
 unsafe fn over<T>(layout: *const WhTextLayout, f: impl FnOnce(&View<'_>) -> Option<T>) -> Option<T> {
     // SAFETY: the caller's contract.
     let v = unsafe { view(layout) }?;
@@ -498,7 +445,6 @@ fn affinity(a: Affinity) -> u32 {
     }
 }
 
-/// Writes a query's answer to out: 1, or 0 for none.
 fn answer<T>(out: Option<&mut T>, value: Option<T>) -> u32 {
     match (out, value) {
         (Some(out), Some(value)) => {
@@ -509,8 +455,7 @@ fn answer<T>(out: Option<&mut T>, value: Option<T>) -> u32 {
     }
 }
 
-/// The caret position nearest the point (x, y), into out. Returns 0 for a
-/// malformed layout.
+/// Returns 0 for a malformed layout.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_offset_at(layout: *const WhTextLayout, x: f32, y: f32, out: *mut WhTextPosition) -> u32 {
     // SAFETY: the caller's contract.
@@ -528,9 +473,8 @@ pub unsafe extern "C" fn wh_text_offset_at(layout: *const WhTextLayout, x: f32, 
     answer(out, p)
 }
 
-/// Where the caret for offset and affinity (WH_TEXT_DOWNSTREAM or
-/// WH_TEXT_UPSTREAM) is drawn, into out. An offset inside a cluster counts
-/// as its start. Returns 0 for a malformed layout.
+/// An offset inside a cluster counts as its start. Returns 0 for a
+/// malformed layout.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_caret_rect(layout: *const WhTextLayout, offset: u32, affinity: u32, out: *mut WhTextCaret) -> u32 {
     // SAFETY: the caller's contract.
@@ -549,10 +493,8 @@ pub unsafe extern "C" fn wh_text_caret_rect(layout: *const WhTextLayout, offset:
     answer(out, caret)
 }
 
-/// The selection of bytes start..end as rectangles per line, through alloc
-/// into out: visually adjacent clusters merge, so bidi text can give
-/// several on one line. Returns 0 for a malformed layout or a failed
-/// allocation, which it doesn't tell apart.
+/// Bidi text can give several rects on one line. Returns 0 for a malformed
+/// layout or a failed allocation.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_selection_rects(
     layout: *const WhTextLayout,
@@ -576,10 +518,8 @@ pub unsafe extern "C" fn wh_text_selection_rects(
     answer(out, rects)
 }
 
-/// The layout's segments, through alloc into out: each a stretch of one
-/// direction and one style on a line. A run id is the Block's key, the
-/// segment's line and index, and the layout's generation. Returns 0 for a
-/// malformed layout or a failed allocation, which it doesn't tell apart.
+/// A run id is (Block key, line, segment, generation). Returns 0 for a
+/// malformed layout or a failed allocation.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_segments(layout: *const WhTextLayout, alloc: WhTextAllocator, out: *mut WhTextSegments) -> u32 {
     // SAFETY: the caller's contract.

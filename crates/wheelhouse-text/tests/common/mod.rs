@@ -1,10 +1,8 @@
-//! A context with Wheelhouse's bundled fonts only, and a text dump of a
-//! layout for snapshots.
 #![allow(dead_code)]
-use std::fmt::Write;
+use std::{fmt::Write, fs};
 use wheelhouse_text::{FontSource, Paragraph, TextContext};
 
-/// The bundled faces native registers, by the bytes id runs name them by.
+/// Indexed by bytes id.
 pub const FONTS: &[&str] = &[
     "AtkinsonHyperlegibleNext-Regular.ttf",
     "AtkinsonHyperlegibleNext-SemiBold.ttf",
@@ -18,7 +16,7 @@ pub const FONTS: &[&str] = &[
 ];
 
 pub fn data(name: &str) -> Vec<u8> {
-    std::fs::read(format!("{}/../../data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    fs::read(format!("{}/../../data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
 }
 
 pub fn context() -> TextContext {
@@ -29,7 +27,6 @@ pub fn context() -> TextContext {
     ctx
 }
 
-/// Lines, then each line's runs and clusters, then boxes.
 pub fn dump(ctx: &TextContext, text: &str, p: &Paragraph) -> String {
     let mut s = String::new();
     for (i, l) in p.lines.iter().enumerate() {

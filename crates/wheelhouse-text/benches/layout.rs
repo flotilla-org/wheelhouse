@@ -1,12 +1,9 @@
-//! Times layout plus copy-out into the arrays, with the bundled fonts only:
-//! a large generated markdown-like document paragraph by paragraph, a
-//! streaming tail re-laid out after each append, and a viewport of
-//! paragraphs re-laid out at widths 300 to 1600 px. Its numbers decide
-//! whether a width change can keep shaping again (#544, decision 4).
-//!
-//! `cargo bench -p wheelhouse-text`; `WHEELHOUSE_TEXT_BENCH_MB` sets the
-//! document's size (default 8).
-use std::time::{Duration, Instant};
+//! Decides whether a width change can keep shaping again (#544, decision 4).
+//! `WHEELHOUSE_TEXT_BENCH_MB` sets the document's size (default 8).
+use std::{
+    env, fs,
+    time::{Duration, Instant},
+};
 use wheelhouse_text::{Family, Input, Paragraph, Style, StyleRun, TextContext};
 
 const FONTS: &[&str] = &[
@@ -68,7 +65,7 @@ const WORDS: &[&str] = &[
     "To",
 ];
 
-/// A deterministic generator, so every run lays out the same document.
+/// Deterministic, so every run lays out the same document.
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self, n: usize) -> usize {
@@ -77,8 +74,7 @@ impl Lcg {
     }
 }
 
-/// A paragraph of markdown-like text: words, `code` spans, **bold**
-/// stretches, and its style runs (0 prose, 1 code, 2 bold).
+/// Styles: 0 prose, 1 code, 2 bold.
 struct Para {
     text: String,
     runs: Vec<StyleRun>,
@@ -133,12 +129,12 @@ fn percentile(times: &mut [Duration], p: f64) -> Duration {
 fn main() {
     let ctx = TextContext::new(false);
     for (id, name) in FONTS.iter().enumerate() {
-        let bytes = std::fs::read(format!("{}/../../data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let bytes = fs::read(format!("{}/../../data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();
         ctx.register_fonts(bytes, id as u64);
     }
     let styles =
         [Style::default(), Style { family: Family::Code, size: 14.0, ..Style::default() }, Style { weight: 600.0, ..Style::default() }];
-    let mb: f64 = std::env::var("WHEELHOUSE_TEXT_BENCH_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(8.0);
+    let mb: f64 = env::var("WHEELHOUSE_TEXT_BENCH_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(8.0);
     let mut rng = Lcg(559);
     let mut doc = vec![];
     let mut bytes = 0;

@@ -1,7 +1,5 @@
-//! Line breaks and cluster positions with the bundled fonts only. Scripts
-//! the bundled fonts don't cover (Arabic, Hebrew, CJK, Thai) shape to
-//! notdef glyphs, so their snapshots check breaks and bidi order, not
-//! glyph shapes.
+//! No bundled font covers Arabic, Hebrew, CJK or Thai: those shape to notdef,
+//! so their snapshots check breaks and bidi order, not glyphs.
 mod common;
 use common::{context, dump};
 use insta::assert_snapshot;
@@ -69,7 +67,6 @@ fn cjk_breaks_between_ideographs() {
 #[cfg(feature = "complex-scripts")]
 #[test]
 fn thai_breaks_between_words() {
-    // No bundled font covers Thai, so this checks break positions only:
     // ICU4X's dictionary finds the words in "สวัสดีครับ ยินดีต้อนรับ".
     assert_snapshot!(plain("\u{E2A}\u{E27}\u{E31}\u{E2A}\u{E14}\u{E35}\u{E04}\u{E23}\u{E31}\u{E1A}\u{E22}\u{E34}\u{E19}\u{E14}\u{E35}\u{E15}\u{E49}\u{E2D}\u{E19}\u{E23}\u{E31}\u{E1A}", 60.0));
 }

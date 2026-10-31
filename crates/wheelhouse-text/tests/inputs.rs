@@ -1,6 +1,5 @@
-//! What a layout refuses, and calls on one context from several threads.
 mod common;
-use std::sync::Arc;
+use std::{sync::Arc, thread};
 use wheelhouse_text::{Error, Family, InlineBox, Input, Style, StyleRun, TextContext};
 
 #[test]
@@ -48,7 +47,7 @@ fn threads_share_one_context() {
     let workers = (0..4)
         .map(|_| {
             let ctx = ctx.clone();
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let styles = [Style::default(), Style { family: Family::Code, ..Style::default() }];
                 for _ in 0..200 {
                     let p = ctx.layout(&Input { runs: &runs, ..Input::plain(text, &styles) }, 120.0).unwrap();

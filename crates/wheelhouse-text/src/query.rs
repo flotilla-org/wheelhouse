@@ -1,26 +1,23 @@
-//! Queries over a layout's arrays: plain functions, so they serve the arrays
-//! in Rust memory and the copies in C memory alike.
+// Free functions over a `View`, so they read C-owned copies of the arrays too.
+use std::ptr;
+
 use crate::{Cluster, Line, View, CLUSTER_ELLIPSIS, CLUSTER_HARD_BREAK, CLUSTER_RTL};
 
-/// Which side of an offset a caret belongs to where the two sides are drawn
-/// apart: at a soft line break, or a direction change.
+/// Matters where an offset's two sides are drawn apart: a soft line break, or
+/// a direction change.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Affinity {
-    /// With the text after the offset.
     #[default]
     Downstream,
-    /// With the text before the offset.
     Upstream,
 }
 
-/// A caret position: a byte offset and its affinity.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Position {
     pub offset: usize,
     pub affinity: Affinity,
 }
 
-/// Where a caret is drawn.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Caret {
     pub x: f32,
@@ -28,11 +25,9 @@ pub struct Caret {
     pub y: f32,
     pub height: f32,
     pub line: usize,
-    /// The text it sits in runs right to left.
     pub rtl: bool,
 }
 
-/// A rectangle of a selection, on one line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 pub struct Rect {
@@ -43,16 +38,16 @@ pub struct Rect {
     pub line: u32,
 }
 
-/// A stretch of one direction and one style on a line: what a run id names.
+/// Clusters of one direction and one style, visually consecutive on a line.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 pub struct Segment {
     pub line: u32,
-    /// Its index among the line's segments, left to right.
+    /// Left to right among the line's.
     pub segment: u32,
     pub cluster_start: u32,
     pub cluster_count: u32,
-    /// The bytes it covers: lowest start to highest end.
+    /// Lowest start to highest end, as bidi may interleave them.
     pub text_start: u32,
     pub text_end: u32,
     pub x: f32,
@@ -61,8 +56,7 @@ pub struct Segment {
     pub rtl: u32,
 }
 
-/// A run's identity across layouts of one Block: the Block's key, the line
-/// and segment, and the layout's generation.
+/// Stable across layouts of one Block: `key` is the Block's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RunId {
     pub key: u64,
@@ -86,8 +80,6 @@ fn rtl(c: &Cluster) -> bool {
     c.flags & CLUSTER_RTL != 0
 }
 
-/// The position nearest a point: the line by y, then the cluster by x in
-/// visual order, then the side of it the point falls.
 pub fn offset_at(view: &View<'_>, x: f32, y: f32) -> Position {
     let Some(last) = view.lines.len().checked_sub(1) else { return Position::default() };
     let line = &view.lines[view.lines.partition_point(|l| l.y + l.height <= y).min(last)];
@@ -116,7 +108,7 @@ pub fn offset_at(view: &View<'_>, x: f32, y: f32) -> Position {
     // Past a hard break is the next line: its far side is the text beside
     // it, when parley left any on its line, or else the break itself.
     if c.flags & CLUSTER_HARD_BREAK != 0 {
-        let at = clusters.iter().position(|o| std::ptr::eq(o, c)).unwrap_or(i);
+        let at = clusters.iter().position(|o| ptr::eq(o, c)).unwrap_or(i);
         let beside = match (left, rtl(c)) {
             (false, false) => clusters.get(at + 1).map(|o| (o, true)),
             (true, true) => at.checked_sub(1).map(|b| (&clusters[b], false)),
@@ -137,9 +129,7 @@ pub fn offset_at(view: &View<'_>, x: f32, y: f32) -> Position {
     }
 }
 
-/// Where the caret for a position is drawn. An offset inside a cluster
-/// counts as its start; a caret inside a ligature sits where its graphemes
-/// divide the ligature's advance.
+/// An offset inside a cluster counts as its start.
 pub fn caret_rect(view: &View<'_>, offset: usize, affinity: Affinity) -> Caret {
     let Some(last) = view.lines.len().checked_sub(1) else {
         return Caret { x: 0.0, y: 0.0, height: 0.0, line: 0, rtl: false };
@@ -189,8 +179,7 @@ pub fn caret_rect(view: &View<'_>, offset: usize, affinity: Affinity) -> Caret {
     Caret { x, y: l.y, height: l.height, line, rtl }
 }
 
-/// The selection of bytes `start..end`, as rectangles per line. Visually
-/// adjacent clusters merge, so bidi text can give several on one line.
+/// Visually adjacent clusters merge, so bidi text can give several on one line.
 pub fn selection_rects(view: &View<'_>, start: usize, end: usize) -> Vec<Rect> {
     let mut rects = vec![];
     if start >= end {
@@ -219,8 +208,6 @@ pub fn selection_rects(view: &View<'_>, start: usize, end: usize) -> Vec<Rect> {
     rects
 }
 
-/// Each line's segments: visually consecutive clusters of one direction and
-/// one style.
 pub fn segments(view: &View<'_>) -> Vec<Segment> {
     let mut out: Vec<Segment> = vec![];
     for (index, line) in view.lines.iter().enumerate() {

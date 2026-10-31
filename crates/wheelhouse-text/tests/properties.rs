@@ -1,5 +1,3 @@
-//! Properties of a layout over random text, styles and widths, with the
-//! bundled fonts only.
 mod common;
 use std::sync::LazyLock;
 
@@ -12,8 +10,7 @@ use wheelhouse_text::{
 
 static CTX: LazyLock<TextContext> = LazyLock::new(common::context);
 
-/// Pieces random text is made of: every script the snapshots cover, and
-/// the characters that make clusters interesting.
+/// Every script the snapshots cover, and characters that make clusters interesting.
 const PIECES: &[&str] = &[
     "a",
     "word",
@@ -183,7 +180,6 @@ fn clusters_cover_the_text_once_in_order(tc: TestCase) {
     }
 }
 
-/// Each position at a cluster edge, both ways.
 fn positions(p: &Paragraph) -> Vec<(usize, Affinity)> {
     let mut offsets = p.clusters.iter().flat_map(|c| [c.start as usize, (c.start + c.len) as usize]).collect::<Vec<_>>();
     offsets.extend(p.lines.iter().map(|l| l.text_start as usize));
