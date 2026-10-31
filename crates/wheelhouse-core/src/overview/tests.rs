@@ -741,6 +741,29 @@ fn a_zoomed_grid_pans_both_ways() {
     assert_eq!(window.target().unwrap().cx, rows.cx);
 }
 
+/// A pan while the whole grid fits moves nothing, so when the grid later
+/// zooms in it does so on the current tile, not where that pan pointed.
+#[test]
+fn a_pan_while_the_grid_fits_is_forgotten() {
+    let project = || segment("project", entity("project", 0));
+    let entries: Vec<_> = (1..=30).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
+    let window = |pan: bool| {
+        let mut window = OverviewWindow::default();
+        window.set_view_mode(ViewMode::Grid, 0.0);
+        window.set_grid(GridPacking::Shelves, 0.0, 0.0);
+        window.update(entries.clone(), Some(tab_workspace_id(1)), 1.6, 0.0);
+        window.open(0.0);
+        if pan {
+            let fit = window.target().unwrap();
+            window.pan(0.5, 0.5);
+            assert_eq!(window.target().unwrap(), fit, "the whole grid fits");
+        }
+        window.set_grid(GridPacking::Shelves, 0.4, 0.0);
+        window.target().unwrap()
+    };
+    assert_eq!(window(true), window(false));
+}
+
 // ---------- a window's overview ----------
 
 fn near(a: Camera, b: Camera) -> bool {
