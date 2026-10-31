@@ -309,7 +309,9 @@ impl Endpoint {
 #[cfg(unix)]
 fn closes(reader: &mut Body, wait: Duration) -> bool {
     use std::io::Read;
-    reader.get_ref().set_read_timeout(Some(wait)).unwrap();
+    // macOS refuses a timeout (EINVAL) once the peer has closed; the read
+    // then ends at once.
+    let _ = reader.get_ref().set_read_timeout(Some(wait));
     let mut rest = Vec::new();
     match reader.read_to_end(&mut rest) {
         Ok(_) => true,
@@ -322,7 +324,9 @@ fn closes(reader: &mut Body, wait: Duration) -> bool {
 #[cfg(unix)]
 fn next(reader: &mut Body, wait: Duration) -> Option<Record> {
     use std::io::BufRead;
-    reader.get_ref().set_read_timeout(Some(wait)).unwrap();
+    // macOS refuses a timeout (EINVAL) once the peer has closed; the read
+    // then ends at once.
+    let _ = reader.get_ref().set_read_timeout(Some(wait));
     let mut line = String::new();
     match reader.read_line(&mut line) {
         Ok(0) => None,
