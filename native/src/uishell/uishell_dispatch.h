@@ -583,8 +583,13 @@ uishell_register_app_cmd_packs(void)
 
 #define UISHELL_APP_OPEN_DASHBOARD(cmd_line) uishell_dashboard_open_from_cmd_line(cmd_line)
 
+// The user file a launch opens; its settings load in the first frame, but
+// the Automation Endpoint is settled before then (uishell_main.c).
+global String8 uishell_launch_user_path;
+
 #define UISHELL_APP_INITIAL_LOAD(user_path, project_path) do \
 { \
+  uishell_launch_user_path = push_str8_copy(rd_state->arena, (user_path)); \
   uishell_cmd("open_user", .file_path = (user_path), .non_graphical = 1); \
   if((project_path).size != 0) \
   { \

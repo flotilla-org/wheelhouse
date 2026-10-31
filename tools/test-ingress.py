@@ -589,6 +589,76 @@ class IngressTests(unittest.TestCase):
                     process.kill()
                     process.wait()
 
+    def launch_nested(self, name, *args, automation=None):
+        """Wheelhouse launched from a terminal of another: WHEELHOUSE_SOCKET
+        names the outer one's endpoint. Its one terminal writes the
+        WHEELHOUSE_SOCKET it sees. Returns the address Wheelhouse wrote to
+        --automation_socket_file and what the terminal saw, once it quits."""
+        binary = str(Path(os.environ['WHEELHOUSE_TEST_BINARY']).resolve())
+        root = Path(self.dir.name, name)
+        dashboard, seen, address_file = root / 'dashboard', root / 'seen', root / 'address'
+        dashboard.mkdir(parents=True)
+        (dashboard / 'id').write_text(name)
+        workspace_seed.seed(dashboard, root / 'presentation' / (name + '.wheelhouse'), [workspace_seed.terminal(
+            'printf %%s "${WHEELHOUSE_SOCKET-unset}" > %s.tmp && mv %s.tmp %s; read answer' % (seen, seen, seen))])
+        if automation:
+            (root / 'user').write_text('// uishell 0.1.0 user file\n\nautomation: "%s"\n' % automation)
+        log = tempfile.TemporaryFile()
+        self.addCleanup(log.close)
+        process = subprocess.Popen([binary, '--user:%s/user' % root, '--dashboard:%s' % dashboard, '--project:%s/project' % root,
+                                    '--automation_socket_file:%s' % address_file, *args],
+                                   stdout=log, stderr=log, env={**os.environ, 'WHEELHOUSE_SOCKET': '/outer/wheelhouse'})
+
+        def failure(message):
+            log.seek(0)
+            return message + ': ' + log.read().decode(errors='replace')
+        try:
+            deadline = time.monotonic() + 20
+            while not (address_file.exists() and seen.exists()):
+                self.assertIsNone(process.poll(), failure('Wheelhouse exited'))
+                self.assertLess(time.monotonic(), deadline, failure('the address file or the terminal\'s report never came'))
+                time.sleep(.05)
+            address = address_file.read_text()
+            if address:
+                wait_ready(address, timeout=5, process=process)
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        self.assertFalse(address_file.exists(), 'the address file outlived Wheelhouse')
+        if address:
+            self.assertFalse(os.path.exists(address), 'the endpoint outlived Wheelhouse')
+        return address, seen.read_text()
+
+    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    @unittest.skipIf(os.environ.get('WHEELHOUSE_CLEAT_FEATURES') == 'none', 'terminals run no program without a VT engine')
+    def test_a_nested_instance_tells_its_terminals_its_own_endpoint(self):
+        # By default each instance listens at its own address under the
+        # runtime directory, and its terminals see that, not the outer one.
+        address, seen = self.launch_nested('default')
+        runtime = os.environ.get('XDG_RUNTIME_DIR')
+        parent = Path(runtime, 'wheelhouse') if runtime and os.path.isabs(runtime) else \
+            Path(tempfile.gettempdir(), 'wheelhouse-%d' % os.geteuid())
+        self.assertEqual(Path(address).parent, parent)
+        uuid.UUID(Path(address).name)
+        self.assertEqual(os.stat(parent).st_mode & 0o777, 0o700)
+        self.assertEqual(seen, address)
+        # Another instance gets another address.
+        self.assertNotEqual(self.launch_nested('second')[0], address)
+        # A launcher may name it.
+        explicit = os.path.join(self.dir.name, 'explicit.sock')
+        self.assertEqual(self.launch_nested('explicit', '--automation_socket:' + explicit), (explicit, explicit))
+        # With automation off there is no default listener, and terminals are
+        # told of none.
+        self.assertEqual(self.launch_nested('off', automation='off'), ('', 'unset'))
+        # An address the launcher names is still served, for metadata.
+        explicit = os.path.join(self.dir.name, 'off.sock')
+        self.assertEqual(self.launch_nested('off-explicit', '--automation_socket:' + explicit, automation='off'), (explicit, 'unset'))
+
     # A stand-in for `flotilla pm connect` that ignores SIGTERM, as does the
     # child it starts; it appends "<its pid> <child pid>" to $WH_TEST_CONNECTOR.
     STUBBORN_CONNECTOR = """#!/bin/sh
