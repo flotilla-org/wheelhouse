@@ -1349,7 +1349,9 @@ name = "wheelhouse-ingress"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "ciborium",
  "getrandom",
+ "hegeltest",
  "libc",
  "serde_json",
  "tokio",
