@@ -500,134 +500,132 @@ class IngressTests(unittest.TestCase):
         lib.wheelhouse_ingress_poll_observed(self.server, self.apply, self.retract, self.observe, None)
         self.assertEqual(self.received, [])
 
-    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
-    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
-    def test_native_process_applies_producer_patch(self):
-        path = os.path.join(self.dir.name, 'native.sock')
-        binary = str(Path(os.environ['WHEELHOUSE_TEST_BINARY']).resolve())
-        # Windows are a Dashboard's Presentation State, kept beside an explicit
-        # --user file; the workspace's tabs are its record's, in the Dashboard.
-        Path(self.dir.name, 'dashboard').mkdir()
-        Path(self.dir.name, 'dashboard', 'id').write_text('ingress')
-        workspace_seed.seed(Path(self.dir.name, 'dashboard'), Path(self.dir.name, 'presentation', 'ingress.wheelhouse'),
-                            [workspace_seed.terminal('read answer', '/tmp'), workspace_seed.terminal('read answer', self.dir.name),
-                             workspace_seed.terminal('read answer')], label='Observed')
-        with tempfile.TemporaryFile() as log:
-            process = subprocess.Popen([binary, '--user:' + self.dir.name + '/user',
-                                        '--dashboard:' + self.dir.name + '/dashboard',
-                                        '--project:' + self.dir.name + '/project',
-                                        '--andamento_socket:' + path,
-                                        '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl'),
-                                        '--ingress_record', '--ingress_record_bytes:1048576',
-                                        '--ingress_record_files:2'],
-                                       stdout=log, stderr=log)
-            try:
-                try:
-                    wait_ready(path, timeout=20, process=process)
-                except (OSError, TimeoutError, RuntimeError):
-                    log.seek(0)
-                    self.fail('native listener failed: ' + log.read().decode(errors='replace'))
-                connection = UnixHTTPConnection(path)
-                try:
-                    connection.request('GET', '/v1/observed/workdirs')
-                    response = connection.getresponse()
-                    self.assertEqual(response.status, 200)
-                    rows = json.loads(response.read())['workdirs']
-                    self.assertEqual({row['cwd'] for row in rows}, {'/tmp', self.dir.name})
-                    self.assertEqual(len(rows), 2)
-                    self.assertEqual(len({row['view_id'] for row in rows}), 2)
-                    self.assertEqual(len({row['workspace_id'] for row in rows}), 1)
-                    self.assertTrue(all(row['live_cwd'] is None and row['entity_id'] is None for row in rows))
-                finally:
-                    connection.close()
-                if os.environ.get('WHEELHOUSE_TEST_WATCHER'):
-                    subprocess.run([os.environ['WHEELHOUSE_TEST_WATCHER'], '--transport', 'wheelhouse',
-                                    '--socket', path, '--roots', str(ROOT), '--once'],
-                                   check=True, timeout=30, stdout=log, stderr=log)
-                publish(path, patch('project', 'native', {
-                    'display.label': 'Native HTTP project', 'flotilla.project': 'native'}))
-                connection = UnixHTTPConnection(path)
-                try:
-                    connection.request('POST', '/v1/metadata/patch', b'{"type":"metadata-patch"}',
-                                       {'Content-Type': 'application/json'})
-                    response = connection.getresponse()
-                    response.read()
-                    self.assertEqual(response.status, 422)
-                finally:
-                    connection.close()
-                # Let the application become idle, then prove background wakeup.
-                time.sleep(1)
-                publish(path, patch('project', 'native', {
-                    'display.label': 'Updated while idle', 'flotilla.project': 'native'}))
-                # Issue #223: the real native flag writes beside the isolated UI log.
-                capture_path = Path(self.dir.name) / 'logs/ingress.jsonl'
-                deadline = time.monotonic() + 2
-                captured = []
-                while time.monotonic() < deadline:
-                    try:
-                        captured = [json.loads(line) for line in capture_path.read_text().splitlines()]
-                    except (FileNotFoundError, json.JSONDecodeError):
-                        pass
-                    if any(r.get('body', {}).get('set', {}).get('display.label', {}).get('value', {}).get('value') ==
-                           'Updated while idle' for r in captured if isinstance(r.get('body'), dict)):
-                        break
-                    time.sleep(.01)
-                self.assertTrue(captured)
-                self.assertTrue(any(r.get('body', {}).get('set', {}).get('display.label', {}).get('value', {}).get('value') ==
-                                    'Updated while idle' for r in captured if isinstance(r.get('body'), dict)))
-                self.assertTrue(any(r['status'] == 422 for r in captured))
-                self.assertTrue(any(r['producer'] == 'ingress.test' and r['status'] == 204 for r in captured))
-                self.assertTrue((capture_path.parent / 'ui_thread.uishell_log').is_file())
-                recordings = list(capture_path.parent.glob('ingress.jsonl*'))
-                self.assertLessEqual(len(recordings), 2)
-                self.assertLessEqual(sum(p.stat().st_size for p in recordings), 2*1048576)
-            finally:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-
-    def launch_nested(self, name, *args, automation=None):
-        """Wheelhouse launched from a terminal of another: WHEELHOUSE_SOCKET
-        names the outer one's endpoint. Its one terminal writes the
-        WHEELHOUSE_SOCKET it sees. Returns the address Wheelhouse wrote to
-        --automation_socket_file and what the terminal saw, once it quits."""
+    def launch(self, name, *args, specs=(), label=None, user='', env=None):
+        """Wheelhouse in a directory of its own, `name`, with one workspace of
+        `specs` (workspace_seed's) when given, and `user` in its user file.
+        Returns the process, its directory, the Workspace ID and failure(),
+        which adds its log to a message. It is stopped at cleanup."""
         binary = str(Path(os.environ['WHEELHOUSE_TEST_BINARY']).resolve())
         root = Path(self.dir.name, name)
-        dashboard, seen, address_file = root / 'dashboard', root / 'seen', root / 'address'
+        dashboard = root / 'dashboard'
         dashboard.mkdir(parents=True)
         (dashboard / 'id').write_text(name)
-        workspace_seed.seed(dashboard, root / 'presentation' / (name + '.wheelhouse'), [workspace_seed.terminal(
-            'printf %%s "${WHEELHOUSE_SOCKET-unset}" > %s.tmp && mv %s.tmp %s; read answer' % (seen, seen, seen))])
-        if automation:
-            (root / 'user').write_text('// uishell 0.1.0 user file\n\nautomation: "%s"\n' % automation)
+        workspace = specs and workspace_seed.seed(dashboard, root / 'presentation' / (name + '.wheelhouse'), list(specs), label=label)
+        (root / 'user').write_text('// uishell 0.1.0 user file\n\n' + user)
         log = tempfile.TemporaryFile()
         self.addCleanup(log.close)
-        process = subprocess.Popen([binary, '--user:%s/user' % root, '--dashboard:%s' % dashboard, '--project:%s/project' % root,
-                                    '--automation_socket_file:%s' % address_file, *args],
-                                   stdout=log, stderr=log, env={**os.environ, 'WHEELHOUSE_SOCKET': '/outer/wheelhouse'})
+        process = subprocess.Popen([binary, '--user:%s/user' % root, '--dashboard:%s' % dashboard, '--project:%s/project' % root, *args],
+                                   stdout=log, stderr=log, env={**os.environ, **(env or {})})
 
         def failure(message):
             log.seek(0)
             return message + ': ' + log.read().decode(errors='replace')
-        try:
-            deadline = time.monotonic() + 20
-            while not (address_file.exists() and seen.exists()):
-                self.assertIsNone(process.poll(), failure('Wheelhouse exited'))
-                self.assertLess(time.monotonic(), deadline, failure('the address file or the terminal\'s report never came'))
-                time.sleep(.05)
-            address = address_file.read_text()
-            if address:
-                wait_ready(address, timeout=5, process=process)
-        finally:
+
+        def stop():
             process.terminate()
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+        self.addCleanup(stop)
+        return process, root, workspace, failure
+
+    def serve(self, path, process, failure):
+        """Waits for the launched Wheelhouse to listen at `path`."""
+        try:
+            wait_ready(path, timeout=20, process=process)
+        except (OSError, TimeoutError, RuntimeError):
+            self.fail(failure('native listener failed'))
+
+    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_native_process_applies_producer_patch(self):
+        path = os.path.join(self.dir.name, 'native.sock')
+        # Windows are a Dashboard's Presentation State, kept beside an explicit
+        # --user file; the workspace's tabs are its record's, in the Dashboard.
+        process, root, _, failure = self.launch(
+            'ingress', '--andamento_socket:' + path, '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl'),
+            '--ingress_record', '--ingress_record_bytes:1048576', '--ingress_record_files:2',
+            specs=[workspace_seed.terminal('read answer', '/tmp'), workspace_seed.terminal('read answer', self.dir.name),
+                   workspace_seed.terminal('read answer')], label='Observed')
+        self.serve(path, process, failure)
+        connection = UnixHTTPConnection(path)
+        try:
+            connection.request('GET', '/v1/observed/workdirs')
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            rows = json.loads(response.read())['workdirs']
+            self.assertEqual({row['cwd'] for row in rows}, {'/tmp', self.dir.name})
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(len({row['view_id'] for row in rows}), 2)
+            self.assertEqual(len({row['workspace_id'] for row in rows}), 1)
+            self.assertTrue(all(row['live_cwd'] is None and row['entity_id'] is None for row in rows))
+        finally:
+            connection.close()
+        if os.environ.get('WHEELHOUSE_TEST_WATCHER'):
+            subprocess.run([os.environ['WHEELHOUSE_TEST_WATCHER'], '--transport', 'wheelhouse',
+                            '--socket', path, '--roots', str(ROOT), '--once'],
+                           check=True, timeout=30, stdout=sys.stderr, stderr=sys.stderr)
+        publish(path, patch('project', 'native', {
+            'display.label': 'Native HTTP project', 'flotilla.project': 'native'}))
+        connection = UnixHTTPConnection(path)
+        try:
+            connection.request('POST', '/v1/metadata/patch', b'{"type":"metadata-patch"}',
+                               {'Content-Type': 'application/json'})
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual(response.status, 422)
+        finally:
+            connection.close()
+        # Let the application become idle, then prove background wakeup.
+        time.sleep(1)
+        publish(path, patch('project', 'native', {
+            'display.label': 'Updated while idle', 'flotilla.project': 'native'}))
+        # Issue #223: the real native flag writes beside the isolated UI log.
+        capture_path = root / 'logs/ingress.jsonl'
+        deadline = time.monotonic() + 2
+        captured = []
+        while time.monotonic() < deadline:
+            try:
+                captured = [json.loads(line) for line in capture_path.read_text().splitlines()]
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+            if any(r.get('body', {}).get('set', {}).get('display.label', {}).get('value', {}).get('value') ==
+                   'Updated while idle' for r in captured if isinstance(r.get('body'), dict)):
+                break
+            time.sleep(.01)
+        self.assertTrue(captured)
+        self.assertTrue(any(r.get('body', {}).get('set', {}).get('display.label', {}).get('value', {}).get('value') ==
+                            'Updated while idle' for r in captured if isinstance(r.get('body'), dict)))
+        self.assertTrue(any(r['status'] == 422 for r in captured))
+        self.assertTrue(any(r['producer'] == 'ingress.test' and r['status'] == 204 for r in captured))
+        self.assertTrue((capture_path.parent / 'ui_thread.uishell_log').is_file())
+        recordings = list(capture_path.parent.glob('ingress.jsonl*'))
+        self.assertLessEqual(len(recordings), 2)
+        self.assertLessEqual(sum(p.stat().st_size for p in recordings), 2*1048576)
+
+    def launch_nested(self, name, *args, automation=None):
+        """Wheelhouse launched from a terminal of another: WHEELHOUSE_SOCKET
+        names the outer one's endpoint. Its one terminal writes the
+        WHEELHOUSE_SOCKET it sees. Returns the address Wheelhouse wrote to
+        --automation_socket_file and what the terminal saw, once it quits."""
+        root = Path(self.dir.name, name)
+        seen, address_file = root / 'seen', root / 'address'
+        process, _, _, failure = self.launch(
+            name, '--automation_socket_file:%s' % address_file, *args,
+            specs=[workspace_seed.terminal('printf %%s "${WHEELHOUSE_SOCKET-unset}" > %s.tmp && mv %s.tmp %s; read answer' % (seen, seen, seen))],
+            user='automation: "%s"\n' % automation if automation else '', env={'WHEELHOUSE_SOCKET': '/outer/wheelhouse'})
+        deadline = time.monotonic() + 20
+        while not (address_file.exists() and seen.exists()):
+            self.assertIsNone(process.poll(), failure('Wheelhouse exited'))
+            self.assertLess(time.monotonic(), deadline, failure('the address file or the terminal\'s report never came'))
+            time.sleep(.05)
+        address = address_file.read_text()
+        if address:
+            wait_ready(address, timeout=5, process=process)
+        process.terminate()
+        process.wait(timeout=10)
         self.assertFalse(address_file.exists(), 'the address file outlived Wheelhouse')
         if address:
             self.assertFalse(os.path.exists(address), 'the endpoint outlived Wheelhouse')
@@ -671,37 +669,15 @@ wait
     def start_with_connector(self):
         """Wheelhouse with one Flotilla subscription run by the stand-in;
         returns it and the connector's and its child's pids."""
-        binary = str(Path(os.environ['WHEELHOUSE_TEST_BINARY']).resolve())
         flotilla = Path(self.dir.name, 'flotilla')
         flotilla.write_text(self.STUBBORN_CONNECTOR)
         flotilla.chmod(0o755)
         marker = Path(self.dir.name, 'connector.pids')
-        Path(self.dir.name, 'dashboard').mkdir()
-        Path(self.dir.name, 'dashboard', 'id').write_text('lifetime')
         path = os.path.join(self.dir.name, 'native.sock')
-        log = tempfile.TemporaryFile()
-        self.addCleanup(log.close)
-        process = subprocess.Popen([binary, '--user:' + self.dir.name + '/user',
-                                    '--dashboard:' + self.dir.name + '/dashboard',
-                                    '--project:' + self.dir.name + '/project',
-                                    '--andamento_socket:' + path,
-                                    '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl'),
-                                    '--flotilla_bin:' + str(flotilla), '--flotilla_subscription:ssh://lifetime'],
-                                   stdout=log, stderr=log, env={**os.environ, 'WH_TEST_CONNECTOR': str(marker)})
-
-        def failure(message):
-            log.seek(0)
-            return message + ': ' + log.read().decode(errors='replace')
-
-        def cleanup():
-            if process.poll() is None:
-                process.kill()
-                process.wait()
-        self.addCleanup(cleanup)
-        try:
-            wait_ready(path, timeout=20, process=process)
-        except (OSError, TimeoutError, RuntimeError):
-            self.fail(failure('native listener failed'))
+        process, _, _, failure = self.launch(
+            'lifetime', '--andamento_socket:' + path, '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl'),
+            '--flotilla_bin:' + str(flotilla), '--flotilla_subscription:ssh://lifetime', env={'WH_TEST_CONNECTOR': str(marker)})
+        self.serve(path, process, failure)
         deadline = time.monotonic() + 10
         while not (marker.exists() and marker.read_text().endswith('\n')):
             self.assertLess(time.monotonic(), deadline, failure('the connector did not start'))

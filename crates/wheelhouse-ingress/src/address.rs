@@ -3,31 +3,13 @@
 //! logical address, `wheelhouse/<instance-uuid>`: a Unix socket under the
 //! runtime directory, or a named pipe on Windows. There is no fixed global
 //! name, so no instance takes over another's endpoint.
-use std::{
-    hash::{BuildHasher, Hasher},
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 /// A random version 4 UUID naming this instance. Uniqueness is all it needs:
 /// the endpoint is protected by the private directory or the pipe's DACL,
 /// not by being hard to guess.
 pub fn instance_uuid() -> String {
-    let mut bytes = [0u8; 16];
-    if getrandom::fill(&mut bytes).is_err() {
-        // Without system randomness, still unique per process and moment.
-        let random = || {
-            let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-            hasher.write_u32(std::process::id());
-            hasher.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
-            hasher.finish()
-        };
-        bytes[..8].copy_from_slice(&random().to_le_bytes());
-        bytes[8..].copy_from_slice(&random().to_le_bytes());
-    }
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// The longest Unix socket path, NUL excluded (`sun_path` is 104 bytes on
@@ -48,21 +30,13 @@ fn runtime_dir(runtime: Option<std::ffi::OsString>, temp: PathBuf, uid: u32) -> 
     runtime.into_iter().chain([temp]).find(fits).unwrap_or_else(|| PathBuf::from(format!("/tmp/wheelhouse-{uid}")))
 }
 
-/// Creates `dir` private to this user (mode 0700), or checks that it already
-/// is; the listener refuses any other parent.
+/// Creates `dir`, and any parent it lacks, private to this user (mode 0700).
+/// A directory already there is left as it is: `Ingress::start` refuses to
+/// listen in one that isn't private.
 #[cfg(unix)]
 fn private_dir(dir: &Path) -> Result<(), String> {
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(e) => return Err(format!("{}: {e}", dir.display())),
-    }
-    let meta = std::fs::symlink_metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    if !meta.is_dir() || meta.mode() & 0o077 != 0 || meta.uid() != unsafe { libc::geteuid() } {
-        return Err(format!("{} must be a directory owned by this user and private (mode 0700)", dir.display()));
-    }
-    Ok(())
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).map_err(|e| format!("{}: {e}", dir.display()))
 }
 
 /// This instance's default address, its directory made ready on Unix.
@@ -96,19 +70,6 @@ pub fn write_address_file(path: &Path, address: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn instances_get_distinct_version_4_uuids() {
-        let ids: std::collections::HashSet<String> = (0..1000).map(|_| instance_uuid()).collect();
-        assert_eq!(ids.len(), 1000);
-        for id in ids.iter().take(10) {
-            let groups: Vec<_> = id.split('-').map(str::len).collect();
-            assert_eq!(groups, [8, 4, 4, 4, 12], "{id}");
-            assert!(id.chars().all(|c| c == '-' || c.is_ascii_hexdigit()), "{id}");
-            assert_eq!(&id[14..15], "4", "{id}");
-            assert!("89ab".contains(&id[19..20]), "{id}");
-        }
-    }
-
     #[cfg(unix)]
     #[test]
     fn the_runtime_directory_is_preferred_and_the_shared_temporary_one_is_per_user() {
@@ -138,19 +99,13 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn the_directory_is_made_private_and_a_shared_one_is_refused() {
+    fn the_directory_is_made_private() {
         use std::os::unix::fs::PermissionsExt;
         let root = std::env::temp_dir().join(format!("wheelhouse-address-test-{}", instance_uuid()));
-        std::fs::create_dir(&root).unwrap();
         let dir = root.join("wheelhouse");
         private_dir(&dir).unwrap();
         assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
         private_dir(&dir).unwrap(); // Already there: still fine.
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(private_dir(&dir).is_err());
-        let file = root.join("file");
-        std::fs::write(&file, "").unwrap();
-        assert!(private_dir(&file).is_err());
         std::fs::remove_dir_all(&root).unwrap();
     }
 

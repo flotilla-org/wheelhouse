@@ -45,8 +45,13 @@ mod transport {
         routing::{get, post},
         Router,
     };
-    use std::{path::PathBuf, sync::mpsc, thread, time::Duration};
-    use tokio::sync::oneshot;
+    use std::{
+        path::PathBuf,
+        sync::{mpsc, Arc},
+        thread,
+        time::Duration,
+    };
+    use tokio::sync::{oneshot, Notify};
 
     pub enum Pending {
         /// One request's patches, applied in one drain so no frame shows part
@@ -57,7 +62,7 @@ mod transport {
             reply: oneshot::Sender<u32>,
         },
         Workdirs {
-            reply: oneshot::Sender<Option<std::sync::Arc<serde_json::Value>>>,
+            reply: oneshot::Sender<Option<Arc<serde_json::Value>>>,
         },
     }
     pub struct Ingress {
@@ -70,7 +75,7 @@ mod transport {
         queue: mpsc::SyncSender<Pending>,
         wake: Wake,
         /// Told when a patch first arrives; see `ticks` in start.
-        published: std::sync::Arc<tokio::sync::Notify>,
+        published: Arc<Notify>,
     }
 
     // Request outcomes from the UI thread's drain.
@@ -202,7 +207,7 @@ mod transport {
                     runtime.block_on(async move {
                         #[cfg(unix)]
                         let listener = tokio::net::UnixListener::from_std(listener).expect("registered Unix listener");
-                        let published = std::sync::Arc::new(tokio::sync::Notify::new());
+                        let published = Arc::new(Notify::new());
                         let mut app = Router::new()
                             .route("/v1/health", get(|| async { StatusCode::NO_CONTENT }))
                             .route("/v1/metadata/patch", post(patch))
@@ -337,33 +342,37 @@ mod transport {
         #[cfg(unix)]
         #[test]
         fn the_ui_is_woken_only_once_a_producer_publishes() {
-            use std::os::unix::fs::DirBuilderExt;
-            use std::sync::atomic::{AtomicU32, Ordering};
+            use std::{
+                fs,
+                io::Write,
+                os::unix::{fs::DirBuilderExt, net::UnixStream},
+                sync::atomic::{AtomicU32, Ordering},
+                time::Instant,
+            };
             static WAKES: AtomicU32 = AtomicU32::new(0);
             extern "C" fn wake() {
                 WAKES.fetch_add(1, Ordering::SeqCst);
             }
             // Short, as macOS's temporary directory leaves no room for a socket.
-            let dir = std::path::PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
-            std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+            let dir = PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
+            fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
             let path = dir.join("socket");
             let server = Ingress::start(path.clone(), wake, None).unwrap();
             thread::sleep(Duration::from_millis(700));
             assert_eq!(WAKES.load(Ordering::SeqCst), 0, "an idle endpoint woke the UI");
-            use std::io::Write;
-            let mut stream = std::os::unix::net::UnixStream::connect(&path).unwrap();
+            let mut stream = UnixStream::connect(&path).unwrap();
             let body = br#"{"type":"metadata-patch"}"#;
             write!(stream, "POST /v1/metadata/patch HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
             stream.write_all(body).unwrap();
             // Nothing polls, so the request waits; its wake and then the ticks follow.
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let deadline = Instant::now() + Duration::from_secs(10);
             while WAKES.load(Ordering::SeqCst) < 3 {
-                assert!(std::time::Instant::now() < deadline, "{} wakes", WAKES.load(Ordering::SeqCst));
+                assert!(Instant::now() < deadline, "{} wakes", WAKES.load(Ordering::SeqCst));
                 thread::sleep(Duration::from_millis(50));
             }
             drop(stream);
             drop(server);
-            std::fs::remove_dir_all(&dir).unwrap();
+            fs::remove_dir_all(&dir).unwrap();
         }
         #[derive(Default)]
         struct Host {
@@ -395,7 +404,7 @@ mod transport {
             );
             1
         }
-        fn read(queue: &mpsc::SyncSender<Pending>) -> oneshot::Receiver<Option<std::sync::Arc<serde_json::Value>>> {
+        fn read(queue: &mpsc::SyncSender<Pending>) -> oneshot::Receiver<Option<Arc<serde_json::Value>>> {
             let (reply, response) = oneshot::channel();
             assert!(queue.send(Pending::Workdirs { reply }).is_ok());
             response
