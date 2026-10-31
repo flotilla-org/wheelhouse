@@ -888,14 +888,18 @@ rd_arrangement_resize(RD_Arrangement *arrangement, RD_PanelID id, F32 delta, F32
   F32 min = panel->weight, max = next->weight, total = 0;
   for(RD_ArrangementPanel *child = panel->parent->first; child != &rd_nil_arrangement_panel; child = child->next)
   { total += Max(0.f, child->weight); }
-  if(total > 0 && abs_f32(total-1.f) > .0001f)
+  B32 rescaled = total > 0 && abs_f32(total-1.f) > .0001f;
+  if(rescaled)
   {
     min /= total;
     max /= total;
     for(RD_ArrangementPanel *child = panel->parent->first; child != &rd_nil_arrangement_panel; child = child->next)
     { child->weight = rd_arrangement_quantize(Max(0.f, child->weight)/total); }
   }
-  if(min+max >= 2*floor) { delta = Clamp(floor-min, delta, max-floor); }
+  // Weights within the tolerance are not rescaled, so the two sides are measured against the total they have.
+  F32 span = min+max;
+  if(!rescaled && total > 0) { span /= total; }
+  if(span >= 2*floor) { delta = Clamp(floor-min, delta, max-floor); }
   panel->weight = rd_arrangement_quantize(min+delta);
   next->weight = rd_arrangement_quantize(max-delta);
 }

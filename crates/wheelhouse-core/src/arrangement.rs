@@ -638,7 +638,8 @@ impl<T: Clone + PartialEq> Arrangement<T> {
         let Some(j) = boundary_partner(&children_weights(&parent.children), i) else { return false };
         let (mut min, mut max) = (parent.children[i].weight, parent.children[j].weight);
         let total = parent.children.iter().fold(0.0f32, |total, child| total + c_max(0.0, child.weight));
-        if total > 0.0 && (total - 1.0).abs() > 0.0001 {
+        let rescaled = total > 0.0 && (total - 1.0).abs() > 0.0001;
+        if rescaled {
             min /= total;
             max /= total;
             for child in &mut parent.children {
@@ -646,7 +647,14 @@ impl<T: Clone + PartialEq> Arrangement<T> {
             }
         }
         let mut delta = delta;
-        if min + max >= 2.0 * floor {
+        // Weights within the tolerance are not rescaled, so their sides are
+        // measured against the total they actually have: 0.499999 twice
+        // can still keep a floor of a half of the whole.
+        let mut span = min + max;
+        if !rescaled && total > 0.0 {
+            span /= total;
+        }
+        if span >= 2.0 * floor {
             // C's Clamp: below the low bound, the low bound; else above the
             // high one, the high one.
             let (low, high) = (floor - min, max - floor);

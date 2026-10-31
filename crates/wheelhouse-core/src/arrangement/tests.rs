@@ -557,6 +557,19 @@ fn resizing_moves_one_boundary_and_equalizing_evens_it() {
     valid(&f.a);
 }
 
+/// Siblings that sum to just under one, within the tolerance that leaves
+/// them unscaled, can still keep a floor of half the whole: a resize past
+/// it stops at the floor rather than taking the whole delta and leaving a
+/// negative weight (#575).
+#[test]
+fn resizing_siblings_a_hair_under_one_stops_at_the_floor() {
+    let mut f = build("panels:{0.499999:{text} 0.499999:{text}}");
+    let first = child(&f.a, 0).id;
+    assert!(ed(&mut f.a, Edit::Resize { panel: first, delta: 1.0, floor: 0.5 }).applied);
+    valid(&f.a);
+    assert!(weights(&f.a).iter().all(|w| *w >= 0.0), "{:?}", weights(&f.a));
+}
+
 fn weights(a: &Arrangement<View>) -> Vec<f32> {
     root(a).children.iter().map(|c| c.weight).collect()
 }

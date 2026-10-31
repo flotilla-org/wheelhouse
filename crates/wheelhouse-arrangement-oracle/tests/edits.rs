@@ -107,6 +107,27 @@ fn a_resize_past_its_floor_keeps_the_cs_signed_zero() {
     assert!(weight_bits(&rust).contains(&(-0.0f32).to_bits()), "the case still reaches -0.0: {:?}", weight_bits(&rust));
 }
 
+/// A panel with no space has no boundary to move (#486): the C returns
+/// before changing anything, so neither a resize nor an equalize applied,
+/// though it has a next sibling (#575).
+#[test]
+fn a_panel_with_no_space_has_nothing_to_resize_or_equalize() {
+    use wheelhouse_core::arrangement::{Dir, Edit, PanelId};
+    let mut rust = Arrangement::new();
+    let mut c = Oracle::new();
+    let squeeze = Edit::Resize { panel: PanelId(1), delta: -0.5000001, floor: 0.6 };
+    for edit in [Edit::Clear, Edit::Split { panel: PanelId(1), dir: Dir::Right }, squeeze] {
+        step_both(&mut rust, &mut c, &Step::Edit { edit, hidden: vec![] });
+    }
+    assert_eq!(rust.panel(PanelId(1)).map(|p| p.weight), Some(-0.0), "panel 1 has no space");
+    for edit in [Edit::Equalize { panel: PanelId(1) }, Edit::Resize { panel: PanelId(1), delta: 0.1, floor: 0.0 }] {
+        let step = Step::Edit { edit, hidden: vec![] };
+        step_both(&mut rust, &mut c, &step);
+        let again = step.apply(&mut rust);
+        assert_eq!(again.map(|o| o.applied), Some(false), "{step:?}");
+    }
+}
+
 /// The weight format: every quantized weight is the C's, bit for bit,
 /// across the range weights take and the format's ties (1/128 rounds up).
 #[hegel::test(test_cases = 2000)]
