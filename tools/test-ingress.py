@@ -654,8 +654,9 @@ class IngressTests(unittest.TestCase):
         # told of none.
         self.assertEqual(self.launch_nested('off', automation='off'), ('', 'unset'))
         # An address the launcher names is still served, for metadata.
+        # The setting is matched without case.
         explicit = os.path.join(self.dir.name, 'off.sock')
-        self.assertEqual(self.launch_nested('off-explicit', '--automation_socket:' + explicit, automation='off'), (explicit, 'unset'))
+        self.assertEqual(self.launch_nested('off-explicit', '--automation_socket:' + explicit, automation='Off'), (explicit, 'unset'))
 
     # A stand-in for `flotilla pm connect` that ignores SIGTERM, as does the
     # child it starts; it appends "<its pid> <child pid>" to $WH_TEST_CONNECTOR.
