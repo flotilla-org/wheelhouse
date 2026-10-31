@@ -48,7 +48,7 @@ pub fn entries(surface: &SurfaceSnapshot) -> Vec<OverviewEntry> {
 
 /// The kind of a local section's entity. It holds groups, so a path through
 /// one is grouped by what comes after it.
-pub const LOCAL_SECTION_KIND: &str = ".section";
+pub const LOCAL_SECTION_KIND: &str = crate::presentation::system::SECTION;
 
 /// What a group is: the entity at the top of a workspace's placement path,
 /// below any local sections, whichever section places it, or none for
