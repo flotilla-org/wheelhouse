@@ -12,15 +12,18 @@ use std::{
 /// the endpoint is protected by the private directory or the pipe's DACL,
 /// not by being hard to guess.
 pub fn instance_uuid() -> String {
-    let random = || {
-        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-        hasher.write_u32(std::process::id());
-        hasher.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
-        hasher.finish()
-    };
     let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&random().to_le_bytes());
-    bytes[8..].copy_from_slice(&random().to_le_bytes());
+    if getrandom::fill(&mut bytes).is_err() {
+        // Without system randomness, still unique per process and moment.
+        let random = || {
+            let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+            hasher.write_u32(std::process::id());
+            hasher.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+            hasher.finish()
+        };
+        bytes[..8].copy_from_slice(&random().to_le_bytes());
+        bytes[8..].copy_from_slice(&random().to_le_bytes());
+    }
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
