@@ -258,12 +258,23 @@ uishell_table_act(BinnacleGrid *grid, BinnacleAction action)
   binnacle_grid_action(grid, &action);
 }
 
-// One keyboard event for the Grid: 1 if the Grid took it.
+// One keyboard event for the Grid: 1 if the Grid took it. The keys follow
+// binnacle's web host (web/src/keymap.ts) where Wheelhouse's own bindings
+// leave them free.
 internal B32
 uishell_table_key(BinnacleGrid *grid, UI_Event *evt)
 {
   BinnacleAction a = {0};
   if(evt->flags & UI_EventFlag_Copy) { a.kind = BINNACLE_ACTION_COPY; uishell_table_act(grid, a); return 1; }
+  // Shift+Space and Ctrl+Space select, on their press: the space they also
+  // type is not text for the cell. There is no cell editor yet (F2 only
+  // asks for one); when there is, it takes the keys while open, as the web
+  // host's textarea does, and none of these reach the Grid.
+  if(evt->kind == UI_EventKind_Text && str8_match(evt->string, str8_lit(" "), 0) &&
+     (evt->modifiers & (WM_Modifier_Shift|WM_Modifier_Ctrl)))
+  {
+    return 1;
+  }
   if(evt->kind == UI_EventKind_Text && evt->string.size != 0)
   {
     a.kind = BINNACLE_ACTION_TYPE_TEXT;
@@ -280,7 +291,9 @@ uishell_table_key(BinnacleGrid *grid, UI_Event *evt)
       default:{}break;
       case UI_EventDeltaUnit_Page:{ by = BINNACLE_FOCUS_PAGE; }break;
       // Home and End (a line's ends) go to the row's first or last column,
-      // Ctrl+Home and Ctrl+End (Whole) to the table's first or last row.
+      // Ctrl+Home and Ctrl+End (Whole) to the table's first or last row, and
+      // Cmd (Ctrl elsewhere) with an arrow (Word) to that edge.
+      case UI_EventDeltaUnit_Word:
       case UI_EventDeltaUnit_Line:
       case UI_EventDeltaUnit_Whole:{ by = BINNACLE_FOCUS_EDGE; }break;
     }
@@ -299,6 +312,16 @@ uishell_table_key(BinnacleGrid *grid, UI_Event *evt)
   else if(evt->slot == UI_EventActionSlot_Cancel || evt->key == WM_Key_Esc) { a.kind = BINNACLE_ACTION_CANCEL; }
   else if(evt->key == WM_Key_F2) { a.kind = BINNACLE_ACTION_BEGIN_EDIT; }
   else if(evt->key == WM_Key_A && (evt->modifiers & WM_Modifier_Accel)) { a.kind = BINNACLE_ACTION_SELECT_ALL; }
+  else if(evt->key == WM_Key_Space && (evt->modifiers & WM_Modifier_Shift)) { a.kind = BINNACLE_ACTION_SELECT_ROW; }
+  else if(evt->key == WM_Key_Space && (evt->modifiers & WM_Modifier_Ctrl)) { a.kind = BINNACLE_ACTION_SELECT_COLUMN; }
+  else if(evt->key == WM_Key_F3) { a.kind = (evt->modifiers & WM_Modifier_Shift) ? BINNACLE_ACTION_FIND_PREVIOUS : BINNACLE_ACTION_FIND_NEXT; }
+  // Alt with Page Up or Down pages along the columns.
+  else if((evt->key == WM_Key_PageUp || evt->key == WM_Key_PageDown) && (evt->modifiers & WM_Modifier_Alt))
+  {
+    a.kind = BINNACLE_ACTION_MOVE_FOCUS;
+    a.args.move_focus = (BinnacleMoveFocus){BINNACLE_COLS, BINNACLE_FOCUS_PAGE, evt->key == WM_Key_PageDown,
+                                            !!(evt->modifiers & WM_Modifier_Shift)};
+  }
   else { return 0; }
   uishell_table_act(grid, a);
   return 1;
