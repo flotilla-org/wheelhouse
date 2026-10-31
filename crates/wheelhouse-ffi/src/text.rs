@@ -61,7 +61,8 @@ pub struct WhText {
 
 /// Where output arrays go: alloc(user, size, align) returns size bytes
 /// aligned to align, or NULL on failure. The library never frees them;
-/// with an arena, free the arena.
+/// with an arena, free the arena. alloc must not call back into the
+/// library.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextAllocator {
@@ -323,6 +324,9 @@ pub unsafe extern "C" fn wh_text_coords(ctx: *const WhText, coords: u32, out: *m
     coords.len()
 }
 
+/// Entries the scratch arrays keep between calls: about a 64 KB paragraph.
+const SCRATCH_KEEP: usize = 1 << 16;
+
 thread_local! {
     /// The arrays a layout is built in before they are copied out.
     static SCRATCH: RefCell<Paragraph> = RefCell::default();
@@ -406,6 +410,10 @@ pub unsafe extern "C" fn wh_text_layout(
                     height: p.height,
                     epoch: p.epoch,
                 };
+                // A huge paragraph's arrays don't stay with the thread.
+                if p.glyphs.capacity() > SCRATCH_KEEP || p.clusters.capacity() > SCRATCH_KEEP {
+                    *p = Paragraph::default();
+                }
                 Ok(())
             })
         })
@@ -448,13 +456,26 @@ unsafe fn view<'a>(layout: *const WhTextLayout) -> Option<View<'a>> {
     }
 }
 
-/// Whether the layout's line and cluster ranges index within its arrays,
-/// so the queries can't read past them.
+/// Whether the layout's ranges index within its arrays and its clusters'
+/// ends fit in u32, so the queries can't read past the arrays or overflow.
+/// A layout is meant to be wh_text_layout's output, unmodified; this keeps
+/// a corrupt one to a 0 return.
 fn well_formed(v: &View<'_>) -> bool {
     v.lines.iter().all(|l| {
         (l.cluster_start as usize).checked_add(l.cluster_count as usize).is_some_and(|end| end <= v.clusters.len())
             && (l.run_start as usize).checked_add(l.run_count as usize).is_some_and(|end| end <= v.runs.len())
-    })
+    }) && v.clusters.iter().all(|c| c.start.checked_add(c.len).is_some())
+}
+
+/// Runs a query over a well-formed layout, catching any panic: None for a
+/// malformed layout, a failed query or a panic.
+unsafe fn over<T>(layout: *const WhTextLayout, f: impl FnOnce(&View<'_>) -> Option<T>) -> Option<T> {
+    // SAFETY: the caller's contract.
+    let v = unsafe { view(layout) }?;
+    if !well_formed(&v) {
+        return None;
+    }
+    catch_unwind(AssertUnwindSafe(|| f(&v))).ok().flatten()
 }
 
 fn affinity(a: Affinity) -> u32 {
@@ -464,18 +485,34 @@ fn affinity(a: Affinity) -> u32 {
     }
 }
 
+/// Writes a query's answer to out: 1, or 0 for none.
+fn answer<T>(out: Option<&mut T>, value: Option<T>) -> u32 {
+    match (out, value) {
+        (Some(out), Some(value)) => {
+            *out = value;
+            1
+        }
+        _ => 0,
+    }
+}
+
 /// The caret position nearest the point (x, y), into out. Returns 0 for a
 /// malformed layout.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_offset_at(layout: *const WhTextLayout, x: f32, y: f32, out: *mut WhTextPosition) -> u32 {
     // SAFETY: the caller's contract.
-    let (Some(v), Some(out)) = (unsafe { view(layout) }, unsafe { out.as_mut() }) else { return 0 };
-    if !well_formed(&v) {
+    let out = unsafe { out.as_mut() };
+    if out.is_none() {
         return 0;
     }
-    let p = query::offset_at(&v, x, y);
-    *out = WhTextPosition { offset: p.offset as u32, affinity: affinity(p.affinity) };
-    1
+    // SAFETY: the caller's contract.
+    let p = unsafe {
+        over(layout, |v| {
+            let p = query::offset_at(v, x, y);
+            Some(WhTextPosition { offset: p.offset as u32, affinity: affinity(p.affinity) })
+        })
+    };
+    answer(out, p)
 }
 
 /// Where the caret for offset and affinity (WH_TEXT_DOWNSTREAM or
@@ -484,14 +521,19 @@ pub unsafe extern "C" fn wh_text_offset_at(layout: *const WhTextLayout, x: f32, 
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_caret_rect(layout: *const WhTextLayout, offset: u32, affinity: u32, out: *mut WhTextCaret) -> u32 {
     // SAFETY: the caller's contract.
-    let (Some(v), Some(out)) = (unsafe { view(layout) }, unsafe { out.as_mut() }) else { return 0 };
-    if !well_formed(&v) {
+    let out = unsafe { out.as_mut() };
+    if out.is_none() {
         return 0;
     }
     let affinity = if affinity == WH_TEXT_UPSTREAM { Affinity::Upstream } else { Affinity::Downstream };
-    let c = query::caret_rect(&v, offset as usize, affinity);
-    *out = WhTextCaret { x: c.x, y: c.y, height: c.height, line: c.line as u32, rtl: c.rtl as u32 };
-    1
+    // SAFETY: the caller's contract.
+    let caret = unsafe {
+        over(layout, |v| {
+            let c = query::caret_rect(v, offset as usize, affinity);
+            Some(WhTextCaret { x: c.x, y: c.y, height: c.height, line: c.line as u32, rtl: c.rtl as u32 })
+        })
+    };
+    answer(out, caret)
 }
 
 /// The selection of bytes start..end as rectangles per line, through alloc
@@ -507,15 +549,18 @@ pub unsafe extern "C" fn wh_text_selection_rects(
     out: *mut WhTextRects,
 ) -> u32 {
     // SAFETY: the caller's contract.
-    let (Some(v), Some(out)) = (unsafe { view(layout) }, unsafe { out.as_mut() }) else { return 0 };
-    if !well_formed(&v) {
+    let out = unsafe { out.as_mut() };
+    if out.is_none() {
         return 0;
     }
-    let rects = query::selection_rects(&v, start as usize, end as usize);
-    // SAFETY: the allocator's contract.
-    let Ok(to) = (unsafe { copy_out(&alloc, &rects) }) else { return 0 };
-    *out = WhTextRects { rects: to, count: rects.len() };
-    1
+    // SAFETY: the caller's contract, and the allocator's.
+    let rects = unsafe {
+        over(layout, |v| {
+            let rects = query::selection_rects(v, start as usize, end as usize);
+            Some(WhTextRects { rects: copy_out(&alloc, &rects).ok()?, count: rects.len() })
+        })
+    };
+    answer(out, rects)
 }
 
 /// The layout's segments, through alloc into out: each a stretch of one
@@ -525,13 +570,16 @@ pub unsafe extern "C" fn wh_text_selection_rects(
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_segments(layout: *const WhTextLayout, alloc: WhTextAllocator, out: *mut WhTextSegments) -> u32 {
     // SAFETY: the caller's contract.
-    let (Some(v), Some(out)) = (unsafe { view(layout) }, unsafe { out.as_mut() }) else { return 0 };
-    if !well_formed(&v) {
+    let out = unsafe { out.as_mut() };
+    if out.is_none() {
         return 0;
     }
-    let segments = query::segments(&v);
-    // SAFETY: the allocator's contract.
-    let Ok(to) = (unsafe { copy_out(&alloc, &segments) }) else { return 0 };
-    *out = WhTextSegments { segments: to, count: segments.len() };
-    1
+    // SAFETY: the caller's contract, and the allocator's.
+    let segments = unsafe {
+        over(layout, |v| {
+            let segments = query::segments(v);
+            Some(WhTextSegments { segments: copy_out(&alloc, &segments).ok()?, count: segments.len() })
+        })
+    };
+    answer(out, segments)
 }

@@ -58,12 +58,15 @@ fn rtl_paragraph_with_english() {
     assert_snapshot!(plain("\u{645}\u{631}\u{62D}\u{628}\u{627} hello \u{628}\u{643}", 1000.0));
 }
 
+// ICU4X's complex-script data puts the CJK and Thai breaks where these show.
+#[cfg(feature = "complex-scripts")]
 #[test]
 fn cjk_breaks_between_ideographs() {
     // No spaces: each ideograph is a break opportunity, but not before "。".
     assert_snapshot!(plain("\u{6F22}\u{5B57}\u{304B}\u{306A}\u{6F22}\u{5B57}\u{3002}\u{6587}\u{5B57}\u{5217}", 50.0));
 }
 
+#[cfg(feature = "complex-scripts")]
 #[test]
 fn thai_breaks_between_words() {
     // No bundled font covers Thai, so this checks break positions only:

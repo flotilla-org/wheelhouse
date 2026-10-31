@@ -5,9 +5,16 @@ edition.workspace = true
 license.workspace = true
 description = "Native paragraph layout over parley and fontique"
 
+[features]
+default = ["complex-scripts"]
+# Line breaking for Thai, Lao, Khmer and Burmese (ICU4X's dictionaries and
+# LSTM models, about 3 MB): without it, those scripts break only where a
+# word overflows the line.
+complex-scripts = ["parley/complex-scripts"]
+
 [dependencies]
 # Pinned: the layout's cluster model (one cluster per grapheme) is 0.12's.
-parley = { version = "=0.12.0", default-features = false, features = ["std", "complex-scripts"] }
+parley = { version = "=0.12.0", default-features = false, features = ["std"] }
 # fontconfig is opened at run time, so native links nothing new on Linux.
 fontique = { version = "=0.12.0", features = ["fontconfig-dlopen"] }
 read-fonts = "0.41"

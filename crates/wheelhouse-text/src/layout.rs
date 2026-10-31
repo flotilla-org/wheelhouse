@@ -103,6 +103,8 @@ pub enum Error {
     /// A style's size is not positive and finite.
     BadSize(usize),
     BadWidth,
+    /// The text is longer than u32::MAX bytes, which the arrays' offsets can't hold.
+    TextTooLong,
 }
 
 impl std::fmt::Display for Error {
@@ -115,6 +117,7 @@ impl std::fmt::Display for Error {
             Error::BoxOutOfBounds(i) => write!(f, "inline box {i} is past the text, inside a character, or out of order"),
             Error::BadSize(i) => write!(f, "style {i} has a size that is not positive and finite"),
             Error::BadWidth => write!(f, "the width is NaN"),
+            Error::TextTooLong => write!(f, "the text is longer than u32::MAX bytes"),
         }
     }
 }
@@ -262,6 +265,9 @@ fn clip_runs(runs: &[StyleRun], start: usize, cut: usize, out: &mut Vec<StyleRun
 fn validate(input: &Input<'_>, width: f32) -> Result<Vec<StyleRun>, Error> {
     if width.is_nan() {
         return Err(Error::BadWidth);
+    }
+    if input.text.len() > u32::MAX as usize {
+        return Err(Error::TextTooLong);
     }
     if input.styles.is_empty() {
         return Err(Error::NoStyles);

@@ -1572,7 +1572,8 @@ typedef struct {
 
 // Where output arrays go: alloc(user, size, align) returns size bytes
 // aligned to align, or NULL on failure. The library never frees them;
-// with an arena, free the arena.
+// with an arena, free the arena. alloc must not call back into the
+// library.
 typedef struct {
   void *(*alloc)(void *user, size_t size, size_t align);
   void *user;

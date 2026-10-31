@@ -134,6 +134,17 @@ int main(int argc, char **argv) {
     assert(wh_text_segments(&layout, allocator(&arena), &segments) == 1);
     assert(segments.count >= layout.line_count && segments.segments[segments.count - 1].style == 1);
 
+    /* A corrupt layout is refused, not read past or overflowed. */
+    WhTextLayout corrupt = layout;
+    WhTextCluster bad_cluster = layout.clusters[0];
+    bad_cluster.len = UINT32_MAX;
+    corrupt.clusters = &bad_cluster;
+    corrupt.cluster_count = 1;
+    assert(wh_text_caret_rect(&corrupt, 0, WH_TEXT_DOWNSTREAM, &caret) == 0);
+    corrupt = layout;
+    corrupt.cluster_count = 1;
+    assert(wh_text_offset_at(&corrupt, 0.0f, 0.0f, &hit) == 0);
+
     /* A cut line ends with an ellipsis covering no bytes. */
     input.max_lines = 1;
     input.ellipsis = 1;
