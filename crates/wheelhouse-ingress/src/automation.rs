@@ -216,39 +216,47 @@ pub fn respond(request: &Request, tree: &[Value], generation: u64, limit: usize)
         },
         None => tree.to_vec(),
     };
-    if !request.terminal_text {
-        for node in &mut nodes {
-            drop_terminal_text(node);
-        }
-    }
-    let wrap = |nodes: &[Value], truncated: bool| {
-        let mut value = json!({"schema": SCHEMA, "generation": generation});
-        match request.route {
-            Route::Semantic => value["nodes"] = nodes.to_vec().into(),
-            Route::Caller => {
-                let session = request.session.clone().unwrap_or_default();
-                value["views"] = caller_views(nodes, &session).into();
-                value["session"] = session.into();
-            }
-        }
-        if truncated {
-            value["truncated"] = true.into();
-        }
-        value
-    };
     let encode = |value: &Value| match request.encoding {
         Encoding::Json => serde_json::to_vec(&json_safe(value)).expect("JSON values serialise"),
         Encoding::Cbor => cbor(value),
     };
-    let mut body = encode(&wrap(&nodes, false));
-    // Terminal text goes first, then whole workspaces from the end.
-    if body.len() > limit && nodes.iter_mut().fold(false, |dropped, node| drop_terminal_text(node) | dropped) {
-        body = encode(&wrap(&nodes, true));
-    }
-    while body.len() > limit && !nodes.is_empty() {
-        nodes.pop();
-        body = encode(&wrap(&nodes, true));
-    }
+    let head = || json!({"schema": SCHEMA, "generation": generation});
+    let body = match request.route {
+        // Only the views showing the session: small, whatever else the
+        // tree holds.
+        Route::Caller => {
+            let mut value = head();
+            let session = request.session.clone().unwrap_or_default();
+            value["views"] = caller_views(&nodes, &session).into();
+            value["session"] = session.into();
+            encode(&value)
+        }
+        Route::Semantic => {
+            if !request.terminal_text {
+                for node in &mut nodes {
+                    drop_terminal_text(node);
+                }
+            }
+            let wrap = |nodes: &[Value], truncated: bool| {
+                let mut value = head();
+                value["nodes"] = nodes.to_vec().into();
+                if truncated {
+                    value["truncated"] = true.into();
+                }
+                value
+            };
+            let mut body = encode(&wrap(&nodes, false));
+            // Terminal text goes first, then whole workspaces from the end.
+            if body.len() > limit && nodes.iter_mut().fold(false, |dropped, node| drop_terminal_text(node) | dropped) {
+                body = encode(&wrap(&nodes, true));
+            }
+            while body.len() > limit && !nodes.is_empty() {
+                nodes.pop();
+                body = encode(&wrap(&nodes, true));
+            }
+            body
+        }
+    };
     let content_type = match request.encoding {
         Encoding::Json => "application/json",
         Encoding::Cbor => "application/cbor",

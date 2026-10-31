@@ -230,7 +230,11 @@ mod transport {
         (state.wake)();
         let reply = match tokio::time::timeout(wait, &mut response).await {
             Ok(reply) => reply.ok(),
-            Err(_) if seen.load(Ordering::SeqCst) => return StatusCode::NO_CONTENT.into_response(),
+            // A reply sent as the wait ran out still counts.
+            Err(_) if seen.load(Ordering::SeqCst) => match response.try_recv() {
+                Ok(reply) => Some(reply),
+                Err(_) => return StatusCode::NO_CONTENT.into_response(),
+            },
             // The UI hasn't seen it yet: give it time for one frame.
             Err(_) => tokio::time::timeout(Duration::from_secs(5), response).await.ok().and_then(Result::ok),
         };

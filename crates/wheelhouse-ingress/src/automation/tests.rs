@@ -174,6 +174,35 @@ fn large_integers_render_as_u64_text_in_json() {
     assert_eq!(read_profile(&cbor(&value)), value);
 }
 
+// RFC 8949 Appendix A's float examples, signed zeros, subnormals and
+// non-finite values included.
+#[test]
+fn floats_encode_as_rfc_8949_appendix_a_says() {
+    for (x, hex) in [
+        (0.0, "f90000"),
+        (-0.0, "f98000"),
+        (1.0, "f93c00"),
+        (1.1, "fb3ff199999999999a"),
+        (1.5, "f93e00"),
+        (65504.0, "f97bff"),
+        (100000.0, "fa47c35000"),
+        (3.4028234663852886e+38, "fa7f7fffff"),
+        (1.0e+300, "fb7e37e43c8800759c"),
+        (5.960464477539063e-8, "f90001"),
+        (0.00006103515625, "f90400"),
+        (-4.0, "f9c400"),
+        (-4.1, "fbc010666666666666"),
+        (f64::INFINITY, "f97c00"),
+        (f64::NAN, "f97e00"),
+        (f64::NEG_INFINITY, "f9fc00"),
+    ] {
+        let mut out = Vec::new();
+        float(x, &mut out);
+        let got: String = out.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(got, hex, "{x}");
+    }
+}
+
 #[test]
 fn floats_take_their_shortest_width() {
     for (x, width) in [(0.0, 2), (1.5, 2), (65504.0, 2), (5.960464477539063e-8, 2), (0.1, 8), (1.0e10, 4), (100000.0, 4)] {
@@ -288,6 +317,10 @@ fn caller_context_lists_the_views_showing_a_session() {
         respond(&request(Route::Caller, "session=s1&root=workspace/00000000-0000-0000-0000-00000000000b"), &tree, 1, MAX_RESPONSE);
     assert_eq!(body(&narrowed)["views"].as_array().unwrap().len(), 1);
     assert!(Request::parse(Route::Caller, Some(""), None).is_err());
+    // The views are found before any size cap, so a large tree loses none.
+    let capped = body(&respond(&request(Route::Caller, "session=s1&include=terminal_text"), &tree, 1, 400));
+    assert_eq!(capped["views"].as_array().unwrap().len(), 2);
+    assert!(capped.get("truncated").is_none());
 }
 
 #[test]
