@@ -374,6 +374,27 @@ mod transport {
             drop(server);
             fs::remove_dir_all(&dir).unwrap();
         }
+        // The default address's directory is only created private: a shared
+        // one, a link to one, or a file in its place is refused here.
+        #[cfg(unix)]
+        #[test]
+        fn a_socket_is_refused_a_parent_that_isnt_private() {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            extern "C" fn wake() {}
+            let root = PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
+            let shared = root.join("shared");
+            std::fs::create_dir_all(&shared).unwrap();
+            std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+            symlink(&shared, root.join("link")).unwrap();
+            std::fs::write(root.join("file"), "").unwrap();
+            for parent in ["shared", "link", "file"] {
+                let refused = Ingress::start(root.join(parent).join("socket"), wake, None).err();
+                assert!(refused.is_some_and(|why| why.contains("private")), "{parent}");
+            }
+            std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o700)).unwrap();
+            drop(Ingress::start(shared.join("socket"), wake, None).unwrap());
+            std::fs::remove_dir_all(&root).unwrap();
+        }
         #[derive(Default)]
         struct Host {
             reads: u32,

@@ -56,6 +56,8 @@ uishell_advertise_automation_endpoint(char const *address)
   char const *name = "WHEELHOUSE_SOCKET";
   int set = address != 0 && address[0] != 0;
 #if defined(_WIN32)
+  // The CRT keeps its own copy of the environment, which getenv reads; the
+  // process's, which CreateProcess hands terminals, is Win32's. Set both.
   int good = _putenv_s(name, set ? address : "") == 0;
   if(!SetEnvironmentVariableA(name, set ? address : 0) && (set || GetLastError() != ERROR_ENVVAR_NOT_FOUND))
   { good = 0; }
