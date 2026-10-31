@@ -411,10 +411,25 @@ pub struct Generation {
 
 impl Generation {
     /// Compare `nodes` with the last tree; whether the generation moved.
-    pub fn observe(&mut self, nodes: &[Node]) -> bool {
-        let mut nodes = nodes.to_vec();
-        drop_terminal_text(&mut nodes);
-        let bytes = serde_json::to_vec(&nodes).expect("nodes serialise");
+    /// The screens are set aside while it is serialised, never copied.
+    pub fn observe(&mut self, nodes: &mut [Node]) -> bool {
+        let mut screens = Vec::new();
+        for node in nodes.iter_mut() {
+            node.visit_mut(&mut |node| {
+                if let Some(terminal) = &mut node.props.terminal {
+                    screens.push((terminal.text.take(), terminal.cursor.take()));
+                }
+            });
+        }
+        let bytes = serde_json::to_vec(&*nodes).expect("nodes serialise");
+        let mut screens = screens.into_iter();
+        for node in nodes.iter_mut() {
+            node.visit_mut(&mut |node| {
+                if let Some(terminal) = &mut node.props.terminal {
+                    (terminal.text, terminal.cursor) = screens.next().expect("one per terminal");
+                }
+            });
+        }
         let changed = self.last.as_ref() != Some(&bytes);
         if changed {
             self.generation += 1;
@@ -437,14 +452,14 @@ pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32
     if !waiting && automation.streams.load(SeqCst) == 0 {
         return;
     }
-    let tree = match mode {
+    let mut tree = match mode {
         AUTOMATION_OFF => None,
         _ => match build() {
             Some(tree) => Some(tree),
             None => return,
         },
     };
-    let changed = match &tree {
+    let changed = match &mut tree {
         Some(tree) => generation.observe(tree),
         // Turning off ends the streams.
         None => current.tree.is_some(),

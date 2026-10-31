@@ -214,7 +214,9 @@ fn the_generation_only_increases_and_moves_only_on_change(tc: TestCase) {
             drop_terminal_text(&mut next);
         }
         let before = generation.generation;
-        let moved = generation.observe(&next);
+        let shown = next.clone();
+        let moved = generation.observe(&mut next);
+        assert_eq!(next, shown, "the screens are put back");
         let mut plain = next.clone();
         drop_terminal_text(&mut plain);
         let changed = last.as_ref() != Some(&plain);
