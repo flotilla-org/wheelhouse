@@ -336,6 +336,18 @@ fn the_generation_only_increases_and_moves_only_on_change(tc: TestCase) {
     }
 }
 
+// A gap with no reader doesn't move the generation by itself: the tree is
+// compared with the last one observed, which is what the last read saw.
+#[test]
+fn an_idle_gap_alone_does_not_move_the_generation() {
+    let mut generation = Generation::default();
+    let start = Instant::now();
+    generation.read(start);
+    assert_eq!(generation.observe(&tree()), 1);
+    assert!(!generation.active(false, start + RECENT * 3));
+    assert_eq!(generation.observe(&tree()), 1);
+}
+
 #[test]
 fn reading_keeps_it_comparing_for_a_while() {
     let mut generation = Generation::default();
@@ -358,5 +370,10 @@ fn queries_parse() {
     assert_eq!(parsed.encoding, Encoding::Cbor);
     assert_eq!(Request::parse(Route::Semantic, None, Some("application/json")).unwrap().encoding, Encoding::Json);
     assert!(Request::parse(Route::Semantic, Some("since=x"), None).is_err());
+    // A wait with nothing to wait past is a mistake.
+    assert!(Request::parse(Route::Semantic, Some("wait=100"), None).is_err());
+    // A `+` is itself; the last of a repeated parameter wins.
+    let parsed = Request::parse(Route::Caller, Some("session=a+b%2Bc&root=x&root=y"), None).unwrap();
+    assert_eq!((parsed.session.as_deref(), parsed.root.as_deref()), (Some("a+b+c"), Some("y")));
     assert!(Request::parse(Route::Semantic, Some("root=%zz"), None).is_err());
 }

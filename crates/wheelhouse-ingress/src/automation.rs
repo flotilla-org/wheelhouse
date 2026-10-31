@@ -13,6 +13,8 @@ pub const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 pub const RECENT: Duration = Duration::from_secs(10);
 /// The longest `wait` a request may ask for.
 pub const MAX_WAIT: Duration = Duration::from_secs(60);
+/// The most reads that may wait for a change at once; more get 503.
+pub const MAX_WAITING: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Route {
@@ -59,6 +61,9 @@ impl Request {
                 _ => {}
             }
         }
+        if request.since.is_none() && query.unwrap_or("").split('&').any(|pair| pair.split('=').next() == Some("wait")) {
+            return Err("wait needs since".into());
+        }
         if route == Route::Caller && request.session.as_deref().is_none_or(str::is_empty) {
             return Err("session is required".into());
         }
@@ -69,13 +74,12 @@ impl Request {
     }
 }
 
-/// `%XX` and `+` decoded.
+/// `%XX` decoded. A `+` stays a `+` (RFC 3986), as IDs may hold one.
 fn decode(text: &str) -> Option<String> {
     let mut bytes = Vec::with_capacity(text.len());
     let mut iter = text.bytes();
     while let Some(byte) = iter.next() {
         bytes.push(match byte {
-            b'+' => b' ',
             b'%' => {
                 let hex = [iter.next()?, iter.next()?];
                 u8::from_str_radix(std::str::from_utf8(&hex).ok()?, 16).ok()?

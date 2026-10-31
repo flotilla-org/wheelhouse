@@ -103,12 +103,16 @@ Both take:
 - `root=<automation-id>`: only that node and what is under it; 404 when no
   node has the ID. Percent-encode the slashes or not: both work.
 - `since=<generation>&wait=<ms>`: answer once `generation` is greater than
-  `since`, or 204 when `wait` (at most 60000) passes first. Without `since`,
-  the current tree at once.
+  `since`, or 204 when `wait` (at most 60000) passes first. Without `wait`,
+  at once: the tree, or 204. `wait` without `since` is a 400.
 - `include=terminal_text`: terminals' screens, where the setting allows.
 
+Values are percent-decoded; a `+` is a `+`, not a space. Of a repeated
+parameter, the last counts.
+
 400 is a malformed query (or `self` without a session), 404 the routes when
-automation is off, and 503 when the UI couldn't answer in time.
+automation is off, and 503 when the UI couldn't answer in time or too many
+reads (256) are already waiting for a change.
 
 ### Response
 

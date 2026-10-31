@@ -606,6 +606,39 @@ mod transport {
             assert_eq!(server.mode.load(std::sync::atomic::Ordering::SeqCst), crate::AUTOMATION_OFF);
         }
 
+        // Reads waiting for a change are bounded; past the bound they get
+        // 503, and a cancelled one is dropped at the next frame.
+        #[test]
+        fn waiting_reads_are_bounded_and_cancelled_ones_dropped() {
+            unsafe extern "C" fn observe(_: *mut c_void, _: u32, emit: AutomationEmit, out: *mut c_void) -> u32 {
+                emit(out, crate::AUTOMATION_WORKSPACES, Text { data: b"[]".as_ptr(), len: 2 }, Text { data: std::ptr::null(), len: 0 });
+                1
+            }
+            let (reads, receiver) = mpsc::sync_channel(crate::automation::MAX_WAITING + 8);
+            let mut server = Ingress::new(mpsc::sync_channel(1).1, receiver, Default::default(), None, None);
+            let host =
+                AutomationHost { mode: crate::AUTOMATION_FULL, terminal_text: 0, observe: Some(observe), context: std::ptr::null_mut() };
+            let read = |reads: &mpsc::SyncSender<Read>| {
+                let (reply, response) = oneshot::channel();
+                let request =
+                    crate::automation::Request::parse(crate::automation::Route::Semantic, Some("since=1&wait=60000"), None).unwrap();
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                reads.send(Read { request, deadline, seen: Default::default(), reply }).unwrap();
+                response
+            };
+            // The first frame moves the generation to 1; these wait past it.
+            let mut responses: Vec<_> = (0..crate::automation::MAX_WAITING + 2).map(|_| read(&reads)).collect();
+            unsafe { wheelhouse_ingress_automation(&mut server, &host) };
+            assert_eq!(server.waiting.len(), crate::automation::MAX_WAITING);
+            for mut response in responses.drain(crate::automation::MAX_WAITING..) {
+                assert_eq!(response.try_recv().unwrap().status, 503);
+            }
+            // Half of the waiting clients go away.
+            responses.truncate(crate::automation::MAX_WAITING / 2);
+            unsafe { wheelhouse_ingress_automation(&mut server, &host) };
+            assert_eq!(server.waiting.len(), crate::automation::MAX_WAITING / 2);
+        }
+
         #[derive(Default)]
         struct Host {
             reads: u32,
@@ -1157,7 +1190,12 @@ unsafe fn automation_frame_end(server: &mut Ingress, host: &AutomationHost, limi
     for read in reads {
         read.seen.store(true, Ordering::SeqCst);
         match read.request.since {
-            Some(since) if generation <= since && now < read.deadline => server.waiting.push(read),
+            Some(since) if generation <= since && now < read.deadline && server.waiting.len() < automation::MAX_WAITING => {
+                server.waiting.push(read)
+            }
+            Some(since) if generation <= since && now < read.deadline => {
+                let _ = read.reply.send(Reply::status(503));
+            }
             Some(since) if generation <= since => {
                 let _ = read.reply.send(Reply::status(204));
             }
