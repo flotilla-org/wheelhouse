@@ -124,12 +124,17 @@ pub struct Flight {
 
 impl Flight {
     /// A flight from `from` to `to` starting at `now_ms`, or none when the
-    /// two are the same camera or `timing` gives it no time: then the
-    /// camera cuts. `interrupted` flights take a share of the time, so
-    /// switching fast never chains full-length flights.
+    /// two are the same camera, `timing` gives it no time, or either camera
+    /// can't be on a path (no width, or not finite): then the camera cuts.
+    /// `interrupted` flights take a share of the time, so switching fast
+    /// never chains full-length flights.
     pub fn new(from: Camera, to: Camera, now_ms: f64, timing: &FlightTiming, interrupted: bool) -> Option<Self> {
+        let usable = |c: Camera| c.cx.is_finite() && c.cy.is_finite() && c.w.is_finite() && c.w > 0.0;
+        if !usable(from) || !usable(to) {
+            return None;
+        }
         let path = ZoomPath::new(from, to, timing.rho);
-        if path.length < 1e-9 {
+        if !path.length.is_finite() || path.length < 1e-9 {
             return None;
         }
         let full = (path.length * timing.ms_per_unit).max(timing.min_ms).min(timing.max_ms);

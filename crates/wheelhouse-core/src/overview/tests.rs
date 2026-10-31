@@ -193,6 +193,24 @@ fn timing_without_time_cuts() {
     assert_eq!(Flight::new(from, to, 0.0, &inverted, false).unwrap().duration_ms, 100.0);
 }
 
+/// Between cameras with no finite path (one 0 wide or less, or not
+/// finite), there is no flight: the camera cuts rather than going NaN.
+#[test]
+fn cameras_without_a_finite_path_cut() {
+    let good = Camera { cx: 0.0, cy: 0.0, w: 1.6 };
+    for bad in [
+        Camera { w: 0.0, ..good },
+        Camera { cx: 20.0, w: 0.0, ..good },
+        Camera { cx: 20.0, w: -1.0, ..good },
+        Camera { cx: f64::NAN, ..good },
+        Camera { w: f64::INFINITY, ..good },
+    ] {
+        for (from, to) in [(good, bad), (bad, good)] {
+            assert_eq!(Flight::new(from, to, 0.0, &FlightTiming::default(), false), None, "{from:?} to {to:?}");
+        }
+    }
+}
+
 /// Flights ease out: halfway through its time, a flight is seven eighths of
 /// the way along its path.
 #[test]
