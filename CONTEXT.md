@@ -316,7 +316,7 @@ A frontend's rule for showing a kind of **View Spec** content: which **Renderer*
 _Avoid_: Plugin, opener, launcher (a Jackstay "launcher" in a **View Spec** is the setting that names an endpoint)
 
 **Rich Text**:
-The core's read-only model of styled, flowing content: a keyed tree of **Containers** whose leaves are **Blocks**. Markdown, agent conversations and logs are sources of it. It records what content is; each frontend chooses how to present it and draws it with its own text engine.
+The core's model of styled, flowing content, shown read-only for now: a keyed tree of **Containers** whose leaves are **Blocks**. Markdown, agent conversations and logs are sources of it. It records what content is; each frontend chooses how to present it and draws it with its own text engine.
 _Avoid_: Document (the arrangement is a document), markdown view, prose
 
 **Block**:
