@@ -5752,7 +5752,10 @@ uishell_sidebar_footer_ui(Rng2F32 rect, UIShell_ControlledSplit *split)
   Vec2F32 dim = dim_2f32(rect);
   String8 diagnostic = uishell_sidebar_notice(ui_build_arena(), state);
   UI_Box *root;
-  UI_Focus(UI_FocusKind_On) UI_Rect(rect)
+  // The footer takes the focus it is built under, not focus of its own:
+  // forced on, it became the window's default navigation root, built as it
+  // is before the workspace's panels, and ate every View's arrow keys.
+  UI_Focus(UI_FocusKind_Null) UI_Rect(rect)
   { root = ui_build_box_from_string(UI_BoxFlag_Clip|UI_BoxFlag_DefaultFocusNav, str8_lit("###sidebar_footer")); }
   UI_Parent(root)
   {

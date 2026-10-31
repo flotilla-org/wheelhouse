@@ -173,6 +173,11 @@ uishell_table_diagnostics(RD_WindowState *ws)
     String8 names[] = {str8_lit("records"), str8_lit("huge"), str8_lit("live")};
     UI_State *saved_ui = ui_state, *test_ui = ui_state_alloc();
     ui_select_state(test_ui);
+    // The footer builds nothing without a sidebar state, which would leave
+    // the Down below passing for want of a footer; an empty one serves: no
+    // error, no notice, no sections, so the footer draws its bare row.
+    UIShell_SidebarState *saved_sidebar = ws->sidebar, sidebar = {0};
+    if(!ws->sidebar) { ws->sidebar = &sidebar; }
     for EachElement(n, names)
     {
       CFG_Node *view = rd_fixture_view(panel, str8_lit("table"), names[n], 1);
@@ -199,11 +204,12 @@ uishell_table_diagnostics(RD_WindowState *ws)
           events.first = events.last = &click;
           events.count = 1;
         }
+        // Down as its key binding sends it: the move_down command's event.
         if(n == 0 && frame == 8)
         {
-          click.v = (UI_Event){.kind = UI_EventKind_Navigate, .delta_unit = UI_EventDeltaUnit_Char, .delta_2s32 = v2s32(0, 1)};
-          events.first = events.last = &click;
-          events.count = 1;
+          uishell_dispatch_ui_event_command(str8_lit("move_down"));
+          events = ws->ui_events;
+          MemoryZeroStruct(&ws->ui_events);
         }
         // Frame 9 has no input: what the View asks for then is its own.
         if(frame == 9) { rd_state->num_frames_requested = 0; rd_state->frame_deadline_us = 0; built_at = now_time_us(); }
@@ -212,6 +218,10 @@ uishell_table_diagnostics(RD_WindowState *ws)
         if(clicking) { ui_state->mouse = pos; }
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         {
+          // The sidebar footer builds before the workspace's panels, as in
+          // the window: it must not take the View's keys.
+          UIShell_ControlledSplit split = {.owner_cfg = window};
+          uishell_sidebar_footer_ui(r2f32p(0, 600, 900, 640), &split);
           wh_view_ui_direct(wh_renderer_from_name(str8_lit("table")), rd_view_address_from_cfg(view), r2f32p(0, 0, 900, 600));
         }
         ui_end_build();
@@ -277,6 +287,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
       TableCheck(drawn <= visible && visible < 2000, "the View paints only the cells in view");
       printf("TABLE_PAINT table=%.*s drawn=%llu visible=%llu\n", str8_varg(names[n]), (unsigned long long)drawn, (unsigned long long)visible);
     }
+    ws->sidebar = saved_sidebar;
     ui_select_state(saved_ui);
   }
 
