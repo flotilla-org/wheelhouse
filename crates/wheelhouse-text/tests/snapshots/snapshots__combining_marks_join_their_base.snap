@@ -1,0 +1,15 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "plain(\"Cafe\\u{301} a\\u{30a}\\u{323}x\", 1000.0)"
+---
+line 0 y=0.0 h=24.0 base=17.0 w=52.9 bytes=0..13 "Cafe\u{301} a\u{30a}\u{323}x"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[13,112,142,134,231]
+  run NotoSansMath-Regular.ttf size=16.0 x=36.2 glyphs=[82,4800,4792]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=45.2 glyphs=[215]
+     0.00 +10.32  "C" word
+    10.32 +8.26   "a" 
+    18.58 +4.53   "f" 
+    23.10 +8.61   "e\u{301}" 
+    31.71 +4.48   " " space word
+    36.19 +8.98   "a\u{30a}\u{323}" word
+    45.17 +7.70   "x"

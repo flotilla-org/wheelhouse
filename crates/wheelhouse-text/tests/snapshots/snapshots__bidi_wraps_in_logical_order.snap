@@ -1,0 +1,28 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "plain(\"one \\u{5E9}\\u{5DC}\\u{5D5}\\u{5DD} \\u{5E2}\\u{5D5}\\u{5DC}\\u{5DD} two\",\n70.0)"
+---
+line 0 y=0.0 h=21.0 base=16.0 w=68.9 bytes=0..13 "one שלום "
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[175,170,133,231]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=30.7 rtl glyphs=[231,0,0,0,0]
+     0.00 +8.77   "o" word
+     8.77 +8.80   "n" 
+    17.57 +8.61   "e" 
+    26.18 +4.48   " " space word
+    30.66 +4.48   " " rtl space word
+    35.14 +8.43   "ם" rtl
+    43.57 +8.43   "ו" rtl
+    52.00 +8.43   "ל" rtl
+    60.43 +8.43   "ש" rtl word
+line 1 y=21.0 h=21.0 base=37.0 w=63.1 bytes=13..25 "עולם two"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 rtl glyphs=[0,0,0,0]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=33.7 glyphs=[231]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=38.2 glyphs=[196,210,175]
+     0.00 +8.43   "ם" rtl
+     8.43 +8.43   "ל" rtl
+    16.86 +8.43   "ו" rtl
+    25.30 +8.43   "ע" rtl word
+    33.73 +4.48   " " space word
+    38.21 +5.34   "t" word
+    43.55 +10.82  "w" 
+    54.37 +8.77   "o"

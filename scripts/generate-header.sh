@@ -6,7 +6,8 @@ set -e
 ffi="$(dirname "$0")/../crates/wheelhouse-ffi"
 out="$ffi/include/wheelhouse.h"
 generate() {
-  cbindgen --quiet --config "$ffi/cbindgen.toml" --output "$1" "$ffi/src/lib.rs"
+  # The crate, not lib.rs alone, so cbindgen can read wheelhouse-text's types.
+  cbindgen --quiet --config "$ffi/cbindgen.toml" --crate wheelhouse-ffi --output "$1" "$ffi"
 }
 if [ "$1" = "--check" ]; then
   tmp=$(mktemp)
