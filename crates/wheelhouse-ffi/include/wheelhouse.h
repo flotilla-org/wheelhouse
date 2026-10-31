@@ -1572,8 +1572,9 @@ typedef struct {
 
 // Where output arrays go: alloc(user, size, align) returns size bytes
 // aligned to align, or NULL on failure. The library never frees them;
-// with an arena, free the arena. alloc must not call back into the
-// library.
+// with an arena, free the arena. A call that fails part way can leave
+// arrays it already allocated: a host whose allocator isn't an arena must
+// track and free them. alloc must not call back into the library.
 typedef struct {
   void *(*alloc)(void *user, size_t size, size_t align);
   void *user;
@@ -2578,7 +2579,8 @@ size_t wh_text_coords(const WhText *ctx, uint32_t coords, const int16_t **out);
 // Lays out a paragraph width pixels wide (INFINITY for no wrapping),
 // writing its arrays through alloc into out. No layout state survives the
 // call: a width change lays out again. Returns 1, or 0 with an error for
-// invalid input or a failed allocation (out is then untouched).
+// invalid input or a failed allocation (out is then untouched, though
+// arrays allocated before the failure stay allocated).
 uint32_t wh_text_layout(const WhText *ctx,
                         const WhTextInput *input,
                         float width,
@@ -2601,7 +2603,7 @@ uint32_t wh_text_caret_rect(const WhTextLayout *layout,
 // The selection of bytes start..end as rectangles per line, through alloc
 // into out: visually adjacent clusters merge, so bidi text can give
 // several on one line. Returns 0 for a malformed layout or a failed
-// allocation.
+// allocation, which it doesn't tell apart.
 uint32_t wh_text_selection_rects(const WhTextLayout *layout,
                                  uint32_t start,
                                  uint32_t end,
@@ -2611,7 +2613,7 @@ uint32_t wh_text_selection_rects(const WhTextLayout *layout,
 // The layout's segments, through alloc into out: each a stretch of one
 // direction and one style on a line. A run id is the Block's key, the
 // segment's line and index, and the layout's generation. Returns 0 for a
-// malformed layout or a failed allocation.
+// malformed layout or a failed allocation, which it doesn't tell apart.
 uint32_t wh_text_segments(const WhTextLayout *layout, WhTextAllocator alloc, WhTextSegments *out);
 
 #ifdef __cplusplus

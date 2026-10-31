@@ -102,6 +102,10 @@ pub enum Error {
     BoxOutOfBounds(usize),
     /// A style's size is not positive and finite.
     BadSize(usize),
+    /// A style's weight or letter spacing is not finite, or its weight not positive.
+    BadStyle(usize),
+    /// A box's width, height or baseline is not finite, or its width or height is negative.
+    BadBox(usize),
     BadWidth,
     /// The text is longer than u32::MAX bytes, which the arrays' offsets can't hold.
     TextTooLong,
@@ -116,6 +120,10 @@ impl std::fmt::Display for Error {
             Error::RunsOverlap(i) => write!(f, "run {i} starts before the run before it ends"),
             Error::BoxOutOfBounds(i) => write!(f, "inline box {i} is past the text, inside a character, or out of order"),
             Error::BadSize(i) => write!(f, "style {i} has a size that is not positive and finite"),
+            Error::BadStyle(i) => {
+                write!(f, "style {i} has a weight or letter spacing that is not finite, or a weight that is not positive")
+            }
+            Error::BadBox(i) => write!(f, "inline box {i} has a size or baseline that is not finite, or a negative size"),
             Error::BadWidth => write!(f, "the width is NaN"),
             Error::TextTooLong => write!(f, "the text is longer than u32::MAX bytes"),
         }
@@ -274,6 +282,16 @@ fn validate(input: &Input<'_>, width: f32) -> Result<Vec<StyleRun>, Error> {
     }
     if let Some(i) = input.styles.iter().position(|s| !(s.size.is_finite() && s.size > 0.0)) {
         return Err(Error::BadSize(i));
+    }
+    if let Some(i) = input.styles.iter().position(|s| !(s.weight.is_finite() && s.weight > 0.0 && s.letter_spacing.is_finite())) {
+        return Err(Error::BadStyle(i));
+    }
+    if let Some(i) = input
+        .boxes
+        .iter()
+        .position(|b| !(b.width.is_finite() && b.height.is_finite() && b.baseline.is_finite() && b.width >= 0.0 && b.height >= 0.0))
+    {
+        return Err(Error::BadBox(i));
     }
     let text = input.text;
     let mut runs = Vec::with_capacity(input.runs.len() + 1);

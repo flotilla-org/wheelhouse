@@ -61,8 +61,9 @@ pub struct WhText {
 
 /// Where output arrays go: alloc(user, size, align) returns size bytes
 /// aligned to align, or NULL on failure. The library never frees them;
-/// with an arena, free the arena. alloc must not call back into the
-/// library.
+/// with an arena, free the arena. A call that fails part way can leave
+/// arrays it already allocated: a host whose allocator isn't an arena must
+/// track and free them. alloc must not call back into the library.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WhTextAllocator {
@@ -330,12 +331,15 @@ const SCRATCH_KEEP: usize = 1 << 16;
 thread_local! {
     /// The arrays a layout is built in before they are copied out.
     static SCRATCH: RefCell<Paragraph> = RefCell::default();
+    /// The input's runs and boxes, converted, reused between calls.
+    static INPUTS: RefCell<(Vec<StyleRun>, Vec<InlineBox>)> = RefCell::default();
 }
 
 /// Lays out a paragraph width pixels wide (INFINITY for no wrapping),
 /// writing its arrays through alloc into out. No layout state survives the
 /// call: a width change lays out again. Returns 1, or 0 with an error for
-/// invalid input or a failed allocation (out is then untouched).
+/// invalid input or a failed allocation (out is then untouched, though
+/// arrays allocated before the failure stay allocated).
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_layout(
     ctx: *const WhText,
@@ -352,10 +356,13 @@ pub unsafe extern "C" fn wh_text_layout(
             let input = input.as_ref().ok_or("null input")?;
             let out = out.as_mut().ok_or("null output")?;
             let text = std::str::from_utf8(slice(input.text.data, input.text.len)?).map_err(|e| e.to_string())?;
-            let runs = slice(input.runs, input.run_count)?
-                .iter()
-                .map(|r| StyleRun { start: r.start as usize, len: r.len as usize, style: r.style as usize })
-                .collect::<Vec<_>>();
+            let (mut runs, mut boxes) = INPUTS.with(|inputs| mem::take(&mut *inputs.borrow_mut()));
+            runs.clear();
+            runs.extend(slice(input.runs, input.run_count)?.iter().map(|r| StyleRun {
+                start: r.start as usize,
+                len: r.len as usize,
+                style: r.style as usize,
+            }));
             let raw_styles = slice(input.styles, input.style_count)?;
             let features = raw_styles
                 .iter()
@@ -380,10 +387,14 @@ pub unsafe extern "C" fn wh_text_layout(
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;
-            let boxes = slice(input.boxes, input.box_count)?
-                .iter()
-                .map(|b| InlineBox { id: b.id, offset: b.offset as usize, width: b.width, height: b.height, baseline: b.baseline })
-                .collect::<Vec<_>>();
+            boxes.clear();
+            boxes.extend(slice(input.boxes, input.box_count)?.iter().map(|b| InlineBox {
+                id: b.id,
+                offset: b.offset as usize,
+                width: b.width,
+                height: b.height,
+                baseline: b.baseline,
+            }));
             let input = Input {
                 text,
                 runs: &runs,
@@ -392,7 +403,7 @@ pub unsafe extern "C" fn wh_text_layout(
                 max_lines: input.max_lines as usize,
                 ellipsis: input.ellipsis != 0,
             };
-            SCRATCH.with(|scratch| {
+            let laid_out = SCRATCH.with(|scratch| {
                 let mut p = scratch.borrow_mut();
                 t.ctx.layout_into(&input, width, &mut p).map_err(|e| e.to_string())?;
                 *out = WhTextLayout {
@@ -415,7 +426,9 @@ pub unsafe extern "C" fn wh_text_layout(
                     *p = Paragraph::default();
                 }
                 Ok(())
-            })
+            });
+            INPUTS.with(|inputs| *inputs.borrow_mut() = (runs, boxes));
+            laid_out
         })
         .map_or(0, |()| 1)
     }
@@ -539,7 +552,7 @@ pub unsafe extern "C" fn wh_text_caret_rect(layout: *const WhTextLayout, offset:
 /// The selection of bytes start..end as rectangles per line, through alloc
 /// into out: visually adjacent clusters merge, so bidi text can give
 /// several on one line. Returns 0 for a malformed layout or a failed
-/// allocation.
+/// allocation, which it doesn't tell apart.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_selection_rects(
     layout: *const WhTextLayout,
@@ -566,7 +579,7 @@ pub unsafe extern "C" fn wh_text_selection_rects(
 /// The layout's segments, through alloc into out: each a stretch of one
 /// direction and one style on a line. A run id is the Block's key, the
 /// segment's line and index, and the layout's generation. Returns 0 for a
-/// malformed layout or a failed allocation.
+/// malformed layout or a failed allocation, which it doesn't tell apart.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_segments(layout: *const WhTextLayout, alloc: WhTextAllocator, out: *mut WhTextSegments) -> u32 {
     // SAFETY: the caller's contract.
