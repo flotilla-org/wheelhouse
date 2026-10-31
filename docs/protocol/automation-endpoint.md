@@ -155,6 +155,10 @@ drydock's `/v1/events` does. Each line is one event:
   nonsense) gets a snapshot. Cursors are opaque, and no history is kept.
 - **The stream ends** when automation is turned off, or when its `root`
   goes.
+- **Screen text never makes an event by itself.** A stream that asks for
+  `include=terminal_text` gets the screens in the snapshots structural
+  changes send, not live screen updates.
+- **At most 64 streams** are open at once; more get 503.
 
 With `Accept: application/cbor`, each event is an ADR 0063 frame: the magic
 `WHEVENTS`, a big-endian u32 length, then the event as one CBOR map with

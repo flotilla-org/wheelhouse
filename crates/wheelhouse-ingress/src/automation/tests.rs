@@ -305,6 +305,19 @@ impl Endpoint {
     }
 }
 
+/// Whether the stream closes within `wait` (rather than staying open).
+#[cfg(unix)]
+fn closes(reader: &mut Body, wait: Duration) -> bool {
+    use std::io::Read;
+    reader.get_ref().set_read_timeout(Some(wait)).unwrap();
+    let mut rest = Vec::new();
+    match reader.read_to_end(&mut rest) {
+        Ok(_) => true,
+        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => false,
+        Err(e) => panic!("{e}"),
+    }
+}
+
 /// The next event line, or `None` when none comes within `wait`.
 #[cfg(unix)]
 fn next(reader: &mut Body, wait: Duration) -> Option<Record> {
@@ -365,7 +378,13 @@ fn the_event_stream_sends_a_snapshot_first_and_after_each_change() {
     // Turning automation off ends the streams, and the routes answer 404.
     assert_eq!(snapshot(next(&mut events, wait).unwrap()).nodes[1].name.as_deref(), Some("again"));
     endpoint.mode.store(AUTOMATION_OFF, SeqCst);
-    assert_eq!(next(&mut events, wait), None);
+    assert!(closes(&mut events, wait), "the stream stayed open");
+    assert!(closes(&mut rooted, wait) && closes(&mut resumed, wait));
+    let deadline = std::time::Instant::now() + wait;
+    while endpoint.automation.streams.load(SeqCst) != 0 {
+        assert!(std::time::Instant::now() < deadline, "streams still counted");
+        std::thread::sleep(Duration::from_millis(10));
+    }
     for route in ["/v1/observed/events", "/v1/observed/semantic", "/v1/observed/self?session=s1"] {
         assert_eq!(endpoint.read(route, "").0, 404, "{route}");
     }

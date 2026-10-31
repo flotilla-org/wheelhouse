@@ -43,6 +43,8 @@ pub const FRAMING: Framing = Framing::new(*b"WHEVENTS", LIMITS);
 const FRAME_WAIT: Duration = Duration::from_secs(5);
 /// No frame has said yet.
 pub const MODE_UNKNOWN: u32 = u32::MAX;
+/// The most event streams open at once; more get 503.
+pub const MAX_STREAMS: usize = 64;
 
 /// What the read routes take.
 #[derive(Debug, Default, Deserialize)]
@@ -216,9 +218,16 @@ async fn caller(State(automation): State<Arc<Automation>>, Query(params): Query<
         Ok(published) => published,
         Err(status) => return status.into_response(),
     };
-    let Some(tree) = tree(&published, &params) else { return StatusCode::NOT_FOUND.into_response() };
-    let views = caller_views(&tree.nodes, &session);
-    reply(cbor, encode(&Caller { schema: SCHEMA, generation: tree.generation, session, views }, cbor))
+    let all = published.tree.as_deref().map_or(&[][..], Vec::as_slice);
+    let nodes = match &params.root {
+        Some(root) => match find(all, root) {
+            Some(node) => std::slice::from_ref(node),
+            None => return StatusCode::NOT_FOUND.into_response(),
+        },
+        None => all,
+    };
+    let views = caller_views(nodes, &session);
+    reply(cbor, encode(&Caller { schema: SCHEMA, generation: published.generation, session, views }, cbor))
 }
 
 /// Ends a stream's count when the client goes.
@@ -234,8 +243,6 @@ impl Drop for Stream {
 /// The stream ends when automation turns off or `root` goes.
 async fn events(State(automation): State<Arc<Automation>>, Query(params): Query<Params>, headers: HeaderMap) -> Response {
     let cbor = cbor_wanted(&headers);
-    automation.streams.fetch_add(1, SeqCst);
-    let stream = Stream(automation.clone());
     let published = match automation.fresh().await {
         Ok(published) => published,
         Err(status) => return status.into_response(),
@@ -243,11 +250,18 @@ async fn events(State(automation): State<Arc<Automation>>, Query(params): Query<
     if tree(&published, &params).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
+    if automation.streams.fetch_add(1, SeqCst) >= MAX_STREAMS {
+        automation.streams.fetch_sub(1, SeqCst);
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let stream = Stream(automation.clone());
     let sent = (params.since.as_deref() == Some(&automation.cursor(published.generation))).then_some(published.generation);
     let changes = automation.published.subscribe();
     let lines = futures_util::stream::unfold((stream, changes, sent, params), move |(stream, mut changes, mut sent, params)| async move {
         loop {
             let published = changes.borrow_and_update().clone();
+            // Automation turned off.
+            published.tree.as_ref()?;
             if sent != Some(published.generation) {
                 sent = Some(published.generation);
                 let tree = tree(&published, &params)?;

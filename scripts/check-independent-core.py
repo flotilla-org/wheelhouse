@@ -23,7 +23,7 @@ metadata = json.loads(subprocess.check_output(
 rigging = "git+https://github.com/flotilla-org/rigging"
 forbidden = [package["name"] for package in metadata["packages"]
              if "zellij" in package["name"]
-             or package["name"].startswith("flotilla") and not (package["source"] or "").startswith(rigging)]
+             or package["name"].startswith("flotilla") and not (package["source"] or "").startswith((rigging + "?", rigging + "#"))]
 assert not forbidden, forbidden
 
 subprocess.run(["cargo", "check", "-p", "wheelhouse-ffi", "--no-default-features",
