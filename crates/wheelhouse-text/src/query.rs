@@ -116,7 +116,9 @@ pub fn offset_at(view: &View<'_>, x: f32, y: f32) -> Position {
         };
         match beside {
             Some(beside) if beside.0.flags & CLUSTER_HARD_BREAK == 0 => (c, left) = beside,
-            _ => return Position { offset: c.start as usize, affinity: Affinity::Downstream },
+            // Breaks that parley left on one line: the far side is the next one.
+            Some(_) => return Position { offset: (c.start + c.len) as usize, affinity: Affinity::Downstream },
+            None => return Position { offset: c.start as usize, affinity: Affinity::Downstream },
         }
     }
     let (start, end) = (c.start as usize, (c.start + c.len) as usize);
@@ -174,7 +176,15 @@ pub fn caret_rect(view: &View<'_>, offset: usize, affinity: Affinity) -> Caret {
     }
     // With no line after a hard break (the text was cut there), before it.
     .or_else(|| if lines.len() == 1 { hard_break.map(leading) } else { None });
-    let (line, x, rtl) = found.unwrap_or((lines.end - 1, 0.0, false));
+    let (line, x, rtl) = found.unwrap_or_else(|| {
+        let line = lines.end - 1;
+        let l = &view.lines[line];
+        // Past a cut, where the text stops before the ellipsis.
+        match line_clusters(view, l).iter().find(|c| c.flags & CLUSTER_ELLIPSIS != 0) {
+            Some(e) if offset >= e.start => leading((line, e)),
+            _ => (line, if view.rtl { l.x + l.width } else { l.x }, view.rtl),
+        }
+    });
     let l = &view.lines[line];
     Caret { x, y: l.y, height: l.height, line, rtl }
 }

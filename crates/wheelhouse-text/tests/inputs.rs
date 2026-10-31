@@ -1,6 +1,6 @@
 mod common;
-use std::{sync::Arc, thread};
-use wheelhouse_text::{Error, Family, InlineBox, Input, Style, StyleRun, TextContext};
+use std::{path::Path, sync::Arc, thread};
+use wheelhouse_text::{Error, Family, FontSource, InlineBox, Input, Style, StyleRun, TextContext};
 
 #[test]
 fn non_finite_numbers_are_refused() {
@@ -32,6 +32,27 @@ fn non_finite_numbers_are_refused() {
     assert_eq!(ctx.layout(&Input { runs: &runs, ..Input::plain(text, &styles) }, 100.0), Err(Error::RunOutOfBounds(0)));
     let boxes = [good];
     assert!(ctx.layout(&Input { boxes: &boxes, ..Input::plain(text, &styles) }, 100.0).is_ok());
+    let many = vec![Style::default(); 65537];
+    assert_eq!(ctx.layout(&Input::plain(text, &many), 100.0), Err(Error::TooManyStyles));
+}
+
+// By hand, as CI machines have few fonts: `cargo test -p wheelhouse-text -- --ignored`.
+#[test]
+#[ignore]
+fn system_fonts_resolve_to_their_files() {
+    let ctx = TextContext::new(true);
+    let styles = [Style::default(), Style { family: Family::Code, ..Style::default() }];
+    let text = "Latin \u{5E9}\u{5DC}\u{5D5}\u{5DD} \u{645}\u{631}\u{62D}\u{628}\u{627} \u{6F22}\u{5B57} \u{E2A}\u{E27}\u{E31}\u{E2A}\u{E14}\u{E35} \u{1F600} code";
+    let runs = [StyleRun { start: text.len() - 4, len: 4, style: 1 }];
+    let p = ctx.layout(&Input { runs: &runs, ..Input::plain(text, &styles) }, 400.0).unwrap();
+    for run in &p.runs {
+        let face = ctx.font(run.font).unwrap();
+        println!("{:?} {} glyphs", face.source, run.glyph_count);
+        assert!(!face.data.as_ref().is_empty());
+        if let FontSource::Path(path) = &face.source {
+            assert!(Path::new(path.as_ref()).is_file(), "{path}");
+        }
+    }
 }
 
 // Threads lay out with one context while another changes its families and

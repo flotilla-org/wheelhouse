@@ -2,19 +2,19 @@
 source: crates/wheelhouse-text/tests/snapshots.rs
 expression: "plain(\"\\u{6F22}\\u{5B57}\\u{304B}\\u{306A}\\u{6F22}\\u{5B57}\\u{3002}\\u{6587}\\u{5B57}\\u{5217}\",\n50.0)"
 ---
-line 0 y=0.0 h=21.0 base=16.0 w=42.2 bytes=0..15 "漢字かな漢"
+line 0 x=0.0 y=0.0 h=21.0 base=16.0 w=42.2 bytes=0..15 "漢字かな漢"
   run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[0,0]
   run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=16.9 glyphs=[0,0]
   run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=33.7 glyphs=[0]
-     0.00 +8.43   "漢" word
-     8.43 +8.43   "字" 
-    16.86 +8.43   "か" word
-    25.30 +8.43   "な" 
-    33.73 +8.43   "漢" 
-line 1 y=21.0 h=21.0 base=37.0 w=42.2 bytes=15..30 "字。文字列"
+     0.00 +8.43   "漢" [0] word
+     8.43 +8.43   "字" [0] 
+    16.86 +8.43   "か" [0] word
+    25.30 +8.43   "な" [0] 
+    33.73 +8.43   "漢" [0] 
+line 1 x=0.0 y=21.0 h=21.0 base=37.0 w=42.2 bytes=15..30 "字。文字列"
   run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[0,0,0,0,0]
-     0.00 +8.43   "字" 
-     8.43 +8.43   "。" word
-    16.86 +8.43   "文" word
-    25.30 +8.43   "字" 
-    33.73 +8.43   "列" word
+     0.00 +8.43   "字" [0] 
+     8.43 +8.43   "。" [0] word
+    16.86 +8.43   "文" [0] word
+    25.30 +8.43   "字" [0] 
+    33.73 +8.43   "列" [0] word

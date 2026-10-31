@@ -541,6 +541,15 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 #define WH_TEXT_FAMILY_ICONS 2
 
+#define WH_TEXT_ALIGN_START 0
+
+#define WH_TEXT_ALIGN_END 1
+
+#define WH_TEXT_ALIGN_CENTER 2
+
+// The last line, and lines that end at a hard break, align to the start.
+#define WH_TEXT_ALIGN_JUSTIFY 3
+
 // With the text after the offset.
 #define WH_TEXT_DOWNSTREAM 0
 
@@ -556,7 +565,7 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 #define WH_TEXT_CLUSTER_RTL 1
 
-// A space, a no-break space or a hard line break.
+// A space, a no-break space, a tab or a hard line break.
 #define WH_TEXT_CLUSTER_WHITESPACE 2
 
 #define WH_TEXT_CLUSTER_WORD_START 4
@@ -568,6 +577,9 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 // Covers no bytes; its start is where the text was cut.
 #define WH_TEXT_CLUSTER_ELLIPSIS 32
+
+// Drawn as a space, advancing to the next tab stop.
+#define WH_TEXT_CLUSTER_TAB 64
 
 // Safe to use from several threads at once.
 typedef struct WhText WhText;
@@ -1508,6 +1520,7 @@ typedef struct {
 
 typedef struct {
   uint8_t tag[4];
+  // At most 65535.
   uint32_t value;
 } WhTextFeature;
 
@@ -1548,6 +1561,10 @@ typedef struct {
   uint32_t max_lines;
   // End a cut last line with "…".
   uint32_t ellipsis;
+  // WH_TEXT_ALIGN_*.
+  uint32_t align;
+  // Tab stops every this many spaces of the tab's own style; 0 for 4.
+  uint32_t tab_size;
 } WhTextInput;
 
 // alloc returns size bytes aligned to align, or NULL. The library never
@@ -1559,6 +1576,8 @@ typedef struct {
 } WhTextAllocator;
 
 typedef struct {
+  // The left of its content; for an empty line, its start edge.
+  float x;
   // The line box's top.
   float y;
   float height;
@@ -1598,6 +1617,12 @@ typedef struct {
   float advance;
   uint32_t line;
   uint32_t rtl;
+  // Down from the baseline to the line's top edge.
+  float underline_offset;
+  float underline_size;
+  // Down from the baseline to the line's top edge (negative: above it).
+  float strikethrough_offset;
+  float strikethrough_size;
 } WhTextRun;
 
 // At its origin on the baseline.
@@ -1618,6 +1643,9 @@ typedef struct {
   uint32_t style;
   // WH_TEXT_CLUSTER_* bits.
   uint32_t flags;
+  // The glyphs it draws: none for a ligature continuation or a glyphless atom.
+  uint32_t glyph_start;
+  uint32_t glyph_count;
 } WhTextCluster;
 
 // x and y are the top left.
@@ -1646,6 +1674,8 @@ typedef struct {
   float height;
   // Stale when wh_text_epoch differs.
   uint64_t epoch;
+  // The resolved base direction.
+  uint32_t rtl;
 } WhTextLayout;
 
 typedef struct {
@@ -2505,20 +2535,20 @@ WhText *wh_text_create(uint32_t system_fonts);
 void wh_text_free(WhText *ctx);
 
 // Copies the bytes. Returns how many faces it registered.
-size_t wh_text_register_font(WhText *ctx, const uint8_t *data, size_t len, uint64_t bytes_id);
+size_t wh_text_register_font(const WhText *ctx, const uint8_t *data, size_t len, uint64_t bytes_id);
 
 // family is WH_TEXT_FAMILY_*. Returns 0 for an unknown slot or non-UTF-8 name.
-uint32_t wh_text_set_family(WhText *ctx, uint32_t family, WheelhouseText name);
+uint32_t wh_text_set_family(const WhText *ctx, uint32_t family, WheelhouseText name);
 
 // Tried in order before fontique's own fallback. Returns 0, changing
 // nothing, if a name is not UTF-8.
-uint32_t wh_text_set_fallbacks(WhText *ctx, const WheelhouseText *names, size_t count);
+uint32_t wh_text_set_fallbacks(const WhText *ctx, const WheelhouseText *names, size_t count);
 
 // Returns 0 for a scale that is not positive and finite.
-uint32_t wh_text_set_scale(WhText *ctx, float scale);
+uint32_t wh_text_set_scale(const WhText *ctx, float scale);
 
 // Rescans the system's fonts.
-void wh_text_fonts_changed(WhText *ctx);
+void wh_text_fonts_changed(const WhText *ctx);
 
 // Changes with font settings, installed fonts or scale.
 uint64_t wh_text_epoch(const WhText *ctx);
@@ -2529,8 +2559,9 @@ uint32_t wh_text_font(const WhText *ctx, uint32_t font, WhTextFont *out);
 // Normalized coordinates, live as long as ctx. Returns how many.
 size_t wh_text_coords(const WhText *ctx, uint32_t coords, const int16_t **out);
 
-// width INFINITY doesn't wrap. On failure, returns 0 with an error and
-// leaves out untouched.
+// Pass width INFINITY for no wrapping: a large finite width aligns RTL or
+// centred lines against that width, far from 0, where f32 loses precision.
+// On failure, returns 0 with an error and leaves out untouched.
 uint32_t wh_text_layout(const WhText *ctx,
                         const WhTextInput *input,
                         float width,

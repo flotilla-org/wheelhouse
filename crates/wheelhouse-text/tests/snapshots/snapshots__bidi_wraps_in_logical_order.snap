@@ -2,27 +2,28 @@
 source: crates/wheelhouse-text/tests/snapshots.rs
 expression: "plain(\"one \\u{5E9}\\u{5DC}\\u{5D5}\\u{5DD} \\u{5E2}\\u{5D5}\\u{5DC}\\u{5DD} two\",\n70.0)"
 ---
-line 0 y=0.0 h=21.0 base=16.0 w=68.9 bytes=0..13 "one שלום "
+line 0 x=0.0 y=0.0 h=22.0 base=17.0 w=70.8 bytes=0..13 "one שלום "
   run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[175,170,133,231]
-  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=30.7 rtl glyphs=[231,0,0,0,0]
-     0.00 +8.77   "o" word
-     8.77 +8.80   "n" 
-    17.57 +8.61   "e" 
-    26.18 +4.48   " " space word
-    30.66 +4.48   " " rtl space word
-    35.14 +8.43   "ם" rtl
-    43.57 +8.43   "ו" rtl
-    52.00 +8.43   "ל" rtl
-    60.43 +8.43   "ש" rtl word
-line 1 y=21.0 h=21.0 base=37.0 w=63.1 bytes=13..25 "עולם two"
-  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 rtl glyphs=[0,0,0,0]
-  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=33.7 glyphs=[231]
-  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=38.2 glyphs=[196,210,175]
-     0.00 +8.43   "ם" rtl
-     8.43 +8.43   "ל" rtl
-    16.86 +8.43   "ו" rtl
-    25.30 +8.43   "ע" rtl word
-    33.73 +4.48   " " space word
-    38.21 +5.34   "t" word
-    43.55 +10.82  "w" 
-    54.37 +8.77   "o"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=30.7 rtl glyphs=[231]
+  run NotoSansHebrew-Subset.ttf size=16.0 x=35.1 rtl glyphs=[17,83,38,64]
+     0.00 +8.77   "o" [175] word
+     8.77 +8.80   "n" [170] 
+    17.57 +8.61   "e" [133] 
+    26.18 +4.48   " " [231] space word
+    30.66 +4.48   " " [231] rtl space word
+    35.14 +10.94  "ם" [17] rtl
+    46.08 +4.66   "ו" [83] rtl
+    50.74 +8.35   "ל" [38] rtl
+    59.09 +11.68  "ש" [64] rtl word
+line 1 x=0.0 y=22.0 h=22.0 base=39.0 w=63.0 bytes=13..25 "עולם two"
+  run NotoSansHebrew-Subset.ttf size=16.0 x=0.0 rtl glyphs=[17,38,83,7]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=33.6 glyphs=[231]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=38.1 glyphs=[196,210,175]
+     0.00 +10.94  "ם" [17] rtl
+    10.94 +8.35   "ל" [38] rtl
+    19.30 +4.82   "ו" [83] rtl
+    24.11 +9.49   "ע" [7] rtl word
+    33.60 +4.48   " " [231] space word
+    38.08 +5.34   "t" [196] word
+    43.42 +10.82  "w" [210] 
+    54.24 +8.77   "o" [175]

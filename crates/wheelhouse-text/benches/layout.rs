@@ -1,148 +1,26 @@
 //! Decides whether a width change can keep shaping again (#544, decision 4).
-//! `WHEELHOUSE_TEXT_BENCH_MB` sets the document's size (default 8).
-use std::{
-    env, fs,
-    time::{Duration, Instant},
-};
+//! `WHEELHOUSE_TEXT_BENCH_MB` sets the document's size (default 8). The FFI's
+//! benchmark (wheelhouse-ffi's `text`) times the same with the copy into C memory.
+mod common;
+use std::time::Instant;
+
+use common::{document, font, ms, summary, Lcg, Para, FONTS, WORDS};
 use wheelhouse_text::{Family, Input, Paragraph, Style, StyleRun, TextContext};
 
-const FONTS: &[&str] = &[
-    "AtkinsonHyperlegibleNext-Regular.ttf",
-    "AtkinsonHyperlegibleNext-SemiBold.ttf",
-    "JetBrainsMonoNerdFont-Regular.ttf",
-    "icons.ttf",
-    "NotoSansSymbols2-Regular.ttf",
-    "NotoSansMath-Regular.ttf",
-    "NotoSansSymbols.ttf",
-    "NotoColorEmoji.ttf",
-    "NotoEmoji-Regular.ttf",
-];
-
-const WORDS: &[&str] = &[
-    "the",
-    "layout",
-    "of",
-    "a",
-    "paragraph",
-    "shapes",
-    "every",
-    "run",
-    "with",
-    "parley",
-    "and",
-    "breaks",
-    "lines",
-    "at",
-    "width",
-    "when",
-    "transcript",
-    "agent",
-    "tool",
-    "result",
-    "returned",
-    "file",
-    "changed",
-    "test",
-    "passed",
-    "build",
-    "succeeded",
-    "review",
-    "comment",
-    "wheelhouse",
-    "native",
-    "glyph",
-    "cluster",
-    "offset",
-    "caret",
-    "selection",
-    "→",
-    "≥",
-    "✓",
-    "😀",
-    "naïve",
-    "café",
-    "AV",
-    "To",
-];
-
-/// Deterministic, so every run lays out the same document.
-struct Lcg(u64);
-impl Lcg {
-    fn next(&mut self, n: usize) -> usize {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        ((self.0 >> 33) as usize) % n
-    }
-}
-
-/// Styles: 0 prose, 1 code, 2 bold.
-struct Para {
-    text: String,
-    runs: Vec<StyleRun>,
-}
-
-fn paragraph(rng: &mut Lcg) -> Para {
-    let mut text = String::new();
-    let mut runs = vec![];
-    match rng.next(10) {
-        0 => text.push_str("## "),
-        1 | 2 => text.push_str("- "),
-        _ => {}
-    }
-    let words = 8 + rng.next(120);
-    for i in 0..words {
-        if i > 0 {
-            text.push(' ');
-        }
-        let start = text.len();
-        match rng.next(14) {
-            0 => {
-                text.push_str("`fn_");
-                text.push_str(WORDS[rng.next(WORDS.len())]);
-                text.push_str("()`");
-                runs.push(StyleRun { start, len: text.len() - start, style: 1 });
-            }
-            1 => {
-                text.push_str(WORDS[rng.next(WORDS.len())]);
-                runs.push(StyleRun { start, len: text.len() - start, style: 2 });
-            }
-            _ => text.push_str(WORDS[rng.next(WORDS.len())]),
-        }
-    }
-    text.push('.');
-    Para { text, runs }
-}
-
 fn layout(ctx: &TextContext, styles: &[Style<'_>], p: &Para, width: f32, out: &mut Paragraph) {
-    let input = Input { runs: &p.runs, ..Input::plain(&p.text, styles) };
+    let runs = p.runs.iter().map(|&(start, len, style)| StyleRun { start, len, style }).collect::<Vec<_>>();
+    let input = Input { runs: &runs, ..Input::plain(&p.text, styles) };
     ctx.layout_into(&input, width, out).unwrap();
-}
-
-fn ms(d: Duration) -> f64 {
-    d.as_secs_f64() * 1e3
-}
-
-fn percentile(times: &mut [Duration], p: f64) -> Duration {
-    times.sort();
-    times[((times.len() - 1) as f64 * p).round() as usize]
 }
 
 fn main() {
     let ctx = TextContext::new(false);
     for (id, name) in FONTS.iter().enumerate() {
-        let bytes = fs::read(format!("{}/../../data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();
-        ctx.register_fonts(bytes, id as u64);
+        ctx.register_fonts(font(name), id as u64);
     }
     let styles =
         [Style::default(), Style { family: Family::Code, size: 14.0, ..Style::default() }, Style { weight: 600.0, ..Style::default() }];
-    let mb: f64 = env::var("WHEELHOUSE_TEXT_BENCH_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(8.0);
-    let mut rng = Lcg(559);
-    let mut doc = vec![];
-    let mut bytes = 0;
-    while (bytes as f64) < mb * 1e6 {
-        let p = paragraph(&mut rng);
-        bytes += p.text.len() + 2;
-        doc.push(p);
-    }
+    let (doc, bytes) = document();
     let mut out = Paragraph::default();
     // Warm up: the first layouts load faces and fill caches.
     for p in doc.iter().take(200) {
@@ -180,51 +58,33 @@ fn main() {
         layout(&ctx, &styles, &tail, 800.0, &mut out);
         times.push(started.elapsed());
     }
-    let appends = times.len();
-    let last_lines = out.lines.len();
-    let sum: Duration = times.iter().sum();
-    println!("streaming tail: {appends} appends to {} bytes ({last_lines} lines) at 800 px", tail.text.len());
-    println!(
-        "  mean {:.3} ms, p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms, last {:.3} ms",
-        ms(sum) / appends as f64,
-        ms(percentile(&mut times.clone(), 0.5)),
-        ms(percentile(&mut times.clone(), 0.99)),
-        ms(*times.iter().max().unwrap()),
-        ms(*times.last().unwrap())
-    );
+    println!("streaming tail: {} appends to {} bytes ({} lines) at 800 px", times.len(), tail.text.len(), out.lines.len());
+    println!("  {}, last {:.3} ms", summary(&times), ms(*times.last().unwrap()));
 
-    // 3. A resize sweep: the paragraphs that fill a 1200 px viewport at
-    // 300 px wide, re-laid out at each width from 300 to 1600 px.
-    let mut viewport = vec![];
-    let mut height = 0.0;
-    for p in &doc {
-        layout(&ctx, &styles, p, 300.0, &mut out);
-        height += out.height;
-        viewport.push(p);
-        if height > 1200.0 {
-            break;
-        }
-    }
+    // 3. A resize sweep: at each width from 300 to 1600 px, the paragraphs
+    // that fill a 1200 px tall viewport at that width.
     let mut times = vec![];
+    let mut counts = vec![];
     for width in (300..=1600).step_by(10) {
         let started = Instant::now();
-        for p in &viewport {
+        let mut height = 0.0;
+        let mut count = 0;
+        for p in &doc {
             layout(&ctx, &styles, p, width as f32, &mut out);
+            height += out.height;
+            count += 1;
+            if height >= 1200.0 {
+                break;
+            }
         }
         times.push(started.elapsed());
+        counts.push(count);
     }
-    let sum: Duration = times.iter().sum();
     println!(
-        "resize sweep: {} paragraphs ({:.0} bytes), {} widths 300..1600 px",
-        viewport.len(),
-        viewport.iter().map(|p| p.text.len()).sum::<usize>(),
-        times.len()
+        "resize sweep: {} widths 300..1600 px, {}..{} paragraphs filling 1200 px",
+        times.len(),
+        counts.iter().min().unwrap(),
+        counts.iter().max().unwrap()
     );
-    println!(
-        "  a width: mean {:.3} ms, p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms (a 120 Hz frame is 8.3 ms)",
-        ms(sum) / times.len() as f64,
-        ms(percentile(&mut times.clone(), 0.5)),
-        ms(percentile(&mut times.clone(), 0.99)),
-        ms(*times.iter().max().unwrap())
-    );
+    println!("  a width: {} (a 120 Hz frame is 8.3 ms)", summary(&times));
 }

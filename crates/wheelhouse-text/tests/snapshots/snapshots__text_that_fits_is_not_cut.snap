@@ -2,10 +2,10 @@
 source: crates/wheelhouse-text/tests/snapshots.rs
 expression: "dump(&ctx, \"short\", &p)"
 ---
-line 0 y=0.0 h=21.0 base=16.0 w=36.3 bytes=0..5 "short"
+line 0 x=0.0 y=0.0 h=21.0 base=16.0 w=36.3 bytes=0..5 "short"
   run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[190,147,175,187,196]
-     0.00 +7.54   "s" word
-     7.54 +8.80   "h" 
-    16.34 +8.77   "o" 
-    25.10 +5.98   "r" 
-    31.09 +5.22   "t"
+     0.00 +7.54   "s" [190] word
+     7.54 +8.80   "h" [147] 
+    16.34 +8.77   "o" [175] 
+    25.10 +5.98   "r" [187] 
+    31.09 +5.22   "t" [196]

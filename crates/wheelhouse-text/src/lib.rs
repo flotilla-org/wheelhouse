@@ -5,11 +5,11 @@ mod layout;
 pub mod query;
 
 pub use fonts::{Family, FontFace, FontSource, TextContext, DEFAULT_FALLBACKS, DEFAULT_FAMILIES};
-pub use layout::{Error, Feature, InlineBox, Input, Style, StyleRun, ELLIPSIS};
+pub use layout::{Align, Error, Feature, InlineBox, Input, Style, StyleRun, ELLIPSIS};
 pub use query::{caret_rect, offset_at, segments, selection_rects, Affinity, Caret, Position, Rect, RunId, Segment};
 
 pub const CLUSTER_RTL: u32 = 1;
-/// A space, a no-break space, or a hard line break.
+/// A space, a no-break space, a tab, or a hard line break.
 pub const CLUSTER_WHITESPACE: u32 = 2;
 pub const CLUSTER_WORD_START: u32 = 4;
 /// No glyphs of its own; its advance is its share of the ligature's.
@@ -17,10 +17,14 @@ pub const CLUSTER_LIGATURE_CONTINUATION: u32 = 8;
 pub const CLUSTER_HARD_BREAK: u32 = 16;
 /// Covers no bytes; its start is where the text was cut.
 pub const CLUSTER_ELLIPSIS: u32 = 32;
+/// Drawn as a space, advancing to the next tab stop.
+pub const CLUSTER_TAB: u32 = 64;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Line {
+    /// The left of its content; for an empty line, its start edge.
+    pub x: f32,
     /// The line box's top.
     pub y: f32,
     pub height: f32,
@@ -62,6 +66,12 @@ pub struct Run {
     pub advance: f32,
     pub line: u32,
     pub rtl: u32,
+    /// Down from the baseline to the line's top edge.
+    pub underline_offset: f32,
+    pub underline_size: f32,
+    /// Down from the baseline to the line's top edge (negative: above it).
+    pub strikethrough_offset: f32,
+    pub strikethrough_size: f32,
 }
 
 /// At its origin on the baseline.
@@ -86,6 +96,9 @@ pub struct Cluster {
     pub style: u32,
     /// WH_TEXT_CLUSTER_* bits.
     pub flags: u32,
+    /// The glyphs it draws: none for a ligature continuation or a glyphless atom.
+    pub glyph_start: u32,
+    pub glyph_count: u32,
 }
 
 /// x and y are the top left.
@@ -110,11 +123,13 @@ pub struct Paragraph {
     pub width: f32,
     pub height: f32,
     pub epoch: u64,
+    /// The resolved base direction.
+    pub rtl: bool,
 }
 
 impl Paragraph {
     pub fn view(&self) -> View<'_> {
-        View { lines: &self.lines, runs: &self.runs, glyphs: &self.glyphs, clusters: &self.clusters, boxes: &self.boxes }
+        View { lines: &self.lines, runs: &self.runs, glyphs: &self.glyphs, clusters: &self.clusters, boxes: &self.boxes, rtl: self.rtl }
     }
 
     fn clear(&mut self) {
@@ -126,6 +141,7 @@ impl Paragraph {
         self.width = 0.0;
         self.height = 0.0;
         self.epoch = 0;
+        self.rtl = false;
     }
 }
 
@@ -136,4 +152,5 @@ pub struct View<'a> {
     pub glyphs: &'a [Glyph],
     pub clusters: &'a [Cluster],
     pub boxes: &'a [PlacedBox],
+    pub rtl: bool,
 }

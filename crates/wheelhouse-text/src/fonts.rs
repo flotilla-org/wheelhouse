@@ -10,7 +10,7 @@ use std::{
     },
 };
 
-use fontique::{Blob, Collection, CollectionOptions, FamilyId, SourceCache, SourceKind};
+use fontique::{Blob, Collection, CollectionOptions, SourceCache, SourceKind};
 use parley::{FontContext, FontData, FontFamily, FontFamilyName, Layout, LayoutContext};
 use read_fonts::{types::NameId, FontRef, TableProvider};
 
@@ -278,18 +278,11 @@ impl State {
 }
 
 // fontique doesn't say which file a resolved face came from, so compare its
-// blob with the faces of the family its name table names, then of every family.
+// blob with the faces of the family its name table names. Not every family:
+// that opens files while the state is locked, and the bytes serve instead.
 fn find_path(font: &FontData, fonts: &mut FontContext) -> Option<Arc<str>> {
     let named = family_names(font).into_iter().filter_map(|name| fonts.collection.family_id(&name)).collect::<Vec<_>>();
-    if let Some(path) = path_in(&named, font, fonts) {
-        return Some(path);
-    }
-    let every = fonts.collection.family_ids().collect::<Vec<_>>();
-    path_in(&every, font, fonts)
-}
-
-fn path_in(families: &[FamilyId], font: &FontData, fonts: &mut FontContext) -> Option<Arc<str>> {
-    for &family in families {
+    for family in named {
         let Some(info) = fonts.collection.family(family) else { continue };
         for face in info.fonts() {
             if face.index() != font.index {

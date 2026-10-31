@@ -2,18 +2,18 @@
 source: crates/wheelhouse-text/tests/snapshots.rs
 expression: "dump(&ctx, text, &p)"
 ---
-line 0 y=0.0 h=21.0 base=16.0 w=39.1 bytes=0..6 "AV To\n"
+line 0 x=0.0 y=0.0 h=21.0 base=16.0 w=39.1 bytes=0..6 "AV To\n"
   run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[1,96,231,83,175]
-     0.00 +9.38   "A" word
-     9.38 +9.17   "V" 
-    18.54 +4.16   " " space word
-    22.70 +7.65   "T" word
-    30.35 +8.77   "o" 
-    39.12 +0.00   "\n" space word break
-line 1 y=21.0 h=21.0 base=37.0 w=41.7 bytes=6..11 "AV To"
+     0.00 +9.38   "A" [1] word
+     9.38 +9.17   "V" [96] 
+    18.54 +4.16   " " [231] space word
+    22.70 +7.65   "T" [83] word
+    30.35 +8.77   "o" [175] 
+    39.12 +0.00   "\n" [] space word break
+line 1 x=0.0 y=21.0 h=21.0 base=37.0 w=41.7 bytes=6..11 "AV To"
   run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[1,96,231,83,175]
-     0.00 +10.02  "A" word
-    10.02 +9.49   "V" 
-    19.50 +4.48   " " space word
-    23.98 +8.93   "T" word
-    32.91 +8.77   "o"
+     0.00 +10.02  "A" [1] word
+    10.02 +9.49   "V" [96] 
+    19.50 +4.48   " " [231] space word
+    23.98 +8.93   "T" [83] word
+    32.91 +8.77   "o" [175]

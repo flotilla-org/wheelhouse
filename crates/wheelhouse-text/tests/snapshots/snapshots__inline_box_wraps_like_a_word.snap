@@ -2,21 +2,21 @@
 source: crates/wheelhouse-text/tests/snapshots.rs
 expression: "dump(&ctx, text, &p)"
 ---
-line 0 y=0.0 h=21.0 base=16.0 w=45.0 bytes=0..7 "before "
+line 0 x=0.0 y=0.0 h=21.0 base=16.0 w=45.0 bytes=0..7 "before "
   run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[123,133,142,175,187,133,231]
-     0.00 +9.10   "b" word
-     9.10 +8.58   "e" 
-    17.68 +4.53   "f" 
-    22.21 +8.77   "o" 
-    30.98 +5.38   "r" 
-    36.35 +8.61   "e" 
-    44.96 +4.48   " " space word
-line 1 y=21.0 h=21.0 base=37.0 w=40.0 bytes=7..7 ""
-line 2 y=42.0 h=21.0 base=58.0 w=32.6 bytes=7..12 "after"
+     0.00 +9.10   "b" [123] word
+     9.10 +8.58   "e" [133] 
+    17.68 +4.53   "f" [142] 
+    22.21 +8.77   "o" [175] 
+    30.98 +5.38   "r" [187] 
+    36.35 +8.61   "e" [133] 
+    44.96 +4.48   " " [231] space word
+line 1 x=0.0 y=21.0 h=21.0 base=37.0 w=40.0 bytes=7..7 ""
+line 2 x=0.0 y=42.0 h=21.0 base=58.0 w=32.6 bytes=7..12 "after"
   run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[112,142,196,133,187]
-     0.00 +8.26   "a" word
-     8.26 +5.15   "f" 
-    13.41 +5.02   "t" 
-    18.43 +8.61   "e" 
-    27.04 +5.58   "r" 
+     0.00 +8.26   "a" [112] word
+     8.26 +5.15   "f" [142] 
+    13.41 +5.02   "t" [196] 
+    18.43 +8.61   "e" [133] 
+    27.04 +5.58   "r" [187] 
 box 1 x=0.0 y=27.0 40x10 line 1

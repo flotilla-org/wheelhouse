@@ -1,9 +1,9 @@
-//! No bundled font covers Arabic, Hebrew, CJK or Thai: those shape to notdef,
-//! so their snapshots check breaks and bidi order, not glyphs.
+//! No font here covers CJK or Thai: those shape to notdef, so their
+//! snapshots check breaks, not glyphs.
 mod common;
-use common::{context, dump};
+use common::{context, dump, ligature_context};
 use insta::assert_snapshot;
-use wheelhouse_text::{Family, Feature, InlineBox, Input, Style, StyleRun};
+use wheelhouse_text::{caret_rect, Affinity, Align, Family, Feature, InlineBox, Input, Style, StyleRun};
 
 fn plain(text: &str, width: f32) -> String {
     let ctx = context();
@@ -170,4 +170,91 @@ fn an_rtl_cut_line_aligns_with_the_lines_above() {
     let input = Input { max_lines: 2, ellipsis: true, ..Input::plain(text, &styles) };
     let p = ctx.layout(&input, 50.0).unwrap();
     assert_snapshot!(dump(&ctx, text, &p));
+}
+
+#[test]
+fn latin_ligatures_split_their_advance() {
+    // "fi" and "ffi" are one glyph each; the graphemes after the first are
+    // continuations with no glyphs.
+    let ctx = ligature_context();
+    let styles = [Style::default()];
+    let text = "fi office";
+    let p = ctx.layout(&Input::plain(text, &styles), 1000.0).unwrap();
+    assert_snapshot!(dump(&ctx, text, &p));
+}
+
+#[test]
+fn arabic_joins_and_forms_lam_alef() {
+    // "لا ل ا سلام": Noto Sans Arabic draws lam-alef as a lam and an alef
+    // form of its own, unlike the isolated lam and alef after it; the
+    // letters of the last word take their joining forms.
+    assert_snapshot!(plain("\u{644}\u{627} \u{644} \u{627} \u{633}\u{644}\u{627}\u{645}", 1000.0));
+}
+
+#[test]
+fn hebrew_paragraph() {
+    assert_snapshot!(plain("\u{5E9}\u{5DC}\u{5D5}\u{5DD} \u{5E2}\u{5D5}\u{5DC}\u{5DD}", 1000.0));
+}
+
+#[test]
+fn tabs_advance_to_the_next_stop() {
+    // Stops every 4 spaces of the code font: "a" then a tab ends at column 4,
+    // "abcd" then a tab at column 8, a leading tab at column 4.
+    let ctx = context();
+    let styles = [Style { family: Family::Code, ..Style::default() }];
+    let text = "a\tx\nabcd\tx\n\tx";
+    let p = ctx.layout(&Input::plain(text, &styles), 1000.0).unwrap();
+    assert_snapshot!(dump(&ctx, text, &p));
+}
+
+#[test]
+fn alignment_places_each_line() {
+    let ctx = context();
+    let styles = [Style::default()];
+    let text = "one two three four five six";
+    let mut out = String::new();
+    for align in [Align::Start, Align::End, Align::Center, Align::Justify] {
+        let p = ctx.layout(&Input { align, ..Input::plain(text, &styles) }, 120.0).unwrap();
+        out += &format!("{align:?}\n{}", dump(&ctx, text, &p));
+    }
+    assert_snapshot!(out);
+}
+
+#[test]
+fn an_empty_last_line_of_rtl_text_has_its_caret_at_the_right() {
+    let ctx = context();
+    let styles = [Style::default()];
+    let text = "\u{5E9}\u{5DC}\u{5D5}\u{5DD}\n";
+    let p = ctx.layout(&Input::plain(text, &styles), 200.0).unwrap();
+    assert!(p.rtl);
+    let caret = caret_rect(&p.view(), text.len(), Affinity::Downstream);
+    assert_eq!((caret.line, caret.x, caret.rtl), (1, 200.0, true));
+}
+
+#[test]
+fn past_a_cut_the_caret_sits_before_the_ellipsis() {
+    let ctx = context();
+    let styles = [Style::default()];
+    let text = "one two three four five";
+    let p = ctx.layout(&Input { max_lines: 1, ellipsis: true, ..Input::plain(text, &styles) }, 60.0).unwrap();
+    let ellipsis = p.clusters.last().unwrap();
+    for offset in [ellipsis.start as usize + 1, text.len()] {
+        let caret = caret_rect(&p.view(), offset, Affinity::Downstream);
+        assert_eq!((caret.line, caret.x), (0, ellipsis.x), "{offset}");
+    }
+}
+
+#[test]
+fn unbounded_rtl_lines_align_against_the_lines_kept() {
+    // The dropped second line is wider than the first: the first still
+    // ends at the paragraph's right edge, its own width.
+    let ctx = context();
+    let styles = [Style::default()];
+    let text = "\u{5E9}\u{5DC}\u{5D5}\u{5DD}\n\u{5E2}\u{5D5}\u{5DC}\u{5DD} \u{5E9}\u{5DC}\u{5D5}\u{5DD} \u{5E2}\u{5D5}\u{5DC}\u{5DD}";
+    for ellipsis in [false, true] {
+        let p = ctx.layout(&Input { max_lines: 1, ellipsis, ..Input::plain(text, &styles) }, f32::INFINITY).unwrap();
+        let line = &p.lines[0];
+        assert!(line.x.abs() < 0.01 && (line.width - p.width).abs() < 0.01, "{ellipsis}: {line:?} in {}", p.width);
+        assert!(p.clusters.iter().all(|c| c.x >= -0.01 && c.x + c.advance <= p.width + 0.01), "{:?}", p.clusters);
+    }
 }

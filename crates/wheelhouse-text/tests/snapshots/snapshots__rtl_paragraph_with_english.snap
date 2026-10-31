@@ -2,23 +2,23 @@
 source: crates/wheelhouse-text/tests/snapshots.rs
 expression: "plain(\"\\u{645}\\u{631}\\u{62D}\\u{628}\\u{627} hello \\u{628}\\u{643}\", 1000.0)"
 ---
-line 0 y=0.0 h=24.0 base=17.0 w=116.9 bytes=0..21 "مرحبا hello بك"
-  run NotoSansMath-Regular.ttf size=16.0 x=883.1 rtl glyphs=[568,546]
-  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=913.1 rtl glyphs=[231]
-  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=917.6 glyphs=[147,133,164,164,175]
-  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=952.0 rtl glyphs=[231]
-  run NotoSansMath-Regular.ttf size=16.0 x=956.5 rtl glyphs=[544,546,550,554,570]
-   883.09 +14.11  "ك" rtl
-   897.20 +15.89  "ب" rtl word
-   913.09 +4.48   " " rtl space word
-   917.57 +8.80   "h" word
-   926.37 +8.61   "e" 
-   934.98 +4.11   "l" 
-   939.09 +4.13   "l" 
-   943.22 +8.77   "o" 
-   951.98 +4.48   " " rtl space word
-   956.46 +3.81   "ا" rtl
-   960.27 +15.89  "ب" rtl
-   976.16 +10.22  "ح" rtl
-   986.38 +5.87   "ر" rtl
-   992.26 +7.74   "م" rtl word
+line 0 x=903.9 y=0.0 h=34.0 base=22.0 w=96.1 bytes=0..21 "مرحبا hello بك"
+  run NotoSansArabic-Subset.ttf size=16.0 x=903.9 rtl glyphs=[113,46,108,13]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=923.0 rtl glyphs=[231]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=927.4 glyphs=[147,133,164,164,175]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=961.9 rtl glyphs=[231]
+  run NotoSansArabic-Subset.ttf size=16.0 x=966.3 rtl glyphs=[4,108,11,18,22,62]
+   903.90 +14.75  "ك" [113,46] rtl
+   918.66 +4.30   "ب" [108,13] rtl word
+   922.96 +4.48   " " [231] rtl space word
+   927.44 +8.80   "h" [147] word
+   936.24 +8.61   "e" [133] 
+   944.85 +4.11   "l" [164] 
+   948.96 +4.13   "l" [164] 
+   953.09 +8.77   "o" [175] 
+   961.86 +4.48   " " [231] rtl space word
+   966.34 +4.66   "ا" [4] rtl
+   970.99 +5.49   "ب" [108,11] rtl
+   976.48 +9.42   "ح" [18] rtl
+   985.90 +5.70   "ر" [22] rtl
+   991.60 +8.40   "م" [62] rtl word

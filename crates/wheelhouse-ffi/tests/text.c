@@ -98,7 +98,7 @@ int main(int argc, char **argv) {
     };
     WhTextStyleRun runs[] = {{27, 6, 1}};
     WhTextInlineBox boxes[] = {{42, 5, 10.0f, 10.0f, 10.0f}};
-    WhTextInput input = {text(s), runs, 1, styles, 2, boxes, 1, 0, 0};
+    WhTextInput input = {text(s), runs, 1, styles, 2, boxes, 1, 0, 0, WH_TEXT_ALIGN_START, 0};
     WhTextLayout layout;
     assert(wh_text_layout(ctx, &input, 200.0f, allocator(&arena), &layout, &error) == 1 && !error);
     assert(arena.calls == 5);
@@ -204,9 +204,31 @@ int main(int argc, char **argv) {
     assert(wh_text_layout(NULL, &input, 200.0f, allocator(&arena), &layout, &error) == 0 && error);
     wheelhouse_string_free(error);
     error = NULL;
+    input.align = WH_TEXT_ALIGN_JUSTIFY + 1;
+    assert(wh_text_layout(ctx, &input, 200.0f, allocator(&arena), &layout, &error) == 0 && error);
+    wheelhouse_string_free(error);
+    error = NULL;
+    input.align = WH_TEXT_ALIGN_START;
+    no_ligatures.value = 65536;
+    assert(wh_text_layout(ctx, &input, 200.0f, allocator(&arena), &layout, &error) == 0 && error);
+    wheelhouse_string_free(error);
+    error = NULL;
+    no_ligatures.value = 0;
+
+    /* A tab is a whitespace cluster to the next stop; RTL text says so, and ends lines at the right. */
+    const char *tabbed = "a\tb";
+    WhTextInput tabs = {text(tabbed), NULL, 0, styles + 1, 1, NULL, 0, 0, 0, WH_TEXT_ALIGN_END, 2};
+    assert(wh_text_layout(ctx, &tabs, 400.0f, allocator(&arena), &layout, &error) == 1);
+    WhTextCluster *tab = &layout.clusters[1];
+    assert(layout.cluster_count == 3 && (tab->flags & WH_TEXT_CLUSTER_TAB) && (tab->flags & WH_TEXT_CLUSTER_WHITESPACE));
+    assert(tab->x + tab->advance - layout.clusters[0].x > layout.clusters[0].advance * 1.99f && !layout.rtl);
+    assert(layout.lines[0].x + layout.lines[0].width > 399.0f && layout.runs[0].underline_size > 0.0f);
+    const char *hebrew = "\xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d";
+    WhTextInput rtl = {text(hebrew), NULL, 0, styles, 1, NULL, 0, 0, 0, WH_TEXT_ALIGN_START, 0};
+    assert(wh_text_layout(ctx, &rtl, 400.0f, allocator(&arena), &layout, &error) == 1 && layout.rtl);
 
     /* Empty text is one empty line, with no arrays to allocate but lines. */
-    input = (WhTextInput){text(""), NULL, 0, styles, 1, NULL, 0, 0, 0};
+    input = (WhTextInput){text(""), NULL, 0, styles, 1, NULL, 0, 0, 0, WH_TEXT_ALIGN_START, 0};
     arena.calls = 0;
     assert(wh_text_layout(ctx, &input, 200.0f, allocator(&arena), &layout, &error) == 1);
     assert(layout.line_count == 1 && layout.cluster_count == 0 && !layout.clusters && arena.calls == 1);

@@ -1,0 +1,21 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+assertion_line: 114
+expression: "dump(&ctx, text, &p)"
+---
+line 0 x=0.0 y=0.0 h=21.0 base=16.0 w=97.5 bytes=0..14 "Supercalifragi"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[77,200,184,133,187,124,112,164,149,142,187,112,143,149]
+     0.00 +9.47   "S" [77] word
+     9.47 +8.64   "u" [200] 
+    18.11 +9.10   "p" [184] 
+    27.22 +8.61   "e" [133] 
+    35.82 +5.38   "r" [187] 
+    41.20 +7.76   "c" [124] 
+    48.96 +8.40   "a" [112] 
+    57.36 +4.30   "l" [164] 
+    61.66 +4.03   "i" [149] 
+    65.70 +5.02   "f" [142] 
+    70.72 +5.38   "r" [187] 
+    76.10 +8.40   "a" [112] 
+    84.50 +8.93   "g" [143] 
+    93.42 +4.03   "i" [149]

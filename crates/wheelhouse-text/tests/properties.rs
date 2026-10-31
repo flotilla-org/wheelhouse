@@ -4,11 +4,12 @@ use std::sync::LazyLock;
 use hegel::generators as gs;
 use hegel::TestCase;
 use wheelhouse_text::{
-    caret_rect, offset_at, selection_rects, Affinity, Cluster, Family, Feature, InlineBox, Input, Paragraph, Style, StyleRun, TextContext,
-    CLUSTER_ELLIPSIS, CLUSTER_LIGATURE_CONTINUATION, CLUSTER_RTL,
+    caret_rect, offset_at, segments, selection_rects, Affinity, Align, Cluster, Family, Feature, InlineBox, Input, Paragraph, Style,
+    StyleRun, TextContext, CLUSTER_ELLIPSIS, CLUSTER_LIGATURE_CONTINUATION, CLUSTER_RTL,
 };
 
 static CTX: LazyLock<TextContext> = LazyLock::new(common::context);
+static LIGATURES: LazyLock<TextContext> = LazyLock::new(common::ligature_context);
 
 /// Every script the snapshots cover, and characters that make clusters interesting.
 const PIECES: &[&str] = &[
@@ -18,6 +19,9 @@ const PIECES: &[&str] = &[
     "AV",
     "To",
     "ffi",
+    "office",
+    "fl",
+    "\u{644}\u{627}",
     " ",
     " ",
     "  ",
@@ -54,6 +58,9 @@ struct Case {
     width: f32,
     max_lines: usize,
     ellipsis: bool,
+    align: Align,
+    tab_size: u32,
+    ligatures: bool,
 }
 
 const NO_LIGATURES: [Feature; 1] = [Feature { tag: *b"liga", value: 0 }];
@@ -111,10 +118,25 @@ impl Case {
             width: tc.draw(gs::sampled_from(&[0.0, 1.0, 13.0, 40.0, 75.5, 160.0, 400.0, 2000.0][..])),
             max_lines: tc.draw(gs::sampled_from(&[0, 0, 1, 2, 3][..])),
             ellipsis: tc.draw(gs::booleans()),
+            align: tc.draw(gs::sampled_from(&[Align::Start, Align::Start, Align::End, Align::Center, Align::Justify][..])),
+            tab_size: tc.draw(gs::sampled_from(&[0, 1, 8][..])),
+            ligatures: tc.draw(gs::weighted_booleans(0.3)),
+        }
+    }
+
+    fn ctx(&self) -> &'static TextContext {
+        if self.ligatures {
+            &LIGATURES
+        } else {
+            &CTX
         }
     }
 
     fn layout(&self) -> Paragraph {
+        self.layout_at(self.width, self.max_lines)
+    }
+
+    fn layout_at(&self, width: f32, max_lines: usize) -> Paragraph {
         let styles = self
             .styles
             .iter()
@@ -132,10 +154,12 @@ impl Case {
             runs: &self.runs,
             styles: &styles,
             boxes: &self.boxes,
-            max_lines: self.max_lines,
+            max_lines,
             ellipsis: self.ellipsis,
+            align: self.align,
+            tab_size: self.tab_size,
         };
-        CTX.layout(&input, self.width).unwrap()
+        self.ctx().layout(&input, width).unwrap()
     }
 }
 
@@ -228,9 +252,13 @@ fn selection_rects_lie_within_their_lines(tc: TestCase) {
     let end = case.text.len() + 1;
     let (a, b) = (tc.draw(gs::integers::<usize>().max_value(end)), tc.draw(gs::integers::<usize>().max_value(end)));
     let view = p.view();
-    let rects = selection_rects(&view, a.min(b), a.max(b));
-    if a != b && p.clusters.iter().any(|c| c.len > 0 && (a.min(b)..a.max(b)).contains(&(c.start as usize))) {
-        assert!(!rects.is_empty());
+    let (start, end) = (a.min(b) as u32, a.max(b) as u32);
+    let rects = selection_rects(&view, start as usize, end as usize);
+    for c in p.clusters.iter().filter(|c| start < end && c.len > 0 && c.start < end && start < c.start + c.len) {
+        assert!(
+            rects.iter().any(|r| r.line == c.line && r.x <= c.x + 0.01 && r.x + r.width >= c.x + c.advance - 0.01),
+            "{c:?} selected in {start}..{end} but outside {rects:?}"
+        );
     }
     for r in rects {
         let line = &p.lines[r.line as usize];
@@ -289,6 +317,95 @@ fn lines_fit_the_width_unless_one_cluster_is_wider(tc: TestCase) {
     }
 }
 
+#[hegel::test(test_cases = 300)]
+fn segments_split_each_line_where_style_or_direction_changes(tc: TestCase) {
+    let case = Case::draw(&tc, PIECES);
+    let p = case.layout();
+    let segments = segments(&p.view());
+    let mut next = 0;
+    for (i, line) in p.lines.iter().enumerate() {
+        let mut at = line.cluster_start;
+        for (n, s) in segments.iter().filter(|s| s.line as usize == i).enumerate() {
+            assert_eq!(s.segment as usize, n);
+            assert_eq!(s.cluster_start, at, "line {i}'s segments tile its clusters in order");
+            assert!(s.cluster_count > 0);
+            let clusters = &p.clusters[s.cluster_start as usize..(s.cluster_start + s.cluster_count) as usize];
+            assert!(clusters.iter().all(|c| c.style == s.style && (c.flags & CLUSTER_RTL != 0) as u32 == s.rtl));
+            assert_eq!(s.text_start, clusters.iter().map(|c| c.start).min().unwrap());
+            assert_eq!(s.text_end, clusters.iter().map(|c| c.start + c.len).max().unwrap());
+            let last = clusters.last().unwrap();
+            assert!((s.x - clusters[0].x).abs() < 0.01 && (s.x + s.width - last.x - last.advance).abs() < 0.01);
+            if let Some(after) = p.clusters.get((s.cluster_start + s.cluster_count) as usize).filter(|c| c.line as usize == i) {
+                assert!(after.style != s.style || (after.flags & CLUSTER_RTL != 0) as u32 != s.rtl, "{s:?} ends before {after:?}");
+            }
+            at += s.cluster_count;
+            next += 1;
+        }
+        assert_eq!(at, line.cluster_start + line.cluster_count);
+    }
+    assert_eq!(next, segments.len());
+}
+
+#[hegel::test(test_cases = 300)]
+fn runs_and_clusters_tile_the_glyphs(tc: TestCase) {
+    let case = Case::draw(&tc, PIECES);
+    let p = case.layout();
+    let (mut run, mut glyph) = (0, 0);
+    for (i, line) in p.lines.iter().enumerate() {
+        assert_eq!(line.run_start, run, "line {i}'s runs follow the line before's");
+        let line_glyphs = glyph;
+        for r in &p.runs[line.run_start as usize..(line.run_start + line.run_count) as usize] {
+            assert_eq!((r.line as usize, r.glyph_start), (i, glyph), "{r:?}");
+            assert!(r.glyph_count > 0 && r.size > 0.0);
+            assert!(r.underline_size > 0.0 && r.strikethrough_size > 0.0 && r.underline_offset > -r.size && r.underline_offset < r.size);
+            assert!(r.strikethrough_offset < r.underline_offset, "{r:?}: strikethrough sits above the underline");
+            glyph += r.glyph_count;
+        }
+        run += line.run_count;
+        // In visual order, each cluster's glyphs come next.
+        let mut at = line_glyphs;
+        for c in &p.clusters[line.cluster_start as usize..(line.cluster_start + line.cluster_count) as usize] {
+            assert_eq!(c.glyph_start, at, "{c:?} in {:?}", p.clusters);
+            if c.flags & CLUSTER_LIGATURE_CONTINUATION != 0 {
+                assert_eq!(c.glyph_count, 0);
+            }
+            at += c.glyph_count;
+        }
+        assert_eq!(at, glyph, "line {i}'s clusters draw its runs' glyphs: {:?} {:?}", p.clusters, p.runs);
+    }
+    assert_eq!((run as usize, glyph as usize), (p.runs.len(), p.glyphs.len()));
+}
+
+#[hegel::test(test_cases = 200)]
+fn a_line_limit_keeps_the_lines_it_would_have_had(tc: TestCase) {
+    let case = Case { ellipsis: false, align: Align::Start, ..Case::draw(&tc, PIECES) };
+    let limit = tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
+    let all = case.layout_at(case.width, 0);
+    let limited = case.layout_at(case.width, limit);
+    let kept = limit.min(all.lines.len());
+    assert_eq!(&limited.lines[..], &all.lines[..kept]);
+    let clusters = all.lines.get(kept).map_or(all.clusters.len(), |l| l.cluster_start as usize);
+    assert_eq!(&limited.clusters[..], &all.clusters[..clusters]);
+    let glyphs = all
+        .lines
+        .get(kept)
+        .map_or(all.glyphs.len(), |l| all.runs.get(l.run_start as usize).map_or(all.glyphs.len(), |r| r.glyph_start as usize));
+    assert_eq!(&limited.glyphs[..], &all.glyphs[..glyphs]);
+}
+
+#[test]
+fn ligatures_split_their_advance_among_their_graphemes() {
+    let styles = [Style::default()];
+    let text = "office";
+    let p = LIGATURES.layout(&Input::plain(text, &styles), 500.0).unwrap();
+    let ffi = &p.clusters[1..4];
+    assert_eq!(ffi.iter().map(|c| c.flags & CLUSTER_LIGATURE_CONTINUATION != 0).collect::<Vec<_>>(), [false, true, true]);
+    assert_eq!(ffi.iter().map(|c| c.glyph_count).collect::<Vec<_>>(), [1, 0, 0], "one glyph for the three");
+    assert!(ffi.iter().all(|c| (c.advance - ffi[0].advance).abs() < 0.01), "{ffi:?}: evenly split");
+    let units = units(text, &p.clusters);
+    assert_eq!(units.len(), 4, "o, ffi, c, e: {units:?}");
+}
+
 #[hegel::test(test_cases = 200)]
 fn layout_is_the_same_every_time(tc: TestCase) {
     let case = Case::draw(&tc, PIECES);
@@ -304,4 +421,26 @@ fn rtl_flags_follow_the_text() {
     let p = CTX.layout(&Input::plain("ab \u{5E9}\u{5DC}", &styles), 500.0).unwrap();
     let rtl = p.clusters.iter().map(|c| c.flags & CLUSTER_RTL != 0).collect::<Vec<_>>();
     assert_eq!(rtl, [false, false, false, true, true]);
+}
+
+#[test]
+fn breaks_parley_leaves_on_one_line_hit_test_past_each_other() {
+    // At width 0 parley keeps both hard breaks on the first line.
+    let case = Case {
+        text: "\u{200B}\n\n".into(),
+        styles: vec![(Family::Icons, 6.0, 400.0, false, 0.0, false)],
+        runs: vec![],
+        boxes: vec![],
+        width: 0.0,
+        max_lines: 0,
+        ellipsis: false,
+        align: Align::Start,
+        tab_size: 0,
+        ligatures: false,
+    };
+    let p = case.layout();
+    let view = p.view();
+    let caret = caret_rect(&view, 4, Affinity::Downstream);
+    let hit = offset_at(&view, caret.x, caret.y + caret.height / 2.0);
+    assert_eq!(caret_rect(&view, hit.offset, hit.affinity).x, caret.x, "{hit:?} {:?}", p.clusters);
 }

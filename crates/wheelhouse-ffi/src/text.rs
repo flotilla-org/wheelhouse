@@ -1,14 +1,20 @@
 use super::*;
 use std::{cell::RefCell, ffi::c_void, mem, str};
 use wheelhouse_text::{
-    query, Affinity, Cluster, Family, Feature, FontSource, Glyph, InlineBox, Input, Line, Paragraph, PlacedBox, Rect, Run, Segment, Style,
-    StyleRun, TextContext, View, CLUSTER_ELLIPSIS, CLUSTER_HARD_BREAK, CLUSTER_LIGATURE_CONTINUATION, CLUSTER_RTL, CLUSTER_WHITESPACE,
-    CLUSTER_WORD_START,
+    query, Affinity, Align, Cluster, Family, Feature, FontSource, Glyph, InlineBox, Input, Line, Paragraph, PlacedBox, Rect, Run, Segment,
+    Style, StyleRun, TextContext, View, CLUSTER_ELLIPSIS, CLUSTER_HARD_BREAK, CLUSTER_LIGATURE_CONTINUATION, CLUSTER_RTL, CLUSTER_TAB,
+    CLUSTER_WHITESPACE, CLUSTER_WORD_START,
 };
 
 pub const WH_TEXT_FAMILY_MAIN: u32 = 0;
 pub const WH_TEXT_FAMILY_CODE: u32 = 1;
 pub const WH_TEXT_FAMILY_ICONS: u32 = 2;
+
+pub const WH_TEXT_ALIGN_START: u32 = 0;
+pub const WH_TEXT_ALIGN_END: u32 = 1;
+pub const WH_TEXT_ALIGN_CENTER: u32 = 2;
+/// The last line, and lines that end at a hard break, align to the start.
+pub const WH_TEXT_ALIGN_JUSTIFY: u32 = 3;
 
 /// With the text after the offset.
 pub const WH_TEXT_DOWNSTREAM: u32 = 0;
@@ -22,7 +28,7 @@ pub const WH_TEXT_FONT_UNKNOWN: u32 = 2;
 
 // Literals, as cbindgen can't evaluate another crate's constants.
 pub const WH_TEXT_CLUSTER_RTL: u32 = 1;
-/// A space, a no-break space or a hard line break.
+/// A space, a no-break space, a tab or a hard line break.
 pub const WH_TEXT_CLUSTER_WHITESPACE: u32 = 2;
 pub const WH_TEXT_CLUSTER_WORD_START: u32 = 4;
 /// No glyphs of its own; its advance is its share of the ligature's.
@@ -30,6 +36,8 @@ pub const WH_TEXT_CLUSTER_LIGATURE_CONTINUATION: u32 = 8;
 pub const WH_TEXT_CLUSTER_HARD_BREAK: u32 = 16;
 /// Covers no bytes; its start is where the text was cut.
 pub const WH_TEXT_CLUSTER_ELLIPSIS: u32 = 32;
+/// Drawn as a space, advancing to the next tab stop.
+pub const WH_TEXT_CLUSTER_TAB: u32 = 64;
 
 const _: () = assert!(
     WH_TEXT_CLUSTER_RTL == CLUSTER_RTL
@@ -38,6 +46,7 @@ const _: () = assert!(
         && WH_TEXT_CLUSTER_LIGATURE_CONTINUATION == CLUSTER_LIGATURE_CONTINUATION
         && WH_TEXT_CLUSTER_HARD_BREAK == CLUSTER_HARD_BREAK
         && WH_TEXT_CLUSTER_ELLIPSIS == CLUSTER_ELLIPSIS
+        && WH_TEXT_CLUSTER_TAB == CLUSTER_TAB
 );
 
 /// Safe to use from several threads at once.
@@ -59,6 +68,7 @@ pub struct WhTextAllocator {
 #[derive(Clone, Copy)]
 pub struct WhTextFeature {
     pub tag: [u8; 4],
+    /// At most 65535.
     pub value: u32,
 }
 
@@ -114,6 +124,10 @@ pub struct WhTextInput {
     pub max_lines: u32,
     /// End a cut last line with "…".
     pub ellipsis: u32,
+    /// WH_TEXT_ALIGN_*.
+    pub align: u32,
+    /// Tab stops every this many spaces of the tab's own style; 0 for 4.
+    pub tab_size: u32,
 }
 
 /// Arrays are NULL when empty. In pixels, y down from the paragraph's top.
@@ -134,6 +148,8 @@ pub struct WhTextLayout {
     pub height: f32,
     /// Stale when wh_text_epoch differs.
     pub epoch: u64,
+    /// The resolved base direction.
+    pub rtl: u32,
 }
 
 #[repr(C)]
@@ -200,7 +216,7 @@ pub unsafe extern "C" fn wh_text_free(ctx: *mut WhText) {
 
 /// Copies the bytes. Returns how many faces it registered.
 #[no_mangle]
-pub unsafe extern "C" fn wh_text_register_font(ctx: *mut WhText, data: *const u8, len: usize, bytes_id: u64) -> usize {
+pub unsafe extern "C" fn wh_text_register_font(ctx: *const WhText, data: *const u8, len: usize, bytes_id: u64) -> usize {
     // SAFETY: the caller's contract.
     let (Some(t), Ok(bytes)) = (unsafe { ctx.as_ref() }, unsafe { slice(data, len) }) else { return 0 };
     catch_unwind(AssertUnwindSafe(|| t.ctx.register_fonts(bytes.to_vec(), bytes_id))).unwrap_or(0)
@@ -208,7 +224,7 @@ pub unsafe extern "C" fn wh_text_register_font(ctx: *mut WhText, data: *const u8
 
 /// family is WH_TEXT_FAMILY_*. Returns 0 for an unknown slot or non-UTF-8 name.
 #[no_mangle]
-pub unsafe extern "C" fn wh_text_set_family(ctx: *mut WhText, family: u32, name: Text) -> u32 {
+pub unsafe extern "C" fn wh_text_set_family(ctx: *const WhText, family: u32, name: Text) -> u32 {
     // SAFETY: the caller's contract.
     let (Some(t), Some(family), Ok(name)) = (unsafe { ctx.as_ref() }, Family::from_slot(family), unsafe { name.read() }) else {
         return 0;
@@ -220,7 +236,7 @@ pub unsafe extern "C" fn wh_text_set_family(ctx: *mut WhText, family: u32, name:
 /// Tried in order before fontique's own fallback. Returns 0, changing
 /// nothing, if a name is not UTF-8.
 #[no_mangle]
-pub unsafe extern "C" fn wh_text_set_fallbacks(ctx: *mut WhText, names: *const Text, count: usize) -> u32 {
+pub unsafe extern "C" fn wh_text_set_fallbacks(ctx: *const WhText, names: *const Text, count: usize) -> u32 {
     // SAFETY: the caller's contract.
     let (Some(t), Ok(names)) = (unsafe { ctx.as_ref() }, unsafe { slice(names, count) }) else { return 0 };
     // SAFETY: the caller's contract.
@@ -231,7 +247,7 @@ pub unsafe extern "C" fn wh_text_set_fallbacks(ctx: *mut WhText, names: *const T
 
 /// Returns 0 for a scale that is not positive and finite.
 #[no_mangle]
-pub unsafe extern "C" fn wh_text_set_scale(ctx: *mut WhText, scale: f32) -> u32 {
+pub unsafe extern "C" fn wh_text_set_scale(ctx: *const WhText, scale: f32) -> u32 {
     // SAFETY: the caller's contract.
     match unsafe { ctx.as_ref() } {
         Some(t) if scale.is_finite() && scale > 0.0 => {
@@ -244,7 +260,7 @@ pub unsafe extern "C" fn wh_text_set_scale(ctx: *mut WhText, scale: f32) -> u32 
 
 /// Rescans the system's fonts.
 #[no_mangle]
-pub unsafe extern "C" fn wh_text_fonts_changed(ctx: *mut WhText) {
+pub unsafe extern "C" fn wh_text_fonts_changed(ctx: *const WhText) {
     // SAFETY: the caller's contract.
     if let Some(t) = unsafe { ctx.as_ref() } {
         let _ = catch_unwind(AssertUnwindSafe(|| t.ctx.fonts_changed()));
@@ -293,8 +309,9 @@ thread_local! {
     static INPUTS: RefCell<(Vec<StyleRun>, Vec<InlineBox>)> = RefCell::default();
 }
 
-/// width INFINITY doesn't wrap. On failure, returns 0 with an error and
-/// leaves out untouched.
+/// Pass width INFINITY for no wrapping: a large finite width aligns RTL or
+/// centred lines against that width, far from 0, where f32 loses precision.
+/// On failure, returns 0 with an error and leaves out untouched.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_layout(
     ctx: *const WhText,
@@ -322,10 +339,13 @@ pub unsafe extern "C" fn wh_text_layout(
             let features = raw_styles
                 .iter()
                 .map(|s| {
-                    Ok(slice(s.features, s.feature_count)?
+                    slice(s.features, s.feature_count)?
                         .iter()
-                        .map(|f| Feature { tag: f.tag, value: f.value.min(u16::MAX as u32) as u16 })
-                        .collect())
+                        .map(|f| {
+                            let value = u16::try_from(f.value).map_err(|_| format!("feature value {} is above 65535", f.value))?;
+                            Ok(Feature { tag: f.tag, value })
+                        })
+                        .collect()
                 })
                 .collect::<Result<Vec<Vec<_>>, String>>()?;
             let styles = raw_styles
@@ -357,6 +377,14 @@ pub unsafe extern "C" fn wh_text_layout(
                 boxes: &boxes,
                 max_lines: input.max_lines as usize,
                 ellipsis: input.ellipsis != 0,
+                align: match input.align {
+                    WH_TEXT_ALIGN_START => Align::Start,
+                    WH_TEXT_ALIGN_END => Align::End,
+                    WH_TEXT_ALIGN_CENTER => Align::Center,
+                    WH_TEXT_ALIGN_JUSTIFY => Align::Justify,
+                    other => return Err(format!("unknown alignment {other}")),
+                },
+                tab_size: input.tab_size,
             };
             let laid_out = SCRATCH.with(|scratch| {
                 let mut p = scratch.borrow_mut();
@@ -375,6 +403,7 @@ pub unsafe extern "C" fn wh_text_layout(
                     width: p.width,
                     height: p.height,
                     epoch: p.epoch,
+                    rtl: p.rtl as u32,
                 };
                 if p.glyphs.capacity() > SCRATCH_KEEP || p.clusters.capacity() > SCRATCH_KEEP {
                     *p = Paragraph::default();
@@ -417,6 +446,7 @@ unsafe fn view<'a>(layout: *const WhTextLayout) -> Option<View<'a>> {
             glyphs: slice(l.glyphs, l.glyph_count).ok()?,
             clusters: slice(l.clusters, l.cluster_count).ok()?,
             boxes: slice(l.boxes, l.box_count).ok()?,
+            rtl: l.rtl != 0,
         })
     }
 }
