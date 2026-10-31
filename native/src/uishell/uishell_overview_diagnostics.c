@@ -3,12 +3,12 @@
 // scene that settles on the new workspace, or a cut without motion; the
 // toggle opens the overview; clicking a heading fits its group, and Escape,
 // the back button or a click outside the group backs out, a level at a
-// time; clicking a tile picks its workspace. Only
-// the workspaces the region shows build: the current one, and through the
-// scene those the camera sees. A local group is a row of its own under its
-// name, and scrolling over or dragging a row too long for the region
-// slides it. A switch lays the overview out as rows or a grid. Runs after the workspace lifecycle diagnostics, on the
-// overview's own clock.
+// time; clicking a tile picks its workspace. Only the workspaces the region
+// shows build: the current one, and through the scene those the camera
+// sees. A local group is a row of its own under its name, and scrolling
+// over or dragging a row too long for the region slides it. A switch lays
+// the overview out as rows or a grid. Runs after the workspace lifecycle
+// diagnostics, on the overview's own clock.
 
 #define OverviewCheck(cond, msg) do { if(!(cond)) { ok = 0; fprintf(stderr, "FAIL overview: %s\n", msg); } } while(0)
 
@@ -272,6 +272,7 @@ uishell_overview_diagnostics(CFG_Node *window)
   uishell_overview_end(&o);
   //- Out of a fitted group: its back button, or a click outside it, shows
   // the whole overview; a click on bare background inside it doesn't.
+  // A click is a drag that doesn't move; these don't check its labels.
   B32 unused_labels = 0;
   OverviewCheck(bare_inside.x != 0 && bare_outside.x != 0, "bare background inside and outside a fitted group");
   uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_zero(), v2f32(0, 0), 0, 0, &unused_labels, bare_inside);

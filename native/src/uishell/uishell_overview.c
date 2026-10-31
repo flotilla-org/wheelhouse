@@ -54,12 +54,21 @@ uishell_overview_view_mode_setting(void)
   return str8_match(value, str8_lit("grid"), StringMatchFlag_CaseInsensitive) ? WHEELHOUSE_OVERVIEW_GRID : WHEELHOUSE_OVERVIEW_ROWS;
 }
 
-internal void
+// The sidebar state's overview_view_mode_seen starts zeroed and so says
+// rows, which is where the core's overview starts: a rows setting makes
+// no call on the first frame, and a grid one does.
+StaticAssert(WHEELHOUSE_OVERVIEW_ROWS == 0, uishell_overview_rows_is_zero);
+
+// Write the user's setting; false when there is no user bucket to keep it
+// in (nothing may be written under the read-only nil node).
+internal B32
 uishell_overview_set_view_mode_setting(U32 view_mode)
 {
   CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+  if(user == &cfg_nil_node) { return 0; }
   CFG_Node *node = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("overview_view_mode"));
   cfg_node_new_replacef(rd_state->cfg, node, "%s", view_mode == WHEELHOUSE_OVERVIEW_GRID ? "grid" : "rows");
+  return 1;
 }
 
 internal B32
@@ -483,9 +492,9 @@ uishell_overview_text(Arena *arena, WheelhouseText text)
 
 // The region drawn through the scene: cluster washes, group headings and
 // the tiles, each showing its workspace's surface, and the controls. Picking
-// a tile, fitting a group and backing out of one are flights; scrolling pans the overview or slides a row,
-// as dragging a row does.
-// Input waits for the overview: a switch's flight is only drawn.
+// a tile, fitting a group and backing out of one are flights; scrolling
+// pans the overview or slides a row, as dragging a row does. Input waits
+// for the overview: a switch's flight is only drawn.
 internal void
 uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledSplit *split, CFG_Node *current)
 {
@@ -758,8 +767,9 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   }
   if(move.sets_view_mode)
   {
-    uishell_overview_set_view_mode_setting(move.view_mode);
-    o->state->overview_view_mode_seen = move.view_mode;
+    // `seen` follows the setting, so the next frame doesn't apply it again;
+    // a mode that couldn't be kept lasts until the setting changes.
+    if(uishell_overview_set_view_mode_setting(move.view_mode)) { o->state->overview_view_mode_seen = move.view_mode; }
     o->state->overview_glide_v = 0;
     moved = wheelhouse_overview_set_view_mode(o->state->core, move.view_mode, 0) || moved;
   }
