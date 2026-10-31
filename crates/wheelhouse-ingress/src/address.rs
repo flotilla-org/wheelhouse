@@ -3,7 +3,10 @@
 //! logical address, `wheelhouse/<instance-uuid>`: a Unix socket under the
 //! runtime directory, or a named pipe on Windows. There is no fixed global
 //! name, so no instance takes over another's endpoint.
-use std::path::{Path, PathBuf};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 /// A random version 4 UUID naming this instance. Uniqueness is all it needs:
 /// the endpoint is protected by the private directory or the pipe's DACL,
@@ -60,7 +63,13 @@ pub fn write_address_file(path: &Path, address: &str) -> Result<(), String> {
     let mut temporary = name.to_owned();
     temporary.push(format!(".{}.tmp", std::process::id()));
     let temporary = path.with_file_name(temporary);
-    std::fs::write(&temporary, address).and_then(|()| std::fs::rename(&temporary, path)).map_err(|e| {
+    // Created afresh, never through a link someone left in its place.
+    let write = || -> std::io::Result<()> {
+        let _ = std::fs::remove_file(&temporary);
+        std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary)?.write_all(address.as_bytes())?;
+        std::fs::rename(&temporary, path)
+    };
+    write().map_err(|e| {
         let _ = std::fs::remove_file(&temporary);
         format!("{}: {e}", path.display())
     })
@@ -120,6 +129,19 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1, "no temporary file is left");
         assert!(write_address_file(&root.join("missing/address"), "x").is_err());
+        // A link left where the temporary file goes isn't written through.
+        #[cfg(unix)]
+        {
+            let victim = root.join("victim");
+            std::fs::write(&victim, "kept").unwrap();
+            std::os::unix::fs::symlink(&victim, root.join(format!("address.{}.tmp", std::process::id()))).unwrap();
+            write_address_file(&path, "y").unwrap();
+            assert_eq!(
+                (std::fs::read_to_string(&victim).unwrap().as_str(), std::fs::read_to_string(&path).unwrap().as_str()),
+                ("kept", "y")
+            );
+            std::fs::remove_file(&victim).unwrap();
+        }
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
         std::fs::remove_dir_all(&root).unwrap();
     }
