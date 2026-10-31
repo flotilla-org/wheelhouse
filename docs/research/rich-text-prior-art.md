@@ -18,7 +18,7 @@ primary sources (repo source via `gh api`, docs.rs, project docs) on 2026-10-31 
 | cosmic-text 0.19 | Rust, Apache-2.0/MIT | HarfRust | yes | yes | yes (per paragraph `BufferLine`) | **no** (not in README/src listing) | yes (Buffer hit, cursor) | none |
 | HarfBuzz 15.0.0 | C/C++, Old-MIT | yes | no | no | no | n/a | n/a | native |
 | HarfRust 0.15.0 | Rust, MIT | yes (port of HB 15) | no | no | no | n/a | n/a | none |
-| kb_text_shape 2.28g | C single header, Zlib | yes | yes (UAX#9 incl. isolates) | break flags only | **no** | n/a | n/a | native |
+| kb_text_shape 2.28g | C single header, Zlib | yes | simplified (LTR/RTL runs; **no** explicit embeddings, overrides or isolates) | break flags only | **no** | n/a | n/a | native |
 | SkParagraph (Skia) | C++, BSD-3 | HarfBuzz | ICU/SkUnicode | yes | yes | **yes** (`addPlaceholder`, `getRectsForPlaceholders`) | **yes** (`getRectsForRange`, `getGlyphPositionAtCoordinate`) | C++ only, drags Skia |
 | Pango 1.5x | C, LGPL-2.1+ | HarfBuzz | FriBidi | yes | yes | **yes-ish** (`PangoAttrShape` w/ ink+logical rect) | yes (`xy_to_index`, `index_to_pos`) | native but GLib |
 | ICU4X 2.4 | Rust, Unicode-3.0 | no | bidi props (+ unicode-bidi crate for UBA) | **yes** (icu_segmenter: line/word/grapheme/sentence, dictionary/LSTM for SEA) | no | n/a | n/a | **official C/C++ FFI** (Diplomat, `ffi/capi`) |
@@ -76,7 +76,7 @@ primary sources (repo source via `gh api`, docs.rs, project docs) on 2026-10-31 
 - https://github.com/JimmyLefevre/kb — `kb_text_shape.h` v2.28g (commit 2026-10-20), ~31.9k lines,
   Zlib, ~1.2k stars. Single-header C, `kbts_` prefix, custom allocator hooks (`KBTS_MALLOC/FREE`,
   `KB_TEXT_SHAPE_NO_CRT`).
-- Does: UAX#9 bidi (embeddings, overrides, isolates; paragraph direction or first-strong),
+- Does: simplified bidi (LTR/RTL runs; **no** explicit embeddings, overrides or isolates per the header's "OTHER LIMITATIONS", `kb_text_shape.h:1537-1547` at 2.28g; corrected 2026-10-31, an earlier version of this note said otherwise),
   script/grapheme/word/line(soft/hard) segmentation emitted as `kbts_break_flags`, OpenType shaping
   for complex scripts (Arabic, Indic, Khmer, Myanmar, USE…), font coverage checks.
 - Does **not**: rasterize, select system fonts / fallback, or do paragraph layout ("glyphs on a
