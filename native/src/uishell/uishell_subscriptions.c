@@ -295,6 +295,8 @@ uishell_subscriptions_poll(void)
       s->starts = starts;
     }
     if(s->ingress) { wheelhouse_ingress_poll_observed(s->ingress, uishell_sidebar_apply_live, uishell_sidebar_retract_live, uishell_sidebar_observed_workdirs, s); }
+    // A connector's endpoint is no Automation Endpoint.
+    if(s->ingress) { wheelhouse_ingress_automation(s->ingress, &(WheelhouseIngressAutomationHost){.mode = WHEELHOUSE_AUTOMATION_OFF}); }
   }
 }
 

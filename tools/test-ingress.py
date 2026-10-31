@@ -10,6 +10,7 @@ import uuid
 import os
 from pathlib import Path
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -101,13 +102,55 @@ def publish(path, value):
     finally:
         connection.close()
 
+def cbor_decode(data):
+    """A CBOR value, as the Automation Endpoint sends it: definite lengths,
+    text keys, no tags."""
+    def item(at):
+        initial = data[at]
+        major, info, at = initial >> 5, initial & 0x1f, at + 1
+        if major == 7:
+            if info in (20, 21, 22):
+                return {20: False, 21: True, 22: None}[info], at
+            size = {25: 2, 26: 4, 27: 8}[info]
+            raw = data[at:at + size]
+            return struct.unpack('>' + {2: 'e', 4: 'f', 8: 'd'}[size], raw)[0], at + size
+        if info < 24:
+            n = info
+        else:
+            size = {24: 1, 25: 2, 26: 4, 27: 8}[info]
+            n, at = int.from_bytes(data[at:at + size], 'big'), at + size
+        if major == 0:
+            return n, at
+        if major == 1:
+            return -1 - n, at
+        if major == 3:
+            return data[at:at + n].decode(), at + n
+        if major == 4:
+            items = []
+            for _ in range(n):
+                value, at = item(at)
+                items.append(value)
+            return items, at
+        if major == 5:
+            entries = {}
+            for _ in range(n):
+                key, at = item(at)
+                assert isinstance(key, str), key
+                entries[key], at = item(at)
+            return entries, at
+        raise AssertionError('unexpected CBOR major type %d' % major)
+    value, end = item(0)
+    assert end == len(data)
+    return value
+
+
 WAKE = C.CFUNCTYPE(None)
 APPLY = C.CFUNCTYPE(C.c_uint32, C.c_void_p, C.c_void_p, C.c_size_t)
 class Text(C.Structure):
     _fields_ = [('data', C.c_void_p), ('len', C.c_size_t)]
 class Workdir(C.Structure):
     _fields_ = [('workspace_id', C.c_uint64), ('view_id', C.c_uint64)] + [
-        (key, Text) for key in ['entity_kind', 'entity_id', 'cwd', 'live_cwd']]
+        (key, Text) for key in ['entity_kind', 'entity_id', 'cwd', 'live_cwd', 'view']]
 EMIT = C.CFUNCTYPE(None, C.c_void_p, C.POINTER(Workdir))
 OBSERVE = C.CFUNCTYPE(C.c_uint32, C.c_void_p, EMIT, C.c_void_p)
 RETRACT = C.CFUNCTYPE(C.c_uint32, C.c_void_p)
@@ -361,7 +404,7 @@ class IngressTests(unittest.TestCase):
 
     def test_observed_directories_change_and_omit_unknown_views(self):
         self.workdirs = [
-            (42, 81, 'worktree', 'one', '/saved/"quoted"/東京', None),
+            (42, 81, 'worktree', 'one', '/saved/"quoted"/東京', None, 'workspace/0192f1a2-3b4c-7d5e-8f60-718293a4b5c6/view/u:1'),
             (42, 82, 'worktree', 'one', '/saved/two', '/live/two'),
             (43, 83, None, None, None, None),
         ]
@@ -369,8 +412,9 @@ class IngressTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(content_type, 'application/json')
         self.assertEqual(json.loads(body), {'workdirs': [
-            dict(workspace_id=42, view_id=81, entity_kind='worktree', entity_id='one', cwd='/saved/"quoted"/東京', live_cwd=None),
-            dict(workspace_id=42, view_id=82, entity_kind='worktree', entity_id='one', cwd='/saved/two', live_cwd='/live/two'),
+            dict(workspace_id=42, view_id=81, entity_kind='worktree', entity_id='one', cwd='/saved/"quoted"/東京', live_cwd=None,
+                 view='workspace/0192f1a2-3b4c-7d5e-8f60-718293a4b5c6/view/u:1'),
+            dict(workspace_id=42, view_id=82, entity_kind='worktree', entity_id='one', cwd='/saved/two', live_cwd='/live/two', view=None),
         ]})
         self.workdirs[1] = (42, 82, 'worktree', 'one', '/saved/two', '/changed')
         self.assertEqual(json.loads(self.request(read=True)[1])['workdirs'][1]['live_cwd'], '/changed')
@@ -588,6 +632,186 @@ class IngressTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+
+    def launch_nested(self, name, *args, automation=None):
+        """Wheelhouse launched from a terminal of another: WHEELHOUSE_SOCKET
+        names the outer one's endpoint. Its one terminal writes the
+        WHEELHOUSE_SOCKET it sees. Returns the address Wheelhouse wrote to
+        --automation_socket_file and what the terminal saw, once it quits."""
+        binary = str(Path(os.environ['WHEELHOUSE_TEST_BINARY']).resolve())
+        root = Path(self.dir.name, name)
+        dashboard, seen, address_file = root / 'dashboard', root / 'seen', root / 'address'
+        dashboard.mkdir(parents=True)
+        (dashboard / 'id').write_text(name)
+        workspace_seed.seed(dashboard, root / 'presentation' / (name + '.wheelhouse'), [workspace_seed.terminal(
+            'printf %%s "${WHEELHOUSE_SOCKET-unset}" > %s.tmp && mv %s.tmp %s; read answer' % (seen, seen, seen))])
+        if automation:
+            (root / 'user').write_text('// uishell 0.1.0 user file\n\nautomation: "%s"\n' % automation)
+        log = tempfile.TemporaryFile()
+        self.addCleanup(log.close)
+        process = subprocess.Popen([binary, '--user:%s/user' % root, '--dashboard:%s' % dashboard, '--project:%s/project' % root,
+                                    '--automation_socket_file:%s' % address_file, *args],
+                                   stdout=log, stderr=log, env={**os.environ, 'WHEELHOUSE_SOCKET': '/outer/wheelhouse'})
+
+        def failure(message):
+            log.seek(0)
+            return message + ': ' + log.read().decode(errors='replace')
+        try:
+            deadline = time.monotonic() + 20
+            while not (address_file.exists() and seen.exists()):
+                self.assertIsNone(process.poll(), failure('Wheelhouse exited'))
+                self.assertLess(time.monotonic(), deadline, failure('the address file or the terminal\'s report never came'))
+                time.sleep(.05)
+            address = address_file.read_text()
+            if address:
+                wait_ready(address, timeout=5, process=process)
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        self.assertFalse(address_file.exists(), 'the address file outlived Wheelhouse')
+        if address:
+            self.assertFalse(os.path.exists(address), 'the endpoint outlived Wheelhouse')
+        return address, seen.read_text()
+
+    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    @unittest.skipIf(os.environ.get('WHEELHOUSE_CLEAT_FEATURES') == 'none', 'terminals run no program without a VT engine')
+    def test_a_nested_instance_tells_its_terminals_its_own_endpoint(self):
+        # By default each instance listens at its own address under the
+        # runtime directory, and its terminals see that, not the outer one.
+        address, seen = self.launch_nested('default')
+        runtime = os.environ.get('XDG_RUNTIME_DIR')
+        parent = Path(runtime, 'wheelhouse') if runtime and os.path.isabs(runtime) else \
+            Path(tempfile.gettempdir(), 'wheelhouse-%d' % os.geteuid())
+        self.assertEqual(Path(address).parent, parent)
+        uuid.UUID(Path(address).name)
+        self.assertEqual(os.stat(parent).st_mode & 0o777, 0o700)
+        self.assertEqual(seen, address)
+        # Another instance gets another address.
+        self.assertNotEqual(self.launch_nested('second')[0], address)
+        # A launcher may name it.
+        explicit = os.path.join(self.dir.name, 'explicit.sock')
+        self.assertEqual(self.launch_nested('explicit', '--automation_socket:' + explicit), (explicit, explicit))
+        # With automation off there is no default listener, and terminals are
+        # told of none.
+        self.assertEqual(self.launch_nested('off', automation='off'), ('', 'unset'))
+        # An address the launcher names is still served, for metadata.
+        explicit = os.path.join(self.dir.name, 'off.sock')
+        self.assertEqual(self.launch_nested('off-explicit', '--automation_socket:' + explicit, automation='off'), (explicit, 'unset'))
+
+    def start_automation(self, name, *args, user=''):
+        """Wheelhouse with one workspace of a terminal and a View of a Cleat
+        session, listening at its own socket; returns the socket's path and
+        the Workspace ID."""
+        binary = str(Path(os.environ['WHEELHOUSE_TEST_BINARY']).resolve())
+        root = Path(self.dir.name, name)
+        dashboard = root / 'dashboard'
+        dashboard.mkdir(parents=True)
+        (dashboard / 'id').write_text(name)
+        session = {'content': {'Local': {'CleatSession': {'transport': 'local', 'host': 'nowhere', 'runtime_root': str(root / 'cleat'),
+                                                           'daemon': 'none', 'session': 'agent-session'}}}, 'presentation': 'terminal'}
+        workspace = workspace_seed.seed(dashboard, root / 'presentation' / (name + '.wheelhouse'),
+                                        [workspace_seed.terminal('read answer', '/tmp'), session], label='Automated')
+        (root / 'user').write_text('// uishell 0.1.0 user file\n\n' + user)
+        path = os.path.join(self.dir.name, name + '.sock')
+        log = tempfile.TemporaryFile()
+        self.addCleanup(log.close)
+        process = subprocess.Popen([binary, '--user:%s/user' % root, '--dashboard:%s' % dashboard, '--project:%s/project' % root,
+                                    '--automation_socket:' + path, *args], stdout=log, stderr=log)
+
+        def cleanup():
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        self.addCleanup(cleanup)
+        try:
+            wait_ready(path, timeout=20, process=process)
+        except (OSError, TimeoutError, RuntimeError):
+            log.seek(0)
+            self.fail('native listener failed: ' + log.read().decode(errors='replace'))
+        return path, workspace, root
+
+    def get(self, path, target, cbor=False):
+        connection = UnixHTTPConnection(path)
+        try:
+            connection.request('GET', target, headers={'Accept': 'application/cbor'} if cbor else {})
+            response = connection.getresponse()
+            body = response.read()
+            if response.status != 200:
+                return response.status, None
+            self.assertEqual(response.getheader('content-type'), 'application/cbor' if cbor else 'application/json')
+            return 200, cbor_decode(body) if cbor else json.loads(body)
+        finally:
+            connection.close()
+
+    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_automation_routes_serve_the_semantic_tree_in_json_and_cbor(self):
+        path, workspace, root = self.start_automation('routes', '--ingress_record')
+        w = 'workspace/' + workspace
+        for cbor in (False, True):
+            status, tree = self.get(path, '/v1/observed/semantic', cbor)
+            self.assertEqual(status, 200)
+            self.assertEqual(tree['schema'], 1)
+            self.assertIsInstance(tree['generation'], int)
+            [node] = tree['nodes']
+            self.assertEqual((node['id'], node['kind'], node['name'], node['durable']), (w, 'workspace', 'Automated', True))
+            self.assertIn('selected', node['state'])
+            [panel] = node['children']
+            self.assertEqual((panel['id'], panel['kind']), (w + '/panel/1', 'panel'))
+            terminal, cleat = panel['children']
+            self.assertEqual((terminal['id'], terminal['kind'], terminal['state']), (w + '/view/u:1', 'view', ['selected']))
+            self.assertEqual(terminal['props']['content'], 'terminal')
+            self.assertEqual(terminal['props']['terminal']['cwd'], '/tmp')
+            self.assertEqual(terminal['props']['terminal']['process'], 'read answer')
+            self.assertEqual(cleat['props']['terminal']['session'], 'agent-session')
+            # A subtree, by its Automation ID.
+            status, sub = self.get(path, '/v1/observed/semantic?root=' + w + '/view/u:2', cbor)
+            self.assertEqual(sub['nodes'], [cleat])
+            self.assertEqual(self.get(path, '/v1/observed/semantic?root=' + w + '/panel/9', cbor)[0], 404)
+            # Caller Context: the views showing a session.
+            status, caller = self.get(path, '/v1/observed/self?session=agent-session', cbor)
+            self.assertEqual((caller['schema'], caller['session']), (1, 'agent-session'))
+            self.assertEqual(caller['views'], [{'id': w + '/view/u:2', 'workspace': w}])
+            self.assertEqual(self.get(path, '/v1/observed/self?session=elsewhere', cbor)[1]['views'], [])
+        self.assertEqual(self.get(path, '/v1/observed/self')[0], 400)
+        # Nothing changes: a wait past the generation times out.
+        generation = self.get(path, '/v1/observed/semantic')[1]['generation']
+        started = time.monotonic()
+        self.assertEqual(self.get(path, '/v1/observed/semantic?since=%d&wait=300' % generation)[0], 204)
+        self.assertGreaterEqual(time.monotonic() - started, .3)
+        self.assertEqual(self.get(path, '/v1/observed/semantic?since=%d' % (generation - 1))[1]['generation'], generation)
+        # The workdirs name each View by its Automation ID.
+        status, workdirs = self.get(path, '/v1/observed/workdirs')
+        self.assertEqual([row['view'] for row in workdirs['workdirs']], [w + '/view/u:1'])
+        # Recorded like the other routes.
+        capture = root / 'logs' / 'ingress.jsonl'
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            paths = [json.loads(line)['path'] for line in capture.read_text().splitlines()] if capture.exists() else []
+            if '/v1/observed/self' in paths:
+                break
+            time.sleep(.05)
+        self.assertIn('/v1/observed/semantic', paths)
+        self.assertIn('/v1/observed/self', paths)
+
+    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_automation_off_serves_none_of_its_routes(self):
+        path, _, _ = self.start_automation('off', user='automation: "off"\n')
+        for target in ['/v1/observed/semantic', '/v1/observed/self?session=agent-session']:
+            for cbor in (False, True):
+                self.assertEqual(self.get(path, target, cbor)[0], 404)
+        # The metadata routes are not affected.
+        self.assertEqual(self.get(path, '/v1/observed/workdirs')[0], 200)
+        publish(path, patch('project', 'p', {'display.label': 'still served'}))
 
     # A stand-in for `flotilla pm connect` that ignores SIGTERM, as does the
     # child it starts; it appends "<its pid> <child pid>" to $WH_TEST_CONNECTOR.

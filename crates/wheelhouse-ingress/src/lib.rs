@@ -2,6 +2,10 @@
 use std::ffi::c_void;
 
 #[cfg(any(unix, windows))]
+mod address;
+#[cfg(any(unix, windows))]
+mod automation;
+#[cfg(any(unix, windows))]
 mod connector;
 #[cfg(unix)]
 mod quit;
@@ -22,6 +26,9 @@ pub struct Workdir {
     pub entity_id: Text,
     pub cwd: Text,
     pub live_cwd: Text,
+    /// The View's Automation ID (`workspace/<uuid>/view/<slot key>`); empty
+    /// when it has none.
+    pub view: Text,
 }
 pub type Emit = unsafe extern "C" fn(*mut c_void, *const Workdir);
 pub type Observe = unsafe extern "C" fn(*mut c_void, Emit, *mut c_void) -> u32;
@@ -31,6 +38,36 @@ pub type Apply = unsafe extern "C" fn(*mut c_void, *const u8, usize) -> u32;
 /// is unavailable), 0 when the endpoint has no provider of its own (a snapshot
 /// there is refused).
 pub type Retract = unsafe extern "C" fn(*mut c_void) -> u32;
+
+/// What an Automation observer gives, for `out`: kind
+/// [`AUTOMATION_WORKSPACES`] with a JSON array of workspace nodes, or
+/// [`AUTOMATION_ANNOTATION`] with an Automation ID and a JSON object of
+/// `props` and `state` to merge into that node.
+pub type AutomationEmit = unsafe extern "C" fn(out: *mut c_void, kind: u32, a: Text, b: Text);
+/// Builds the Semantic Tree on the UI thread: emits everything, then
+/// returns 1, or 0 when it isn't available now. `flags` has
+/// [`AUTOMATION_TERMINAL_TEXT`] when terminals' screen text is wanted.
+pub type AutomationObserve = unsafe extern "C" fn(context: *mut c_void, flags: u32, emit: AutomationEmit, out: *mut c_void) -> u32;
+pub const AUTOMATION_WORKSPACES: u32 = 1;
+pub const AUTOMATION_ANNOTATION: u32 = 2;
+pub const AUTOMATION_TERMINAL_TEXT: u32 = 1;
+/// The `automation` setting: off serves none of the routes.
+pub const AUTOMATION_OFF: u32 = 0;
+pub const AUTOMATION_OBSERVE: u32 = 1;
+pub const AUTOMATION_FULL: u32 = 2;
+/// No frame has said yet.
+const AUTOMATION_UNKNOWN: u32 = u32::MAX;
+
+/// The host's side of the Automation Endpoint, at a frame's end.
+#[repr(C)]
+pub struct AutomationHost {
+    /// An `AUTOMATION_*` setting.
+    pub mode: u32,
+    /// Whether `automation_terminal_text` is `screen`.
+    pub terminal_text: u32,
+    pub observe: Option<AutomationObserve>,
+    pub context: *mut c_void,
+}
 
 #[cfg(any(unix, windows))]
 mod transport {
@@ -58,8 +95,49 @@ mod transport {
             reply: oneshot::Sender<Option<std::sync::Arc<serde_json::Value>>>,
         },
     }
+    /// An automation read, answered at a frame's end (automation.rs).
+    pub struct Read {
+        pub request: crate::automation::Request,
+        /// When a `since` read waiting for a change gives up.
+        pub deadline: std::time::Instant,
+        /// Who answers it ([`Claim`]): the UI, or the handler when its wait
+        /// runs out while the UI holds it waiting.
+        pub claim: std::sync::Arc<Claim>,
+        pub reply: oneshot::Sender<crate::automation::Reply>,
+    }
+    /// Which side answers a read, so exactly one does: the UI claims it to
+    /// answer, or marks it waiting; the handler, whose wait ran out, may
+    /// expire only a waiting read, and otherwise takes the UI's answer.
+    #[derive(Default)]
+    pub struct Claim(std::sync::atomic::AtomicU8);
+    const UNSEEN: u8 = 0;
+    const WAITING: u8 = 1;
+    const ANSWERING: u8 = 2;
+    const EXPIRED: u8 = 3;
+    impl Claim {
+        /// The UI holds it for a change. False when the handler gave up.
+        pub fn wait(&self) -> bool {
+            self.0.compare_exchange(UNSEEN, WAITING, SeqCst, SeqCst).is_ok() || self.0.load(SeqCst) == WAITING
+        }
+        /// The UI answers it. False when the handler gave up.
+        pub fn answer(&self) -> bool {
+            [UNSEEN, WAITING].iter().any(|&from| self.0.compare_exchange(from, ANSWERING, SeqCst, SeqCst).is_ok())
+        }
+        /// The handler's wait ran out: true when it answers 204, false when
+        /// the UI hasn't seen it yet or is answering it.
+        fn expire(&self) -> bool {
+            self.0.compare_exchange(WAITING, EXPIRED, SeqCst, SeqCst).is_ok()
+        }
+    }
+    use std::sync::atomic::Ordering::SeqCst;
     pub struct Ingress {
         pub queue: mpsc::Receiver<Pending>,
+        pub reads: mpsc::Receiver<Read>,
+        /// Reads waiting for the generation to pass their `since`.
+        pub waiting: Vec<Read>,
+        pub generation: crate::automation::Generation,
+        /// The `automation` setting, as the UI last said.
+        pub mode: std::sync::Arc<std::sync::atomic::AtomicU32>,
         shutdown: Option<oneshot::Sender<()>>,
         thread: Option<thread::JoinHandle<()>>,
     }
@@ -67,6 +145,10 @@ mod transport {
     struct Shared {
         queue: mpsc::SyncSender<Pending>,
         wake: Wake,
+        /// Told when a patch first arrives; see `ticks` in start.
+        published: std::sync::Arc<tokio::sync::Notify>,
+        reads: mpsc::SyncSender<Read>,
+        mode: std::sync::Arc<std::sync::atomic::AtomicU32>,
     }
 
     // Request outcomes from the UI thread's drain.
@@ -119,6 +201,7 @@ mod transport {
         if state.queue.try_send(Pending::Patch { bodies, replace, reply }).is_err() {
             return StatusCode::SERVICE_UNAVAILABLE;
         }
+        state.published.notify_one();
         (state.wake)();
         match tokio::time::timeout(Duration::from_secs(5), response).await {
             Ok(Ok(APPLIED)) => StatusCode::NO_CONTENT,
@@ -139,6 +222,52 @@ mod transport {
                 ([("cache-control", "no-store"), ("content-type", "application/json")], value.to_string()).into_response()
             }
             _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        }
+    }
+
+    async fn semantic(state: State<Shared>, headers: HeaderMap, uri: axum::http::Uri) -> Response {
+        observed(state, headers, uri, crate::automation::Route::Semantic).await
+    }
+
+    async fn caller(state: State<Shared>, headers: HeaderMap, uri: axum::http::Uri) -> Response {
+        observed(state, headers, uri, crate::automation::Route::Caller).await
+    }
+
+    // A read of the Semantic Tree, answered at a frame's end. One that waits
+    // for a change past `since` gives 204 once `wait` passes, if the UI saw
+    // it without a change.
+    async fn observed(State(state): State<Shared>, headers: HeaderMap, uri: axum::http::Uri, route: crate::automation::Route) -> Response {
+        use std::sync::atomic::Ordering;
+        if state.mode.load(Ordering::Relaxed) == crate::AUTOMATION_OFF {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+        let request = match crate::automation::Request::parse(route, uri.query(), accept) {
+            Ok(request) => request,
+            Err(why) => return (StatusCode::BAD_REQUEST, why).into_response(),
+        };
+        let wait = if request.since.is_some() { request.wait } else { Duration::ZERO };
+        let claim = std::sync::Arc::new(Claim::default());
+        let (reply, mut response) = oneshot::channel();
+        let read = Read { request, deadline: std::time::Instant::now() + wait, claim: claim.clone(), reply };
+        if state.reads.try_send(read).is_err() {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        (state.wake)();
+        let reply = match tokio::time::timeout(wait, &mut response).await {
+            Ok(reply) => reply.ok(),
+            // Waiting for a change that didn't come.
+            Err(_) if claim.expire() => return StatusCode::NO_CONTENT.into_response(),
+            // The UI hasn't seen it yet, or is answering it: give it time for
+            // a frame.
+            Err(_) => tokio::time::timeout(Duration::from_secs(5), response).await.ok().and_then(Result::ok),
+        };
+        match reply {
+            Some(reply) if reply.status == 200 => {
+                ([("cache-control", "no-store"), ("content-type", reply.content_type)], reply.body).into_response()
+            }
+            Some(reply) => StatusCode::from_u16(reply.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR).into_response(),
+            None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         }
     }
 
@@ -188,6 +317,10 @@ mod transport {
             // a burst of either may make the other receive 503 and retry. This
             // preserves request ordering and bounds total pending UI work.
             let (queue, receiver) = mpsc::sync_channel(64);
+            let (reads, read_receiver) = mpsc::sync_channel(64);
+            // Until a frame says, reads wait for one.
+            let mode = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(crate::AUTOMATION_UNKNOWN));
+            let shared_mode = mode.clone();
             let (shutdown, stop) = oneshot::channel();
             let thread = thread::Builder::new()
                 .name("wheelhouse-ingress".into())
@@ -197,19 +330,25 @@ mod transport {
                     runtime.block_on(async move {
                         #[cfg(unix)]
                         let listener = tokio::net::UnixListener::from_std(listener).expect("registered Unix listener");
+                        let published = std::sync::Arc::new(tokio::sync::Notify::new());
                         let mut app = Router::new()
                             .route("/v1/health", get(|| async { StatusCode::NO_CONTENT }))
                             .route("/v1/metadata/patch", post(patch))
                             .route("/v1/metadata/snapshot", post(snapshot))
                             .route("/v1/observed/workdirs", get(workdirs))
-                            .with_state(Shared { queue, wake });
+                            .route("/v1/observed/semantic", get(semantic))
+                            .route("/v1/observed/self", get(caller))
+                            .with_state(Shared { queue, wake, published: published.clone(), reads, mode: shared_mode });
                         if let Some((path, bytes, files)) = recording {
                             let recorder = crate::recording::Recorder::start(path, bytes, files);
                             app = app.layer(axum::middleware::from_fn_with_state(recorder, crate::recording::capture));
                         }
                         let app = app.layer(axum::middleware::from_fn(limit_body));
                         let server = axum::serve(listener, app);
+                        // Facts expire on the UI's ticks. Every instance listens,
+                        // so an endpoint nobody has published to stays idle.
                         let ticks = async {
+                            published.notified().await;
                             loop {
                                 tokio::time::sleep(Duration::from_millis(250)).await;
                                 wake();
@@ -219,7 +358,17 @@ mod transport {
                     });
                 })
                 .map_err(|e| e.to_string())?;
-            Ok(Self { queue: receiver, shutdown: Some(shutdown), thread: Some(thread) })
+            Ok(Self::new(receiver, read_receiver, mode, Some(shutdown), Some(thread)))
+        }
+
+        fn new(
+            queue: mpsc::Receiver<Pending>,
+            reads: mpsc::Receiver<Read>,
+            mode: std::sync::Arc<std::sync::atomic::AtomicU32>,
+            shutdown: Option<oneshot::Sender<()>>,
+            thread: Option<thread::JoinHandle<()>>,
+        ) -> Self {
+            Self { queue, reads, waiting: Vec::new(), generation: Default::default(), mode, shutdown, thread }
         }
     }
     impl Drop for Ingress {
@@ -248,7 +397,12 @@ mod transport {
             });
             let mut headers = HeaderMap::new();
             headers.insert("content-type", "application/json".parse().unwrap());
-            let response = patch(State(Shared { queue, wake }), headers, Bytes::from_static(request)).await;
+            let response = patch(
+                State(Shared { queue, wake, published: Default::default(), reads: mpsc::sync_channel(1).0, mode: Default::default() }),
+                headers,
+                Bytes::from_static(request),
+            )
+            .await;
             assert_eq!(response, StatusCode::NO_CONTENT);
             host.join().unwrap();
         }
@@ -267,7 +421,13 @@ mod transport {
             });
             let mut headers = HeaderMap::new();
             headers.insert("content-type", "application/json".parse().unwrap());
-            let status = catalog(Shared { queue, wake }, headers, Bytes::from_static(body), replace).await;
+            let status = catalog(
+                Shared { queue, wake, published: Default::default(), reads: mpsc::sync_channel(1).0, mode: Default::default() },
+                headers,
+                Bytes::from_static(body),
+                replace,
+            )
+            .await;
             (host.join().unwrap(), status)
         }
         #[tokio::test]
@@ -314,7 +474,7 @@ mod transport {
                 (true, None, 1, UNSUPPORTED, &[][..]),
             ] {
                 let (queue, receiver) = mpsc::sync_channel(4);
-                let mut server = Ingress { queue: receiver, shutdown: None, thread: None };
+                let mut server = Ingress::new(receiver, mpsc::sync_channel(1).1, Default::default(), None, None);
                 let (reply, ack) = oneshot::channel();
                 queue.send(Pending::Patch { bodies: vec![Bytes::new(), Bytes::new()], replace, reply }).unwrap();
                 let mut host = Calls(Vec::new(), retracted);
@@ -323,6 +483,211 @@ mod transport {
                 assert_eq!(host.0, calls);
             }
         }
+        // Every instance listens now, so one nobody publishes to must not
+        // wake the UI; facts expire on the ticks once a producer has published.
+        #[cfg(unix)]
+        #[test]
+        fn the_ui_is_woken_only_once_a_producer_publishes() {
+            use std::os::unix::fs::DirBuilderExt;
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static WAKES: AtomicU32 = AtomicU32::new(0);
+            extern "C" fn wake() {
+                WAKES.fetch_add(1, Ordering::SeqCst);
+            }
+            // Short, as macOS's temporary directory leaves no room for a socket.
+            let dir = std::path::PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
+            std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+            let path = dir.join("socket");
+            let server = Ingress::start(path.clone(), wake, None).unwrap();
+            thread::sleep(Duration::from_millis(700));
+            assert_eq!(WAKES.load(Ordering::SeqCst), 0, "an idle endpoint woke the UI");
+            use std::io::Write;
+            let mut stream = std::os::unix::net::UnixStream::connect(&path).unwrap();
+            let body = br#"{"type":"metadata-patch"}"#;
+            write!(stream, "POST /v1/metadata/patch HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+            stream.write_all(body).unwrap();
+            // Nothing polls, so the request waits; its wake and then the ticks follow.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while WAKES.load(Ordering::SeqCst) < 3 {
+                assert!(std::time::Instant::now() < deadline, "{} wakes", WAKES.load(Ordering::SeqCst));
+                thread::sleep(Duration::from_millis(50));
+            }
+            drop(stream);
+            drop(server);
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        /// GET `target` over the socket at `path`, with extra headers;
+        /// the status and body.
+        #[cfg(unix)]
+        fn get(path: &std::path::Path, target: &str, headers: &str) -> (u16, String, Vec<u8>) {
+            use std::io::{Read as _, Write as _};
+            let mut stream = std::os::unix::net::UnixStream::connect(path).unwrap();
+            write!(stream, "GET {target} HTTP/1.1\r\nHost: x\r\n{headers}Connection: close\r\n\r\n").unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).unwrap();
+            let split = response.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+            let head = String::from_utf8_lossy(&response[..split]).to_string();
+            let status = head[9..12].parse().unwrap();
+            (status, head, response[split + 4..].to_vec())
+        }
+
+        // `since` waits for the tree to change, or gives 204 once `wait`
+        // passes; off serves none of it; CBOR when asked for.
+        #[cfg(unix)]
+        #[test]
+        fn reads_wait_for_a_change_or_time_out() {
+            use std::os::unix::fs::DirBuilderExt;
+            use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+            static NAME: AtomicU32 = AtomicU32::new(1);
+            static MODE: AtomicU32 = AtomicU32::new(crate::AUTOMATION_FULL);
+            extern "C" fn wake() {}
+            unsafe extern "C" fn observe(_: *mut c_void, _: u32, emit: AutomationEmit, out: *mut c_void) -> u32 {
+                let tree =
+                    format!(r#"[{{"id":"workspace/w","kind":"workspace","durable":true,"name":"n{}"}}]"#, NAME.load(Ordering::SeqCst));
+                emit(
+                    out,
+                    crate::AUTOMATION_WORKSPACES,
+                    Text { data: tree.as_ptr(), len: tree.len() },
+                    Text { data: std::ptr::null(), len: 0 },
+                );
+                1
+            }
+            let dir = std::path::PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
+            std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+            let path = dir.join("socket");
+            let server = Ingress::start(path.clone(), wake, None).unwrap();
+            // The UI: a frame every 20ms.
+            let stop = std::sync::Arc::new(AtomicBool::new(false));
+            let frames = {
+                let stop = stop.clone();
+                let server = Box::into_raw(Box::new(server)) as usize;
+                thread::spawn(move || {
+                    while !stop.load(Ordering::SeqCst) {
+                        let host = AutomationHost {
+                            mode: MODE.load(Ordering::SeqCst),
+                            terminal_text: 0,
+                            observe: Some(observe),
+                            context: std::ptr::null_mut(),
+                        };
+                        unsafe { wheelhouse_ingress_automation(server as *mut Ingress, &host) };
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    unsafe { drop(Box::from_raw(server as *mut Ingress)) };
+                })
+            };
+            // A read before the first frame waits for it.
+            let (status, _, body) = get(&path, "/v1/observed/semantic", "");
+            assert_eq!(status, 200);
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!((value["schema"].as_u64(), value["generation"].as_u64()), (Some(1), Some(1)));
+            assert_eq!(value["nodes"][0]["name"], "n1");
+            // No change within the wait: 204, after about the wait.
+            let started = std::time::Instant::now();
+            assert_eq!(get(&path, "/v1/observed/semantic?since=1&wait=300", "").0, 204);
+            assert!(started.elapsed() >= Duration::from_millis(300));
+            // A change while waiting answers at once with the new tree.
+            let changer = thread::spawn(|| {
+                thread::sleep(Duration::from_millis(200));
+                NAME.store(2, Ordering::SeqCst);
+            });
+            let started = std::time::Instant::now();
+            let (status, _, body) = get(&path, "/v1/observed/semantic?since=1&wait=10000", "");
+            assert_eq!(status, 200);
+            assert!(started.elapsed() < Duration::from_secs(5));
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!((value["generation"].as_u64(), value["nodes"][0]["name"].as_str()), (Some(2), Some("n2")));
+            changer.join().unwrap();
+            // An older generation answers at once.
+            assert_eq!(get(&path, "/v1/observed/semantic?since=1&wait=10000", "").0, 200);
+            // CBOR, the same value.
+            let (status, head, body) = get(&path, "/v1/observed/semantic", "Accept: application/cbor\r\n");
+            assert_eq!(status, 200);
+            assert!(head.contains("content-type: application/cbor"), "{head}");
+            assert_eq!(body, crate::automation::cbor(&value));
+            // Self needs a session.
+            assert_eq!(get(&path, "/v1/observed/self", "").0, 400);
+            assert_eq!(get(&path, "/v1/observed/self?session=s", "").0, 200);
+            // Off: 404, metadata routes unaffected.
+            MODE.store(crate::AUTOMATION_OFF, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(100));
+            assert_eq!(get(&path, "/v1/observed/semantic", "").0, 404);
+            assert_eq!(get(&path, "/v1/observed/self?session=s", "").0, 404);
+            assert_eq!(get(&path, "/v1/health", "").0, 204);
+            stop.store(true, Ordering::SeqCst);
+            frames.join().unwrap();
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+
+        // A read made before the first frame waits for it, and gets 404
+        // when that frame says automation is off.
+        #[test]
+        fn a_read_queued_before_automation_turns_off_gets_404() {
+            let (reads, receiver) = mpsc::sync_channel(4);
+            let mut server = Ingress::new(mpsc::sync_channel(1).1, receiver, Default::default(), None, None);
+            let (reply, response) = oneshot::channel();
+            let request = crate::automation::Request::parse(crate::automation::Route::Semantic, None, None).unwrap();
+            reads.send(Read { request, deadline: std::time::Instant::now(), claim: Default::default(), reply }).unwrap();
+            let host = AutomationHost { mode: crate::AUTOMATION_OFF, terminal_text: 0, observe: None, context: std::ptr::null_mut() };
+            unsafe { wheelhouse_ingress_automation(&mut server, &host) };
+            assert_eq!(response.blocking_recv().unwrap().status, 404);
+            assert_eq!(server.mode.load(std::sync::atomic::Ordering::SeqCst), crate::AUTOMATION_OFF);
+        }
+
+        // Reads waiting for a change are bounded; past the bound they get
+        // 503, and a cancelled one is dropped at the next frame.
+        #[test]
+        fn waiting_reads_are_bounded_and_cancelled_ones_dropped() {
+            unsafe extern "C" fn observe(_: *mut c_void, _: u32, emit: AutomationEmit, out: *mut c_void) -> u32 {
+                emit(out, crate::AUTOMATION_WORKSPACES, Text { data: b"[]".as_ptr(), len: 2 }, Text { data: std::ptr::null(), len: 0 });
+                1
+            }
+            let (reads, receiver) = mpsc::sync_channel(crate::automation::MAX_WAITING + 8);
+            let mut server = Ingress::new(mpsc::sync_channel(1).1, receiver, Default::default(), None, None);
+            let host =
+                AutomationHost { mode: crate::AUTOMATION_FULL, terminal_text: 0, observe: Some(observe), context: std::ptr::null_mut() };
+            let read = |reads: &mpsc::SyncSender<Read>| {
+                let (reply, response) = oneshot::channel();
+                let request =
+                    crate::automation::Request::parse(crate::automation::Route::Semantic, Some("since=1&wait=60000"), None).unwrap();
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                reads.send(Read { request, deadline, claim: Default::default(), reply }).unwrap();
+                response
+            };
+            // The first frame moves the generation to 1; these wait past it.
+            let mut responses: Vec<_> = (0..crate::automation::MAX_WAITING + 2).map(|_| read(&reads)).collect();
+            unsafe { wheelhouse_ingress_automation(&mut server, &host) };
+            assert_eq!(server.waiting.len(), crate::automation::MAX_WAITING);
+            for mut response in responses.drain(crate::automation::MAX_WAITING..) {
+                assert_eq!(response.try_recv().unwrap().status, 503);
+            }
+            // Half of the waiting clients go away.
+            responses.truncate(crate::automation::MAX_WAITING / 2);
+            unsafe { wheelhouse_ingress_automation(&mut server, &host) };
+            assert_eq!(server.waiting.len(), crate::automation::MAX_WAITING / 2);
+        }
+
+        // Exactly one side answers a read: once the UI claims it to answer,
+        // the handler's wait running out takes that answer rather than 204;
+        // once the handler has given up, the UI neither answers nor holds it.
+        #[test]
+        fn exactly_one_side_answers_a_read() {
+            // Unseen when the wait runs out: the handler waits for the UI.
+            let claim = Claim::default();
+            assert!(!claim.expire());
+            assert!(claim.answer());
+            // Being answered when the wait runs out: no 204.
+            let claim = Claim::default();
+            assert!(claim.wait());
+            assert!(claim.answer());
+            assert!(!claim.expire());
+            // Waiting when the wait runs out: 204, and the UI lets it go.
+            let claim = Claim::default();
+            assert!(claim.wait() && claim.wait());
+            assert!(claim.expire());
+            assert!(!claim.answer());
+            assert!(!claim.wait());
+        }
+
         #[derive(Default)]
         struct Host {
             reads: u32,
@@ -349,6 +714,7 @@ mod transport {
                     entity_id: empty(),
                     live_cwd: empty(),
                     cwd: Text { data: b"/repo".as_ptr(), len: 5 },
+                    view: empty(),
                 },
             );
             1
@@ -361,7 +727,7 @@ mod transport {
         #[test]
         fn failed_observation_is_shared_only_within_the_drain() {
             let (queue, receiver) = mpsc::sync_channel(64);
-            let mut server = Ingress { queue: receiver, shutdown: None, thread: None };
+            let mut server = Ingress::new(receiver, mpsc::sync_channel(1).1, Default::default(), None, None);
             let mut host = Host { fail: true, ..Host::default() };
             let reads: Vec<_> = (0..4).map(|_| read(&queue)).collect();
             unsafe {
@@ -382,7 +748,7 @@ mod transport {
         #[test]
         fn burst_reads_share_snapshot_but_patches_invalidate_it() {
             let (queue, receiver) = mpsc::sync_channel(64);
-            let mut server = Ingress { queue: receiver, shutdown: None, thread: None };
+            let mut server = Ingress::new(receiver, mpsc::sync_channel(1).1, Default::default(), None, None);
             let mut host = Host::default();
             let mut reads = Vec::new();
             drop(read(&queue)); // Cancelled reads do not call the observer.
@@ -471,6 +837,76 @@ pub unsafe extern "C" fn wheelhouse_ingress_start_recorded(
         Err("Local HTTP ingress is supported on Unix and Windows hosts".into())
     };
     boxed_or_error(result, error, capacity)
+}
+
+/// This instance's default Automation Endpoint address, `wheelhouse/<instance
+/// UUID>` under the runtime directory (address.rs), NUL-terminated in
+/// `address`. On Unix its private directory is made. Returns 1, or 0 with
+/// why NUL-terminated in `address` (cut to fit).
+///
+/// # Safety
+/// `address` must be writable for `capacity` bytes, or NULL with 0.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_default_address(address: *mut u8, capacity: usize) -> u32 {
+    #[cfg(any(unix, windows))]
+    let result = address::default_address().and_then(|path| path.into_os_string().into_string().map_err(|_| "address is not UTF-8".into()));
+    #[cfg(not(any(unix, windows)))]
+    let result: Result<String, String> = Err("Local HTTP ingress is supported on Unix and Windows hosts".into());
+    let (ok, text) = match result {
+        Ok(path) if path.len() < capacity => (1, path),
+        Ok(_) => (0, "address buffer too small".to_owned()),
+        Err(why) => (0, why),
+    };
+    copy_text(&text, address, capacity);
+    ok
+}
+
+/// Writes `address` (empty: there is none) to the file at `path`, replacing
+/// it whole (address.rs). Returns 1, or 0 with why NUL-terminated in `error`.
+///
+/// # Safety
+/// Text pointers must be valid UTF-8 for their lengths (NULL only for length
+/// zero); `error` writable for `capacity` bytes, or NULL with 0.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_write_address_file(path: Text, address: Text, error: *mut u8, capacity: usize) -> u32 {
+    let text = |t: &Text| -> Result<&str, String> {
+        if t.len == 0 {
+            return Ok("");
+        }
+        std::str::from_utf8(std::slice::from_raw_parts(t.data, t.len)).map_err(|e| e.to_string())
+    };
+    #[cfg(any(unix, windows))]
+    let result = text(&path).and_then(|path| {
+        if path.is_empty() {
+            return Err("address file path must not be empty".to_owned());
+        }
+        address::write_address_file(path.as_ref(), text(&address)?)
+    });
+    #[cfg(not(any(unix, windows)))]
+    let result: Result<(), String> = {
+        let _ = (path, address, text);
+        Err("Local HTTP ingress is supported on Unix and Windows hosts".into())
+    };
+    match result {
+        Ok(()) => 1,
+        Err(why) => {
+            copy_text(&why, error, capacity);
+            0
+        }
+    }
+}
+
+/// `text` NUL-terminated in `out`, cut at a character boundary to fit.
+unsafe fn copy_text(text: &str, out: *mut u8, capacity: usize) {
+    if out.is_null() || capacity == 0 {
+        return;
+    }
+    let mut end = text.len().min(capacity - 1);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    std::ptr::copy_nonoverlapping(text.as_ptr(), out, end);
+    *out.add(end) = 0;
 }
 
 /// The handle for `result`, or NULL with its message NUL-terminated in `error`.
@@ -601,14 +1037,7 @@ pub unsafe extern "C" fn wheelhouse_connector_state(connector: *const Connector,
     if !len.is_null() {
         *len = detail.len();
     }
-    if !text.is_null() && capacity > 0 {
-        let mut end = detail.len().min(capacity - 1);
-        while !detail.is_char_boundary(end) {
-            end -= 1;
-        }
-        std::ptr::copy_nonoverlapping(detail.as_ptr(), text, end);
-        *text.add(end) = 0;
-    }
+    copy_text(&detail, text, capacity);
     code
 }
 
@@ -718,7 +1147,8 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
                     std::str::from_utf8(std::slice::from_raw_parts(t.data, t.len)).map(Some)
                 }
             }
-            let (Ok(cwd), Ok(live_cwd), Ok(kind), Ok(id)) = (text(&r.cwd), text(&r.live_cwd), text(&r.entity_kind), text(&r.entity_id))
+            let (Ok(cwd), Ok(live_cwd), Ok(kind), Ok(id), Ok(view)) =
+                (text(&r.cwd), text(&r.live_cwd), text(&r.entity_kind), text(&r.entity_id), text(&r.view))
             else {
                 snapshot.valid = false;
                 return;
@@ -726,7 +1156,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
             if cwd.is_none() && live_cwd.is_none() {
                 return;
             }
-            snapshot.values.push(serde_json::json!({"workspace_id": r.workspace_id, "view_id": r.view_id,
+            snapshot.values.push(serde_json::json!({"workspace_id": r.workspace_id, "view_id": r.view_id, "view": view,
                 "entity_kind": kind, "entity_id": id, "cwd": cwd, "live_cwd": live_cwd}));
         }
         // Coalesce adjacent reads within this UI drain. A patch invalidates the
@@ -758,6 +1188,123 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
     }
     #[cfg(not(any(unix, windows)))]
     let _ = (server, apply, retract, observe, context);
+}
+
+/// Answer Automation Endpoint reads at a frame's end (automation.rs): the
+/// host's `automation` setting decides whether the routes are served; while
+/// a client waits or has read recently the tree is built and compared, so
+/// the generation moves when it changes; and each read past its `since` is
+/// answered from it. Nothing is built otherwise.
+///
+/// # Safety
+/// `server` must be NULL or a live handle, exclusively accessed by this
+/// call; `host` NULL or valid for the call. The observer must emit
+/// synchronously with valid UTF-8 buffers and must not unwind.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_automation(server: *mut Ingress, host: *const AutomationHost) {
+    #[cfg(any(unix, windows))]
+    if let (Some(server), Some(host)) = (server.as_mut(), host.as_ref()) {
+        automation_frame_end(server, host, automation::MAX_RESPONSE, std::time::Instant::now());
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = (server, host);
+}
+
+#[cfg(any(unix, windows))]
+unsafe fn automation_frame_end(server: &mut Ingress, host: &AutomationHost, limit: usize, now: std::time::Instant) {
+    use automation::Reply;
+    use std::sync::atomic::Ordering;
+    let mode = host.mode.min(AUTOMATION_FULL);
+    server.mode.store(mode, Ordering::Relaxed);
+    let mut reads: Vec<transport::Read> = std::mem::take(&mut server.waiting);
+    reads.extend(std::iter::from_fn(|| server.reads.try_recv().ok()));
+    reads.retain(|read| !read.reply.is_closed());
+    if mode == AUTOMATION_OFF {
+        for read in reads {
+            let _ = read.reply.send(Reply::status(404));
+        }
+        return;
+    }
+    if !server.generation.active(!reads.is_empty(), now) {
+        return;
+    }
+    let text = host.terminal_text != 0 && reads.iter().any(|read| read.request.terminal_text);
+    let Some(tree) = observe_tree(host, text) else {
+        for read in reads {
+            let _ = read.reply.send(Reply::status(503));
+        }
+        return;
+    };
+    let generation = server.generation.observe(&tree);
+    for read in reads {
+        let unchanged = read.request.since.is_some_and(|since| generation <= since);
+        if unchanged && now < read.deadline && server.waiting.len() < automation::MAX_WAITING {
+            // Unless its handler gave up as it came in.
+            if read.claim.wait() {
+                server.waiting.push(read);
+            }
+            continue;
+        }
+        if !read.claim.answer() {
+            continue;
+        }
+        let reply = match unchanged {
+            true if now < read.deadline => Reply::status(503),
+            true => Reply::status(204),
+            false => {
+                server.generation.read(now);
+                automation::respond(&read.request, &tree, generation, limit)
+            }
+        };
+        let _ = read.reply.send(reply);
+    }
+}
+
+/// The Semantic Tree the host emits, or `None` when it can't give one now.
+#[cfg(any(unix, windows))]
+unsafe fn observe_tree(host: &AutomationHost, text: bool) -> Option<Vec<serde_json::Value>> {
+    #[derive(Default)]
+    struct Collected {
+        workspaces: Vec<serde_json::Value>,
+        annotations: Vec<(String, serde_json::Map<String, serde_json::Value>)>,
+        valid: bool,
+    }
+    unsafe extern "C" fn emit(out: *mut c_void, kind: u32, a: Text, b: Text) {
+        let collected = &mut *(out as *mut Collected);
+        let read = |t: &Text| -> Option<&[u8]> {
+            match t.len {
+                0 => Some(&[]),
+                len if !t.data.is_null() => Some(std::slice::from_raw_parts(t.data, len)),
+                _ => None,
+            }
+        };
+        let ok = match (kind, read(&a), read(&b)) {
+            (AUTOMATION_WORKSPACES, Some(a), _) => match serde_json::from_slice(a) {
+                Ok(serde_json::Value::Array(nodes)) => {
+                    collected.workspaces.extend(nodes);
+                    true
+                }
+                _ => false,
+            },
+            (AUTOMATION_ANNOTATION, Some(a), Some(b)) => match (std::str::from_utf8(a), serde_json::from_slice(b)) {
+                (Ok(id), Ok(serde_json::Value::Object(extra))) => {
+                    collected.annotations.push((id.to_owned(), extra));
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        collected.valid &= ok;
+    }
+    let observe = host.observe?;
+    let mut collected = Collected { valid: true, ..Default::default() };
+    let flags = if text { AUTOMATION_TERMINAL_TEXT } else { 0 };
+    let ok = observe(host.context, flags, emit, &mut collected as *mut Collected as *mut c_void) == 1;
+    if ok && !collected.valid {
+        eprintln!("wheelhouse ingress: the Semantic Tree's observer emitted malformed JSON or text; answering 503");
+    }
+    (ok && collected.valid).then(|| automation::assemble(collected.workspaces, &collected.annotations))
 }
 
 /// One request's patches, between frames: a snapshot retracts the provider's

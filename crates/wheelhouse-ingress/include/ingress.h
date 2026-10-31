@@ -26,9 +26,11 @@ extern WheelhouseIngress *wheelhouse_ingress_start_recorded(const uint8_t *, siz
 extern void wheelhouse_ingress_poll(WheelhouseIngress *, uint32_t (*)(void *, const uint8_t *, size_t),
   uint32_t (*)(void *), void *);
 typedef struct { const uint8_t *data; size_t len; } WheelhouseIngressText;
+// view is the View's Automation ID (workspace/<uuid>/view/<slot key>), empty
+// for none; view_id is a session-local CFG_ID, deprecated for it.
 typedef struct {
   uint64_t workspace_id, view_id;
-  WheelhouseIngressText entity_kind, entity_id, cwd, live_cwd;
+  WheelhouseIngressText entity_kind, entity_id, cwd, live_cwd, view;
 } WheelhouseIngressWorkdir;
 typedef void (*WheelhouseIngressWorkdirEmit)(void *, const WheelhouseIngressWorkdir *);
 // observe runs on the UI thread and synchronously emits borrowed records.
@@ -40,7 +42,41 @@ typedef void (*WheelhouseIngressWorkdirEmit)(void *, const WheelhouseIngressWork
 extern void wheelhouse_ingress_poll_observed(WheelhouseIngress *,
   uint32_t (*)(void *, const uint8_t *, size_t), uint32_t (*)(void *),
   uint32_t (*)(void *, WheelhouseIngressWorkdirEmit, void *), void *);
+// The Automation Endpoint's reads (GET /v1/observed/semantic and
+// /v1/observed/self; docs/protocol/automation-endpoint.md), answered at a
+// frame's end by wheelhouse_ingress_automation with the host's automation
+// setting (mode: off serves none of them, 404). While a client waits or has
+// read in the last 10s, observe builds the Semantic Tree on the UI thread:
+// it emits, synchronously, WORKSPACES with a JSON array of workspace nodes
+// (wheelhouse_semantic_workspaces) and ANNOTATION with an Automation ID and
+// a JSON object whose props (merged one level deep) and state flags join
+// that node; then returns 1, or 0 when it can't now (503). flags has
+// TERMINAL_TEXT when a read asks for screens and terminal_text allows it.
+#define WHEELHOUSE_AUTOMATION_OFF 0u
+#define WHEELHOUSE_AUTOMATION_OBSERVE 1u
+#define WHEELHOUSE_AUTOMATION_FULL 2u
+#define WHEELHOUSE_AUTOMATION_WORKSPACES 1u
+#define WHEELHOUSE_AUTOMATION_ANNOTATION 2u
+#define WHEELHOUSE_AUTOMATION_TERMINAL_TEXT 1u
+typedef void (*WheelhouseIngressAutomationEmit)(void *out, uint32_t kind, WheelhouseIngressText a, WheelhouseIngressText b);
+typedef struct {
+  uint32_t mode, terminal_text;
+  uint32_t (*observe)(void *context, uint32_t flags, WheelhouseIngressAutomationEmit emit, void *out);
+  void *context;
+} WheelhouseIngressAutomationHost;
+extern void wheelhouse_ingress_automation(WheelhouseIngress *, const WheelhouseIngressAutomationHost *);
 extern void wheelhouse_ingress_stop(WheelhouseIngress *);
+// The Automation Endpoint's default address for this instance,
+// wheelhouse/<instance UUID> under the runtime directory (address.rs):
+// $XDG_RUNTIME_DIR/wheelhouse/<UUID>, else <temp>/wheelhouse-<uid>/<UUID>, its
+// private directory made; \\.\pipe\wheelhouse\<UUID> on Windows. Writes it
+// NUL-terminated and returns 1, or returns 0 with why in the buffer.
+extern uint32_t wheelhouse_ingress_default_address(uint8_t *address, size_t capacity);
+// Replaces the file at path with exactly address (empty: no endpoint), so a
+// launcher reading it never sees part of it. 1, or 0 with a NUL-terminated
+// error.
+extern uint32_t wheelhouse_ingress_write_address_file(WheelhouseIngressText path, WheelhouseIngressText address,
+  uint8_t *error, size_t capacity);
 extern uint64_t wheelhouse_ingress_now_ms(void);
 
 // A connector: a command supervised on a thread of its own (connector.rs).

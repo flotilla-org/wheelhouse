@@ -5,9 +5,13 @@ Flotilla's `pm connect` is one producer. The core owns metadata semantics.
 
 ## Endpoint and payload
 
-Wheelhouse listens on the endpoint configured by `--andamento_socket`: a Unix
-socket on Unix hosts or a local byte-mode named pipe (`\\.\pipe\<name>`) on Windows.
-Producers discover it through `WHEELHOUSE_SOCKET` or an explicit socket argument.
+Wheelhouse listens on the endpoint configured by `--andamento_socket` (or
+`--automation_socket`): a Unix socket on Unix hosts or a local byte-mode named
+pipe (`\\.\pipe\<name>`) on Windows. Without either, each instance listens at
+an address of its own under the runtime directory, as the
+[Automation Endpoint](automation-endpoint.md#discovery) describes; this is the
+same endpoint. Producers discover it through `WHEELHOUSE_SOCKET`, which
+Wheelhouse sets for its terminals, or an explicit socket argument.
 On Unix, the socket must live in a private directory (mode 0700); the listener
 uses mode 0600. Startup fails if the path already exists, and clean shutdown
 removes its own socket.

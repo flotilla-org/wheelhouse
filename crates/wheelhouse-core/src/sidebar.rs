@@ -1009,6 +1009,27 @@ impl Sidebar {
         Ok(chosen)
     }
 
+    /// Every registered workspace's Semantic Tree (automation.rs): its name,
+    /// Workspace Subject, panel tree as shown, and the current Views of its
+    /// Slots.
+    pub fn semantic_workspaces(&self) -> Vec<crate::automation::Node> {
+        self.workspaces
+            .iter()
+            .map(|(&id, entry)| {
+                let record = &entry.record;
+                let overlay = self.overlay(id).expect("a registered workspace");
+                let arrangement = record.arrangement_view(&planner(&self.state, record));
+                crate::automation::workspace_node(
+                    id,
+                    overlay.name.or(overlay.subject_name),
+                    record.subject(),
+                    &arrangement.doc,
+                    &record.slots.get().slots(),
+                )
+            })
+            .collect()
+    }
+
     /// A registered workspace's slots, in default placement order.
     pub fn slots(&self, workspace: WorkspaceId) -> Result<Vec<SlotInfo>, String> {
         Ok(self.workspace(workspace)?.slots.get().slots())
