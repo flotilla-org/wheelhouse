@@ -694,6 +694,27 @@ fn the_treemap_picks_the_best_breaks(tc: TestCase) {
     }
 }
 
+/// A one-tile group beside a hundred-tile one still gets tiles inside its
+/// rectangle: the margin never leaves it no room.
+#[test]
+fn a_tiny_group_beside_a_huge_one_fits() {
+    let mut entries = vec![entry("tree", vec![segment("project", entity("project", 0))], 1)];
+    for v in 0..100 {
+        entries.push(entry("tree", vec![segment("project", entity("project", 1)), segment("vessel", entity("vessel", v))], v + 2));
+    }
+    let groups = logical_layout(&entries, None, &BTreeSet::new()).groups;
+    assert_eq!(groups.iter().map(tile_count).collect::<Vec<_>>(), [1, 100]);
+    for aspect in [0.5, 1.6, 3.5] {
+        let region = SceneRect { x0: 0.0, y0: 0.0, x1: aspect, y1: 1.0 };
+        let blocks = grid::treemap(&groups, aspect, true, 2.0);
+        assert_eq!(blocks.len(), 2);
+        for block in &blocks {
+            assert!(block.t > 0.0 && block.t.is_finite(), "{block:?}");
+            assert!(region.contains(&block_rect(block, aspect)), "{block:?} is outside {region:?}");
+        }
+    }
+}
+
 /// A grid zoomed in on a tile too narrow to read pans both ways, as far as
 /// the scene goes; rows only pan down.
 #[test]
