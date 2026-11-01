@@ -9,7 +9,7 @@
 //! Every call that can fail is guarded by `run`. The plain reads, of a
 //! handle's generation and a delta's fields, can't panic and aren't guarded.
 use super::*;
-use wheelhouse_core::rich_text::{
+use wheelhouse_rich_text::{
     copy_block, Alert, Align, Anchor, Attr, Color, Delta, Detail, FindOptions, FindStatus, Format, Key, ListOp, Match, Metrics,
     NodeContent, Op, Part, Point, Position, RichText, SubscriptionId, Tree, View, Window, MATCH_LIMIT, NO_STRING,
 };

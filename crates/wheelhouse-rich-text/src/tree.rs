@@ -3,10 +3,11 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use wheelhouse_stream::list_ops;
+
 use super::ingest::{SourceInfo, Staged};
 use super::pages::{Pages, Source, TextRange, PAGE};
 use super::ring::{Ring, What};
-use crate::stream::list_ops;
 
 /// A markdown node's key is its parent's key and its ordinal among its
 /// siblings.

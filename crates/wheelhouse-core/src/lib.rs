@@ -28,7 +28,6 @@ pub mod presentation;
 pub mod profile;
 pub mod records;
 pub mod replay;
-pub mod rich_text;
 pub mod sidebar;
 pub mod sidebar_arrangement;
 pub mod slots;

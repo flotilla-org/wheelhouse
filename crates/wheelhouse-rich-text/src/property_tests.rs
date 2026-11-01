@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use hegel::generators as gs;
 use hegel::TestCase;
+use wheelhouse_stream::apply_list;
 
 use super::generate::{self, Choose};
 use super::heights::{Entry as Row, HeightIndex};
 use super::*;
-use crate::stream::apply_list;
 
 pub(crate) struct Draws<'a>(pub &'a TestCase);
 
