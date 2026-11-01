@@ -44,6 +44,23 @@ int main(void)
     { fprintf(stderr, "FAIL: changed %s\n", keep[i]); good = 0; }
   }
   good = uishell_prepare_terminal_environment() && good;
+  // An enclosing Wheelhouse's endpoint is replaced by this one's, or removed
+  // when this one has none, also when it was never set.
+  set_test_variable("WHEELHOUSE_SOCKET", "/outer/wheelhouse");
+  good = uishell_advertise_automation_endpoint("/inner/wheelhouse") && good;
+  char const *socket = getenv("WHEELHOUSE_SOCKET");
+  if(!socket || strcmp(socket, "/inner/wheelhouse"))
+  { fprintf(stderr, "FAIL: WHEELHOUSE_SOCKET is %s, not this instance's\n", socket ? socket : "unset"); good = 0; }
+  for(int pass = 0; pass < 2; pass++)
+  {
+    good = uishell_advertise_automation_endpoint(pass ? 0 : "") && good;
+    if(getenv("WHEELHOUSE_SOCKET") != 0) { fprintf(stderr, "FAIL: kept WHEELHOUSE_SOCKET without an endpoint\n"); good = 0; }
+#if defined(_WIN32)
+    SetLastError(ERROR_SUCCESS);
+    if(GetEnvironmentVariableA("WHEELHOUSE_SOCKET", 0, 0) != 0 || GetLastError() != ERROR_ENVVAR_NOT_FOUND)
+    { fprintf(stderr, "FAIL: native environment kept WHEELHOUSE_SOCKET\n"); good = 0; }
+#endif
+  }
   fprintf(stderr, "%s: terminal launch environment\n", good ? "PASS" : "FAIL");
   return !good;
 }

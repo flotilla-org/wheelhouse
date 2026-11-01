@@ -2,6 +2,8 @@
 use std::ffi::c_void;
 
 #[cfg(any(unix, windows))]
+mod address;
+#[cfg(any(unix, windows))]
 mod connector;
 #[cfg(unix)]
 mod quit;
@@ -43,8 +45,13 @@ mod transport {
         routing::{get, post},
         Router,
     };
-    use std::{path::PathBuf, sync::mpsc, thread, time::Duration};
-    use tokio::sync::oneshot;
+    use std::{
+        path::PathBuf,
+        sync::{mpsc, Arc},
+        thread,
+        time::Duration,
+    };
+    use tokio::sync::{oneshot, Notify};
 
     pub enum Pending {
         /// One request's patches, applied in one drain so no frame shows part
@@ -55,7 +62,7 @@ mod transport {
             reply: oneshot::Sender<u32>,
         },
         Workdirs {
-            reply: oneshot::Sender<Option<std::sync::Arc<serde_json::Value>>>,
+            reply: oneshot::Sender<Option<Arc<serde_json::Value>>>,
         },
     }
     pub struct Ingress {
@@ -67,6 +74,8 @@ mod transport {
     struct Shared {
         queue: mpsc::SyncSender<Pending>,
         wake: Wake,
+        /// Told when a patch first arrives; see `ticks` in start.
+        published: Arc<Notify>,
     }
 
     // Request outcomes from the UI thread's drain.
@@ -119,6 +128,7 @@ mod transport {
         if state.queue.try_send(Pending::Patch { bodies, replace, reply }).is_err() {
             return StatusCode::SERVICE_UNAVAILABLE;
         }
+        state.published.notify_one();
         (state.wake)();
         match tokio::time::timeout(Duration::from_secs(5), response).await {
             Ok(Ok(APPLIED)) => StatusCode::NO_CONTENT,
@@ -197,19 +207,23 @@ mod transport {
                     runtime.block_on(async move {
                         #[cfg(unix)]
                         let listener = tokio::net::UnixListener::from_std(listener).expect("registered Unix listener");
+                        let published = Arc::new(Notify::new());
                         let mut app = Router::new()
                             .route("/v1/health", get(|| async { StatusCode::NO_CONTENT }))
                             .route("/v1/metadata/patch", post(patch))
                             .route("/v1/metadata/snapshot", post(snapshot))
                             .route("/v1/observed/workdirs", get(workdirs))
-                            .with_state(Shared { queue, wake });
+                            .with_state(Shared { queue, wake, published: published.clone() });
                         if let Some((path, bytes, files)) = recording {
                             let recorder = crate::recording::Recorder::start(path, bytes, files);
                             app = app.layer(axum::middleware::from_fn_with_state(recorder, crate::recording::capture));
                         }
                         let app = app.layer(axum::middleware::from_fn(limit_body));
                         let server = axum::serve(listener, app);
+                        // Facts expire on the UI's ticks. Every instance listens,
+                        // so an endpoint nobody has published to stays idle.
                         let ticks = async {
+                            published.notified().await;
                             loop {
                                 tokio::time::sleep(Duration::from_millis(250)).await;
                                 wake();
@@ -248,7 +262,7 @@ mod transport {
             });
             let mut headers = HeaderMap::new();
             headers.insert("content-type", "application/json".parse().unwrap());
-            let response = patch(State(Shared { queue, wake }), headers, Bytes::from_static(request)).await;
+            let response = patch(State(Shared { queue, wake, published: Default::default() }), headers, Bytes::from_static(request)).await;
             assert_eq!(response, StatusCode::NO_CONTENT);
             host.join().unwrap();
         }
@@ -267,7 +281,7 @@ mod transport {
             });
             let mut headers = HeaderMap::new();
             headers.insert("content-type", "application/json".parse().unwrap());
-            let status = catalog(Shared { queue, wake }, headers, Bytes::from_static(body), replace).await;
+            let status = catalog(Shared { queue, wake, published: Default::default() }, headers, Bytes::from_static(body), replace).await;
             (host.join().unwrap(), status)
         }
         #[tokio::test]
@@ -323,6 +337,64 @@ mod transport {
                 assert_eq!(host.0, calls);
             }
         }
+        // Every instance listens now, so one nobody publishes to must not
+        // wake the UI; facts expire on the ticks once a producer has published.
+        #[cfg(unix)]
+        #[test]
+        fn the_ui_is_woken_only_once_a_producer_publishes() {
+            use std::{
+                fs,
+                io::Write,
+                os::unix::{fs::DirBuilderExt, net::UnixStream},
+                sync::atomic::{AtomicU32, Ordering},
+                time::Instant,
+            };
+            static WAKES: AtomicU32 = AtomicU32::new(0);
+            extern "C" fn wake() {
+                WAKES.fetch_add(1, Ordering::SeqCst);
+            }
+            // Short, as macOS's temporary directory leaves no room for a socket.
+            let dir = PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
+            fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+            let path = dir.join("socket");
+            let server = Ingress::start(path.clone(), wake, None).unwrap();
+            thread::sleep(Duration::from_millis(700));
+            assert_eq!(WAKES.load(Ordering::SeqCst), 0, "an idle endpoint woke the UI");
+            let mut stream = UnixStream::connect(&path).unwrap();
+            let body = br#"{"type":"metadata-patch"}"#;
+            write!(stream, "POST /v1/metadata/patch HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+            stream.write_all(body).unwrap();
+            // Nothing polls, so the request waits; its wake and then the ticks follow.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while WAKES.load(Ordering::SeqCst) < 3 {
+                assert!(Instant::now() < deadline, "{} wakes", WAKES.load(Ordering::SeqCst));
+                thread::sleep(Duration::from_millis(50));
+            }
+            drop(stream);
+            drop(server);
+            fs::remove_dir_all(&dir).unwrap();
+        }
+        // The default address's directory is only created private: a shared
+        // one, a link to one, or a file in its place is refused here.
+        #[cfg(unix)]
+        #[test]
+        fn a_socket_is_refused_a_parent_that_isnt_private() {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            extern "C" fn wake() {}
+            let root = PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
+            let shared = root.join("shared");
+            std::fs::create_dir_all(&shared).unwrap();
+            std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+            symlink(&shared, root.join("link")).unwrap();
+            std::fs::write(root.join("file"), "").unwrap();
+            for parent in ["shared", "link", "file"] {
+                let refused = Ingress::start(root.join(parent).join("socket"), wake, None).err();
+                assert!(refused.is_some_and(|why| why.contains("private")), "{parent}");
+            }
+            std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o700)).unwrap();
+            drop(Ingress::start(shared.join("socket"), wake, None).unwrap());
+            std::fs::remove_dir_all(&root).unwrap();
+        }
         #[derive(Default)]
         struct Host {
             reads: u32,
@@ -353,7 +425,7 @@ mod transport {
             );
             1
         }
-        fn read(queue: &mpsc::SyncSender<Pending>) -> oneshot::Receiver<Option<std::sync::Arc<serde_json::Value>>> {
+        fn read(queue: &mpsc::SyncSender<Pending>) -> oneshot::Receiver<Option<Arc<serde_json::Value>>> {
             let (reply, response) = oneshot::channel();
             assert!(queue.send(Pending::Workdirs { reply }).is_ok());
             response
@@ -471,6 +543,76 @@ pub unsafe extern "C" fn wheelhouse_ingress_start_recorded(
         Err("Local HTTP ingress is supported on Unix and Windows hosts".into())
     };
     boxed_or_error(result, error, capacity)
+}
+
+/// This instance's default Automation Endpoint address, `wheelhouse/<instance
+/// UUID>` under the runtime directory (address.rs), NUL-terminated in
+/// `address`. On Unix its private directory is made. Returns 1, or 0 with
+/// why NUL-terminated in `address` (cut to fit).
+///
+/// # Safety
+/// `address` must be writable for `capacity` bytes, or NULL with 0.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_default_address(address: *mut u8, capacity: usize) -> u32 {
+    #[cfg(any(unix, windows))]
+    let result = address::default_address().and_then(|path| path.into_os_string().into_string().map_err(|_| "address is not UTF-8".into()));
+    #[cfg(not(any(unix, windows)))]
+    let result: Result<String, String> = Err("Local HTTP ingress is supported on Unix and Windows hosts".into());
+    let (ok, text) = match result {
+        Ok(path) if path.len() < capacity => (1, path),
+        Ok(_) => (0, "address buffer too small".to_owned()),
+        Err(why) => (0, why),
+    };
+    copy_text(&text, address, capacity);
+    ok
+}
+
+/// Writes `address` (empty: there is none) to the file at `path`, replacing
+/// it whole (address.rs). Returns 1, or 0 with why NUL-terminated in `error`.
+///
+/// # Safety
+/// Text pointers must be valid UTF-8 for their lengths (NULL only for length
+/// zero); `error` writable for `capacity` bytes, or NULL with 0.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_write_address_file(path: Text, address: Text, error: *mut u8, capacity: usize) -> u32 {
+    let text = |t: &Text| -> Result<&str, String> {
+        if t.len == 0 {
+            return Ok("");
+        }
+        std::str::from_utf8(std::slice::from_raw_parts(t.data, t.len)).map_err(|e| e.to_string())
+    };
+    #[cfg(any(unix, windows))]
+    let result = text(&path).and_then(|path| {
+        if path.is_empty() {
+            return Err("address file path must not be empty".to_owned());
+        }
+        address::write_address_file(path.as_ref(), text(&address)?)
+    });
+    #[cfg(not(any(unix, windows)))]
+    let result: Result<(), String> = {
+        let _ = (path, address, text);
+        Err("Local HTTP ingress is supported on Unix and Windows hosts".into())
+    };
+    match result {
+        Ok(()) => 1,
+        Err(why) => {
+            copy_text(&why, error, capacity);
+            0
+        }
+    }
+}
+
+/// `text` NUL-terminated in `out`, cut at a character boundary to fit.
+unsafe fn copy_text(text: &str, out: *mut u8, capacity: usize) {
+    if out.is_null() || capacity == 0 {
+        return;
+    }
+    let mut end = text.len().min(capacity - 1);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    std::ptr::copy_nonoverlapping(text.as_ptr(), out, end);
+    *out.add(end) = 0;
 }
 
 /// The handle for `result`, or NULL with its message NUL-terminated in `error`.
@@ -601,14 +743,7 @@ pub unsafe extern "C" fn wheelhouse_connector_state(connector: *const Connector,
     if !len.is_null() {
         *len = detail.len();
     }
-    if !text.is_null() && capacity > 0 {
-        let mut end = detail.len().min(capacity - 1);
-        while !detail.is_char_boundary(end) {
-            end -= 1;
-        }
-        std::ptr::copy_nonoverlapping(detail.as_ptr(), text, end);
-        *text.add(end) = 0;
-    }
+    copy_text(&detail, text, capacity);
     code
 }
 

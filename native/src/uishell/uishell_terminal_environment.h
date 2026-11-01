@@ -46,4 +46,26 @@ uishell_prepare_terminal_environment(void)
   return good;
 }
 
+// WHEELHOUSE_SOCKET names this instance's Automation Endpoint (#554), so its
+// terminals reach it and never an enclosing Wheelhouse's: replaced with
+// `address`, or removed when there is none (empty or NULL; automation off).
+// Run at startup, before terminals open.
+static int
+uishell_advertise_automation_endpoint(char const *address)
+{
+  char const *name = "WHEELHOUSE_SOCKET";
+  int set = address != 0 && address[0] != 0;
+#if defined(_WIN32)
+  // The CRT keeps its own copy of the environment, which getenv reads; the
+  // process's, which CreateProcess hands terminals, is Win32's. Set both.
+  int good = _putenv_s(name, set ? address : "") == 0;
+  if(!SetEnvironmentVariableA(name, set ? address : 0) && (set || GetLastError() != ERROR_ENVVAR_NOT_FOUND))
+  { good = 0; }
+#else
+  int good = (set ? setenv(name, address, 1) : unsetenv(name)) == 0;
+#endif
+  if(!good) { fprintf(stderr, "Could not %s %s\n", set ? "set" : "clear", name); }
+  return good;
+}
+
 #endif
