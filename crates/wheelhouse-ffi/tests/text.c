@@ -143,7 +143,7 @@ int main(int argc, char **argv) {
     assert(font.kind == WH_TEXT_FONT_BYTES && font.bytes_id == 102 && font.face_index == 0 && font.data && font.data_len > 0);
     assert(wh_text_font(ctx, 1000, &font) == 0);
     const int16_t *coords;
-    assert(wh_text_coords(ctx, 0, &coords) == 0);
+    assert(wh_text_coords(ctx, 0, &coords) == 0 && !coords);
 
     /* The box sits on the first line, after "Wide ", scaled. */
     assert(layout.box_count == 1 && layout.boxes[0].id == 42 && layout.boxes[0].width == 20.0f && layout.boxes[0].line == 0);

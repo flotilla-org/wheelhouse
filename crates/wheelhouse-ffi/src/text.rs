@@ -298,14 +298,14 @@ pub unsafe extern "C" fn wh_text_font(ctx: *const WhText, font: u32, out: *mut W
 }
 
 /// Normalized coordinates, live as long as ctx (as wh_text_font's are).
-/// Returns how many.
+/// Returns how many; with none, out is NULL.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_coords(ctx: *const WhText, coords: u32, out: *mut *const i16) -> usize {
     // SAFETY: the caller's contract.
     let (Some(t), Some(out)) = (unsafe { ctx.as_ref() }, unsafe { out.as_mut() }) else { return 0 };
     // The context keeps every entry for its life, so the pointer outlives the Arc.
     let coords = t.ctx.coords(coords);
-    *out = coords.as_ptr();
+    *out = if coords.is_empty() { ptr::null() } else { coords.as_ptr() };
     coords.len()
 }
 
