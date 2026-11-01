@@ -224,9 +224,11 @@ class Thread:
             fields['mediaType'] = 'text/x-ansi'
         elif side.get('structuredPatch'):
             path = side.get('filePath', '')
-            fields = {'mediaType': 'text/x-diff',
-                      'structured': {'filePath': path, 'hunks': side['structuredPatch']}}
             text = unified_diff(path, side['structuredPatch'])
+            fields = {'mediaType': 'text/x-diff'}
+            # The hunks repeat the diff, so they go only when it fits under the cap.
+            if len(text.encode('utf-8')) <= OUTPUT_CAP:
+                fields['structured'] = {'filePath': path, 'hunks': side['structuredPatch']}
         elif image:
             fields['mediaType'], text = image
         text, truncated = self.spilled(text) or cap(text, f'{self.source.name}:{self.line}')
@@ -262,6 +264,8 @@ class Source:
         self.path, self.thread, self.offset, self.pending = path, thread, 0, b''
 
     def drain(self):
+        # Claude Code only appends; a transcript that shrinks or is replaced
+        # is not detected, and reading resumes at the old offset.
         with self.path.open('rb') as handle:
             handle.seek(self.offset)
             data = handle.read()
@@ -273,6 +277,7 @@ class Source:
             try:
                 record = json.loads(raw)
             except ValueError:
+                print(f'{self.path.name}:{self.thread.line}: skipping a line that is not JSON', file=sys.stderr)
                 continue
             if isinstance(record, dict):
                 self.thread.record(record)
@@ -297,12 +302,14 @@ class Translator:
         added = []
         for path in found:
             meta_path = path.with_name(path.stem + '.meta.json')
-            meta = {}
-            if meta_path.is_file():
-                try:
-                    meta = json.loads(meta_path.read_text())
-                except ValueError:
-                    meta = {}
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (OSError, ValueError):
+                meta = None
+            if not isinstance(meta, dict):
+                if not final:
+                    continue  # meta.json may not be written yet
+                meta = {}
             call_id = meta.get('toolUseId')
             parent_thread = self.call_threads.get(call_id)
             if call_id and parent_thread is None and not final:

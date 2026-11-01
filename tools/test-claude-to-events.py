@@ -95,6 +95,24 @@ class GoldenTests(unittest.TestCase):
         self.assertLessEqual(len(result['content'].encode()), translator.OUTPUT_CAP)
         self.assertEqual(result['content'], 'é' * (translator.OUTPUT_CAP // 2))
 
+    def test_an_edit_too_large_for_the_cap_drops_its_hunks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            hunk = {'oldStart': 1, 'oldLines': 0, 'newStart': 1, 'newLines': 1,
+                    'lines': ['+' + 'x' * translator.OUTPUT_CAP]}
+            records = [
+                {'type': 'user', 'uuid': 'p', 'message': {'role': 'user', 'content': 'go'}},
+                {'type': 'assistant', 'uuid': 'a', 'message': {'id': 'm', 'role': 'assistant', 'content': [
+                    {'type': 'tool_use', 'id': 'c', 'name': 'Write', 'input': {'file_path': 'big.txt'}}]}},
+                {'type': 'user', 'uuid': 'r', 'toolUseResult': {'filePath': 'big.txt', 'structuredPatch': [hunk]},
+                 'message': {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'c', 'content': 'ok'}]}},
+            ]
+            path.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
+            result = next(e for e in events(translate(path)) if e['type'] == 'ToolCallResult')
+        self.assertEqual(result['mediaType'], 'text/x-diff')
+        self.assertNotIn('structured', result)
+        self.assertEqual(result['truncated']['ref'], 'session.jsonl:3')
+
 
 class FollowTests(unittest.TestCase):
     def test_follow_appends_events_as_the_transcripts_grow(self):
@@ -139,6 +157,26 @@ class FollowTests(unittest.TestCase):
         self.assertEqual(
             {t: [e['seq'] for e in items] for t, items in by_thread(events(seen)).items()},
             {t: list(range(1, len(items) + 1)) for t, items in by_thread(events(seen)).items()})
+
+    def test_a_subagent_waits_for_its_meta_file_while_following(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp) / 'subagent'
+            shutil.copytree(FIXTURES / 'subagent', case)
+            main = transcript(case)
+            subagents = main.with_suffix('') / 'subagents'
+            metas = {p: p.read_bytes() for p in subagents.glob('*.meta.json')}
+            for meta in metas:
+                meta.unlink()
+            out = io.StringIO()
+            run = translator.Translator(main, out)
+            run.step()
+            self.assertEqual(set(by_thread(events(out.getvalue()))), {main.stem})
+            for meta, body in metas.items():
+                meta.write_bytes(body)
+            run.step()
+        starts = {e['threadId']: e.get('parent') for e in events(out.getvalue()) if e['type'] == 'RunStarted'}
+        self.assertEqual(starts['agent-a1b2c3'], {'threadId': main.stem, 'toolCallId': 'toolu_spawn'})
+        self.assertEqual(starts['agent-d4e5f6'], {'threadId': 'agent-a1b2c3', 'toolCallId': 'toolu_child_spawn'})
 
 
 def update():
