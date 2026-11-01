@@ -1,0 +1,15 @@
+[package]
+name = "conversation-events"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The conversation event contract (wheelhouse#548): AG-UI's event set in JSON Lines"
+
+# No Wheelhouse dependencies: the crate moves to Flotilla when it builds the
+# projector (#548, decision 8).
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+hegeltest = "0.49.2"

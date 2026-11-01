@@ -1,0 +1,14 @@
+{"type":"Hello","contract":1}
+{"type":"RunStarted","threadId":"t1","seq":1,"runId":"r1"}
+{"type":"TextMessageStart","threadId":"t1","seq":2,"messageId":"m1","role":"user"}
+{"type":"TextMessageContent","threadId":"t1","seq":3,"messageId":"m1","delta":"Fix the **failing** test"}
+{"type":"TextMessageEnd","threadId":"t1","seq":4,"messageId":"m1"}
+{"type":"ReasoningMessageStart","threadId":"t1","seq":5,"messageId":"rs1"}
+{"type":"ReasoningMessageContent","threadId":"t1","seq":6,"messageId":"rs1","delta":"Summary: check the parser first."}
+{"type":"ReasoningMessageEnd","threadId":"t1","seq":7,"messageId":"rs1"}
+{"type":"ToolCallStart","threadId":"t1","seq":8,"toolCallId":"c1","toolCallName":"Bash","title":"cargo test -p wheelhouse-text","kind":"shell"}
+{"type":"ToolCallArgs","threadId":"t1","seq":9,"toolCallId":"c1","delta":"{\"command\":\"cargo test -p wheelhouse-text\"}"}
+{"type":"ToolCallEnd","threadId":"t1","seq":10,"toolCallId":"c1"}
+{"type":"ToolCallResult","threadId":"t1","seq":11,"toolCallId":"c1","messageId":"m2","status":"failed","mediaType":"text/x-ansi","content":"\u001b[31merror\u001b[0m: 1 test failed\n","truncated":null}
+{"type":"Custom","threadId":"t1","seq":12,"name":"compaction","value":{}}
+{"type":"RunFinished","threadId":"t1","seq":13,"runId":"r1","outcome":"completed"}

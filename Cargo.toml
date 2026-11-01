@@ -14,6 +14,7 @@ members = [
     "crates/wheelhouse-tables",
     "crates/wheelhouse-wasm",
     "crates/wheelhouse-text",
+    "crates/conversation-events",
 ]
 # tools/scenario is a workspace of its own: it pins Flotilla's crates by git
 # revision, which normal builds shouldn't fetch.
@@ -44,6 +45,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 unicode-width = "0.1.14"
 
+conversation-events = { path = "crates/conversation-events" }
 wheelhouse-core = { path = "crates/wheelhouse-core" }
 wheelhouse-rich-text = { path = "crates/wheelhouse-rich-text" }
 wheelhouse-stream = { path = "crates/wheelhouse-stream" }
