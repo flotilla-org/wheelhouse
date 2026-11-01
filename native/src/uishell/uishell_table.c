@@ -430,6 +430,8 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   UI_ScrollRegionThumbAxis axes[Axis2_COUNT] = {0};
   for EachEnumVal(Axis2, axis)
   {
+    // The bar only compares activity for a change, so the count wraps: kept
+    // to 16 bits, every bump stays a distinct F32.
     axes[axis] = (UI_ScrollRegionThumbAxis){state->thumb[axis], (F32)(state->scrolled & 0xffff),
                                             &state->thumb[axis].fraction, sizeof(state->thumb[axis].fraction),
                                             state->scrolling[axis]};
@@ -495,7 +497,9 @@ WH_VIEW_UI_FUNCTION_DEF(table)
     if(bar.kind != UI_ScrollBarActionKind_Drag) { state->dragged_to[axis] = -1; }
     else if(bar.drag_moved)
     {
-      F64 fraction = Clamp(0.0, *(F64 *)bar.drag_origin + bar.drag_pct, 1.0);
+      F64 origin = 0;
+      if(bar.drag_origin != 0) { MemoryCopy(&origin, bar.drag_origin, sizeof(origin)); }
+      F64 fraction = Clamp(0.0, origin + bar.drag_pct, 1.0);
       if(fraction != state->dragged_to[axis])
       {
         state->dragged_to[axis] = fraction;
@@ -549,7 +553,7 @@ WH_VIEW_UI_FUNCTION_DEF(table)
     state->thumb[axis] = thumb;
     state->page_px[axis] = body;
     state->scrolling[axis] = r1f32(a->scrolling_start, a->scrolling_end);
-    state->content_px[axis] = thumb.size >= 1 || thumb.size <= 0 ? 0 : a->extent - body + (F32)(body/thumb.size);
+    state->content_px[axis] = !(thumb.size > 0 && thumb.size < 1) ? 0 : a->extent - body + (F32)(body/thumb.size);
   }
   ui_box_equip_custom_draw(box, uishell_table_draw, draw);
   // A drag can autoscroll and a pending view fills next frame; a live
