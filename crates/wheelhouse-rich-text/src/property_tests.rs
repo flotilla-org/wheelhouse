@@ -21,7 +21,7 @@ impl Choose for Draws<'_> {
 
 /// What a frontend keeps: a model built only from deltas.
 #[derive(Debug, Default)]
-struct Model {
+pub(crate) struct Model {
     nodes: HashMap<Key, NodeContent>,
     children: HashMap<Key, Vec<Key>>,
     generation: u64,
@@ -59,7 +59,7 @@ impl Model {
     }
 }
 
-fn fresh(rich: &mut RichText) -> Model {
+pub(crate) fn fresh(rich: &mut RichText) -> Model {
     let id = rich.subscribe();
     let mut model = Model::default();
     model.apply(&rich.poll(id).unwrap().expect("a first poll is a snapshot")).unwrap();
@@ -67,14 +67,14 @@ fn fresh(rich: &mut RichText) -> Model {
     model
 }
 
-fn follow(rich: &mut RichText, id: SubscriptionId, model: &mut Model) {
+pub(crate) fn follow(rich: &mut RichText, id: SubscriptionId, model: &mut Model) {
     if let Some(delta) = rich.poll(id).unwrap() {
         model.apply(&delta).unwrap();
     }
     assert!(!rich.changed_since(id).unwrap());
 }
 
-fn same(model: &Model, fresh: &Model) {
+pub(crate) fn same(model: &Model, fresh: &Model) {
     assert_eq!(model.nodes, fresh.nodes, "a followed model's nodes differ from a fresh snapshot's");
     assert_eq!(model.children, fresh.children, "a followed model's child lists differ from a fresh snapshot's");
 }

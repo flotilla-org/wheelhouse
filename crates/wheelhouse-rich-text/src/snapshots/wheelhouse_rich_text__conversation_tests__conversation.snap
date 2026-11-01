@@ -1,0 +1,45 @@
+---
+source: crates/wheelhouse-rich-text/src/conversation_tests.rs
+expression: outline(whole(CONVERSATION).doc())
+---
+Root
+  Turn Turn { role: User }
+    Paragraph "Why does ka lo fail? See the log." [Code "ka lo"] [Link(https://example.com/log) "the log"]
+  Section Section { section: Reasoning, name: "", title: "", tool: Other, status: Ok }
+    Paragraph "Summary: run the tests first." [Strong "tests"]
+  Turn Turn { role: Assistant }
+    Paragraph "I'll run the suite." [Emphasis "suite"]
+    Code Code { language: "rust" } "fn mi() {\n    ne();\n}"
+    Embed application/vnd.flotilla.table [None, None] 2 rows "a\tb\n1\t2"
+  Section Section { section: Tool, name: "Bash", title: "cargo test", tool: Shell, status: Failed }
+    Log "error: ka lo\n100%\nsee the docs" [Color(Palette(1)) "error"] [Strong "error"] [Color(Palette(208)) "ka"] [Background(Rgb(10, 20, 30)) "lo"] [Link(https://example.com/x) "the docs"]
+    Notice "Output truncated: 120000 bytes in all, the rest at session.jsonl:42"
+  Section Section { section: Tool, name: "Edit", title: "src/lib.rs", tool: Edit, status: Ok }
+    Code Code { language: "diff" } "--- a/src/lib.rs\n+++ b/src/lib.rs\n-ka\n+lo"
+  Section Section { section: Tool, name: "Read", title: "notes.md", tool: Read, status: Ok }
+    Heading 1 "Notes"
+    List List { ordered: false, start: 1, tight: true }
+      ListItem Item { task: None }
+        Paragraph "one"
+      ListItem Item { task: None }
+        Paragraph "two"
+  Section Section { section: Tool, name: "Screenshot", title: "", tool: Other, status: Ok }
+    Notice "A terminal showing two failures"
+  Section Section { section: Tool, name: "Task", title: "Find the flaky test", tool: Agent, status: Ok }
+    Section Section { section: Subagent, name: "", title: "t2", tool: Agent, status: Ok }
+      Turn Turn { role: User }
+        Paragraph "Find the flaky test."
+      Section Section { section: Tool, name: "Grep", title: "flaky", tool: Search, status: Ok }
+        Log "src/a.rs:3: flaky"
+    Paragraph "It's sa_do." [Code "sa_do"]
+  Section Section { section: Tool, name: "Bash", title: "cargo build", tool: Shell, status: Pending }
+  Divider "compaction"
+  Divider "interrupted"
+  Turn Turn { role: User }
+    Paragraph "Try again"
+  Turn Turn { role: Assistant }
+    Paragraph "Done: all green." [Emphasis "all"]
+  Section Section { section: Tool, name: "Bash", title: "cargo test", tool: Shell, status: Ok }
+    Log "ok"
+  Turn Turn { role: Assistant }
+    Paragraph "Still stream" [Strong "stream"]

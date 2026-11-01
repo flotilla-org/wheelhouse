@@ -415,10 +415,10 @@ typedef struct BinnacleGrid BinnacleGrid;
 // A footnote's definition: a Container with a label.
 #define WHEELHOUSE_RICH_KIND_FOOTNOTE 4
 
-// Reserved for transcripts.
+// A conversation's message.
 #define WHEELHOUSE_RICH_KIND_TURN 5
 
-// Reserved for transcripts.
+// A tool call, reasoning, or a subagent's thread.
 #define WHEELHOUSE_RICH_KIND_SECTION 6
 
 #define WHEELHOUSE_RICH_KIND_PARAGRAPH 16
@@ -432,6 +432,16 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 // A table's text is its cells as TSV.
 #define WHEELHOUSE_RICH_KIND_EMBED 20
+
+// Lines of tool output, with literal colours.
+#define WHEELHOUSE_RICH_KIND_LOG 21
+
+// A break in a conversation; its text says why (`compaction`, or a run's
+// outcome such as `interrupted`).
+#define WHEELHOUSE_RICH_KIND_DIVIDER 22
+
+// A note standing in for content, such as output that was cut.
+#define WHEELHOUSE_RICH_KIND_NOTICE 23
 
 #define WHEELHOUSE_RICH_ATTR_EMPHASIS 0
 
@@ -461,6 +471,26 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 // U+FFFC standing for an inline object: `value` indexes the objects.
 #define WHEELHOUSE_RICH_ATTR_INLINE_OBJECT 10
+
+// A background colour: `value` as WHEELHOUSE_RICH_ATTR_COLOR_PALETTE's.
+#define WHEELHOUSE_RICH_ATTR_BACKGROUND_PALETTE 11
+
+// `value` is 0xRRGGBB.
+#define WHEELHOUSE_RICH_ATTR_BACKGROUND_RGB 12
+
+#define WHEELHOUSE_RICH_ATTR_UNDERLINE 13
+
+// The theme's default colour as the text's: `value` is
+// WHEELHOUSE_RICH_DEFAULT_*. Inverse video swaps the defaults in.
+#define WHEELHOUSE_RICH_ATTR_COLOR_DEFAULT 14
+
+// The theme's default colour as the background: `value` is
+// WHEELHOUSE_RICH_DEFAULT_*.
+#define WHEELHOUSE_RICH_ATTR_BACKGROUND_DEFAULT 15
+
+#define WHEELHOUSE_RICH_DEFAULT_FOREGROUND 0
+
+#define WHEELHOUSE_RICH_DEFAULT_BACKGROUND 1
 
 #define WHEELHOUSE_RICH_TASK_NONE 0
 

@@ -1,0 +1,42 @@
+{"type":"Hello","contract":1}
+{"type":"RunStarted","threadId":"t1","seq":1,"runId":"r1"}
+{"type":"TextMessageStart","threadId":"t1","seq":2,"messageId":"m1","role":"user"}
+{"type":"TextMessageContent","threadId":"t1","seq":3,"messageId":"m1","delta":"Why does `ka lo` fail? See [the log][log].\n\n[log]: https://example.com/log"}
+{"type":"TextMessageEnd","threadId":"t1","seq":4,"messageId":"m1"}
+{"type":"ReasoningMessageStart","threadId":"t1","seq":5,"messageId":"rs1"}
+{"type":"ReasoningMessageContent","threadId":"t1","seq":6,"messageId":"rs1","delta":"Summary: run the **tests** "}
+{"type":"ReasoningMessageContent","threadId":"t1","seq":7,"messageId":"rs1","delta":"first."}
+{"type":"ReasoningMessageEnd","threadId":"t1","seq":8,"messageId":"rs1"}
+{"type":"TextMessageStart","threadId":"t1","seq":9,"messageId":"m2","role":"assistant"}
+{"type":"TextMessageContent","threadId":"t1","seq":10,"messageId":"m2","delta":"I'll run the *suite*.\n\n```rust\nfn mi() {\n"}
+{"type":"TextMessageContent","threadId":"t1","seq":11,"messageId":"m2","delta":"    ne();\n}\n```\n\n| a | b |\n"}
+{"type":"TextMessageContent","threadId":"t1","seq":12,"messageId":"m2","delta":"|---|---|\n| 1 | 2 |\n"}
+{"type":"TextMessageEnd","threadId":"t1","seq":13,"messageId":"m2"}
+{"type":"ToolCallStart","threadId":"t1","seq":14,"toolCallId":"c1","toolCallName":"Bash","title":"cargo test","kind":"shell","parentMessageId":"m2"}
+{"type":"ToolCallArgs","threadId":"t1","seq":15,"toolCallId":"c1","delta":"{\"command\":\"cargo test\"}"}
+{"type":"ToolCallEnd","threadId":"t1","seq":16,"toolCallId":"c1"}
+{"type":"ToolCallResult","threadId":"t1","seq":17,"toolCallId":"c1","messageId":"r1","status":"failed","mediaType":"text/x-ansi","content":"\u001b[1;31merror\u001b[0m: \u001b[38;5;208mka\u001b[39m \u001b[48;2;10;20;30mlo\u001b[0m\n10%\r50%\r100%\nsee \u001b]8;;https://example.com/x\u0007the docs\u001b]8;;\u0007\u001b[?25l\n","truncated":{"totalBytes":120000,"ref":"session.jsonl:42"}}
+{"type":"ToolCallStart","threadId":"t1","seq":18,"toolCallId":"c2","toolCallName":"Edit","title":"src/lib.rs","kind":"edit"}
+{"type":"ToolCallResult","threadId":"t1","seq":19,"toolCallId":"c2","messageId":"r2","status":"ok","mediaType":"text/x-diff","content":"","structured":{"patch":"--- a/src/lib.rs\n+++ b/src/lib.rs\n-ka\n+lo\n"}}
+{"type":"ToolCallStart","threadId":"t1","seq":20,"toolCallId":"c3","toolCallName":"Read","title":"notes.md","kind":"read"}
+{"type":"ToolCallResult","threadId":"t1","seq":21,"toolCallId":"c3","messageId":"r3","mediaType":"text/markdown","content":"# Notes\n\n- one\n- two\n"}
+{"type":"ToolCallStart","threadId":"t1","seq":22,"toolCallId":"c4","toolCallName":"Screenshot","kind":"other"}
+{"type":"ToolCallResult","threadId":"t1","seq":23,"toolCallId":"c4","messageId":"r4","mediaType":"image/png","content":"","structured":{"alt":"A terminal showing two failures"}}
+{"type":"ToolCallStart","threadId":"t1","seq":24,"toolCallId":"c9","toolCallName":"Task","title":"Find the flaky test","kind":"agent"}
+{"type":"RunStarted","threadId":"t2","seq":1,"runId":"r2","parent":{"threadId":"t1","toolCallId":"c9"}}
+{"type":"TextMessageStart","threadId":"t2","seq":2,"messageId":"s1","role":"user"}
+{"type":"TextMessageContent","threadId":"t2","seq":3,"messageId":"s1","delta":"Find the flaky test."}
+{"type":"TextMessageEnd","threadId":"t2","seq":4,"messageId":"s1"}
+{"type":"ToolCallStart","threadId":"t2","seq":5,"toolCallId":"d1","toolCallName":"Grep","title":"flaky","kind":"search"}
+{"type":"ToolCallResult","threadId":"t2","seq":6,"toolCallId":"d1","messageId":"q1","status":"ok","mediaType":"text/plain","content":"src/a.rs:3: flaky\n"}
+{"type":"RunFinished","threadId":"t2","seq":7,"runId":"r2","outcome":"completed"}
+{"type":"ToolCallResult","threadId":"t1","seq":25,"toolCallId":"c9","messageId":"r9","status":"ok","mediaType":"text/markdown","content":"It's `sa_do`."}
+{"type":"ToolCallStart","threadId":"t1","seq":26,"toolCallId":"c5","toolCallName":"Bash","title":"cargo build","kind":"shell"}
+{"type":"Custom","threadId":"t1","seq":27,"name":"compaction","value":{}}
+{"type":"Custom","threadId":"t1","seq":28,"name":"flotilla.nudge","value":{"text":"hello"}}
+{"type":"StepStarted","threadId":"t1","seq":29,"stepName":"unknown to us"}
+{"type":"RunFinished","threadId":"t1","seq":30,"runId":"r1","outcome":"interrupted"}
+{"type":"RunStarted","threadId":"t1","seq":31,"runId":"r3"}
+{"type":"MessagesSnapshot","threadId":"t1","seq":32,"messages":[{"id":"m3","role":"user","content":"Try again"},{"id":"m4","role":"assistant","content":"Done: *all* green.","toolCalls":[{"id":"c6","type":"function","function":{"name":"Bash","arguments":"{}"},"title":"cargo test","kind":"shell"}]},{"id":"r6","role":"tool","toolCallId":"c6","content":"ok\n","status":"ok","mediaType":"text/plain"}]}
+{"type":"TextMessageStart","threadId":"t1","seq":33,"messageId":"m5","role":"assistant"}
+{"type":"TextMessageContent","threadId":"t1","seq":34,"messageId":"m5","delta":"Still **stream"}

@@ -1936,10 +1936,12 @@ dependencies = [
 name = "wheelhouse-rich-text"
 version = "0.1.0"
 dependencies = [
+ "conversation-events",
  "hegeltest",
  "insta",
  "pulldown-cmark",
  "regex",
+ "serde_json",
  "wheelhouse-stream",
 ]
 
