@@ -52,6 +52,9 @@ struct LNX_WM_Window
   U64 counter_value;
   B32 sync_pending;
   Vec2S32 configured_size;
+  B32 maximized;
+  B32 minimized;
+  B32 fullscreen;
   B32 custom_border;
   F32 custom_title_bar_thickness;
   F32 custom_edge_thickness;

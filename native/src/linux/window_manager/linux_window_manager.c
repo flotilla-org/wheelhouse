@@ -19,25 +19,44 @@ lnx_window_from_x11window(Window window)
   return result;
 }
 
-internal B32
-lnx_wm_window_has_net_wm_state(LNX_WM_Window *w, Atom state)
+// The shell asks for these states every frame, so they are cached and
+// re-read only when the window manager changes the property.
+internal void
+lnx_wm_window_read_state(LNX_WM_Window *w, Atom property)
 {
-  B32 result = 0;
   Atom actual_type = 0;
   int actual_format = 0;
   unsigned long count = 0;
   unsigned long bytes_after = 0;
-  Atom *props = 0;
-  if(XGetWindowProperty(lnx_wm_state->display, w->window, lnx_wm_state->net_wm_state_atom, 0, 1024, 0, XA_ATOM,
-                        &actual_type, &actual_format, &count, &bytes_after, (U8 **)&props) == Success && props != 0)
+  if(property == lnx_wm_state->net_wm_state_atom)
   {
-    for(unsigned long idx = 0; idx < count; idx += 1)
+    B32 horz = 0, vert = 0;
+    w->fullscreen = 0;
+    Atom *props = 0;
+    if(XGetWindowProperty(lnx_wm_state->display, w->window, property, 0, 1024, 0, XA_ATOM,
+                          &actual_type, &actual_format, &count, &bytes_after, (U8 **)&props) == Success && props != 0)
     {
-      if(props[idx] == state) { result = 1; break; }
+      for(unsigned long idx = 0; idx < count; idx += 1)
+      {
+        horz |= props[idx] == lnx_wm_state->net_wm_state_maximized_horz_atom;
+        vert |= props[idx] == lnx_wm_state->net_wm_state_maximized_vert_atom;
+        w->fullscreen |= props[idx] == lnx_wm_state->net_wm_state_fullscreen_atom;
+      }
+      XFree(props);
     }
-    XFree(props);
+    w->maximized = horz && vert;
   }
-  return result;
+  else if(property == lnx_wm_state->wm_state_atom)
+  {
+    w->minimized = 0;
+    long *state = 0;
+    if(XGetWindowProperty(lnx_wm_state->display, w->window, property, 0, 2, 0, property,
+                          &actual_type, &actual_format, &count, &bytes_after, (U8 **)&state) == Success && state != 0)
+    {
+      w->minimized = (count > 0 && state[0] == IconicState);
+      XFree(state);
+    }
+  }
 }
 
 internal void
@@ -294,6 +313,7 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
                KeyPressMask|
                KeyReleaseMask|
                StructureNotifyMask|
+               PropertyChangeMask|
                FocusChangeMask);
   Atom protocols[] =
   {
@@ -389,7 +409,7 @@ wm_window_is_fullscreen(WM_Window handle)
 {
   if(wm_window_match(handle, wm_window_zero())) {return 0;}
   LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
-  return lnx_wm_window_has_net_wm_state(w, lnx_wm_state->net_wm_state_fullscreen_atom);
+  return w->fullscreen;
 }
 
 internal void
@@ -405,8 +425,7 @@ wm_window_is_maximized(WM_Window handle)
 {
   if(wm_window_match(handle, wm_window_zero())) {return 0;}
   LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
-  return (lnx_wm_window_has_net_wm_state(w, lnx_wm_state->net_wm_state_maximized_horz_atom) &&
-          lnx_wm_window_has_net_wm_state(w, lnx_wm_state->net_wm_state_maximized_vert_atom));
+  return w->maximized;
 }
 
 internal void
@@ -422,19 +441,7 @@ wm_window_is_minimized(WM_Window handle)
 {
   if(wm_window_match(handle, wm_window_zero())) {return 0;}
   LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
-  B32 result = 0;
-  Atom actual_type = 0;
-  int actual_format = 0;
-  unsigned long count = 0;
-  unsigned long bytes_after = 0;
-  long *state = 0;
-  if(XGetWindowProperty(lnx_wm_state->display, w->window, lnx_wm_state->wm_state_atom, 0, 2, 0, lnx_wm_state->wm_state_atom,
-                        &actual_type, &actual_format, &count, &bytes_after, (U8 **)&state) == Success && state != 0)
-  {
-    result = (count > 0 && state[0] == IconicState);
-    XFree(state);
-  }
-  return result;
+  return w->minimized;
 }
 
 internal void
@@ -959,6 +966,11 @@ wm_get_events(Arena *arena, B32 wait)
           WM_Event *e = wm_event_list_push_new(arena, &evts, WM_EventKind_Wakeup);
           e->window.u64[0] = (U64)window;
         }
+      }break;
+      case PropertyNotify:
+      {
+        LNX_WM_Window *window = lnx_window_from_x11window(evt.xproperty.window);
+        if(window != 0) { lnx_wm_window_read_state(window, evt.xproperty.atom); }
       }break;
       case Expose:
       {
