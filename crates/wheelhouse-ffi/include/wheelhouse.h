@@ -1346,7 +1346,8 @@ typedef struct {
   size_t group;
   // WHEELHOUSE_OVERVIEW_ROWS or _GRID.
   uint32_t view_mode;
-  // The camera is moving, or the layout changing: draw again next frame.
+  // The camera is moving, the layout changing, or something gliding or
+  // springing back: draw again next frame.
   uint32_t flying;
   // The current workspace is open and still: draw it as itself, not
   // through the scene.
@@ -1355,7 +1356,8 @@ typedef struct {
   // workspace or something to show); without one, draw the workspace as
   // itself.
   uint32_t has_view;
-  // The part of the scene the region shows.
+  // The part of the scene the region shows, with any stretch of the
+  // whole overview past its end.
   WheelhouseOverviewRect view;
   WheelhouseOverviewRect bounds;
   const WheelhouseOverviewTile *tiles;
@@ -1364,6 +1366,14 @@ typedef struct {
   size_t group_count;
   const WheelhouseOverviewRegion *regions;
   size_t region_count;
+  // A drag or glide past an end, already drawn into `view` (the whole
+  // overview) or into one row's tiles, labels, regions and bounds
+  // (`stretch_group`; WHEELHOUSE_NONE for the whole overview). In scene
+  // units, as the row's slide or the camera's centre moves; 0 when
+  // nothing is stretched.
+  size_t stretch_group;
+  double stretch_x;
+  double stretch_y;
 } WheelhouseOverviewFrame;
 
 // As ListOpView, with a Rich Text key: INSERT reads `at` and `key`, REMOVE
@@ -2582,6 +2592,34 @@ uint32_t wheelhouse_overview_set_grid(WheelhouseCore *h,
                                       double region_width,
                                       double now_ms,
                                       char **error_out);
+
+// A press on the overview: on row `group` (an index into the frame's
+// groups), or WHEELHOUSE_NONE between rows. It catches whatever is gliding
+// or springing back where it is drawn; `caught_out` (if not null) says
+// whether it did, so the press shouldn't also count as a click. A press
+// that moves is a drag (wheelhouse_overview_drag); every press ends with
+// wheelhouse_overview_release.
+uint32_t wheelhouse_overview_grab(WheelhouseCore *h,
+                                  size_t group,
+                                  double now_ms,
+                                  uint32_t *caught_out,
+                                  char **error_out);
+
+// The press has moved `dx` across and `dy` down since it began, as shares
+// of the region's width and height. Its first call picks what it drags:
+// mostly sideways over a row too long for the region slides the row, else
+// pans a grid wider than the region; mostly up or down pans an overview
+// taller than it. The host decides when a press has moved far enough to
+// be a drag.
+uint32_t wheelhouse_overview_drag(WheelhouseCore *h,
+                                  double dx,
+                                  double dy,
+                                  double now_ms,
+                                  char **error_out);
+
+// The press ends: what was dragged glides on, slowing, or springs back
+// from past its end; the frame is `flying` until it stops.
+uint32_t wheelhouse_overview_release(WheelhouseCore *h, double now_ms, char **error_out);
 
 // The region at `now_ms`. Its text is borrowed from the overview: free
 // it with wheelhouse_overview_frame_free before the next call that changes

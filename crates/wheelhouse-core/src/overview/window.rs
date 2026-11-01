@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::camera::{ease_out, Camera, CameraRig, FlightTiming};
 use super::logical::{logical_layout, GroupKey, LogicalLayout, OverviewEntry};
 use super::morph::{morph, MORPH_MS};
-use super::scene::{scene, GridPacking, Scene, SceneOptions, ViewMode};
+use super::scene::{scene, GridPacking, Scene, SceneOptions, SceneRect, ViewMode};
+use super::scroller::{Extent, Range, Scroller};
 use crate::{PlacementKey, WorkspaceId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -38,8 +39,47 @@ pub struct OverviewWindow {
     scene: Scene,
     rig: Option<CameraRig>,
     morph: Option<Morph>,
-    /// The smallest readable tile width the host last gave.
+    /// The smallest readable tile width the host last gave, and the
+    /// region's width in the same units.
     readable_width: f64,
+    region_width: f64,
+    /// A press on the overview not yet a drag: the row under it, if any,
+    /// and when it was pressed.
+    press: Option<(Option<usize>, f64)>,
+    /// The drag under way, and one let go of that is still gliding or
+    /// springing back (or was caught by the press).
+    held: Option<Gesture>,
+    loose: Option<Gesture>,
+}
+
+/// What a drag moves: a row's slide, or the overview's camera across or
+/// down.
+#[derive(Debug, Clone, PartialEq)]
+enum Target {
+    Slide(GroupKey),
+    Pan(Axis),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    Across,
+    Down,
+}
+
+#[derive(Debug, Clone)]
+struct Gesture {
+    target: Target,
+    scroller: Scroller,
+}
+
+/// A stretch past an end, drawn on top of the scene: a row's (`group`)
+/// across, or the whole overview's across or down. In scene units, as the
+/// row's slide or the camera's centre moves.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stretch {
+    pub group: Option<usize>,
+    pub x: f64,
+    pub y: f64,
 }
 
 /// A change of layout being drawn.
@@ -126,6 +166,10 @@ impl OverviewWindow {
             rig: None,
             morph: None,
             readable_width: 0.0,
+            region_width: 0.0,
+            press: None,
+            held: None,
+            loose: None,
         }
     }
 
@@ -161,6 +205,9 @@ impl OverviewWindow {
         let share = if region_width.is_finite() && region_width > 0.0 { (readable / region_width).clamp(0.0, 1.0) } else { 0.0 };
         let new_readable = readable != self.readable_width;
         self.readable_width = readable;
+        if region_width.is_finite() && region_width > 0.0 {
+            self.region_width = region_width;
+        }
         if self.options.packing != packing {
             self.options.packing = packing;
             self.options.readable_share = share;
@@ -238,6 +285,7 @@ impl OverviewWindow {
     }
 
     fn follow(&mut self, changed: bool, current: Option<WorkspaceId>, aspect: f64, now_ms: f64) {
+        self.advance_gestures(now_ms);
         let aspect = if aspect.is_finite() && aspect > 0.0 { aspect } else { self.options.aspect };
         let reshaped = aspect != self.options.aspect;
         let switched = current != self.current;
@@ -343,6 +391,7 @@ impl OverviewWindow {
     /// Rows: slide group `group`'s row by `by` scene units (negative shows
     /// what is further right), within its range.
     pub fn slide(&mut self, group: usize, by: f64, now_ms: f64) {
+        self.stop_glide();
         if let Some(group) = self.scene.groups.get(group) {
             let slide = (group.slide + by).clamp(group.slide_min, 0.0);
             self.slides.insert(group.key.clone(), slide);
@@ -355,6 +404,7 @@ impl OverviewWindow {
     /// scene units, as far as it goes: rows only scroll down, and a grid
     /// only when it is zoomed in.
     pub fn pan(&mut self, dx: f64, dy: f64) {
+        self.stop_glide();
         if self.mode != OverviewMode::Overview {
             return;
         }
@@ -482,6 +532,7 @@ impl OverviewWindow {
     }
 
     fn go(&mut self, now_ms: f64) {
+        self.stop_glide();
         let Some(target) = self.target() else { return };
         if let Some(m) = &mut self.morph {
             m.track = None;
@@ -499,5 +550,289 @@ impl OverviewWindow {
             Some(rig) => rig.jump_to(target),
             None => self.rig = Some(CameraRig::new(target)),
         }
+    }
+
+    // ---------- grabbing, dragging and gliding (wheelhouse#527) ----------
+
+    /// A press on the overview, on row `group` or between rows: it catches
+    /// whatever is gliding or springing back where it is drawn, and may
+    /// become a drag. True when it caught something, so the press isn't
+    /// also a click.
+    pub fn grab(&mut self, group: Option<usize>, now_ms: f64) -> bool {
+        if self.mode == OverviewMode::Workspace {
+            return false;
+        }
+        self.press = Some((group, now_ms));
+        self.held = None;
+        let Some(mut gesture) = self.loose.take() else { return false };
+        let caught = gesture.scroller.grab(self.extent(&gesture.target), now_ms);
+        self.loose = Some(gesture);
+        caught
+    }
+
+    /// The press has moved `dx` and `dy` since it began, as shares of the
+    /// region's width and height. Its first move picks what it drags:
+    /// mostly sideways over a row too long for the region slides the row,
+    /// else pans an overview wider than the region; mostly up or down pans
+    /// one taller than it. What it drags follows, stretching past its ends.
+    pub fn drag(&mut self, dx: f64, dy: f64, now_ms: f64) {
+        let (dx, dy) = (if dx.is_finite() { dx } else { 0.0 }, if dy.is_finite() { dy } else { 0.0 });
+        if self.held.is_none() {
+            let Some((group, pressed_ms)) = self.press.take() else { return };
+            let Some(target) = self.drag_target(group, dx, dy) else {
+                // Nothing to drag that way: the rest of the press does nothing.
+                self.release_loose(now_ms);
+                return;
+            };
+            self.held = Some(match self.loose.take() {
+                Some(gesture) if gesture.target == target && gesture.scroller.held() => gesture,
+                other => {
+                    self.loose = other;
+                    self.release_loose(now_ms);
+                    // Held since the press, so the first move has a speed.
+                    let mut scroller = Scroller::at(self.place(&target).unwrap_or(0.0));
+                    scroller.grab(self.extent(&target), pressed_ms);
+                    Gesture { target, scroller }
+                }
+            });
+        }
+        let Some(mut gesture) = self.held.take() else { return };
+        let Some(view) = self.camera(now_ms).map(|c| c.view(self.options.aspect)) else { return };
+        // The content follows the hand: a row moves with it, and the camera
+        // the other way.
+        let by = match gesture.target {
+            Target::Slide(_) => dx * view.width(),
+            Target::Pan(Axis::Across) => -dx * view.width(),
+            Target::Pan(Axis::Down) => -dy * view.height(),
+        };
+        match self.range(&gesture.target) {
+            Some(range) => {
+                let extent = self.extent(&gesture.target);
+                gesture.scroller.drag(by, range, extent, now_ms);
+                self.put(&gesture.target, gesture.scroller.place(), now_ms);
+                self.held = Some(gesture);
+            }
+            // What it dragged has gone.
+            None => self.held = None,
+        }
+    }
+
+    /// The press ends: what was dragged glides on at the drag's speed, or
+    /// springs back from past its end.
+    pub fn release(&mut self, now_ms: f64) {
+        self.press = None;
+        if let Some(gesture) = self.held.take() {
+            self.release_loose(now_ms);
+            self.loose = Some(gesture);
+        }
+        if let Some(gesture) = &mut self.loose {
+            gesture.scroller.release(self.motion, now_ms);
+        }
+        self.settle_loose();
+    }
+
+    /// Something is gliding or springing back: the host draws again next
+    /// frame.
+    pub fn moving(&self) -> bool {
+        self.loose.as_ref().is_some_and(|g| g.scroller.moving())
+    }
+
+    /// The stretch past an end being drawn, if any.
+    pub fn stretch(&self) -> Option<Stretch> {
+        let gesture = self.held.as_ref().or(self.loose.as_ref())?;
+        let over = gesture.scroller.over();
+        if over == 0.0 || self.mode == OverviewMode::Workspace {
+            return None;
+        }
+        Some(match &gesture.target {
+            Target::Slide(key) => Stretch { group: Some(self.scene.groups.iter().position(|g| &g.key == key)?), x: over, y: 0.0 },
+            Target::Pan(Axis::Across) => Stretch { group: None, x: over, y: 0.0 },
+            Target::Pan(Axis::Down) => Stretch { group: None, x: 0.0, y: over },
+        })
+    }
+
+    /// The scene as drawn at `now_ms`: part way through a change of layout,
+    /// with a row stretched past its end.
+    pub fn drawn_scene(&self, now_ms: f64) -> Cow<'_, Scene> {
+        let scene = self.scene_at(now_ms);
+        let Some(Stretch { group: Some(group), x, .. }) = self.stretch() else { return scene };
+        let mut scene = scene.into_owned();
+        let shift = |r: &mut SceneRect| {
+            r.x0 += x;
+            r.x1 += x;
+        };
+        for tile in scene.tiles.iter_mut().filter(|t| t.group == group) {
+            shift(&mut tile.rect);
+            shift(&mut tile.label);
+        }
+        if let Some(g) = scene.groups.get_mut(group) {
+            shift(&mut g.bounds);
+            g.regions.iter_mut().flatten().for_each(shift);
+        }
+        Cow::Owned(scene)
+    }
+
+    /// The camera as drawn at `now_ms`: with the overview stretched past
+    /// its end.
+    pub fn drawn_camera(&self, now_ms: f64) -> Option<Camera> {
+        let camera = self.camera(now_ms)?;
+        Some(match self.stretch() {
+            Some(Stretch { group: None, x, y }) => Camera { cx: camera.cx + x, cy: camera.cy + y, ..camera },
+            _ => camera,
+        })
+    }
+
+    /// What a drag that has moved `dx`, `dy` from a press on `group` moves.
+    fn drag_target(&self, group: Option<usize>, dx: f64, dy: f64) -> Option<Target> {
+        let slides = group.and_then(|g| self.scene.groups.get(g)).filter(|g| self.options.mode == ViewMode::Rows && g.slide_min < 0.0);
+        // Compared as drawn: a share of the width is `aspect` times as long
+        // as the same share of the height.
+        if (dx * self.options.aspect).abs() >= dy.abs() {
+            match slides {
+                Some(g) => Some(Target::Slide(g.key.clone())),
+                None => self.pans(Axis::Across).then_some(Target::Pan(Axis::Across)),
+            }
+        } else {
+            self.pans(Axis::Down).then_some(Target::Pan(Axis::Down))
+        }
+    }
+
+    /// The overview is larger than the region that way, so it pans: down
+    /// when it is taller; across only for a grid wider than it (rows slide
+    /// instead).
+    fn pans(&self, axis: Axis) -> bool {
+        if self.mode != OverviewMode::Overview || (axis == Axis::Across && self.options.mode != ViewMode::Grid) {
+            return false;
+        }
+        self.range(&Target::Pan(axis)).is_some_and(|r| r.hi - r.lo > 1e-9)
+    }
+
+    /// Where a target is now: the row's slide, or the overview camera's
+    /// centre.
+    fn place(&self, target: &Target) -> Option<f64> {
+        match target {
+            Target::Slide(key) => self.scene.groups.iter().find(|g| &g.key == key).map(|g| g.slide),
+            Target::Pan(axis) => {
+                let camera = self.scene.overview_camera(self.current, self.pan);
+                Some(if *axis == Axis::Across { camera.cx } else { camera.cy })
+            }
+        }
+    }
+
+    /// The ends a target keeps to: a row from its slide_min to 0, the
+    /// overview's camera within the scene. None once it can't move.
+    fn range(&self, target: &Target) -> Option<Range> {
+        match target {
+            Target::Slide(key) => self.scene.groups.iter().find(|g| &g.key == key).map(|g| Range::new(g.slide_min, 0.0)),
+            Target::Pan(axis) => {
+                if self.mode != OverviewMode::Overview || self.scene.tiles.is_empty() {
+                    return None;
+                }
+                let view = self.scene.overview_camera(self.current, self.pan).view(self.options.aspect);
+                let bounds = self.scene.bounds;
+                let (lo, hi, half) = match axis {
+                    Axis::Across => (bounds.x0, bounds.x1, view.width() / 2.0),
+                    Axis::Down => (bounds.y0, bounds.y1, view.height() / 2.0),
+                };
+                Some(Range::new(lo + half, (hi - half).max(lo + half)))
+            }
+        }
+    }
+
+    /// How long the region is along a target's axis, in scene units, and
+    /// how long a point is: the host's region width, in points, when it has
+    /// given one.
+    /// From the camera's destination, not the camera as drawn: a stretch and
+    /// a spring are solved in units of the extent, so it holds still through
+    /// a flight. A drag's distance comes from the camera as drawn, so the
+    /// content follows the hand; the two differ only during a flight.
+    fn extent(&self, target: &Target) -> Extent {
+        let view = self.camera_view();
+        let points_across = if self.region_width > 0.0 { self.region_width } else { 1000.0 };
+        let (length, points) = match target {
+            Target::Pan(Axis::Down) => (view.height(), points_across / self.options.aspect),
+            _ => (view.width(), points_across),
+        };
+        let length = if length.is_finite() && length > 0.0 { length } else { 1.0 };
+        Extent { length, point: length / points.max(1.0) }
+    }
+
+    fn camera_view(&self) -> SceneRect {
+        let camera = self.rig.map(|rig| rig.destination()).unwrap_or(Camera { cx: 0.0, cy: 0.0, w: 1.0 });
+        camera.view(self.options.aspect)
+    }
+
+    /// Move a target to `place`, as a drag or glide does: a row's slide, or
+    /// the overview scrolled there, without stopping the glide doing it.
+    fn put(&mut self, target: &Target, place: f64, now_ms: f64) {
+        match target {
+            Target::Slide(key) => {
+                if self.slides.get(key) != Some(&place) {
+                    self.slides.insert(key.clone(), place);
+                    self.rebuild();
+                    self.follow_scene(now_ms, false);
+                }
+            }
+            Target::Pan(axis) => {
+                let camera = self.scene.overview_camera(self.current, self.pan);
+                let centre = match axis {
+                    Axis::Across => (place, camera.cy),
+                    Axis::Down => (camera.cx, place),
+                };
+                let to = self.scene.overview_camera(self.current, Some(centre));
+                if to != camera {
+                    self.pan = Some((to.cx, to.cy));
+                    self.cut();
+                }
+            }
+        }
+    }
+
+    /// Each frame: what was let go of glides or springs on, following its
+    /// target as the scene moves under it; it stops once its target is
+    /// gone or the overview closes.
+    fn advance_gestures(&mut self, now_ms: f64) {
+        if self.mode == OverviewMode::Workspace {
+            self.press = None;
+            self.held = None;
+            self.loose = None;
+            return;
+        }
+        let Some(mut gesture) = self.loose.take() else { return };
+        if gesture.scroller.held() {
+            self.loose = Some(gesture);
+            return;
+        }
+        // What it moved has gone: the gesture stops, and leaves nothing to put.
+        let Some(range) = self.range(&gesture.target) else { return };
+        let extent = self.extent(&gesture.target);
+        gesture.scroller.advance(range, extent, now_ms);
+        self.put(&gesture.target, gesture.scroller.place(), now_ms);
+        self.loose = Some(gesture);
+        self.settle_loose();
+    }
+
+    /// Let go of a gesture caught by a press that turned into something
+    /// else: a stretch springs back from where it was caught.
+    fn release_loose(&mut self, now_ms: f64) {
+        if let Some(gesture) = &mut self.loose {
+            gesture.scroller.release(self.motion, now_ms);
+        }
+        self.settle_loose();
+    }
+
+    fn settle_loose(&mut self) {
+        if self.loose.as_ref().is_some_and(|g| !g.scroller.moving() && !g.scroller.held()) {
+            self.loose = None;
+        }
+    }
+
+    /// A wheel's scroll, a pick or a flight stops a glide where it is; a
+    /// stretch still springs back.
+    fn stop_glide(&mut self) {
+        if let Some(gesture) = &mut self.loose {
+            gesture.scroller.stop_glide();
+        }
+        self.settle_loose();
     }
 }
