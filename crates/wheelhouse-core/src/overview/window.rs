@@ -742,6 +742,10 @@ impl OverviewWindow {
     /// How long the region is along a target's axis, in scene units, and
     /// how long a point is: the host's region width, in points, when it has
     /// given one.
+    /// From the camera's destination, not the camera as drawn: a stretch and
+    /// a spring are solved in units of the extent, so it holds still through
+    /// a flight. A drag's distance comes from the camera as drawn, so the
+    /// content follows the hand; the two differ only during a flight.
     fn extent(&self, target: &Target) -> Extent {
         let view = self.camera_view();
         let points_across = if self.region_width > 0.0 { self.region_width } else { 1000.0 };
@@ -799,6 +803,7 @@ impl OverviewWindow {
             self.loose = Some(gesture);
             return;
         }
+        // What it moved has gone: the gesture stops, and leaves nothing to put.
         let Some(range) = self.range(&gesture.target) else { return };
         let extent = self.extent(&gesture.target);
         gesture.scroller.advance(range, extent, now_ms);

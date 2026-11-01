@@ -181,6 +181,7 @@ impl Scroller {
     /// Move on to `now_ms`: a glide slows, meeting an end carries it past
     /// into a spring, and a spring settles. `range` may have moved under it.
     pub fn advance(&mut self, range: Range, extent: Extent, now_ms: f64) {
+        debug_assert!(extent.length > 0.0 && extent.point > 0.0, "{extent:?}");
         if !self.held() {
             self.place = range.clamp(self.place);
         }
