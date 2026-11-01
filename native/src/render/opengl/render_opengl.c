@@ -58,10 +58,22 @@ internal R_OGL_FormatInfo
 r_ogl_format_info_from_tex2dformat(R_Tex2DFormat fmt)
 {
   R_OGL_FormatInfo result;
-  result.internal_format = GL_RGBA;
+  result.internal_format = GL_RGBA8;
   result.format = GL_RGBA;
   result.base_type = GL_UNSIGNED_BYTE;
-  // TODO(rjf)
+  // Matches D3D11's DXGI formats (render_d3d11.c), so data and channel maps mean the same on every backend.
+  switch(fmt)
+  {
+    default:{}break;
+    case R_Tex2DFormat_R8:    {result.internal_format = GL_R8;      result.format = GL_RED;  result.base_type = GL_UNSIGNED_BYTE;}break;
+    case R_Tex2DFormat_RG8:   {result.internal_format = GL_RG8;     result.format = GL_RG;   result.base_type = GL_UNSIGNED_BYTE;}break;
+    case R_Tex2DFormat_BGRA8: {result.internal_format = GL_RGBA8;   result.format = GL_BGRA; result.base_type = GL_UNSIGNED_BYTE;}break;
+    case R_Tex2DFormat_R16:   {result.internal_format = GL_R16;     result.format = GL_RED;  result.base_type = GL_UNSIGNED_SHORT;}break;
+    case R_Tex2DFormat_RGBA16:{result.internal_format = GL_RGBA16;  result.format = GL_RGBA; result.base_type = GL_UNSIGNED_SHORT;}break;
+    case R_Tex2DFormat_R32:   {result.internal_format = GL_R32F;    result.format = GL_RED;  result.base_type = GL_FLOAT;}break;
+    case R_Tex2DFormat_RG32:  {result.internal_format = GL_RG32F;   result.format = GL_RG;   result.base_type = GL_FLOAT;}break;
+    case R_Tex2DFormat_RGBA32:{result.internal_format = GL_RGBA32F; result.format = GL_RGBA; result.base_type = GL_FLOAT;}break;
+  }
   return result;
 }
 
@@ -184,6 +196,9 @@ r_init(CmdLine *cmdln)
       glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
     
+    // Tightly packed rows: R8 glyph pages fill rects of any width (#605).
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
     // rjf: white texture
     {
       glGenTextures(1, &r_ogl_state->white_texture);
