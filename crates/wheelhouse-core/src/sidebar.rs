@@ -14,6 +14,7 @@ use crate::{
     automation::{workspace_node, Node},
     detail::DetailCard,
     host::PaneObservation,
+    lifecycle::{self, Closed, EffectiveHome, Groups, Home, HomeEdit, Life},
     managed::{ManagedContent, SlotPlan},
     metadata::EntityId,
     presentation::{system, PlacementNode, PresentationState, SurfaceSnapshot, UNPLACED_WORKSPACES_SECTION},
@@ -68,6 +69,27 @@ pub enum Intent {
     ToggleDisplayVariable {
         name: String,
     },
+    /// Open a new subjectless workspace with the Workspace ID the host made,
+    /// named `name`, else the lowest "Workspace N" not in use, living in
+    /// `home` (a group that is the default group is no home of its own).
+    NewWorkspace {
+        workspace: WorkspaceId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default)]
+        home: Home,
+    },
+    /// Close an open workspace: keep it when `keep`, it has a subject and the
+    /// subject hasn't ended (lifecycle::close_outcome), else destroy it.
+    CloseWorkspace {
+        workspace: WorkspaceId,
+        keep: bool,
+    },
+    /// Re-home a local workspace, as a row's drop does.
+    SetWorkspaceHome {
+        workspace: WorkspaceId,
+        edit: HomeEdit,
+    },
 }
 
 /// The name [`Sidebar::dispatch`]'s callers use; it goes with `dispatch`.
@@ -83,6 +105,9 @@ impl Intent {
             Self::TogglePlacement { .. } => "toggle-placement",
             Self::SetVariable { .. } => "set-variable",
             Self::ToggleDisplayVariable { .. } => "toggle-display-variable",
+            Self::NewWorkspace { .. } => "new-workspace",
+            Self::CloseWorkspace { .. } => "close-workspace",
+            Self::SetWorkspaceHome { .. } => "set-workspace-home",
         }
     }
 }
@@ -195,6 +220,26 @@ pub enum HostEffect {
         /// applied target so the first reconciliation sees current content.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         primary_target: Option<String>,
+        /// The subject's Kept Workspace, which the host reopens (and
+        /// completes with) rather than making a new one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kept: Option<WorkspaceId>,
+    },
+    /// Make a workspace with this ID and name, with default panels, and show
+    /// it.
+    OpenWorkspace {
+        workspace: WorkspaceId,
+        name: String,
+    },
+    /// Close a workspace: keep its layout when `kept` (the host's
+    /// `detached_workspace`), else discard it.
+    CloseWorkspace {
+        workspace: WorkspaceId,
+        kept: bool,
+    },
+    /// Show this workspace, after a close.
+    ShowWorkspace {
+        workspace: WorkspaceId,
     },
     /// No materialization is available; the frontend can show its inspector.
     Inspect {
@@ -247,6 +292,8 @@ pub struct Sidebar {
     /// When workspace content outside the records last changed: managed
     /// content's resolutions, or a workspace forgotten.
     content_changed: u64,
+    /// When a workspace was last forgotten, for [`life_generation`](Self::life_generation).
+    lives_changed: u64,
     /// The Dashboard's sidebar arrangement, and what its last
     /// reconciliation did.
     sidebar_arrangement: Versioned<SidebarArrangement>,
@@ -620,8 +667,126 @@ impl Sidebar {
         let forgotten = self.workspaces.remove(&id).is_some();
         if forgotten {
             self.content_changed = self.clock.tick();
+            self.lives_changed = self.content_changed;
         }
         forgotten
+    }
+
+    /// The generation of every workspace's [`Life`], and of which are
+    /// registered: it changes whenever any does. Cheap enough to read every
+    /// frame. A home's effective group also follows the local groups.
+    pub fn life_generation(&self) -> u64 {
+        self.workspaces.values().map(|entry| entry.record.life.generation()).fold(self.lives_changed, u64::max)
+    }
+
+    /// A registered workspace's [`Life`], and its one home (none for a
+    /// subject workspace).
+    pub fn workspace_life(&self, workspace: WorkspaceId) -> Result<(Life, Option<EffectiveHome>), String> {
+        let record = self.workspace(workspace)?;
+        Ok((record.life.get().clone(), lifecycle::effective_home(record, &Groups::of(&self.local))))
+    }
+
+    /// Seed the lifecycle part of a record that has none (`kept` unknown:
+    /// written before it existed, or registered by the host), from what the
+    /// host has. Returns whether it was seeded; a seeded part is the core's.
+    pub fn seed_life(&mut self, workspace: WorkspaceId, kept: bool, home: Home) -> Result<bool, String> {
+        let home = home.normalized();
+        self.with_workspace(workspace, |record, clock, _, _| {
+            Ok::<_, String>(record.life.get().kept.is_none() && record.life.follow(clock, |life| *life = Life { kept: Some(kept), home }))
+        })
+    }
+
+    /// The name the core resolves for a registered workspace: the user's,
+    /// else its subject's, else the one the host observed.
+    fn resolved_name(&self, id: WorkspaceId) -> Option<String> {
+        let overlay = self.overlay(id).ok()?;
+        overlay
+            .name
+            .or(overlay.subject_name)
+            .or_else(|| self.state.workspaces().iter().find(|tab| tab.tab_id == id).map(|tab| tab.name.clone()))
+    }
+
+    /// The open workspaces in the order the host last observed, and the one
+    /// it shows.
+    fn observed_order(&self) -> (Vec<WorkspaceId>, Option<WorkspaceId>) {
+        let mut tabs: Vec<_> = self.state.workspaces().iter().collect();
+        tabs.sort_by_key(|tab| tab.position);
+        (tabs.iter().map(|tab| tab.tab_id).collect(), tabs.iter().find(|tab| tab.active).map(|tab| tab.tab_id))
+    }
+
+    fn new_workspace(&mut self, id: WorkspaceId, name: Option<String>, home: Home) -> Result<Vec<HostEffect>, String> {
+        if self.workspaces.contains_key(&id) {
+            return Err(format!("workspace {id} is already registered"));
+        }
+        let mut home = home.normalized();
+        let groups = Groups::of(&self.local);
+        // A new workspace in the default group has no group of its own.
+        if home.group.as_deref() == Some(groups.default_group()) {
+            home.group = None;
+        }
+        let name = match name.filter(|name| !name.is_empty()) {
+            Some(name) => name,
+            None => {
+                let names: Vec<String> = self.workspaces.keys().filter_map(|id| self.resolved_name(*id)).collect();
+                lifecycle::default_name(names.iter().map(String::as_str))
+            }
+        };
+        self.ensure_workspace(id);
+        let entry = self.workspaces.get_mut(&id).expect("just registered");
+        entry.record.life.follow(&mut self.clock, |life| *life = Life { kept: Some(false), home });
+        entry.record.set_name(&mut self.clock, Some(name.clone()));
+        self.refresh_workspace_records();
+        self.refresh_content();
+        Ok(vec![HostEffect::OpenWorkspace { workspace: id, name }])
+    }
+
+    fn close_workspace(&mut self, id: WorkspaceId, keep: bool) -> Result<Vec<HostEffect>, String> {
+        let record = self.workspace(id)?;
+        if record.life.get().kept == Some(true) {
+            return Err(format!("workspace {id} is kept, not open"));
+        }
+        let (order, shown) = self.observed_order();
+        if !order.contains(&id) {
+            return Err(format!("workspace {id} is not open"));
+        }
+        let ended = record.subject().is_some_and(|subject| self.state.subject_ended(subject));
+        let closed = lifecycle::close_outcome(record, keep, ended);
+        let next = lifecycle::next_shown(&order, shown, id);
+        match closed {
+            Closed::Kept => {
+                let entry = self.workspaces.get_mut(&id).expect("registered");
+                entry.record.life.follow(&mut self.clock, |life| life.kept = Some(true));
+            }
+            Closed::Destroyed => {
+                self.forget_workspace(id);
+            }
+        }
+        let mut effects = vec![HostEffect::CloseWorkspace { workspace: id, kept: closed == Closed::Kept }];
+        effects.extend(next.map(|workspace| HostEffect::ShowWorkspace { workspace }));
+        Ok(effects)
+    }
+
+    fn set_workspace_home(&mut self, id: WorkspaceId, edit: HomeEdit) -> Result<Vec<HostEffect>, String> {
+        let record = self.workspace(id)?;
+        if record.subject().is_some() {
+            return Err(format!("workspace {id} has a subject, so no home"));
+        }
+        let edit = match edit {
+            HomeEdit::Group(group) if group.is_empty() => return Err("a group needs an ID".into()),
+            HomeEdit::Project(project) => HomeEdit::Project(project.filter(|project| !project.is_empty())),
+            edit => edit,
+        };
+        let entry = self.workspaces.get_mut(&id).expect("registered");
+        entry.record.life.follow(&mut self.clock, |life| life.home.edit(edit));
+        Ok(vec![])
+    }
+
+    /// The subject's Kept Workspace, if it has one.
+    fn kept_workspace(&self, subject: &EntityRef) -> Option<WorkspaceId> {
+        self.workspaces
+            .iter()
+            .find(|(_, entry)| entry.record.life.get().kept == Some(true) && entry.record.subject() == Some(subject))
+            .map(|(id, _)| *id)
     }
 
     /// Workspaces the host registered or materialized and has not forgotten.
@@ -692,6 +857,16 @@ impl Sidebar {
         }
         let patch = self.local_patch(entity, None);
         self.local.remove(entity);
+        if entity.kind == system::GROUP {
+            // Its workspaces, open or kept, move to the default group.
+            for entry in self.workspaces.values_mut() {
+                entry.record.life.follow(&mut self.clock, |life| {
+                    if life.home.group.as_deref() == Some(entity.id.as_str()) {
+                        life.home.group = None;
+                    }
+                });
+            }
+        }
         self.apply_local([patch], true);
         if entity.kind != system::REF {
             self.follow_sidebar_declarations();
@@ -1523,6 +1698,7 @@ impl Sidebar {
                             recipe,
                             cwd: request.checkout_path.clone(),
                             primary_target,
+                            kept: self.kept_workspace(&entity),
                         };
                         self.pending.insert(request_id, Pending::Materialize(entity, request));
                         effect
@@ -1565,6 +1741,9 @@ impl Sidebar {
                 self.invalidate();
                 Ok(vec![])
             }
+            Intent::NewWorkspace { workspace, name, home } => self.new_workspace(workspace, name, home),
+            Intent::CloseWorkspace { workspace, keep } => self.close_workspace(workspace, keep),
+            Intent::SetWorkspaceHome { workspace, edit } => self.set_workspace_home(workspace, edit),
         }
     }
 
@@ -1583,7 +1762,14 @@ impl Sidebar {
             }
             Pending::Materialize(entity, request) => match result {
                 Ok(Some(id)) => {
+                    // A Dashboard has one workspace per subject: the one it
+                    // opened, reopened if it was the Kept Workspace.
+                    if let Some(kept) = self.kept_workspace(&entity).filter(|kept| *kept != id) {
+                        self.forget_workspace(kept);
+                    }
                     self.ensure_workspace(id);
+                    let entry = self.workspaces.get_mut(&id).expect("just registered");
+                    entry.record.life.follow(&mut self.clock, |life| life.kept = Some(false));
                     self.state.bind_materializing_subject(&request, id, entity.clone());
                     // If observation arrived before acknowledgement, claim now.
                     let current = self.state.workspaces().to_vec();

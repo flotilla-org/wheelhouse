@@ -7,7 +7,8 @@ use std::rc::Rc;
 use hegel::generators as gs;
 use hegel::TestCase;
 
-use crate::presentation::PlacementNode;
+use crate::lifecycle::{CloseKind, Home, HomeEdit};
+use crate::presentation::{PlacementNode, PresentationState};
 use crate::scaling_tests::{catalog, fleet, patch, text, Shape, CONFIG, PROVIDER};
 use crate::sidebar::{HostEffect, Intent, IntentReceipt, Sidebar, Workspace};
 use crate::stream::{StreamView, SubscriptionId, UnknownSubscription};
@@ -72,7 +73,7 @@ fn step(tc: &TestCase, sidebar: &mut Sidebar, now: &mut u64) -> Vec<u64> {
     let now = *now;
     let c = tc.draw(gs::integers::<usize>().max_value(CONVOYS - 1));
     let pick = |len: usize| tc.draw(gs::integers::<usize>().max_value(len.max(1) - 1));
-    match tc.draw(gs::integers::<u8>().max_value(14)) {
+    match tc.draw(gs::integers::<u8>().max_value(15)) {
         0 => {
             let phase = if tc.draw(gs::booleans()) { "active" } else { "landed" };
             sidebar.apply(now, PROVIDER, [change("convoy", c, vec![("flotilla.convoy.phase", text(phase))], &[])]).unwrap();
@@ -168,6 +169,17 @@ fn step(tc: &TestCase, sidebar: &mut Sidebar, now: &mut u64) -> Vec<u64> {
                     sidebar.complete(request, result);
                 }
             }
+        }
+        14 => {
+            // A lifecycle intent: some are refused (an ID made twice, a
+            // workspace not open, a subject workspace re-homed).
+            let workspace = tab_workspace_id(pick(4) as u64 + 1);
+            let intent = match pick(3) {
+                0 => Intent::NewWorkspace { workspace, name: None, home: Home::default() },
+                1 => Intent::CloseWorkspace { workspace, keep: tc.draw(gs::booleans()) },
+                _ => Intent::SetWorkspaceHome { workspace, edit: HomeEdit::Group("g".into()) },
+            };
+            intend(sidebar, &mut accepted, intent);
         }
         _ => {
             let (section, group) = (EntityRef::local(".section", "s"), EntityRef::local(".group", "g"));
@@ -363,6 +375,9 @@ fn intent_names_are_their_tags() {
         Intent::TogglePlacement { key: key.clone() },
         Intent::SetVariable { key, name: "density".into(), value: None },
         Intent::ToggleDisplayVariable { name: "show-finished".into() },
+        Intent::NewWorkspace { workspace: tab_workspace_id(1), name: None, home: Home::default() },
+        Intent::CloseWorkspace { workspace: tab_workspace_id(1), keep: true },
+        Intent::SetWorkspaceHome { workspace: tab_workspace_id(1), edit: HomeEdit::Project(None) },
     ] {
         assert_eq!(serde_json::to_value(&intent).unwrap()["action"], intent.name());
     }
@@ -535,5 +550,49 @@ fn a_url_that_arrives_later_reaches_the_stream() {
     let delta = sidebar.poll(id).unwrap().expect("the forge gave subjects URLs");
     followed.apply(&delta).unwrap();
     assert!(with_url(&followed) > 0);
+    assert_eq!(followed, StreamView::of(sidebar.snapshot_shared()));
+}
+
+/// A row's close role is its node's content: when its open workspace's
+/// subject ends, a delta changes the row from detach to destroy.
+#[test]
+fn a_subject_ending_changes_its_rows_close() {
+    let mut sidebar = Sidebar::new(CONFIG).unwrap();
+    sidebar.apply(1, PROVIDER, catalog(20)).unwrap();
+    let vessel = EntityRef::new(PROVIDER, "vessel", "fleet/convoy-00000003");
+    sidebar
+        .apply(
+            1,
+            PROVIDER,
+            [change(
+                "vessel",
+                3,
+                vec![("action.primary.recipe", text("true")), ("flotilla.convoy.phase", text("active")), ("status.state", text("running"))],
+                &[],
+            )],
+        )
+        .unwrap();
+    let IntentReceipt::Accepted { effects, .. } = sidebar.apply_intent(Intent::Activate { entity: vessel.clone() }) else {
+        panic!("a vessel opens");
+    };
+    let [HostEffect::Materialize { request_id, .. }] = effects[..] else { panic!("{effects:?}") };
+    let workspace = tab_workspace_id(1);
+    sidebar.complete(request_id, Ok(Some(workspace)));
+    sidebar.observe(vec![Workspace { id: workspace, position: 0, name: "vessel".into(), selected: true }], vec![]);
+    let id = sidebar.subscribe();
+    let mut followed = StreamView::default();
+    followed.apply(&sidebar.poll(id).unwrap().unwrap()).unwrap();
+    let closes = |view: &StreamView| -> Vec<Option<CloseKind>> {
+        view.nodes
+            .values()
+            .filter(|node| matches!(node.state, PresentationState::Live { workspace_id, .. } if workspace_id == workspace))
+            .map(|node| node.close)
+            .collect()
+    };
+    assert!(!closes(&followed).is_empty() && closes(&followed).iter().all(|close| *close == Some(CloseKind::Detach)));
+    sidebar.apply(2, PROVIDER, [change("vessel", 3, vec![("flotilla.convoy.phase", text("landed"))], &[])]).unwrap();
+    let delta = sidebar.poll(id).unwrap().expect("the end changes the row");
+    followed.apply(&delta).unwrap();
+    assert!(closes(&followed).iter().all(|close| *close == Some(CloseKind::Destroy)), "{:?}", closes(&followed));
     assert_eq!(followed, StreamView::of(sidebar.snapshot_shared()));
 }

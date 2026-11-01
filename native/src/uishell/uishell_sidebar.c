@@ -2016,10 +2016,10 @@ uishell_sidebar_init(RD_WindowState *ws)
     state->initialized = 1;
     char *error = 0;
     // A host requires exactly the ABI it was built against.
-    if(wheelhouse_abi_version() != 20)
+    if(wheelhouse_abi_version() != 21)
     {
       Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 20 is required; this library has ABI %u",
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 21 is required; this library has ABI %u",
         (U32)wheelhouse_abi_version()));
       scratch_end(scratch);
       return state;

@@ -7,6 +7,7 @@
 //! both calls; a host that gets one follows again from a new subscription.
 use super::*;
 use wheelhouse_core::{
+    lifecycle::{CloseKind, Home, HomeEdit},
     presentation::{Content, Presented},
     sidebar::{Intent, IntentReceipt},
     stream::{ListOp, NodeContent, Parent, SectionContent, SidebarDelta, SidebarOp, SubscriptionId},
@@ -46,6 +47,17 @@ pub const WHEELHOUSE_INTENT_ACTIVATE: u32 = 2;
 pub const WHEELHOUSE_INTENT_TOGGLE_PLACEMENT: u32 = 3;
 pub const WHEELHOUSE_INTENT_SET_VARIABLE: u32 = 4;
 pub const WHEELHOUSE_INTENT_TOGGLE_DISPLAY_VARIABLE: u32 = 5;
+pub const WHEELHOUSE_INTENT_NEW_WORKSPACE: u32 = 6;
+pub const WHEELHOUSE_INTENT_CLOSE_WORKSPACE: u32 = 7;
+pub const WHEELHOUSE_INTENT_SET_WORKSPACE_HOME: u32 = 8;
+
+/// What a node's close control offers: nothing; close its workspace and
+/// keep it (CLOSE_WORKSPACE with keep); close and destroy it (without
+/// keep); or, for a pin, remove the pin.
+pub const WHEELHOUSE_CLOSE_NONE: u32 = 0;
+pub const WHEELHOUSE_CLOSE_DETACH: u32 = 1;
+pub const WHEELHOUSE_CLOSE_DESTROY: u32 = 2;
+pub const WHEELHOUSE_CLOSE_REMOVE_PIN: u32 = 3;
 
 /// wheelhouse_apply_intent's result: the intent was malformed, or the
 /// sidebar unusable (error_out says why), and nothing changed.
@@ -121,6 +133,7 @@ struct StreamNode {
     selected: bool,
     openable: bool,
     has_url: bool,
+    close: u32,
     collapsed: bool,
     pinned: bool,
     default_host: String,
@@ -278,6 +291,7 @@ impl WheelhouseDelta {
             selected: false,
             openable: false,
             has_url: false,
+            close: WHEELHOUSE_CLOSE_NONE,
             collapsed: false,
             pinned: section.pinned,
             default_host: section.default_host.clone().unwrap_or_default(),
@@ -308,6 +322,7 @@ impl WheelhouseDelta {
             selected,
             openable: openable || node.has_url,
             has_url: node.has_url,
+            close: close_code(node.close),
             collapsed: node.collapsed,
             pinned: false,
             default_host: String::new(),
@@ -410,6 +425,8 @@ pub struct StreamNodeView {
     pub openable: u32,
     /// Its subject has a URL: COPY_SUBJECT_URL of its entity copies it.
     pub has_url: u32,
+    /// What its close control offers (WHEELHOUSE_CLOSE_*).
+    pub close: u32,
     pub collapsed: u32,
     pub pinned: u32,
     pub default_host: Text,
@@ -448,6 +465,7 @@ pub unsafe extern "C" fn wheelhouse_delta_node(d: *const WheelhouseDelta, index:
         selected: n.selected as u32,
         openable: n.openable as u32,
         has_url: n.has_url as u32,
+        close: n.close,
         collapsed: n.collapsed as u32,
         pinned: n.pinned as u32,
         default_host: Text::borrowed(&n.default_host),
@@ -574,7 +592,12 @@ pub unsafe extern "C" fn wheelhouse_delta_release(d: *mut WheelhouseDelta) {
 /// ACTIVATE_PLACEMENT and TOGGLE_PLACEMENT a node's `key`; COPY_SUBJECT_URL
 /// and ACTIVATE an `entity`; SET_VARIABLE `key`, the variable's `name`, and
 /// `value` when `has_value` (none resets it); TOGGLE_DISPLAY_VARIABLE `name`.
-/// A key is one a delta gave.
+/// A key is one a delta gave. NEW_WORKSPACE reads `workspace_id` (the
+/// host makes it), `name` (empty: the default name), `group` and
+/// `project` (its home; empty: none); CLOSE_WORKSPACE `workspace_id` and
+/// `keep`; SET_WORKSPACE_HOME `workspace_id` and either `group` when
+/// `has_group` (it lives there, with no project) or `project` (empty: none,
+/// leaving its group).
 #[repr(C)]
 pub struct IntentView {
     pub kind: u32,
@@ -583,6 +606,11 @@ pub struct IntentView {
     pub name: Text,
     pub has_value: u32,
     pub value: Text,
+    pub workspace_id: WorkspaceIdView,
+    pub keep: u32,
+    pub has_group: u32,
+    pub group: Text,
+    pub project: Text,
 }
 impl IntentView {
     unsafe fn read(&self) -> Result<Intent, String> {
@@ -597,6 +625,19 @@ impl IntentView {
                 value: if self.has_value != 0 { Some(self.value.read()?) } else { None },
             },
             WHEELHOUSE_INTENT_TOGGLE_DISPLAY_VARIABLE => Intent::ToggleDisplayVariable { name: self.name.read()? },
+            WHEELHOUSE_INTENT_NEW_WORKSPACE => Intent::NewWorkspace {
+                workspace: self.workspace_id.into(),
+                name: Some(self.name.read()?).filter(|name| !name.is_empty()),
+                home: Home { group: Some(self.group.read()?), project: Some(self.project.read()?) }.normalized(),
+            },
+            WHEELHOUSE_INTENT_CLOSE_WORKSPACE => Intent::CloseWorkspace { workspace: self.workspace_id.into(), keep: self.keep != 0 },
+            WHEELHOUSE_INTENT_SET_WORKSPACE_HOME => Intent::SetWorkspaceHome {
+                workspace: self.workspace_id.into(),
+                edit: match self.has_group {
+                    0 => HomeEdit::Project(Some(self.project.read()?).filter(|project| !project.is_empty())),
+                    _ => HomeEdit::Group(self.group.read()?),
+                },
+            },
             other => return Err(format!("unknown intent kind {other}")),
         })
     }
@@ -634,5 +675,14 @@ pub unsafe extern "C" fn wheelhouse_apply_intent(
             WHEELHOUSE_INTENT_REFUSED
         }
         None => WHEELHOUSE_INTENT_INVALID,
+    }
+}
+
+fn close_code(close: Option<CloseKind>) -> u32 {
+    match close {
+        None => WHEELHOUSE_CLOSE_NONE,
+        Some(CloseKind::Detach) => WHEELHOUSE_CLOSE_DETACH,
+        Some(CloseKind::Destroy) => WHEELHOUSE_CLOSE_DESTROY,
+        Some(CloseKind::RemovePin) => WHEELHOUSE_CLOSE_REMOVE_PIN,
     }
 }

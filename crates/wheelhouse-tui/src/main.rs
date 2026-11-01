@@ -73,6 +73,10 @@ mod native {
                 }
                 HostEffect::CopyUrl { .. } => Err(io::Error::other("clipboard is not implemented")),
                 HostEffect::Inspect { .. } => Err(io::Error::other("inspect is not implemented")),
+                // Only lifecycle intents return these, and this host sends none.
+                HostEffect::OpenWorkspace { .. } | HostEffect::CloseWorkspace { .. } | HostEffect::ShowWorkspace { .. } => {
+                    Err(io::Error::other("workspace lifecycle effects are not implemented"))
+                }
             }
         }
     }
@@ -103,7 +107,12 @@ mod native {
     fn effect_request_id(effect: &HostEffect) -> Option<u64> {
         match effect {
             HostEffect::Focus { request_id, .. } | HostEffect::Materialize { request_id, .. } => Some(*request_id),
-            HostEffect::Inspect { .. } | HostEffect::OpenUrl { .. } | HostEffect::CopyUrl { .. } => None,
+            HostEffect::Inspect { .. }
+            | HostEffect::OpenUrl { .. }
+            | HostEffect::CopyUrl { .. }
+            | HostEffect::OpenWorkspace { .. }
+            | HostEffect::CloseWorkspace { .. }
+            | HostEffect::ShowWorkspace { .. } => None,
         }
     }
 

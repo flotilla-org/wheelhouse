@@ -125,6 +125,17 @@ typedef struct BinnacleGrid BinnacleGrid;
 // Copy the URL in recipe; needs no completion.
 #define WHEELHOUSE_EFFECT_COPY_URL 4
 
+// Make a workspace with workspace_id, named name, with default panels, and
+// show it; needs no completion.
+#define WHEELHOUSE_EFFECT_OPEN_WORKSPACE 5
+
+// Close workspace_id: keep its layout when kept (a Kept Workspace), else
+// discard it; needs no completion.
+#define WHEELHOUSE_EFFECT_CLOSE_WORKSPACE 6
+
+// Show workspace_id, after a close; needs no completion.
+#define WHEELHOUSE_EFFECT_SHOW_WORKSPACE 7
+
 // The size of a tab: the host's View Address, copied whole.
 #define WHEELHOUSE_TAB_BYTES 40
 
@@ -373,6 +384,14 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 // The layout a workspace shows now.
 #define WHEELHOUSE_LAYOUT_CURRENT 2
+
+// A workspace's home: none (a subject workspace), a local group's ID, or a
+// project's.
+#define WHEELHOUSE_HOME_NONE 0
+
+#define WHEELHOUSE_HOME_GROUP 1
+
+#define WHEELHOUSE_HOME_PROJECT 2
 
 // The overview's mode: the current workspace is open.
 #define WHEELHOUSE_OVERVIEW_WORKSPACE 0
@@ -715,6 +734,23 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 #define WHEELHOUSE_INTENT_TOGGLE_DISPLAY_VARIABLE 5
 
+#define WHEELHOUSE_INTENT_NEW_WORKSPACE 6
+
+#define WHEELHOUSE_INTENT_CLOSE_WORKSPACE 7
+
+#define WHEELHOUSE_INTENT_SET_WORKSPACE_HOME 8
+
+// What a node's close control offers: nothing; close its workspace and
+// keep it (CLOSE_WORKSPACE with keep); close and destroy it (without
+// keep); or, for a pin, remove the pin.
+#define WHEELHOUSE_CLOSE_NONE 0
+
+#define WHEELHOUSE_CLOSE_DETACH 1
+
+#define WHEELHOUSE_CLOSE_DESTROY 2
+
+#define WHEELHOUSE_CLOSE_REMOVE_PIN 3
+
 // wheelhouse_apply_intent's result: the intent was malformed, or the
 // sidebar unusable (error_out says why), and nothing changed.
 #define WHEELHOUSE_INTENT_INVALID 0
@@ -959,8 +995,14 @@ typedef struct {
   // WHEELHOUSE_EFFECT_*.
   uint32_t kind;
   uint64_t request_id;
-  // A FOCUS effect's workspace; zeroes otherwise.
+  // A FOCUS, OPEN_WORKSPACE, CLOSE_WORKSPACE or SHOW_WORKSPACE effect's
+  // workspace, or a MATERIALIZE effect's Kept Workspace when `kept`;
+  // zeroes otherwise.
   WheelhouseWorkspaceId workspace_id;
+  // CLOSE_WORKSPACE: the workspace is kept. MATERIALIZE: its subject has a
+  // Kept Workspace, workspace_id, which the host reopens and completes
+  // with rather than making a new one.
+  uint32_t kept;
   // A MATERIALIZE or INSPECT effect's entity; empty otherwise.
   WheelhouseEntity entity;
   WheelhouseText name;
@@ -1370,6 +1412,24 @@ typedef struct {
   const WheelhouseNote *notes;
   size_t note_count;
 } WheelhouseSidebarArrangement;
+
+// A workspace's lifecycle part, as the core keeps it.
+typedef struct {
+  // 0 while unknown: a record written before the part existed, or a
+  // workspace the host registered itself, which the host seeds
+  // (wheelhouse_workspace_seed_life).
+  uint32_t kept_known;
+  // Closed and kept (a Kept Workspace: native's `detached_workspace`).
+  uint32_t kept;
+  // Its home's two fields: the group it lives in, and the project it
+  // lives with, which wins (empty: none).
+  WheelhouseText group;
+  WheelhouseText project;
+  // Its one home (WHEELHOUSE_HOME_*): the project, else the group while
+  // it exists, else the default group; none for a subject workspace.
+  uint32_t home_kind;
+  WheelhouseText home;
+} WorkspaceLifeView;
 
 // A rectangle of the scene.
 typedef struct {
@@ -1830,6 +1890,8 @@ typedef struct {
   uint32_t openable;
   // Its subject has a URL: COPY_SUBJECT_URL of its entity copies it.
   uint32_t has_url;
+  // What its close control offers (WHEELHOUSE_CLOSE_*).
+  uint32_t close;
   uint32_t collapsed;
   uint32_t pinned;
   WheelhouseText default_host;
@@ -1881,7 +1943,12 @@ typedef struct {
 // ACTIVATE_PLACEMENT and TOGGLE_PLACEMENT a node's `key`; COPY_SUBJECT_URL
 // and ACTIVATE an `entity`; SET_VARIABLE `key`, the variable's `name`, and
 // `value` when `has_value` (none resets it); TOGGLE_DISPLAY_VARIABLE `name`.
-// A key is one a delta gave.
+// A key is one a delta gave. NEW_WORKSPACE reads `workspace_id` (the
+// host makes it), `name` (empty: the default name), `group` and
+// `project` (its home; empty: none); CLOSE_WORKSPACE `workspace_id` and
+// `keep`; SET_WORKSPACE_HOME `workspace_id` and either `group` when
+// `has_group` (it lives there, with no project) or `project` (empty: none,
+// leaving its group).
 typedef struct {
   uint32_t kind;
   WheelhouseText key;
@@ -1889,6 +1956,11 @@ typedef struct {
   WheelhouseText name;
   uint32_t has_value;
   WheelhouseText value;
+  WheelhouseWorkspaceId workspace_id;
+  uint32_t keep;
+  uint32_t has_group;
+  WheelhouseText group;
+  WheelhouseText project;
 } WheelhouseIntent;
 
 typedef struct {
@@ -2623,6 +2695,31 @@ uint64_t wheelhouse_workspace_content_revision(WheelhouseCore *h, char **error_o
 // only it knows, such as terminals' sizes, by Automation ID. Free the bytes
 // with wheelhouse_bytes_free.
 uint32_t wheelhouse_semantic_workspaces(WheelhouseCore *h, WheelhouseBytes *out, char **error_out);
+
+// A registered workspace's lifecycle part. Free it with
+// wheelhouse_workspace_life_free.
+WorkspaceLifeView *wheelhouse_workspace_life(WheelhouseCore *h,
+                                             WheelhouseWorkspaceId workspace,
+                                             char **error_out);
+
+void wheelhouse_workspace_life_free(WorkspaceLifeView *life);
+
+// The generation of every workspace's lifecycle part, and of which are
+// registered: it changes whenever any does. Cheap enough to read every
+// frame; a home's effective group also follows the Dashboard's local
+// groups. 0 on failure.
+uint64_t wheelhouse_life_generation(WheelhouseCore *h, char **error_out);
+
+// Seed the lifecycle part of a record that has none (kept_known 0) from
+// what the host has: whether it is kept, and its home's group and project
+// (empty: none). 1 if seeded; 0 with no error when it already had one;
+// after that the core's is the truth.
+uint32_t wheelhouse_workspace_seed_life(WheelhouseCore *h,
+                                        WheelhouseWorkspaceId workspace,
+                                        uint32_t kept,
+                                        WheelhouseText group,
+                                        WheelhouseText project,
+                                        char **error_out);
 
 // Each frame, before reading it: the window's current workspace (zeroes for
 // none), its workspace region's width over height, the time, and whether

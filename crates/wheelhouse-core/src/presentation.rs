@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 use crate::census::Census;
+use crate::lifecycle::CloseKind;
 #[cfg(test)]
 use crate::state::variables_census;
 use crate::state::{ControllerTab, EvaluatedPlacement, EvaluatedSection, NodeVariables};
@@ -109,6 +110,9 @@ pub struct PlacementNode {
     /// or issue's, from its forge).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub has_url: bool,
+    /// What its close control offers (lifecycle::close_kind), if anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close: Option<CloseKind>,
     /// Retained even when collapsed, for inspection and native input handling.
     pub children: Vec<Rc<PlacementNode>>,
 }
@@ -275,6 +279,7 @@ impl SurfaceSnapshot {
         host_entities: &BTreeMap<WorkspaceId, EntityRef>,
         default_groups: &[EntityRef],
         stale: &dyn Fn(&EntityRef) -> bool,
+        close: &dyn Fn(&EntityRef, &PresentationState) -> Option<CloseKind>,
     ) {
         let mut covered = std::collections::BTreeSet::new();
         for section in &self.sections {
@@ -298,14 +303,16 @@ impl SurfaceSnapshot {
                 .unwrap_or_else(|| EntityRef::local(system::WORKSPACE, workspace.tab_id.to_string()));
             let key = PlacementKey(vec![PlacementSegment { loop_name: UNPLACED_WORKSPACES_SECTION.into(), entity: entity.clone() }]);
             let is_stale = stale(&entity);
+            let state = PresentationState::Live { workspace_id: workspace.tab_id, selected: workspace.active };
             nodes.push(Rc::new(PlacementNode {
+                close: close(&entity, &state),
                 loop_key: key.loop_key(UNPLACED_WORKSPACES_SECTION).expect("a cover key has its one segment"),
                 key,
                 entity,
                 label: workspace.name.clone(),
                 layout: None,
                 form: "compact".into(),
-                state: PresentationState::Live { workspace_id: workspace.tab_id, selected: workspace.active },
+                state,
                 content: Content {
                     fields: vec![TemplateConfigRenderedField {
                         class: TemplateConfigFieldClass::Required,
@@ -418,6 +425,8 @@ pub(crate) struct SurfaceContext<'a> {
     pub(crate) stale: &'a dyn Fn(&EntityRef) -> bool,
     /// Whether the subject a node presents has a URL.
     pub(crate) has_url: &'a dyn Fn(&EntityRef) -> bool,
+    /// What a node presenting an entity in this state offers to close.
+    pub(crate) close: &'a dyn Fn(&EntityRef, &PresentationState) -> Option<CloseKind>,
 }
 
 /// A node's resolution, kept while what it was resolved from is the same.
@@ -429,6 +438,7 @@ pub(crate) struct SurfaceMemo {
     collapsed: bool,
     stale: bool,
     has_url: bool,
+    close: Option<CloseKind>,
     node: Rc<PlacementNode>,
 }
 
@@ -462,6 +472,7 @@ impl Resolver<'_> {
         let collapsed = entity.annotation.default_collapsed != self.model.collapsed_placements.contains(key);
         let stale = (self.cx.stale)(&entity.entity);
         let has_url = (self.cx.has_url)(&entity.entity);
+        let close = (self.cx.close)(&entity.entity, &state);
         if let Some(memo) = self.prior.remove(&address) {
             let same = Rc::ptr_eq(&memo.placement, entity)
                 && match (&memo.variables, &variables) {
@@ -473,6 +484,7 @@ impl Resolver<'_> {
                 && memo.collapsed == collapsed
                 && memo.stale == stale
                 && memo.has_url == has_url
+                && memo.close == close
                 && memo.node.children.len() == children.len()
                 && memo.node.children.iter().zip(&children).all(|(before, now)| Rc::ptr_eq(before, now));
             if same {
@@ -481,9 +493,11 @@ impl Resolver<'_> {
                 return Some(node);
             }
         }
-        let node = Rc::new(resolve_node(entity, variables.as_deref(), region, state.clone(), collapsed, stale, has_url, children)?);
-        self.next
-            .insert(address, SurfaceMemo { placement: entity.clone(), variables, state, collapsed, stale, has_url, node: node.clone() });
+        let node = Rc::new(resolve_node(entity, variables.as_deref(), region, state.clone(), collapsed, stale, has_url, close, children)?);
+        self.next.insert(
+            address,
+            SurfaceMemo { placement: entity.clone(), variables, state, collapsed, stale, has_url, close, node: node.clone() },
+        );
         Some(node)
     }
 }
@@ -581,6 +595,7 @@ fn resolve_node(
     collapsed: bool,
     stale: bool,
     has_url: bool,
+    close: Option<CloseKind>,
     children: Vec<Rc<PlacementNode>>,
 ) -> Option<PlacementNode> {
     let key = entity.placement.clone()?;
@@ -621,6 +636,7 @@ fn resolve_node(
         collapsed,
         stale,
         has_url,
+        close,
         children,
     })
 }

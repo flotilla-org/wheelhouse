@@ -195,6 +195,10 @@ _Avoid_: Window config, wheelhouse_records
 A **Workspace** the user closed but chose to keep. It keeps its **Workspace ID** and **Workspace Overlay**, and activating its subject again reopens it rather than creating a new Workspace.
 _Avoid_: Detached workspace, archived workspace
 
+**Workspace Home**:
+Where a local (subjectless) **Workspace** lives in the sidebar: a local group, or a project, which wins over the group. A Workspace whose group is gone lives in the default group. A **Workspace** with a **Workspace Subject** lives where its subject is placed, and has no home.
+_Avoid_: lives_in, lives_with, parent group
+
 **Workspace Focus**:
 The focused panel, view, or control a **Workspace** remembers in a given window. It is **Presentation State**: each window and frontend keeps its own.
 _Avoid_: Window focus, global focus
