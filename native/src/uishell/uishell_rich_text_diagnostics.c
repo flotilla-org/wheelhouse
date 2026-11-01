@@ -325,7 +325,7 @@ uishell_rt_diag_fixture(Arena *arena, U64 paragraphs, String8 extra_in_paragraph
   str8_list_pushf(arena, &out, "Opening words with a [relative link](notes.md), a [web link](https://example.com/tides) and [[Harbour Master]].\n\n");
   str8_list_pushf(arena, &out, "![A lighthouse](lighthouse.png)\n\n");
   str8_list_pushf(arena, &out, "```rust\nfn main() {\n    println!(\"fenced\");\n}\n```\n\n");
-  str8_list_pushf(arena, &out, "| Vessel | Berth | Tonnage |\n|:-------|:-----:|--------:|\n| Kestrel | 4 | 1200 |\n| Plover | 7 | 950 |\n| Tern | 2 | 30 |\n\n");
+  str8_list_pushf(arena, &out, "| Vessel | Berth | Tonnage |\n|:-------|:-----:|--------:|\n| Kestrel | 4 | 1200 |\n| Plover | 7 | 950 |\n| Tern \xE2\x9A\x93 | 2 | 30 |\n\n");
   str8_list_pushf(arena, &out, "- a tight item\n- another item\n\n> A quote holds a paragraph.\n\n");
   for(U64 i = 0; i < paragraphs; i += 1)
   {
@@ -740,6 +740,16 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     {
       UIShell_TableDraw *td = (UIShell_TableDraw *)grid->custom_draw_user_data;
       RichCheck(td->snap.axes[BINNACLE_ROWS].count == 3 && td->snap.axes[BINNACLE_COLS].count == 3, "the Grid holds the table's rows and columns");
+      // Its cells are laid out as Rich Text is, when drawn: an anchor, which
+      // the UI font lacks, comes from a fallback face, not as a missing glyph.
+      U64 layouts = s->layouts.layouts;
+      DR_BucketScope(dr_bucket_make()) { grid->custom_draw(grid, grid->custom_draw_user_data); }
+      U64 drawn = s->layouts.layouts - layouts;
+      BinnacleAxisSnapshot *cols = &td->snap.axes[BINNACLE_COLS];
+      UIShell_RtLayoutEntry *anchor = cols->strip_len ? uishell_rt_cell_layout(s, str8_lit("Tern \xE2\x9A\x93"), cols->strip[0].size) : 0;
+      B32 found = anchor && anchor->layout->text.glyph_count != 0 && s->layouts.layouts == layouts + drawn;
+      for(U64 i = 0; found && i < anchor->layout->text.glyph_count; i += 1) { found = anchor->layout->text.glyphs[i].id != 0; }
+      RichCheck(drawn != 0 && found, "a table cell's text is laid out with fallback, as Rich Text is");
       // Unfocused, the wheel over it scrolls the Rich Text.
       WheelhouseRichWindow w = {0};
       wheelhouse_rich_text_window(s->doc, s->sub, &w, &error);

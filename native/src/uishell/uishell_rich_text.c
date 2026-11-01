@@ -968,6 +968,7 @@ struct UIShell_RtLayoutEntry
   U64 metrics_hash;
   // A list item's number lives in its list, not its Block's version.
   U64 label_hash;
+  U32 max_lines;
   UIShell_RtLayout *layout;
   U32 size_class;
   U64 bytes;
@@ -998,16 +999,16 @@ struct UIShell_RtLayoutCache
 };
 
 internal U64
-uishell_rt_layout_hash(U64 key, U64 version, U32 width_bits, U64 epoch, U64 metrics_hash, U64 label_hash)
+uishell_rt_layout_hash(U64 key, U64 version, U32 width_bits, U64 epoch, U64 metrics_hash, U64 label_hash, U32 max_lines)
 {
-  U64 fields[] = {key, version, width_bits, epoch, metrics_hash, label_hash};
+  U64 fields[] = {key, version, width_bits, epoch, metrics_hash, label_hash, max_lines};
   return XXH3_64bits(fields, sizeof(fields));
 }
 
 internal void
 uishell_rt_layout_evict(UIShell_RtLayoutCache *cache, UIShell_RtLayoutEntry *e)
 {
-  U64 hash = uishell_rt_layout_hash(e->key, e->version, e->width_bits, e->epoch, e->metrics_hash, e->label_hash);
+  U64 hash = uishell_rt_layout_hash(e->key, e->version, e->width_bits, e->epoch, e->metrics_hash, e->label_hash, e->max_lines);
   for(UIShell_RtLayoutEntry **at = &cache->slots[hash % UISHELL_RT_LAYOUT_SLOTS]; *at != 0; at = &(*at)->hash_next)
   {
     if(*at == e) { *at = e->hash_next; break; }
@@ -1051,9 +1052,10 @@ uishell_rt_layout_arrays_size(WhTextLayout *l)
           sizeof(WhTextCluster)*l->cluster_count + sizeof(WhTextBox)*l->box_count + 5*8);
 }
 
-// The Block's layout at text width `width`, from the cache or laid out now.
+// The Block's layout at text width `width`, from the cache or laid out now;
+// cut to `max_lines` with an ellipsis, unless 0.
 internal UIShell_RtLayoutEntry *
-uishell_rt_layout(UIShell_RtLayoutCache *cache, UIShell_RtTheme *t, UIShell_RtNode *n, UIShell_RtFrame *frame, F32 width)
+uishell_rt_layout(UIShell_RtLayoutCache *cache, UIShell_RtTheme *t, UIShell_RtNode *n, UIShell_RtFrame *frame, F32 width, U32 max_lines)
 {
   WhText *ctx = uishell_rt_text();
   U64 epoch = wh_text_epoch(ctx);
@@ -1061,12 +1063,12 @@ uishell_rt_layout(UIShell_RtLayoutCache *cache, UIShell_RtTheme *t, UIShell_RtNo
   U32 width_bits = 0;
   MemoryCopy(&width_bits, &width, sizeof(width_bits));
   U64 label_hash = frame->label.size ? XXH3_64bits(frame->label.str, frame->label.size) : 0;
-  U64 hash = uishell_rt_layout_hash(n->key, n->version, width_bits, epoch, t->metrics_hash, label_hash);
+  U64 hash = uishell_rt_layout_hash(n->key, n->version, width_bits, epoch, t->metrics_hash, label_hash, max_lines);
   UIShell_RtLayoutEntry **slot = &cache->slots[hash % UISHELL_RT_LAYOUT_SLOTS];
   for(UIShell_RtLayoutEntry *e = *slot; e != 0; e = e->hash_next)
   {
     if(e->key == n->key && e->version == n->version && e->width_bits == width_bits && e->epoch == epoch &&
-       e->metrics_hash == t->metrics_hash && e->label_hash == label_hash)
+       e->metrics_hash == t->metrics_hash && e->label_hash == label_hash && e->max_lines == max_lines)
     {
       DLLRemove_NP(cache->lru_first, cache->lru_last, e, lru_next, lru_prev);
       DLLPushBack_NP(cache->lru_first, cache->lru_last, e, lru_next, lru_prev);
@@ -1083,6 +1085,8 @@ uishell_rt_layout(UIShell_RtLayoutCache *cache, UIShell_RtTheme *t, UIShell_RtNo
   input.styles = styled.styles;
   input.style_count = styled.style_count;
   input.align = WH_TEXT_ALIGN_START;
+  input.max_lines = max_lines;
+  input.ellipsis = max_lines != 0;
   WhTextLayout text = {0}, label = {0};
   char *error = 0;
   if(!wh_text_layout(ctx, &input, width, uishell_rt_allocator(scratch.arena), &text, &error))
@@ -1138,6 +1142,7 @@ uishell_rt_layout(UIShell_RtLayoutCache *cache, UIShell_RtTheme *t, UIShell_RtNo
     e->epoch = epoch;
     e->metrics_hash = t->metrics_hash;
     e->label_hash = label_hash;
+    e->max_lines = max_lines;
     e->layout = layout;
     e->size_class = size_class;
     e->bytes = bytes;
@@ -1450,7 +1455,7 @@ uishell_rt_block_height(UIShell_RichTextState *s, UIShell_RtNode *n, F32 content
   }
   else
   {
-    UIShell_RtLayoutEntry *e = uishell_rt_layout(&s->layouts, &s->theme, n, &f, uishell_rt_text_width(&f, content_width));
+    UIShell_RtLayoutEntry *e = uishell_rt_layout(&s->layouts, &s->theme, n, &f, uishell_rt_text_width(&f, content_width), 0);
     if(e) { inner = e->layout->text.height; }
     if(layout_out) { *layout_out = e; }
   }
@@ -1576,6 +1581,48 @@ uishell_rt_draw_run_marks(UIShell_RtTheme *t, WhTextLayout *l, UIShell_RtStyleIn
         dr_rect(r2f32p(x0, y, x1, y + Max(1.f, run->strikethrough_size)), color, 0, 0, 0);
       }
     }
+  }
+}
+
+internal F32
+uishell_rt_cell_pad(UIShell_RtTheme *t)
+{
+  return floor_f32(uishell_rt_px(t)*0.4f);
+}
+
+// A table cell's text (#545): laid out as Rich Text is, so with fontique's
+// fallback, on one line cut with an ellipsis. Keyed by its text: equal
+// cells share a layout.
+internal UIShell_RtLayoutEntry *
+uishell_rt_cell_layout(UIShell_RichTextState *s, String8 text, F32 cell_width)
+{
+  UIShell_RtNode n = {0};
+  n.kind = WHEELHOUSE_RICH_KIND_PARAGRAPH;
+  n.key = XXH3_64bits(text.str, text.size);
+  n.text = text;
+  UIShell_RtFrame f = {0};
+  return uishell_rt_layout(&s->layouts, &s->theme, &n, &f, cell_width - 2*uishell_rt_cell_pad(&s->theme), 1);
+}
+
+// Paints a table Embed's cell and header text.
+internal void
+uishell_rt_table_cell_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, String8 text, B32 right, Vec4F32 color)
+{
+  UIShell_RichTextState *s = (UIShell_RichTextState *)user;
+  Rng2F32 visible = intersect_2f32(cell, clip);
+  if(text.size == 0 || visible.x1 <= visible.x0 || visible.y1 <= visible.y0) { return; }
+  UIShell_RtTheme *t = &s->theme;
+  F32 pad = uishell_rt_cell_pad(t);
+  UIShell_RtLayoutEntry *e = uishell_rt_cell_layout(s, text, dim_2f32(cell).x);
+  if(e == 0 || e->layout->text.line_count == 0) { return; }
+  WhTextLayout *l = &e->layout->text;
+  WhTextLine *line = &l->lines[0];
+  F32 x = right ? Max(cell.x0 + pad, cell.x1 - pad - (line->x + line->width)) : cell.x0 + pad;
+  Vec2F32 origin = v2f32(floor_f32(x), floor_f32(cell.y0 + (dim_2f32(cell).y - line->height)/2 - line->y));
+  UIShell_RtBucket pages = {0};
+  DR_ClipScope(intersect_2f32(dr_top_clip(), visible))
+  {
+    if(!uishell_rt_draw_glyphs(&pages, t, l, 0, 0, origin, &color)) { rd_request_frame(); }
   }
 }
 
@@ -3345,6 +3392,8 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
           BinnacleGrid *grid = wheelhouse_table_grid(tb->table);
           UIShell_TableDraw *td = push_array(ui_build_arena(), UIShell_TableDraw, 1);
           td->table = tb->table;
+          td->draw_text = uishell_rt_table_cell_text;
+          td->text_user = s;
           for(BinnacleEffect effect; binnacle_grid_poll_effect(grid, &effect);) {}
           binnacle_grid_snapshot(grid, &td->snap);
           ui_box_equip_custom_draw(grid_box, uishell_table_draw, td);

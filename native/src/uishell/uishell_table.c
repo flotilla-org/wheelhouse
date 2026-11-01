@@ -90,11 +90,17 @@ uishell_table_strip_clip(BinnacleAxisSnapshot *axis, size_t index)
   return r1f32(axis->scrolling_start, axis->scrolling_end);
 }
 
+// Paints a cell's or header's text in `cell`, clipped to `clip`.
+typedef void UIShell_TableTextFunction(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, String8 text, B32 right, Vec4F32 color);
+
 typedef struct UIShell_TableDraw UIShell_TableDraw;
 struct UIShell_TableDraw
 {
   WheelhouseTable *table;
   BinnacleSnapshot snap;
+  // The text's painter, if not the box's font (uishell_table_draw_text).
+  UIShell_TableTextFunction *draw_text;
+  void *text_user;
 };
 
 internal Rng2F32
@@ -104,7 +110,7 @@ uishell_table_rect(Rng2F32 origin, BinnacleRect r)
 }
 
 internal void
-uishell_table_draw_text(UI_Box *box, Rng2F32 cell, Rng2F32 clip, String8 text, B32 right, Vec4F32 color)
+uishell_table_draw_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, String8 text, B32 right, Vec4F32 color)
 {
   if(text.size == 0) { return; }
   Rng2F32 visible = intersect_2f32(cell, clip);
@@ -140,6 +146,7 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
   Vec4F32 header_line = mix_4f32(band, text_color, 0.2f);
   Vec4F32 accent = rd_accent_color();
   F32 col_band = cols->header, row_band = rows->header;
+  UIShell_TableTextFunction *draw_text = d->draw_text ? d->draw_text : uishell_table_draw_text;
   Rng2F32 body = r2f32p(o.x0+col_band, o.y0+row_band, o.x1, o.y1);
 
   // Body cells: each row item crossing each column item, clipped to the
@@ -164,7 +171,7 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
       }
       U32 align = 0;
       String8 text = uishell_table_text(wheelhouse_table_cell(d->table, ri->key, ci->key, &align));
-      uishell_table_draw_text(box, cell, clip, text, align == WHEELHOUSE_TABLE_ALIGN_RIGHT, text_color);
+      draw_text(d->text_user, box, cell, clip, text, align == WHEELHOUSE_TABLE_ALIGN_RIGHT, text_color);
       uishell_table_cells_drawn += 1;
     }
   }
@@ -234,7 +241,7 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
                                   : push_str8f(scratch.arena, "%S%S", label, arrow);
       }
       B32 pending = !!(h->flags & (BINNACLE_HEADER_PENDING|BINNACLE_HEADER_MOVE_PENDING|BINNACLE_HEADER_FILTER_PENDING));
-      uishell_table_draw_text(box, rect, clip, label, axis_idx == BINNACLE_ROWS, pending ? weak : text_color);
+      draw_text(d->text_user, box, rect, clip, label, axis_idx == BINNACLE_ROWS, pending ? weak : text_color);
       scratch_end(scratch);
     }
   }
