@@ -630,10 +630,12 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     U64 heading = 0;
     RichCheck(uishell_rt_resolve_link(scratch.arena, s, str8_lit("https://example.com/tides"), &resolved, &heading) == UIShell_RtLink_External,
               "a web link opens externally");
+    uishell_rt_resolve_link(scratch.arena, s, str8_lit("notes.md"), &resolved, &heading);
+    fprintf(stderr, "RICH_TEXT_LINK notes.md -> %.*s (beside %.*s)\n", str8_varg(resolved), str8_varg(dir));
     RichCheck(uishell_rt_resolve_link(scratch.arena, s, str8_lit("notes.md"), &resolved, &heading) == UIShell_RtLink_File &&
-              str8_match(resolved, push_str8f(scratch.arena, "%S/notes.md", dir), 0), "a relative .md link resolves beside the file");
+              path_match_normalized(resolved, push_str8f(scratch.arena, "%S/notes.md", dir)), "a relative .md link resolves beside the file");
     RichCheck(uishell_rt_resolve_link(scratch.arena, s, str8_lit("Harbour Master"), &resolved, &heading) == UIShell_RtLink_File &&
-              str8_match(resolved, note, 0), "a wikilink resolves to the note beside the file");
+              path_match_normalized(resolved, note), "a wikilink resolves to the note beside the file");
     RichCheck(uishell_rt_resolve_link(scratch.arena, s, str8_lit("#mid-channel"), &resolved, &heading) == UIShell_RtLink_Heading && heading != 0,
               "a fragment link resolves to its heading");
     // Repeated headings take GitHub's suffixes, in document order.
@@ -654,9 +656,9 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     String8 spaced = push_str8f(scratch.arena, "%S/tide tables.md", dir);
     write_data_to_file_path(spaced, str8_lit("# Tide tables\n"));
     RichCheck(uishell_rt_resolve_link(scratch.arena, s, str8_lit("tide%20tables.md?rev=2#noon"), &resolved, &heading) == UIShell_RtLink_File &&
-              str8_match(resolved, spaced, 0), "a percent-encoded relative link resolves to its file");
+              path_match_normalized(resolved, spaced), "a percent-encoded relative link resolves to its file");
     RichCheck(uishell_rt_resolve_link(scratch.arena, s, str8_lit("No Such Note"), &resolved, &heading) == UIShell_RtLink_File &&
-              str8_match(resolved, push_str8f(scratch.arena, "%S/No Such Note", dir), 0), "a missing wikilink names its path, without inventing a note");
+              path_match_normalized(resolved, push_str8f(scratch.arena, "%S/No Such Note", dir)), "a missing wikilink names its path, without inventing a note");
     // Clicking the relative link opens it as a new View.
     UIShell_RtNode *opening = uishell_rt_diag_block_with(s, str8_lit("Opening words"));
     U32 at = opening ? (U32)str8_find_needle(opening->text, 0, str8_lit("relative"), 0) + 3 : 0;
@@ -681,7 +683,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       B32 opened = 0;
       for(UIShell_CmdNode *n = rd_state->cmds[0].first; n; n = n->next)
       {
-        opened |= str8_match(n->cmd.name, str8_lit("open"), 0) && str8_match(n->cmd.regs->file_path, push_str8f(scratch.arena, "%S/notes.md", dir), 0);
+        opened |= str8_match(n->cmd.name, str8_lit("open"), 0) && path_match_normalized(n->cmd.regs->file_path, push_str8f(scratch.arena, "%S/notes.md", dir));
       }
       MemoryZeroStruct(&rd_state->cmds[0]);
       RichCheck(opened, "a click on a relative .md link opens it as a new View");
