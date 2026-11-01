@@ -19,6 +19,93 @@ lnx_window_from_x11window(Window window)
   return result;
 }
 
+internal B32
+lnx_wm_window_has_net_wm_state(LNX_WM_Window *w, Atom state)
+{
+  B32 result = 0;
+  Atom actual_type = 0;
+  int actual_format = 0;
+  unsigned long count = 0;
+  unsigned long bytes_after = 0;
+  Atom *props = 0;
+  if(XGetWindowProperty(lnx_wm_state->display, w->window, lnx_wm_state->net_wm_state_atom, 0, 1024, 0, XA_ATOM,
+                        &actual_type, &actual_format, &count, &bytes_after, (U8 **)&props) == Success && props != 0)
+  {
+    for(unsigned long idx = 0; idx < count; idx += 1)
+    {
+      if(props[idx] == state) { result = 1; break; }
+    }
+    XFree(props);
+  }
+  return result;
+}
+
+internal void
+lnx_wm_window_send_net_wm_state(LNX_WM_Window *w, B32 set, Atom first, Atom second)
+{
+  XEvent evt = {0};
+  evt.xclient.type = ClientMessage;
+  evt.xclient.window = w->window;
+  evt.xclient.message_type = lnx_wm_state->net_wm_state_atom;
+  evt.xclient.format = 32;
+  evt.xclient.data.l[0] = !!set;
+  evt.xclient.data.l[1] = first;
+  evt.xclient.data.l[2] = second;
+  evt.xclient.data.l[3] = 1;
+  XSendEvent(lnx_wm_state->display, DefaultRootWindow(lnx_wm_state->display), 0,
+             SubstructureNotifyMask|SubstructureRedirectMask, &evt);
+  XFlush(lnx_wm_state->display);
+}
+
+// The window manager draws no frame around a custom-border window, so the
+// edges and title bar the shell reports stand in for it: a press there hands
+// the drag to the window manager with _NET_WM_MOVERESIZE. -1 is client area.
+internal int
+lnx_wm_moveresize_code_from_pos(LNX_WM_Window *w, Vec2F32 pos)
+{
+  if(!w->custom_border) { return -1; }
+  WM_Window handle = {(U64)w};
+  Rng2F32 window_rect = wm_client_rect_from_window(handle);
+  F32 edge = w->custom_edge_thickness;
+  Rng2F32 inside_edges = pad_2f32(window_rect, -edge);
+  Rng2F32 title_bar = r2f32p(inside_edges.x0, inside_edges.y0, inside_edges.x1, inside_edges.y0 + w->custom_title_bar_thickness);
+  if(!contains_2f32(window_rect, pos)) { return -1; }
+  if(contains_2f32(inside_edges, pos) && !contains_2f32(title_bar, pos)) { return -1; }
+  for(LNX_WM_WindowClientArea *n = w->first_client_area; n != 0; n = n->next)
+  {
+    if(contains_2f32(n->rect, pos)) { return -1; }
+  }
+  if(contains_2f32(title_bar, pos)) { return _NET_WM_MOVERESIZE_MOVE; }
+  // A maximized window has no edges to drag; they act as title bar.
+  if(wm_window_is_maximized(handle)) { return _NET_WM_MOVERESIZE_MOVE; }
+  B32 left = pos.x < inside_edges.x0, right = pos.x >= inside_edges.x1;
+  B32 top = pos.y < inside_edges.y0, bottom = pos.y >= inside_edges.y1;
+  if(top && left)     { return _NET_WM_MOVERESIZE_SIZE_TOPLEFT; }
+  if(top && right)    { return _NET_WM_MOVERESIZE_SIZE_TOPRIGHT; }
+  if(bottom && left)  { return _NET_WM_MOVERESIZE_SIZE_BOTTOMLEFT; }
+  if(bottom && right) { return _NET_WM_MOVERESIZE_SIZE_BOTTOMRIGHT; }
+  if(left)            { return _NET_WM_MOVERESIZE_SIZE_LEFT; }
+  if(right)           { return _NET_WM_MOVERESIZE_SIZE_RIGHT; }
+  if(top)             { return _NET_WM_MOVERESIZE_SIZE_TOP; }
+  return _NET_WM_MOVERESIZE_SIZE_BOTTOM;
+}
+
+// _NET_WM_SYNC_REQUEST: the window manager holds the next step of an
+// interactive resize until the counter reaches the value it sent, so the
+// counter moves only once a frame at the new size has been swapped.
+internal void
+lnx_wm_window_presented(LNX_WM_Window *w)
+{
+  if(w->sync_pending)
+  {
+    w->sync_pending = 0;
+    XSyncValue value;
+    XSyncIntsToValue(&value, (unsigned int)(w->counter_value & 0xffffffffu), (int)(w->counter_value >> 32));
+    XSyncSetCounter(lnx_wm_state->display, w->counter_xid, value);
+    XFlush(lnx_wm_state->display);
+  }
+}
+
 ////////////////////////////////
 //~ rjf: @os_hooks Main Initialization API (Implemented Per-OS)
 
@@ -30,12 +117,25 @@ wm_init(void)
   lnx_wm_state = push_array(arena, LNX_WM_State, 1);
   lnx_wm_state->arena = arena;
   lnx_wm_state->display = XOpenDisplay(0);
+  if(lnx_wm_state->display == 0)
+  {
+    char *name = getenv("DISPLAY");
+    fprintf(stderr, "Could not open X display \"%s\". Check DISPLAY and XAUTHORITY.\n", name ? name : "");
+    exit(1);
+  }
   if(pipe2(lnx_wm_state->wake_pipe, O_NONBLOCK|O_CLOEXEC) != 0) { perror("window wake pipe"); abort(); }
   
   //- rjf: calculate atoms
   lnx_wm_state->wm_delete_window_atom        = XInternAtom(lnx_wm_state->display, "WM_DELETE_WINDOW", 0);
   lnx_wm_state->wm_sync_request_atom         = XInternAtom(lnx_wm_state->display, "_NET_WM_SYNC_REQUEST", 0);
   lnx_wm_state->wm_sync_request_counter_atom = XInternAtom(lnx_wm_state->display, "_NET_WM_SYNC_REQUEST_COUNTER", 0);
+  lnx_wm_state->motif_wm_hints_atom              = XInternAtom(lnx_wm_state->display, "_MOTIF_WM_HINTS", 0);
+  lnx_wm_state->net_wm_moveresize_atom           = XInternAtom(lnx_wm_state->display, "_NET_WM_MOVERESIZE", 0);
+  lnx_wm_state->net_wm_state_atom                = XInternAtom(lnx_wm_state->display, "_NET_WM_STATE", 0);
+  lnx_wm_state->net_wm_state_maximized_horz_atom = XInternAtom(lnx_wm_state->display, "_NET_WM_STATE_MAXIMIZED_HORZ", 0);
+  lnx_wm_state->net_wm_state_maximized_vert_atom = XInternAtom(lnx_wm_state->display, "_NET_WM_STATE_MAXIMIZED_VERT", 0);
+  lnx_wm_state->net_wm_state_fullscreen_atom     = XInternAtom(lnx_wm_state->display, "_NET_WM_STATE_FULLSCREEN", 0);
+  lnx_wm_state->wm_state_atom                    = XInternAtom(lnx_wm_state->display, "WM_STATE", 0);
   
   lnx_wm_state->clipboard_atom = XInternAtom(lnx_wm_state->display, "CLIPBOARD", 0);
   lnx_wm_state->clipboard_utf8_atom = XInternAtom(lnx_wm_state->display, "UTF8_STRING", 0);
@@ -193,6 +293,7 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
                ButtonReleaseMask|
                KeyPressMask|
                KeyReleaseMask|
+               StructureNotifyMask|
                FocusChangeMask);
   Atom protocols[] =
   {
@@ -206,6 +307,17 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
     w->counter_xid = XSyncCreateCounter(lnx_wm_state->display, initial_value);
   }
   XChangeProperty(lnx_wm_state->display, w->window, lnx_wm_state->wm_sync_request_counter_atom, XA_CARDINAL, 32, PropModeReplace, (U8 *)&w->counter_xid, 1);
+  w->configured_size = v2s32((S32)resolution.x, (S32)resolution.y);
+  
+  //- rjf: custom border -> ask the window manager for no decorations
+  if(flags & WM_WindowFlag_CustomBorder)
+  {
+    w->custom_border = 1;
+    // MWM_HINTS_DECORATIONS, with no decorations. Format-32 properties are longs in Xlib.
+    long hints[5] = {1<<1, 0, 0, 0, 0};
+    XChangeProperty(lnx_wm_state->display, w->window, lnx_wm_state->motif_wm_hints_atom, lnx_wm_state->motif_wm_hints_atom,
+                    32, PropModeReplace, (U8 *)hints, ArrayCount(hints));
+  }
   
   //- rjf: create xic
   w->xic = XCreateIC(lnx_wm_state->xim,
@@ -276,45 +388,63 @@ internal B32
 wm_window_is_fullscreen(WM_Window handle)
 {
   if(wm_window_match(handle, wm_window_zero())) {return 0;}
-  // TODO(rjf)
-  return 0;
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  return lnx_wm_window_has_net_wm_state(w, lnx_wm_state->net_wm_state_fullscreen_atom);
 }
 
 internal void
 wm_window_set_fullscreen(WM_Window handle, B32 fullscreen)
 {
   if(wm_window_match(handle, wm_window_zero())) {return;}
-  // TODO(rjf)
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  lnx_wm_window_send_net_wm_state(w, fullscreen, lnx_wm_state->net_wm_state_fullscreen_atom, 0);
 }
 
 internal B32
 wm_window_is_maximized(WM_Window handle)
 {
   if(wm_window_match(handle, wm_window_zero())) {return 0;}
-  // TODO(rjf)
-  return 0;
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  return (lnx_wm_window_has_net_wm_state(w, lnx_wm_state->net_wm_state_maximized_horz_atom) &&
+          lnx_wm_window_has_net_wm_state(w, lnx_wm_state->net_wm_state_maximized_vert_atom));
 }
 
 internal void
 wm_window_set_maximized(WM_Window handle, B32 maximized)
 {
   if(wm_window_match(handle, wm_window_zero())) {return;}
-  // TODO(rjf)
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  lnx_wm_window_send_net_wm_state(w, maximized, lnx_wm_state->net_wm_state_maximized_horz_atom, lnx_wm_state->net_wm_state_maximized_vert_atom);
 }
 
 internal B32
 wm_window_is_minimized(WM_Window handle)
 {
   if(wm_window_match(handle, wm_window_zero())) {return 0;}
-  // TODO(rjf)
-  return 0;
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  B32 result = 0;
+  Atom actual_type = 0;
+  int actual_format = 0;
+  unsigned long count = 0;
+  unsigned long bytes_after = 0;
+  long *state = 0;
+  if(XGetWindowProperty(lnx_wm_state->display, w->window, lnx_wm_state->wm_state_atom, 0, 2, 0, lnx_wm_state->wm_state_atom,
+                        &actual_type, &actual_format, &count, &bytes_after, (U8 **)&state) == Success && state != 0)
+  {
+    result = (count > 0 && state[0] == IconicState);
+    XFree(state);
+  }
+  return result;
 }
 
 internal void
 wm_window_set_minimized(WM_Window handle, B32 minimized)
 {
   if(wm_window_match(handle, wm_window_zero())) {return;}
-  // TODO(rjf)
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  if(minimized) { XIconifyWindow(lnx_wm_state->display, w->window, DefaultScreen(lnx_wm_state->display)); }
+  else          { XMapWindow(lnx_wm_state->display, w->window); }
+  XFlush(lnx_wm_state->display);
 }
 
 internal void
@@ -335,28 +465,44 @@ internal void
 wm_window_clear_custom_border_data(WM_Window handle)
 {
   if(wm_window_match(handle, wm_window_zero())) {return;}
-  // TODO(rjf)
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  if(w->last_client_area != 0)
+  {
+    w->last_client_area->next = lnx_wm_state->free_client_area;
+    lnx_wm_state->free_client_area = w->first_client_area;
+  }
+  w->first_client_area = w->last_client_area = 0;
+  w->custom_title_bar_thickness = 0;
+  w->custom_edge_thickness = 0;
 }
 
 internal void
 wm_window_push_custom_title_bar(WM_Window handle, F32 thickness)
 {
   if(wm_window_match(handle, wm_window_zero())) {return;}
-  // TODO(rjf)
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  w->custom_title_bar_thickness = thickness;
 }
 
 internal void
 wm_window_push_custom_edges(WM_Window handle, F32 thickness)
 {
   if(wm_window_match(handle, wm_window_zero())) {return;}
-  // TODO(rjf)
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  w->custom_edge_thickness = thickness;
 }
 
 internal void
 wm_window_push_custom_title_bar_client_area(WM_Window handle, Rng2F32 rect)
 {
   if(wm_window_match(handle, wm_window_zero())) {return;}
-  // TODO(rjf)
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  LNX_WM_WindowClientArea *n = lnx_wm_state->free_client_area;
+  if(n != 0) { SLLStackPop(lnx_wm_state->free_client_area); }
+  else       { n = push_array_no_zero(lnx_wm_state->arena, LNX_WM_WindowClientArea, 1); }
+  n->next = 0;
+  n->rect = rect;
+  SLLQueuePush(w->first_client_area, w->last_client_area, n);
 }
 
 internal B32
@@ -722,8 +868,42 @@ wm_get_events(Arena *arena, B32 wait)
           case Button3:{key = WM_Key_RightMouseButton;}break;
         }
         
-        // rjf: push event
+        // rjf: left press on the title bar or an edge -> the window manager moves or resizes
         LNX_WM_Window *window = lnx_window_from_x11window(evt.xbutton.window);
+        if(window != 0 && evt.type == ButtonPress && evt.xbutton.button == Button1)
+        {
+          int moveresize_code = lnx_wm_moveresize_code_from_pos(window, v2f32((F32)evt.xbutton.x, (F32)evt.xbutton.y));
+          if(moveresize_code == _NET_WM_MOVERESIZE_MOVE &&
+             evt.xbutton.time - window->last_title_bar_press_time < (Time)(lnx_wm_state->gfx_info.double_click_time*1000))
+          {
+            window->last_title_bar_press_time = 0;
+            WM_Window handle = {(U64)window};
+            wm_window_set_maximized(handle, !wm_window_is_maximized(handle));
+            break;
+          }
+          if(moveresize_code >= 0)
+          {
+            if(moveresize_code == _NET_WM_MOVERESIZE_MOVE) { window->last_title_bar_press_time = evt.xbutton.time; }
+            // The press holds an implicit pointer grab, which the window manager needs.
+            XUngrabPointer(lnx_wm_state->display, evt.xbutton.time);
+            XEvent xev = {0};
+            xev.xclient.type = ClientMessage;
+            xev.xclient.window = window->window;
+            xev.xclient.message_type = lnx_wm_state->net_wm_moveresize_atom;
+            xev.xclient.format = 32;
+            xev.xclient.data.l[0] = evt.xbutton.x_root;
+            xev.xclient.data.l[1] = evt.xbutton.y_root;
+            xev.xclient.data.l[2] = moveresize_code;
+            xev.xclient.data.l[3] = Button1;
+            xev.xclient.data.l[4] = 1; // source: application
+            XSendEvent(lnx_wm_state->display, DefaultRootWindow(lnx_wm_state->display), 0,
+                       SubstructureRedirectMask|SubstructureNotifyMask, &xev);
+            XFlush(lnx_wm_state->display);
+            break;
+          }
+        }
+        
+        // rjf: push event
         if(key != WM_Key_Null)
         {
           WM_Event *e = wm_event_list_push_new(arena, &evts, evt.type == ButtonPress ? WM_EventKind_Press : WM_EventKind_Release);
@@ -752,6 +932,42 @@ wm_get_events(Arena *arena, B32 wait)
         e->pos.x = (F32)evt.xmotion.x;
         e->pos.y = (F32)evt.xmotion.y;
         set_mouse_cursor = 1;
+        switch(window != 0 ? lnx_wm_moveresize_code_from_pos(window, e->pos) : -1)
+        {
+          default:{}break;
+          case _NET_WM_MOVERESIZE_SIZE_TOPLEFT:
+          case _NET_WM_MOVERESIZE_SIZE_BOTTOMRIGHT:{lnx_wm_state->last_set_cursor = WM_Cursor_DownRight;}break;
+          case _NET_WM_MOVERESIZE_SIZE_TOPRIGHT:
+          case _NET_WM_MOVERESIZE_SIZE_BOTTOMLEFT:{lnx_wm_state->last_set_cursor = WM_Cursor_UpRight;}break;
+          case _NET_WM_MOVERESIZE_SIZE_LEFT:
+          case _NET_WM_MOVERESIZE_SIZE_RIGHT:{lnx_wm_state->last_set_cursor = WM_Cursor_LeftRight;}break;
+          case _NET_WM_MOVERESIZE_SIZE_TOP:
+          case _NET_WM_MOVERESIZE_SIZE_BOTTOM:{lnx_wm_state->last_set_cursor = WM_Cursor_UpDown;}break;
+        }
+      }break;
+      
+      //- rjf: resizes & exposures -> draw a frame
+      // Every ConfigureNotify in the queue is drained before the frame, so a
+      // drag's burst of sizes coalesces into one frame at the latest size.
+      case ConfigureNotify:
+      {
+        LNX_WM_Window *window = lnx_window_from_x11window(evt.xconfigure.window);
+        Vec2S32 size = v2s32(evt.xconfigure.width, evt.xconfigure.height);
+        if(window != 0 && (size.x != window->configured_size.x || size.y != window->configured_size.y))
+        {
+          window->configured_size = size;
+          WM_Event *e = wm_event_list_push_new(arena, &evts, WM_EventKind_Wakeup);
+          e->window.u64[0] = (U64)window;
+        }
+      }break;
+      case Expose:
+      {
+        LNX_WM_Window *window = lnx_window_from_x11window(evt.xexpose.window);
+        if(window != 0 && evt.xexpose.count == 0)
+        {
+          WM_Event *e = wm_event_list_push_new(arena, &evts, WM_EventKind_Wakeup);
+          e->window.u64[0] = (U64)window;
+        }
       }break;
       
       //- rjf: window focus/unfocus
@@ -779,12 +995,11 @@ wm_get_events(Arena *arena, B32 wait)
           LNX_WM_Window *window = lnx_window_from_x11window(evt.xclient.window);
           if(window != 0)
           {
-            window->counter_value = 0;
-            window->counter_value |= evt.xclient.data.l[2];
-            window->counter_value |= (evt.xclient.data.l[3] << 32);
-            XSyncValue value;
-            XSyncIntToValue(&value, window->counter_value);
-            XSyncSetCounter(lnx_wm_state->display, window->counter_xid, value);
+            // Xlib sign-extends the 32-bit halves into longs.
+            window->counter_value = (U64)(U32)evt.xclient.data.l[2] | ((U64)(U32)evt.xclient.data.l[3] << 32);
+            window->sync_pending = 1;
+            WM_Event *e = wm_event_list_push_new(arena, &evts, WM_EventKind_Wakeup);
+            e->window.u64[0] = (U64)window;
           }
         }
       }break;
