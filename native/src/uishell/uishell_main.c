@@ -186,7 +186,8 @@ frame(void)
 // The user's automation setting (`automation: off | observe | full`),
 // read from the user file itself: it loads in the first frame, and the
 // Automation Endpoint and WHEELHOUSE_SOCKET are settled before any terminal
-// opens. Only off turns it off.
+// opens. Only a missing value, observe or full turns it on: a mistyped off
+// stays off.
 internal B32
 uishell_automation_enabled(void)
 {
@@ -194,10 +195,10 @@ uishell_automation_enabled(void)
   String8 text = uishell_launch_user_path.size ? data_from_file_path(scratch.arena, uishell_launch_user_path) : str8_zero();
   MD_Node *root = md_tree_from_string(scratch.arena, text);
   String8 value = raw_from_escaped_str8(scratch.arena, md_child_from_string(root, str8_lit("automation"), 0)->first->string);
-  B32 enabled = !str8_match(value, str8_lit("off"), StringMatchFlag_CaseInsensitive);
-  if(value.size && enabled && !str8_match(value, str8_lit("observe"), StringMatchFlag_CaseInsensitive) &&
-     !str8_match(value, str8_lit("full"), StringMatchFlag_CaseInsensitive))
-  { fprintf(stderr, "Unknown automation setting \"%.*s\" (off, observe or full); taking it as full\n", str8_varg(value)); }
+  B32 enabled = (value.size == 0 || str8_match(value, str8_lit("observe"), StringMatchFlag_CaseInsensitive) ||
+                 str8_match(value, str8_lit("full"), StringMatchFlag_CaseInsensitive));
+  if(value.size && !enabled && !str8_match(value, str8_lit("off"), StringMatchFlag_CaseInsensitive))
+  { fprintf(stderr, "Unknown automation setting \"%.*s\" (off, observe or full); taking it as off\n", str8_varg(value)); }
   scratch_end(scratch);
   return enabled;
 }

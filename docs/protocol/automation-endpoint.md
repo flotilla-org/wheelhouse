@@ -53,8 +53,8 @@ an enclosing one: running Wheelhouse inside Wheelhouse is the everyday case.
 ## Gating
 
 The user setting `automation: off | observe | full` (default `full`) is read
-from the user file at launch. Any other value is taken as `full`, with a
-warning on stderr.
+from the user file at launch. Any other value is taken as `off`, with a
+warning on stderr, so a mistyped `off` leaves automation off.
 
 - `off`: there is no default listener and terminals get no
   `WHEELHOUSE_SOCKET`. An address given on the command line is still served,
