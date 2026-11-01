@@ -1,5 +1,5 @@
 ---
-source: crates/wheelhouse-core/src/rich_text/tests.rs
+source: crates/wheelhouse-rich-text/src/tests.rs
 expression: "outline(RichText::open(GFM).doc())"
 ---
 Root

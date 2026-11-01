@@ -1780,11 +1780,10 @@ dependencies = [
  "hegeltest",
  "insta",
  "kdl",
- "pulldown-cmark",
- "regex",
  "serde",
  "serde_json",
  "unicode-width",
+ "wheelhouse-stream",
 ]
 
 [[package]]
@@ -1796,6 +1795,7 @@ dependencies = [
  "hegeltest",
  "serde_json",
  "wheelhouse-core",
+ "wheelhouse-rich-text",
  "wheelhouse-tables",
  "wheelhouse-text",
 ]
@@ -1828,6 +1828,25 @@ dependencies = [
  "tokio",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "wheelhouse-rich-text"
+version = "0.1.0"
+dependencies = [
+ "hegeltest",
+ "insta",
+ "pulldown-cmark",
+ "regex",
+ "wheelhouse-stream",
+]
+
+[[package]]
+name = "wheelhouse-stream"
+version = "0.1.0"
+dependencies = [
+ "hegeltest",
+ "serde",
 ]
 
 [[package]]

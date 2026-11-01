@@ -46,7 +46,7 @@ rich_text = target / "ffi-rich-text"
 subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", str(root / "crates/wheelhouse-ffi/tests/rich_text.c"),
                 "-I", str(root / "crates/wheelhouse-ffi/include"),
                 "-L", str(library), "-lwheelhouse_ffi", "-o", str(rich_text)], check=True)
-fixtures = root / "crates/wheelhouse-core/src/rich_text/fixtures"
+fixtures = root / "crates/wheelhouse-rich-text/src/fixtures"
 subprocess.run([str(rich_text)] + [str(fixtures / name) for name in ("blocks.md", "gfm.md", "extensions.md")],
                env=dict(os.environ, LD_LIBRARY_PATH=str(library), DYLD_LIBRARY_PATH=str(library)), check=True)
 print("Workspace and C ABI verified without a Zellij or Flotilla dependency.")

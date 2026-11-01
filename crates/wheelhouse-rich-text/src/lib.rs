@@ -1,7 +1,7 @@
 //! Rich Text for markdown (#558; decided on #538, #540, #541 and #546).
 use std::collections::HashMap;
 
-pub use crate::stream::{ListOp, SubscriptionId, UnknownSubscription};
+pub use wheelhouse_stream::{ListOp, SubscriptionId, UnknownSubscription};
 
 mod find;
 #[cfg(any(test, feature = "test-support"))]

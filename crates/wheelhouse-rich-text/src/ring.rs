@@ -2,8 +2,9 @@
 //! from a ring of changes rather than by comparing trees (#540).
 use std::collections::{HashMap, VecDeque};
 
+use wheelhouse_stream::ListOp;
+
 use super::tree::{Key, NodeContent, NodeId, Tree};
-use crate::stream::ListOp;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
