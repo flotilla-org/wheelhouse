@@ -28,7 +28,7 @@ mod scale_tests;
 #[cfg(test)]
 mod tests;
 
-pub use conversation::{TAIL_BYTES, TAIL_ITEMS};
+pub use conversation::{CopyAction, TAIL_BYTES, TAIL_ITEMS};
 pub use find::{Find, FindOptions, FindStatus, Match, FIND_BUDGET, MATCH_LIMIT};
 pub use log::{CHUNK_BYTES, CHUNK_LINES, LINE_CAP};
 pub use pages::PAGE;
@@ -91,8 +91,20 @@ impl RichText {
     }
 
     pub(crate) fn tuned_conversation(jsonl: &[u8], capacity: usize, tuning: conversation::Tuning) -> RichText {
+        RichText::tuned_thread(jsonl, capacity, tuning, None)
+    }
+
+    /// One thread of a conversation, a subagent's, at the root: what a View
+    /// of that thread alone shows. The threads it started stay inside the
+    /// calls that started them, and the rest of the conversation is left
+    /// out.
+    pub fn open_thread(jsonl: &[u8], thread: &str) -> RichText {
+        RichText::tuned_thread(jsonl, RING_CAPACITY, conversation::Tuning::default(), Some(thread))
+    }
+
+    pub(crate) fn tuned_thread(jsonl: &[u8], capacity: usize, tuning: conversation::Tuning, thread: Option<&str>) -> RichText {
         let mut rich = RichText::with_ring_capacity("", capacity);
-        let conversation = rich.edit(|sink| conversation::Conversation::open(jsonl, tuning, sink));
+        let conversation = rich.edit(|sink| conversation::Conversation::open(jsonl, tuning, thread, sink));
         rich.conversation = Some(Box::new(conversation));
         rich
     }
@@ -118,6 +130,29 @@ impl RichText {
         let left = self.edit(|sink| conversation.backfill(budget, sink));
         self.conversation = Some(conversation);
         left
+    }
+
+    /// What `action` copies of the Container `key`, collapsed or not, as
+    /// plain text; None if the action doesn't apply to it (or for
+    /// markdown).
+    pub fn copy_action(&self, key: Key, action: CopyAction) -> Option<String> {
+        self.conversation.as_ref()?.copy(key, action)
+    }
+
+    /// Whether [`RichText::copy_action`] copies something, cheaply.
+    pub fn can_copy(&self, key: Key, action: CopyAction) -> bool {
+        self.conversation.as_ref().is_some_and(|c| c.can_copy(key, action))
+    }
+
+    /// The whole conversation as markdown, backfilled first so none of it
+    /// is missing; None for markdown, which a selection copies. The backfill
+    /// runs to the end here, without yielding: a frontend that mustn't wait
+    /// on a large file backfills a step a frame and copies once
+    /// [`RichText::backfill_remaining`] is 0.
+    pub fn copy_all(&mut self) -> Option<String> {
+        self.conversation.as_ref()?;
+        while self.backfill(Duration::from_secs(1)) > 0 {}
+        self.conversation.as_ref().map(|c| c.transcript())
     }
 
     /// The bytes backfill has yet to read; 0 for markdown.

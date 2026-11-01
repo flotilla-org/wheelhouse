@@ -12,7 +12,7 @@ use super::*;
 use std::time::Duration;
 
 use wheelhouse_rich_text::{
-    copy_block, Alert, Align, Anchor, Attr, Color, Delta, Detail, FindOptions, FindStatus, Format, Key, ListOp, Match, Metrics,
+    copy_block, Alert, Align, Anchor, Attr, Color, CopyAction, Delta, Detail, FindOptions, FindStatus, Format, Key, ListOp, Match, Metrics,
     NodeContent, Op, Part, Point, Position, RichText, Role, SectionKind, SubscriptionId, ToolKind, ToolStatus, Tree, View, Window,
     BACKFILL_BUDGET, MATCH_LIMIT, NO_STRING,
 };
@@ -145,6 +145,15 @@ pub const WHEELHOUSE_RICH_POSITION_FRACTION: u32 = 1;
 pub const WHEELHOUSE_RICH_COPY_PLAIN: u32 = 0;
 pub const WHEELHOUSE_RICH_COPY_HTML: u32 = 1;
 pub const WHEELHOUSE_RICH_COPY_MARKDOWN: u32 = 2;
+
+/// What a Container's hover action copies (wheelhouse#546), and the bits of
+/// wheelhouse_rich_text_copy_actions' mask.
+/// A Turn's markdown as plain text, without reasoning or tool calls.
+pub const WHEELHOUSE_RICH_ACTION_MESSAGE: u32 = 1;
+/// A tool call's output, without its ANSI escapes.
+pub const WHEELHOUSE_RICH_ACTION_TOOL_OUTPUT: u32 = 2;
+/// A tool call's `command` argument.
+pub const WHEELHOUSE_RICH_ACTION_COMMAND: u32 = 4;
 
 pub const WHEELHOUSE_RICH_FIND_REGEX: u32 = 1;
 pub const WHEELHOUSE_RICH_FIND_CASE_SENSITIVE: u32 = 2;
@@ -655,6 +664,22 @@ pub unsafe extern "C" fn wheelhouse_rich_text_open_conversation(jsonl: Text, err
     .unwrap_or(ptr::null_mut())
 }
 
+/// One thread of a conversation (`thread`, a subagent's) at the root: what a
+/// View of that thread alone shows. Otherwise as
+/// wheelhouse_rich_text_open_conversation.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_open_thread(
+    jsonl: Text,
+    thread: Text,
+    error_out: *mut *mut c_char,
+) -> *mut WheelhouseRichText {
+    pure(error_out, || {
+        let rich = RichText::open_thread(slice(jsonl.data, jsonl.len)?, &thread.read()?);
+        Ok(Box::into_raw(Box::new(WheelhouseRichText { rich, poisoned: false, window: vec![] })))
+    })
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Bytes appended to a conversation's file, in any pieces: a line waits for
 /// its newline. `changed_out` (if not NULL) gets 1 if anything changed. An
 /// error for a markdown document.
@@ -1080,6 +1105,25 @@ pub unsafe extern "C" fn wheelhouse_rich_text_set_collapsed(
     view(h, subscription, error_out, |doc, view| view.set_collapsed(doc, Key(key), collapsed != 0)).is_some() as u32
 }
 
+/// `out` gets 1 if this subscription's View has the Container `key`
+/// collapsed: by wheelhouse_rich_text_set_collapsed, until it is expanded
+/// again or a reveal expands it.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_collapsed(
+    h: *mut WheelhouseRichText,
+    subscription: u64,
+    key: u64,
+    out: *mut u32,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    view(h, subscription, error_out, |_, view| {
+        let out = out.as_mut().ok_or("null output")?;
+        *out = u32::from(view.is_collapsed(Key(key)));
+        Ok(())
+    })
+    .is_some() as u32
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WheelhouseRichWindowEntry {
@@ -1300,6 +1344,62 @@ pub unsafe extern "C" fn wheelhouse_rich_text_copy_block(
 ) -> u32 {
     run(h, error_out, |h| {
         let text = copy_block(h.rich.doc(), Key(key), format(copy_format)?).ok_or("no such Block")?;
+        write_bytes(out, text.into_bytes())
+    })
+    .is_some() as u32
+}
+
+fn action_bit(action: CopyAction) -> u32 {
+    match action {
+        CopyAction::Message => WHEELHOUSE_RICH_ACTION_MESSAGE,
+        CopyAction::ToolOutput => WHEELHOUSE_RICH_ACTION_TOOL_OUTPUT,
+        CopyAction::Command => WHEELHOUSE_RICH_ACTION_COMMAND,
+    }
+}
+
+/// The WHEELHOUSE_RICH_ACTION_* bits that copy something of the Container
+/// `key`; 0 for none, and for markdown.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_copy_actions(
+    h: *mut WheelhouseRichText,
+    key: u64,
+    out: *mut u32,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        let out = out.as_mut().ok_or("null output")?;
+        *out = CopyAction::ALL.into_iter().filter(|&a| h.rich.can_copy(Key(key), a)).map(action_bit).fold(0, |m, b| m | b);
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// What one WHEELHOUSE_RICH_ACTION_* copies of the Container `key`,
+/// collapsed or not; an error if it doesn't apply. Free the bytes with
+/// wheelhouse_bytes_free.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_copy_action(
+    h: *mut WheelhouseRichText,
+    key: u64,
+    action: u32,
+    out: *mut Bytes,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        let action =
+            CopyAction::ALL.into_iter().find(|&a| action_bit(a) == action).ok_or_else(|| format!("unknown copy action {action}"))?;
+        let text = h.rich.copy_action(Key(key), action).ok_or("nothing to copy")?;
+        write_bytes(out, text.into_bytes())
+    })
+    .is_some() as u32
+}
+
+/// A conversation's whole transcript as markdown, backfilling what is left
+/// first. An error for markdown. Free the bytes with wheelhouse_bytes_free.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_copy_all(h: *mut WheelhouseRichText, out: *mut Bytes, error_out: *mut *mut c_char) -> u32 {
+    run(h, error_out, |h| {
+        let text = h.rich.copy_all().ok_or("not a conversation")?;
         write_bytes(out, text.into_bytes())
     })
     .is_some() as u32

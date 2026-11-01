@@ -274,6 +274,13 @@ struct UIShell_RtNode
   U64 child_cap;
   // A Block's place in document order, for comparing selection ends.
   U64 order;
+  // A Turn's role; a Section's kind, tool, status, name and title.
+  U32 role;
+  U32 section;
+  U32 tool;
+  U32 status;
+  String8 name;
+  String8 title;
 };
 
 typedef struct UIShell_RtModel UIShell_RtModel;
@@ -360,7 +367,7 @@ uishell_rt_node_remove(UIShell_RtModel *m, U64 key)
 internal U64
 uishell_rt_node_bytes(UIShell_RtNode *n)
 {
-  return (n->text.size + n->language.size + n->label.size + n->media_type.size +
+  return (n->text.size + n->language.size + n->label.size + n->media_type.size + n->name.size + n->title.size +
           n->span_count*sizeof(WheelhouseRichSpan) + n->string_count*sizeof(String8) +
           n->column_count*sizeof(U32) + n->column_count*n->row_count*sizeof(WheelhouseRichCell) +
           n->child_cap*sizeof(U64));
@@ -373,6 +380,8 @@ uishell_rt_node_copy_content(Arena *arena, UIShell_RtNode *n)
   n->language = push_str8_copy(arena, n->language);
   n->label = push_str8_copy(arena, n->label);
   n->media_type = push_str8_copy(arena, n->media_type);
+  n->name = push_str8_copy(arena, n->name);
+  n->title = push_str8_copy(arena, n->title);
   WheelhouseRichSpan *spans = push_array_no_zero(arena, WheelhouseRichSpan, n->span_count);
   MemoryCopy(spans, n->spans, sizeof(*spans)*n->span_count);
   n->spans = spans;
@@ -407,6 +416,12 @@ uishell_rt_node_set(UIShell_RtModel *m, UIShell_RtNode *n, WheelhouseRichNode *c
   n->language = uishell_rt_s8(c->language);
   n->label = uishell_rt_s8(c->label);
   n->media_type = uishell_rt_s8(c->media_type);
+  n->role = c->role;
+  n->section = c->section;
+  n->tool = c->tool;
+  n->status = c->status;
+  n->name = uishell_rt_s8(c->name);
+  n->title = uishell_rt_s8(c->title);
   n->spans = (WheelhouseRichSpan *)c->spans;
   n->span_count = c->span_count;
   Temp scratch = scratch_begin(0, 0);
@@ -599,14 +614,22 @@ enum
   UIShell_RtInk_Literal    = (1<<3),
   UIShell_RtInk_Weak       = (1<<4),
   UIShell_RtInk_Code       = (1<<5),
+  UIShell_RtInk_Wash       = (1<<6),
 };
+
+// A literal colour: 0xRRGGBB, a palette index with bit 24 set, or the
+// theme's foreground (0) or background (1) with bit 25 set.
+#define UISHELL_RT_PALETTE_BIT (1u<<24)
+#define UISHELL_RT_DEFAULT_BIT (1u<<25)
 
 typedef struct UIShell_RtStyleInk UIShell_RtStyleInk;
 struct UIShell_RtStyleInk
 {
   UIShell_RtInk ink;
-  // For UIShell_RtInk_Literal: 0xRRGGBB, or a palette index with bit 24 set.
+  // For UIShell_RtInk_Literal.
   U32 color;
+  // For UIShell_RtInk_Wash: a literal background.
+  U32 background;
 };
 
 // Fields that change layout are apart from the colours: a theme change lays
@@ -628,6 +651,9 @@ struct UIShell_RtTheme
   Vec4F32 find;
   Vec4F32 find_current;
   Vec4F32 focus;
+  Vec4F32 background;
+  // ANSI's sixteen, which a log's palette colours map through (0xRRGGBB).
+  U32 palette[16];
   U64 colors_hash;
 };
 
@@ -651,27 +677,152 @@ uishell_rt_theme(void)
   t.find = t.link; t.find.w = 0.25f;
   t.find_current = t.link; t.find_current.w = 0.55f;
   t.focus = t.link;
-  t.colors_hash = XXH3_64bits(&t.text, sizeof(Vec4F32)*10);
+  t.background = background;
+  U32 palette[16] =
+  {
+    0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5,
+    0x666666, 0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xffffff,
+  };
+  MemoryCopyArray(t.palette, palette);
+  t.colors_hash = XXH3_64bits(&t.text, OffsetOf(UIShell_RtTheme, colors_hash) - OffsetOf(UIShell_RtTheme, text));
   return t;
+}
+
+// A literal colour: the theme's sixteen, then xterm's 6x6x6 cube and its
+// greys.
+internal Vec4F32
+uishell_rt_literal_color(UIShell_RtTheme *t, U32 color)
+{
+  if(color & UISHELL_RT_DEFAULT_BIT) { return (color & 1) ? t->background : t->text; }
+  if(color & UISHELL_RT_PALETTE_BIT)
+  {
+    U32 index = color & 0xff;
+    if(index < 16) { color = t->palette[index]; }
+    else if(index < 232)
+    {
+      U32 cube = index - 16, levels[6] = {0, 95, 135, 175, 215, 255};
+      color = (levels[cube/36]<<16) | (levels[(cube/6)%6]<<8) | levels[cube%6];
+    }
+    else
+    {
+      U32 grey = 8 + (index - 232)*10;
+      color = (grey<<16) | (grey<<8) | grey;
+    }
+  }
+  return v4f32(((color>>16)&0xff)/255.f, ((color>>8)&0xff)/255.f, (color&0xff)/255.f, t->text.w);
 }
 
 internal Vec4F32
 uishell_rt_ink_color(UIShell_RtTheme *t, UIShell_RtStyleInk *s)
 {
-  if(s->ink & UIShell_RtInk_Literal)
-  {
-    if(!(s->color & (1u<<24)))
-    {
-      return v4f32(((s->color>>16)&0xff)/255.f, ((s->color>>8)&0xff)/255.f, (s->color&0xff)/255.f, t->text.w);
-    }
-    // ANSI's eight, for palette indices.
-    local_persist U32 palette[8] = {0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5};
-    UIShell_RtStyleInk literal = {UIShell_RtInk_Literal, palette[s->color & 7]};
-    return uishell_rt_ink_color(t, &literal);
-  }
+  if(s->ink & UIShell_RtInk_Literal) { return uishell_rt_literal_color(t, s->color); }
   if(s->ink & UIShell_RtInk_Link) { return t->link; }
   if(s->ink & UIShell_RtInk_Weak) { return t->weak; }
   return t->text;
+}
+
+////////////////////////////////
+//~ Container Styles (CONTEXT.md)
+
+// What a Container Style draws around a Container's Blocks.
+typedef U32 UIShell_RtChrome;
+enum
+{
+  UIShell_RtChrome_Background = (1<<0),
+  // A header row: an icon for the kind, the name, the title, the status.
+  UIShell_RtChrome_Header     = (1<<1),
+  // Collapsed when the View first sees it; its header toggles it.
+  UIShell_RtChrome_Collapsed  = (1<<2),
+  // Its header opens its thread as a View of its own, in place of toggling.
+  UIShell_RtChrome_Thread     = (1<<3),
+};
+
+typedef enum UIShell_RtAlign
+{
+  UIShell_RtAlign_Start,
+  UIShell_RtAlign_End,
+}
+UIShell_RtAlign;
+
+// A rule for the Containers of `kind`, and of `role` and `section` unless
+// they are 0 (WHEELHOUSE_RICH_ROLE_NONE, _SECTION_NONE: any). Lengths are
+// in ems of the theme's size.
+typedef struct UIShell_RtContainerStyle UIShell_RtContainerStyle;
+struct UIShell_RtContainerStyle
+{
+  U32 kind;
+  U32 role;
+  U32 section;
+  // Between the chrome's edges and the Blocks.
+  F32 inset_x;
+  F32 inset_top;
+  F32 inset_bottom;
+  // At most this share of the column it sits in, 0 for all of it; content
+  // narrower than that shrinks it to fit.
+  F32 max_width;
+  UIShell_RtAlign align;
+  UIShell_RtChrome chrome;
+  F32 radius;
+  // The WHEELHOUSE_RICH_ACTION_* its hover offers: in its header row if it
+  // has one, else in a row under it.
+  U32 actions;
+  // Below everything, before the next Container.
+  F32 gap;
+};
+
+// A View's set, picked as View state. Another set (a Slack- or WhatsApp-
+// like one) is another table here; a control its bubbles offer on hover
+// (rewind, fork) is another action bit.
+typedef struct UIShell_RtStyleSet UIShell_RtStyleSet;
+struct UIShell_RtStyleSet
+{
+  String8 name;
+  UIShell_RtContainerStyle *rules;
+  U64 rule_count;
+};
+
+// First match wins.
+global UIShell_RtContainerStyle uishell_rt_chat_rules[] =
+{
+  {WHEELHOUSE_RICH_KIND_TURN, WHEELHOUSE_RICH_ROLE_USER, 0, .inset_x = 0.8f, .inset_top = 0.5f, .inset_bottom = 0.5f, .max_width = 0.75f,
+   .align = UIShell_RtAlign_End, .chrome = UIShell_RtChrome_Background, .radius = 0.9f, .actions = WHEELHOUSE_RICH_ACTION_MESSAGE, .gap = 0.3f},
+  {WHEELHOUSE_RICH_KIND_TURN, 0, 0, .actions = WHEELHOUSE_RICH_ACTION_MESSAGE, .gap = 0.3f},
+  {WHEELHOUSE_RICH_KIND_SECTION, 0, WHEELHOUSE_RICH_SECTION_TOOL, .inset_x = 1.2f, .inset_bottom = 0.3f,
+   .chrome = UIShell_RtChrome_Header|UIShell_RtChrome_Collapsed,
+   .actions = WHEELHOUSE_RICH_ACTION_TOOL_OUTPUT|WHEELHOUSE_RICH_ACTION_COMMAND, .gap = 0.2f},
+  {WHEELHOUSE_RICH_KIND_SECTION, 0, WHEELHOUSE_RICH_SECTION_REASONING, .inset_x = 1.2f, .inset_bottom = 0.3f,
+   .chrome = UIShell_RtChrome_Header|UIShell_RtChrome_Collapsed, .gap = 0.2f},
+  {WHEELHOUSE_RICH_KIND_SECTION, 0, WHEELHOUSE_RICH_SECTION_SUBAGENT,
+   .chrome = UIShell_RtChrome_Header|UIShell_RtChrome_Collapsed|UIShell_RtChrome_Thread, .gap = 0.2f},
+};
+
+// "document" has no rules: markdown presents its Containers plainly.
+global UIShell_RtStyleSet uishell_rt_style_sets[] =
+{
+  {str8_lit_comp("document"), 0, 0},
+  {str8_lit_comp("chat"), uishell_rt_chat_rules, ArrayCount(uishell_rt_chat_rules)},
+};
+
+internal UIShell_RtStyleSet *
+uishell_rt_style_set_from_name(String8 name)
+{
+  for EachElement(i, uishell_rt_style_sets)
+  {
+    if(str8_match(uishell_rt_style_sets[i].name, name, StringMatchFlag_CaseInsensitive)) { return &uishell_rt_style_sets[i]; }
+  }
+  return 0;
+}
+
+internal UIShell_RtContainerStyle *
+uishell_rt_container_style(UIShell_RtStyleSet *set, UIShell_RtNode *n)
+{
+  if(set == 0 || n == 0 || n->kind >= WHEELHOUSE_RICH_KIND_PARAGRAPH || n->key == WHEELHOUSE_RICH_ROOT_KEY) { return 0; }
+  for(U64 i = 0; i < set->rule_count; i += 1)
+  {
+    UIShell_RtContainerStyle *r = &set->rules[i];
+    if(r->kind == n->kind && (r->role == 0 || r->role == n->role) && (r->section == 0 || r->section == n->section)) { return r; }
+  }
+  return 0;
 }
 
 ////////////////////////////////
@@ -697,6 +848,9 @@ struct UIShell_RtFrame
   B32 code;
   B32 rule;
   B32 table;
+  // A break in a conversation: its text centred between two rules.
+  B32 divider;
+  B32 weak;
 };
 
 internal F32
@@ -799,6 +953,20 @@ uishell_rt_frame(Arena *arena, UIShell_RtModel *m, UIShell_RtTheme *t, UIShell_R
       f.pad_top = floor_f32(px*0.15f);
       f.pad_bottom = floor_f32(px*0.75f);
     } break;
+    // A log's chunks run on as one block of output.
+    case WHEELHOUSE_RICH_KIND_LOG: {} break;
+    case WHEELHOUSE_RICH_KIND_DIVIDER:
+    {
+      f.divider = 1;
+      f.weak = 1;
+      f.pad_top = floor_f32(px*0.6f);
+      f.pad_bottom = floor_f32(px*0.6f);
+    } break;
+    case WHEELHOUSE_RICH_KIND_NOTICE:
+    {
+      f.weak = 1;
+      f.pad_bottom = floor_f32(px*0.4f);
+    } break;
   }
   if(f.label_above) { f.inset_y += uishell_rt_line_px(t); }
   return f;
@@ -817,6 +985,7 @@ enum
   UIShell_RtAttr_Link      = (1<<4),
   UIShell_RtAttr_Footnote  = (1<<5),
   UIShell_RtAttr_Color     = (1<<6),
+  UIShell_RtAttr_Background = (1<<7),
 };
 
 // Ligatures off for code: its glyphs are its characters.
@@ -851,7 +1020,7 @@ uishell_rt_base_style(UIShell_RtTheme *t, UIShell_RtNode *n)
     s.size = t->size*t->heading_scale[Clamp(1, n->level, 6)-1];
     s.weight = 700.f;
   }
-  else if(n->kind == WHEELHOUSE_RICH_KIND_CODE)
+  else if(n->kind == WHEELHOUSE_RICH_KIND_CODE || n->kind == WHEELHOUSE_RICH_KIND_LOG)
   {
     s.family = WH_TEXT_FAMILY_CODE;
     s.size = t->size*t->code_scale;
@@ -870,8 +1039,10 @@ uishell_rt_styled(Arena *arena, UIShell_RtTheme *t, UIShell_RtNode *n)
   result.inks = push_array(arena, UIShell_RtStyleInk, cap);
   UIShell_RtAttrs *style_attrs = push_array(arena, UIShell_RtAttrs, cap);
   U32 *style_colors = push_array(arena, U32, cap);
+  U32 *style_backgrounds = push_array(arena, U32, cap);
   result.styles[0] = uishell_rt_base_style(t, n);
-  result.inks[0].ink = n->kind == WHEELHOUSE_RICH_KIND_CODE ? UIShell_RtInk_Code : 0;
+  result.inks[0].ink = (n->kind == WHEELHOUSE_RICH_KIND_CODE ? UIShell_RtInk_Code :
+                        n->kind == WHEELHOUSE_RICH_KIND_DIVIDER || n->kind == WHEELHOUSE_RICH_KIND_NOTICE ? UIShell_RtInk_Weak : 0);
   result.style_count = 1;
   if(n->span_count == 0) { return result; }
   U32 *bounds = push_array(arena, U32, 2*n->span_count);
@@ -887,7 +1058,7 @@ uishell_rt_styled(Arena *arena, UIShell_RtTheme *t, UIShell_RtNode *n)
     U32 start = bounds[b], end = bounds[b+1];
     if(start == end || end > n->text.size) { continue; }
     UIShell_RtAttrs attrs = 0;
-    U32 color = 0;
+    U32 color = 0, background = 0;
     for(U64 i = 0; i < n->span_count; i += 1)
     {
       WheelhouseRichSpan *s = &n->spans[i];
@@ -903,14 +1074,18 @@ uishell_rt_styled(Arena *arena, UIShell_RtTheme *t, UIShell_RtNode *n)
         case WHEELHOUSE_RICH_ATTR_LINK: { attrs |= UIShell_RtAttr_Link; } break;
         case WHEELHOUSE_RICH_ATTR_FOOTNOTE_REFERENCE: { attrs |= UIShell_RtAttr_Footnote; } break;
         case WHEELHOUSE_RICH_ATTR_COLOR_RGB: { attrs |= UIShell_RtAttr_Color; color = s->value & 0xffffff; } break;
-        case WHEELHOUSE_RICH_ATTR_COLOR_PALETTE: { attrs |= UIShell_RtAttr_Color; color = (1u<<24) | (s->value & 0xff); } break;
+        case WHEELHOUSE_RICH_ATTR_COLOR_PALETTE: { attrs |= UIShell_RtAttr_Color; color = UISHELL_RT_PALETTE_BIT | (s->value & 0xff); } break;
+        case WHEELHOUSE_RICH_ATTR_COLOR_DEFAULT: { attrs |= UIShell_RtAttr_Color; color = UISHELL_RT_DEFAULT_BIT | (s->value & 1); } break;
+        case WHEELHOUSE_RICH_ATTR_BACKGROUND_RGB: { attrs |= UIShell_RtAttr_Background; background = s->value & 0xffffff; } break;
+        case WHEELHOUSE_RICH_ATTR_BACKGROUND_PALETTE: { attrs |= UIShell_RtAttr_Background; background = UISHELL_RT_PALETTE_BIT | (s->value & 0xff); } break;
+        case WHEELHOUSE_RICH_ATTR_BACKGROUND_DEFAULT: { attrs |= UIShell_RtAttr_Background; background = UISHELL_RT_DEFAULT_BIT | (s->value & 1); } break;
       }
     }
     if(attrs == 0) { continue; }
     U64 style = 0;
     for(U64 i = 1; i < result.style_count && style == 0; i += 1)
     {
-      if(style_attrs[i] == attrs && style_colors[i] == color) { style = i; }
+      if(style_attrs[i] == attrs && style_colors[i] == color && style_backgrounds[i] == background) { style = i; }
     }
     if(style == 0)
     {
@@ -930,10 +1105,12 @@ uishell_rt_styled(Arena *arena, UIShell_RtTheme *t, UIShell_RtNode *n)
       if(attrs & (UIShell_RtAttr_Link|UIShell_RtAttr_Footnote)) { ink.ink |= UIShell_RtInk_Link; }
       if(attrs & UIShell_RtAttr_Strike) { ink.ink |= UIShell_RtInk_Strike; }
       if(attrs & UIShell_RtAttr_Color) { ink.ink |= UIShell_RtInk_Literal; ink.color = color; }
+      if(attrs & UIShell_RtAttr_Background) { ink.ink |= UIShell_RtInk_Wash; ink.background = background; }
       result.styles[style] = s;
       result.inks[style] = ink;
       style_attrs[style] = attrs;
       style_colors[style] = color;
+      style_backgrounds[style] = background;
     }
     result.runs[result.run_count++] = (WhTextStyleRun){start, end - start, (U32)style};
   }
@@ -1084,7 +1261,7 @@ uishell_rt_layout(UIShell_RtLayoutCache *cache, UIShell_RtTheme *t, UIShell_RtNo
   input.run_count = styled.run_count;
   input.styles = styled.styles;
   input.style_count = styled.style_count;
-  input.align = WH_TEXT_ALIGN_START;
+  input.align = n->kind == WHEELHOUSE_RICH_KIND_DIVIDER ? WH_TEXT_ALIGN_CENTER : WH_TEXT_ALIGN_START;
   input.max_lines = max_lines;
   input.ellipsis = max_lines != 0;
   WhTextLayout text = {0}, label = {0};
@@ -1206,6 +1383,9 @@ enum
   UIShell_RtStop_Embed,
   UIShell_RtStop_CopyButton,
   UIShell_RtStop_Expand,
+  // A Section's header: it toggles the Section, or opens its thread.
+  UIShell_RtStop_Toggle,
+  UIShell_RtStop_Thread,
 };
 
 typedef struct UIShell_RtStop UIShell_RtStop;
@@ -1227,6 +1407,17 @@ struct UIShell_RtStats
   U64 frame_layouts;
   U64 frame_layout_us;
 };
+
+// A Container's chrome column this frame, memoized: a bubble's fit to its
+// content takes laying its Blocks out.
+typedef struct UIShell_RtColumn UIShell_RtColumn;
+struct UIShell_RtColumn
+{
+  U64 key;
+  U64 stamp;
+  Rng1F32 x;
+};
+#define UISHELL_RT_COLUMN_SLOTS 1024
 
 typedef struct UIShell_RichTextState UIShell_RichTextState;
 struct UIShell_RichTextState
@@ -1300,6 +1491,31 @@ struct UIShell_RichTextState
   U8 notice[256];
   U64 notice_size;
   U64 notice_until_us;
+  // A conversation (#616), and the one thread it shows if a subagent's.
+  B32 conversation;
+  // On `arena`, whole: an id is the file's, of any length.
+  String8 thread;
+  // Copy All waits for backfill to finish, a step a frame.
+  B32 copy_all_pending;
+  // The hovered Container's copy actions, as of this generation.
+  U64 actions_key;
+  U64 actions_generation;
+  U32 actions_mask;
+  // The Container Style set it draws with, and where its column is.
+  UIShell_RtStyleSet *styles;
+  F32 content_x;
+  UIShell_RtColumn *columns;
+  U64 column_stamp;
+  // Containers already collapsed by default, so a later toggle holds.
+  U64 *defaulted;
+  U64 defaulted_cap;
+  U64 defaulted_count;
+  // The Container whose hover actions show, and the action last copied.
+  U64 hover_key;
+  U32 copied_action;
+  // When the conversation was opened, and when its tail first painted.
+  U64 opened_us;
+  U64 first_tail_us;
 };
 
 internal void
@@ -1338,6 +1554,109 @@ uishell_rt_error(char **error)
     *error = 0;
   }
   return result;
+}
+
+////////////////////////////////
+//~ Collapsing, and opening a thread
+
+// Whether `key` is newly in the set of Containers already collapsed by
+// default. A doubling leaves the old table in `arena`: a geometric series,
+// so under twice what the last table takes.
+internal B32
+uishell_rt_defaulted_insert(UIShell_RichTextState *s, U64 key)
+{
+  if(s->defaulted_count + 1 > s->defaulted_cap/2)
+  {
+    U64 cap = Max(1024, s->defaulted_cap*2);
+    U64 *keys = push_array(s->arena, U64, cap);
+    for(U64 i = 0; i < s->defaulted_cap; i += 1)
+    {
+      U64 k = s->defaulted[i];
+      if(k == 0) { continue; }
+      U64 at = k & (cap-1);
+      while(keys[at] != 0) { at = (at + 1) & (cap-1); }
+      keys[at] = k;
+    }
+    s->defaulted = keys;
+    s->defaulted_cap = cap;
+  }
+  U64 k = key ? key : 1, at = k & (s->defaulted_cap-1);
+  for(; s->defaulted[at] != 0; at = (at + 1) & (s->defaulted_cap-1))
+  {
+    if(s->defaulted[at] == k) { return 0; }
+  }
+  s->defaulted[at] = k;
+  s->defaulted_count += 1;
+  return 1;
+}
+
+// A Container its style collapses by default is collapsed the first time
+// the View sees it; after that it stays as toggled.
+internal void
+uishell_rt_collapse_default(UIShell_RichTextState *s, UIShell_RtNode *n)
+{
+  UIShell_RtContainerStyle *st = uishell_rt_container_style(s->styles, n);
+  if(st && (st->chrome & UIShell_RtChrome_Collapsed) && uishell_rt_defaulted_insert(s, n->key))
+  {
+    char *error = 0;
+    wheelhouse_rich_text_set_collapsed(s->doc, s->sub, n->key, 1, &error);
+    uishell_rt_error(&error);
+  }
+}
+
+internal void
+uishell_rt_collapse_defaults(UIShell_RichTextState *s)
+{
+  for(U64 i = 0; i < s->model.slots_count; i += 1)
+  {
+    for(UIShell_RtNode *n = s->model.slots[i]; n != 0; n = n->hash_next) { uishell_rt_collapse_default(s, n); }
+  }
+}
+
+internal void
+uishell_rt_toggle(UIShell_RichTextState *s, U64 key)
+{
+  char *error = 0;
+  U32 collapsed = 0;
+  if(wheelhouse_rich_text_collapsed(s->doc, s->sub, key, &collapsed, &error))
+  {
+    wheelhouse_rich_text_set_collapsed(s->doc, s->sub, key, !collapsed, &error);
+  }
+  uishell_rt_error(&error);
+}
+
+internal B32
+uishell_rt_collapsed(UIShell_RichTextState *s, U64 key)
+{
+  char *error = 0;
+  U32 collapsed = 0;
+  wheelhouse_rich_text_collapsed(s->doc, s->sub, key, &collapsed, &error);
+  uishell_rt_error(&error);
+  return collapsed;
+}
+
+// A subagent's thread opens as a View of its own (#616): this View again,
+// with the thread as View state, beside it.
+internal void
+uishell_rt_open_thread(RD_ViewAddress view, String8 thread)
+{
+  CFG_Node *src = rd_cfg_from_view(view);
+  if(src == &cfg_nil_node || thread.size == 0) { return; }
+  RD_PanelAddress panel = rd_panel_from_cfg(src);
+  CFG_Node *dst = cfg_node_deep_copy(rd_state->cfg, src);
+  cfg_node_insert_child(rd_state->cfg, src->parent, src, dst);
+  rd_view_key_assign(dst, 1);
+  cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, dst, str8_lit("thread")), thread);
+  RD_ViewAddress opened = rd_view_address_from_cfg(dst);
+  WheelhouseArrangementIntent intent = rd_arrangement_intent(WHEELHOUSE_INTENT_MOVE_TAB, panel.owner);
+  intent.panel = panel.id;
+  rd_arrangement_intent_tab(&intent, opened);
+  rd_arrangement_intent_after(&intent, view);
+  if(!rd_arrangement_apply_intent(intent).applied) { cfg_node_release(rd_state->cfg, dst); return; }
+  UIShell_RegsScope(.tab = opened)
+  {
+    uishell_push_cmd_current(str8_lit("focus_tab"));
+  }
 }
 
 ////////////////////////////////
@@ -1465,6 +1784,135 @@ uishell_rt_block_height(UIShell_RichTextState *s, UIShell_RtNode *n, F32 content
 }
 
 ////////////////////////////////
+//~ Columns: where Container Styles put Blocks
+
+internal F32
+uishell_rt_em(UIShell_RtTheme *t, F32 ems)
+{
+  return floor_f32(uishell_rt_px(t)*ems);
+}
+
+internal F32
+uishell_rt_header_row(UIShell_RtTheme *t)
+{
+  return floor_f32(uishell_rt_line_px(t)*1.35f);
+}
+
+internal F32
+uishell_rt_action_row(UIShell_RtTheme *t)
+{
+  return floor_f32(uishell_rt_line_px(t)*1.3f);
+}
+
+// A Container's header and footer rows: its top inset and header, and its
+// bottom inset, hover actions and gap. Without a style, none.
+internal F32
+uishell_rt_header_height(UIShell_RtTheme *t, UIShell_RtContainerStyle *st)
+{
+  if(st == 0) { return 0; }
+  return uishell_rt_em(t, st->inset_top) + ((st->chrome & UIShell_RtChrome_Header) ? uishell_rt_header_row(t) : 0);
+}
+
+internal F32
+uishell_rt_footer_height(UIShell_RtTheme *t, UIShell_RtContainerStyle *st)
+{
+  if(st == 0) { return 0; }
+  B32 action_row = st->actions != 0 && !(st->chrome & UIShell_RtChrome_Header);
+  return uishell_rt_em(t, st->inset_bottom) + (action_row ? uishell_rt_action_row(t) : 0) + uishell_rt_em(t, st->gap);
+}
+
+// The nearest styled Container holding `n`, not `n` itself.
+internal UIShell_RtNode *
+uishell_rt_styled_parent(UIShell_RichTextState *s, UIShell_RtNode *n, UIShell_RtContainerStyle **style_out)
+{
+  for(UIShell_RtNode *a = uishell_rt_node(&s->model, n->parent); a != 0 && a->key != WHEELHOUSE_RICH_ROOT_KEY; a = uishell_rt_node(&s->model, a->parent))
+  {
+    UIShell_RtContainerStyle *st = uishell_rt_container_style(s->styles, a);
+    if(st) { *style_out = st; return a; }
+  }
+  return 0;
+}
+
+internal Rng1F32 uishell_rt_chrome_column(UIShell_RichTextState *s, UIShell_RtNode *c, UIShell_RtContainerStyle *st);
+
+// The column `n` sits in, in the content box: its styled Container's
+// inside, or the View's reading column.
+internal Rng1F32
+uishell_rt_column(UIShell_RichTextState *s, UIShell_RtNode *n)
+{
+  UIShell_RtContainerStyle *st = 0;
+  UIShell_RtNode *c = uishell_rt_styled_parent(s, n, &st);
+  if(c == 0) { return rng_1f32(s->content_x, s->content_x + s->width); }
+  Rng1F32 chrome = uishell_rt_chrome_column(s, c, st);
+  F32 inset = uishell_rt_em(&s->theme, st->inset_x);
+  F32 x0 = chrome.min + inset, x1 = Max(chrome.max - inset, x0 + 8.f);
+  return rng_1f32(x0, x1);
+}
+
+// How wide a capped Container's content wants to be, up to `cap`: its
+// widest line, or all of `cap` for what fills its width (code, tables) or
+// too many Blocks to measure.
+internal F32
+uishell_rt_fit_width(UIShell_RichTextState *s, UIShell_RtNode *c, UIShell_RtContainerStyle *st, F32 cap)
+{
+  F32 inset = 2*uishell_rt_em(&s->theme, st->inset_x), inner = Max(cap - inset, 8.f), widest = 0;
+  Temp scratch = scratch_begin(0, 0);
+  U64 stack[64], depth = 0, blocks = 0;
+  stack[depth++] = c->key;
+  B32 full = 0;
+  while(depth > 0 && !full)
+  {
+    UIShell_RtNode *n = uishell_rt_node(&s->model, stack[--depth]);
+    if(n == 0 || n->hidden) { continue; }
+    if(n->kind < WHEELHOUSE_RICH_KIND_PARAGRAPH)
+    {
+      if(depth + n->child_count > ArrayCount(stack)) { full = 1; break; }
+      for(U64 i = n->child_count; i > 0; i -= 1) { stack[depth++] = n->children[i-1]; }
+      continue;
+    }
+    if(++blocks > 32) { full = 1; break; }
+    UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, &s->theme, n);
+    if(f.code || f.table || f.rule || f.divider) { full = 1; break; }
+    UIShell_RtLayoutEntry *e = uishell_rt_layout(&s->layouts, &s->theme, n, &f, uishell_rt_text_width(&f, inner), 0);
+    if(e == 0) { full = 1; break; }
+    for(U64 i = 0; i < e->layout->text.line_count; i += 1)
+    {
+      WhTextLine *line = &e->layout->text.lines[i];
+      widest = Max(widest, f.indent + 2*f.inset_x + line->x + line->width);
+    }
+  }
+  scratch_end(scratch);
+  return full ? cap : Min(cap, ceil_f32(widest) + inset + 1.f);
+}
+
+// Where a styled Container's chrome goes across: its column, capped at its
+// share and aligned.
+internal Rng1F32
+uishell_rt_chrome_column(UIShell_RichTextState *s, UIShell_RtNode *c, UIShell_RtContainerStyle *st)
+{
+  UIShell_RtColumn *memo = 0;
+  if(s->columns)
+  {
+    for(U64 probe = 0; probe < 8 && memo == 0; probe += 1)
+    {
+      UIShell_RtColumn *slot = &s->columns[(c->key + probe) & (UISHELL_RT_COLUMN_SLOTS-1)];
+      if(slot->key == c->key && slot->stamp == s->column_stamp) { return slot->x; }
+      if(slot->stamp != s->column_stamp) { memo = slot; }
+    }
+  }
+  Rng1F32 outer = uishell_rt_column(s, c);
+  F32 w = dim_1f32(outer);
+  if(st->max_width > 0)
+  {
+    F32 cap = floor_f32(w*st->max_width);
+    w = uishell_rt_fit_width(s, c, st, cap);
+  }
+  Rng1F32 x = st->align == UIShell_RtAlign_End ? rng_1f32(outer.max - w, outer.max) : rng_1f32(outer.min, outer.min + w);
+  if(memo) { *memo = (UIShell_RtColumn){c->key, s->column_stamp, x}; }
+  return x;
+}
+
+////////////////////////////////
 //~ Drawing (#544, decision 8)
 
 internal U64
@@ -1566,6 +2014,10 @@ uishell_rt_draw_run_marks(UIShell_RtTheme *t, WhTextLayout *l, UIShell_RtStyleIn
       F32 pad = 2.f;
       dr_rect(r2f32p(x0 - pad, origin.y + line->y + 1, x1 + pad, origin.y + line->y + line->height - 1), t->code_wash, 3.f, 0, 1.f);
     }
+    if(washes && (ink.ink & UIShell_RtInk_Wash))
+    {
+      dr_rect(r2f32p(x0, origin.y + line->y, x1, origin.y + line->y + line->height), uishell_rt_literal_color(t, ink.background), 0, 0, 0);
+    }
     if(!washes)
     {
       Vec4F32 color = uishell_rt_ink_color(t, &ink);
@@ -1656,6 +2108,15 @@ uishell_rt_build_bucket(UIShell_RichTextState *s, UIShell_RtBucket *b, UIShell_R
     if(f.code)
     {
       dr_rect(r2f32p(f.indent, f.pad_top, width, height - f.pad_bottom), t->code_block, 4.f, 0, 1.f);
+    }
+    if(f.divider && e != 0 && e->layout->text.line_count != 0)
+    {
+      // Rules either side of the centred text.
+      WhTextLine *line = &e->layout->text.lines[0];
+      F32 gap = floor_f32(uishell_rt_px(t)*0.6f), y = floor_f32(f.pad_top + f.inset_y + line->y + line->height/2);
+      F32 x0 = f.indent + f.inset_x + line->x - gap, x1 = f.indent + f.inset_x + line->x + line->width + gap;
+      if(x0 > f.indent) { dr_rect(r2f32p(f.indent, y, x0, y + 1.f), t->rule, 0, 0, 0); }
+      if(x1 < width) { dr_rect(r2f32p(x1, y, width, y + 1.f), t->rule, 0, 0, 0); }
     }
     if(e != 0)
     {
@@ -1756,6 +2217,78 @@ internal UI_BOX_CUSTOM_DRAW(uishell_rt_block_draw)
   }
 }
 
+// A styled Container's chrome behind its Blocks: its background.
+typedef struct UIShell_RtChromeDraw UIShell_RtChromeDraw;
+struct UIShell_RtChromeDraw
+{
+  U64 key;
+  Vec4F32 color;
+  F32 radius;
+};
+
+internal UI_BOX_CUSTOM_DRAW(uishell_rt_chrome_draw)
+{
+  UIShell_RtChromeDraw *d = (UIShell_RtChromeDraw *)user_data;
+  dr_rect(box->rect, d->color, d->radius, 0, 1.f);
+}
+
+// A Section's header row: what it shows, for the diagnostics, and its
+// hover and focus.
+typedef struct UIShell_RtHeaderDraw UIShell_RtHeaderDraw;
+struct UIShell_RtHeaderDraw
+{
+  U64 key;
+  U32 section;
+  U32 status;
+  B32 collapsed;
+  B32 hovered;
+  B32 focused;
+  Vec4F32 wash;
+  Vec4F32 focus_color;
+};
+
+internal UI_BOX_CUSTOM_DRAW(uishell_rt_header_draw)
+{
+  UIShell_RtHeaderDraw *d = (UIShell_RtHeaderDraw *)user_data;
+  if(d->hovered) { dr_rect(box->rect, d->wash, 4.f, 0, 1.f); }
+  if(d->focused) { dr_rect(pad_2f32(box->rect, 1.f), d->focus_color, 3.f, 1.5f, 1.f); }
+}
+
+// A Section header's marks, from the icon font.
+internal RD_IconKind
+uishell_rt_tool_icon(UIShell_RtNode *n)
+{
+  if(n->section == WHEELHOUSE_RICH_SECTION_REASONING) { return RD_IconKind_Glasses; }
+  if(n->section == WHEELHOUSE_RICH_SECTION_SUBAGENT) { return RD_IconKind_Thread; }
+  switch(n->tool)
+  {
+    default:
+    case WHEELHOUSE_RICH_TOOL_OTHER: return RD_IconKind_Gear;
+    case WHEELHOUSE_RICH_TOOL_SHELL: return RD_IconKind_RightCaret;
+    case WHEELHOUSE_RICH_TOOL_EDIT: return RD_IconKind_Pencil;
+    case WHEELHOUSE_RICH_TOOL_READ: return RD_IconKind_FileOutline;
+    case WHEELHOUSE_RICH_TOOL_SEARCH: return RD_IconKind_Find;
+    case WHEELHOUSE_RICH_TOOL_AGENT: return RD_IconKind_Threads;
+    case WHEELHOUSE_RICH_TOOL_WEB: return RD_IconKind_Binoculars;
+    case WHEELHOUSE_RICH_TOOL_MCP: return RD_IconKind_Module;
+  }
+}
+
+internal RD_IconKind
+uishell_rt_status_icon(U32 status)
+{
+  switch(status)
+  {
+    default: break;
+    case WHEELHOUSE_RICH_STATUS_PENDING: return RD_IconKind_Refresh;
+    case WHEELHOUSE_RICH_STATUS_OK: return RD_IconKind_Check;
+    case WHEELHOUSE_RICH_STATUS_FAILED: return RD_IconKind_X;
+    case WHEELHOUSE_RICH_STATUS_INTERRUPTED: return RD_IconKind_Stop;
+    case WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL: return RD_IconKind_QuestionMark;
+  }
+  return RD_IconKind_Null;
+}
+
 ////////////////////////////////
 //~ Where things are this frame
 
@@ -1772,6 +2305,9 @@ struct UIShell_RtPlaced
   UIShell_RtLayoutEntry *layout;
   UIShell_RtFrame frame;
   B32 visible;
+  // A header or footer row's Container, and its style.
+  UIShell_RtNode *container;
+  UIShell_RtContainerStyle *style;
 };
 
 typedef struct UIShell_RtPlacement UIShell_RtPlacement;
@@ -1784,6 +2320,7 @@ struct UIShell_RtPlacement
   F64 viewport;
   F32 content_x;
   F32 content_width;
+  B32 at_end;
 };
 
 internal Vec2F32
@@ -2318,11 +2855,16 @@ uishell_rt_place(Arena *arena, UIShell_RichTextState *s, F32 content_x, F32 cont
     {
       WheelhouseRichWindowEntry *e = &entries[i];
       F32 height = 0;
+      UIShell_RtNode *n = uishell_rt_node(&s->model, e->key);
+      if(n == 0) { continue; }
       if(e->part == WHEELHOUSE_RICH_PART_BLOCK)
       {
-        UIShell_RtNode *n = uishell_rt_node(&s->model, e->key);
-        if(n == 0) { continue; }
-        height = uishell_rt_block_height(s, n, content_width, 0);
+        height = uishell_rt_block_height(s, n, dim_1f32(uishell_rt_column(s, n)), 0);
+      }
+      else
+      {
+        UIShell_RtContainerStyle *st = uishell_rt_container_style(s->styles, n);
+        height = e->part == WHEELHOUSE_RICH_PART_HEADER ? uishell_rt_header_height(&s->theme, st) : uishell_rt_footer_height(&s->theme, st);
       }
       if(!e->measured || abs_f32(height - e->height) > 0.25f)
       {
@@ -2335,6 +2877,7 @@ uishell_rt_place(Arena *arena, UIShell_RichTextState *s, F32 content_x, F32 cont
   pl.top = w.top;
   pl.total = w.total;
   pl.viewport = w.viewport;
+  pl.at_end = w.at_end;
   pl.v = push_array(arena, UIShell_RtPlaced, Max(entry_count, 1));
   for(U64 i = 0; i < entry_count; i += 1)
   {
@@ -2347,11 +2890,26 @@ uishell_rt_place(Arena *arena, UIShell_RichTextState *s, F32 content_x, F32 cont
     F32 y = (F32)(e->top - w.top);
     p->rect = r2f32p(content_x, y, content_x + content_width, y + e->height);
     p->visible = p->rect.y1 > 0 && p->rect.y0 < (F32)w.viewport;
-    if(e->part != WHEELHOUSE_RICH_PART_BLOCK) { continue; }
-    p->node = uishell_rt_node(&s->model, e->key);
-    if(p->node == 0) { continue; }
+    UIShell_RtNode *n = uishell_rt_node(&s->model, e->key);
+    if(n == 0) { continue; }
+    if(e->part != WHEELHOUSE_RICH_PART_BLOCK)
+    {
+      p->container = n;
+      p->style = uishell_rt_container_style(s->styles, n);
+      if(p->style)
+      {
+        Rng1F32 x = uishell_rt_chrome_column(s, n, p->style);
+        p->rect.x0 = x.min;
+        p->rect.x1 = x.max;
+      }
+      continue;
+    }
+    p->node = n;
+    Rng1F32 x = uishell_rt_column(s, n);
+    p->rect.x0 = x.min;
+    p->rect.x1 = x.max;
     p->frame = uishell_rt_frame(arena, &s->model, &s->theme, p->node);
-    uishell_rt_block_height(s, p->node, content_width, &p->layout);
+    uishell_rt_block_height(s, p->node, dim_1f32(x), &p->layout);
   }
   // The anchor holds its line: after the anchored Block is laid out anew,
   // the line its byte starts goes where the anchor says; otherwise the
@@ -2402,9 +2960,13 @@ uishell_rt_stops(Arena *arena, UIShell_RichTextState *s, UIShell_RtPlacement *pl
   for(U64 i = 0; i < pl->count; i += 1)
   {
     UIShell_RtPlaced *p = &pl->v[i];
-    if(p->node == 0) { continue; }
     UIShell_RtStop more[64];
     U64 more_count = 0;
+    if(p->part == WHEELHOUSE_RICH_PART_HEADER && p->style && (p->style->chrome & UIShell_RtChrome_Header))
+    {
+      more[more_count++] = (UIShell_RtStop){(p->style->chrome & UIShell_RtChrome_Thread) ? UIShell_RtStop_Thread : UIShell_RtStop_Toggle, p->key, 0, 0};
+    }
+    if(p->node == 0 && more_count == 0) { continue; }
     if(p->frame.table)
     {
       more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Embed, p->key, 0, 0};
@@ -2414,7 +2976,7 @@ uishell_rt_stops(Arena *arena, UIShell_RichTextState *s, UIShell_RtPlacement *pl
       if(capped || (t && t->expanded)) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Expand, p->key, 1, 0}; }
     }
     if(p->frame.code) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_CopyButton, p->key, 0, 0}; }
-    for(U64 sp = 0; sp < p->node->span_count && more_count < ArrayCount(more); sp += 1)
+    for(U64 sp = 0; p->node && sp < p->node->span_count && more_count < ArrayCount(more); sp += 1)
     {
       WheelhouseRichSpan *span = &p->node->spans[sp];
       if(span->attr == WHEELHOUSE_RICH_ATTR_LINK) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Link, p->key, span->start, span->start + span->len}; }
@@ -2462,10 +3024,144 @@ uishell_rt_activate_stop(UIShell_RichTextState *s, UIShell_RtStop *stop)
       Temp scratch = scratch_begin(0, 0);
       wm_set_clipboard_text(uishell_rt_copy_block(scratch.arena, s, stop->key, WHEELHOUSE_RICH_COPY_PLAIN));
       s->copied_key = stop->key;
+      s->copied_action = 0;
       s->copied_until_us = now_time_us() + 1500000;
       scratch_end(scratch);
     } break;
+    case UIShell_RtStop_Toggle: { uishell_rt_toggle(s, stop->key); } break;
+    case UIShell_RtStop_Thread:
+    {
+      UIShell_RtNode *n = uishell_rt_node(&s->model, stop->key);
+      if(n && n->title.size) { uishell_cmd("open_conversation_thread", .string = push_str8_copy(rd_frame_arena(), n->title)); }
+    } break;
   }
+}
+
+////////////////////////////////
+//~ Hover actions (#546)
+
+typedef struct UIShell_RtAction UIShell_RtAction;
+struct UIShell_RtAction
+{
+  U64 key;
+  U32 action;
+  // In the content box's coordinates.
+  Rng2F32 rect;
+};
+
+internal String8
+uishell_rt_action_label(U32 action)
+{
+  switch(action)
+  {
+    default: break;
+    case WHEELHOUSE_RICH_ACTION_MESSAGE: return str8_lit("Copy");
+    case WHEELHOUSE_RICH_ACTION_TOOL_OUTPUT: return str8_lit("Copy output");
+    case WHEELHOUSE_RICH_ACTION_COMMAND: return str8_lit("Copy command");
+  }
+  return str8_zero();
+}
+
+// The Container with hover actions under a point in the content box: a
+// row's own, or a Block's nearest that has some.
+internal U64
+uishell_rt_hovered(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Vec2F32 local)
+{
+  for(U64 i = 0; i < pl->count; i += 1)
+  {
+    UIShell_RtPlaced *p = &pl->v[i];
+    if(!contains_2f32(p->rect, local)) { continue; }
+    if(p->part != WHEELHOUSE_RICH_PART_BLOCK)
+    {
+      if(p->style && p->style->actions) { return p->key; }
+      continue;
+    }
+    if(p->node == 0) { continue; }
+    for(UIShell_RtNode *n = p->node;;)
+    {
+      UIShell_RtContainerStyle *st = 0;
+      UIShell_RtNode *c = uishell_rt_styled_parent(s, n, &st);
+      if(c == 0) { break; }
+      if(st->actions) { return c->key; }
+      n = c;
+    }
+  }
+  return 0;
+}
+
+// The hovered Container's actions, right-aligned in its header row, or in
+// the row under its Blocks: those its style offers that copy something.
+internal U64
+uishell_rt_actions(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UIShell_RtAction *out, U64 cap)
+{
+  if(s->hover_key == 0 || s->doc == 0) { return 0; }
+  UIShell_RtTheme *t = &s->theme;
+  UIShell_RtPlaced *row = 0;
+  for(U64 i = 0; i < pl->count && row == 0; i += 1)
+  {
+    UIShell_RtPlaced *p = &pl->v[i];
+    if(p->key != s->hover_key || p->style == 0) { continue; }
+    B32 header = (p->style->chrome & UIShell_RtChrome_Header) != 0;
+    if(p->part == (header ? WHEELHOUSE_RICH_PART_HEADER : WHEELHOUSE_RICH_PART_FOOTER)) { row = p; }
+  }
+  if(row == 0) { return 0; }
+  // Asked once per Container and generation, not every frame it is hovered.
+  if(s->actions_key != s->hover_key || s->actions_generation != s->model.generation)
+  {
+    char *error = 0;
+    s->actions_mask = 0;
+    wheelhouse_rich_text_copy_actions(s->doc, s->hover_key, &s->actions_mask, &error);
+    uishell_rt_error(&error);
+    s->actions_key = s->hover_key;
+    s->actions_generation = s->model.generation;
+  }
+  U32 mask = s->actions_mask & row->style->actions;
+  B32 header = row->part == WHEELHOUSE_RICH_PART_HEADER;
+  F32 y0 = row->rect.y0 + uishell_rt_em(t, header ? row->style->inset_top : row->style->inset_bottom);
+  F32 h = header ? uishell_rt_header_row(t) : uishell_rt_action_row(t);
+  F32 pad = uishell_rt_em(t, 0.5f), x1 = row->rect.x1 - (header ? pad : 0);
+  U64 count = 0;
+  U32 order[] = {WHEELHOUSE_RICH_ACTION_COMMAND, WHEELHOUSE_RICH_ACTION_TOOL_OUTPUT, WHEELHOUSE_RICH_ACTION_MESSAGE};
+  for EachElement(i, order)
+  {
+    if(!(mask & order[i]) || count == cap) { continue; }
+    F32 w = fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, uishell_rt_action_label(order[i])).x + 2*pad;
+    out[count++] = (UIShell_RtAction){s->hover_key, order[i], r2f32p(x1 - w, y0 + 2, x1, y0 + h - 2)};
+    x1 -= w + pad/2;
+  }
+  return count;
+}
+
+internal void
+uishell_rt_do_action(UIShell_RichTextState *s, UIShell_RtAction *a)
+{
+  WheelhouseBytes bytes = {0};
+  char *error = 0;
+  if(wheelhouse_rich_text_copy_action(s->doc, a->key, a->action, &bytes, &error))
+  {
+    wm_set_clipboard_text(str8(bytes.data, bytes.len));
+    wheelhouse_bytes_free(bytes);
+    s->copied_key = a->key;
+    s->copied_action = a->action;
+    s->copied_until_us = now_time_us() + 1500000;
+  }
+  uishell_rt_error(&error);
+}
+
+// Copy All: the whole transcript. The core backfills what is left before it
+// copies, so the View asks only once its per-frame backfill has finished,
+// and the window never waits on a large file's read.
+internal void
+uishell_rt_copy_all(UIShell_RichTextState *s)
+{
+  WheelhouseBytes bytes = {0};
+  char *error = 0;
+  if(s->doc && wheelhouse_rich_text_copy_all(s->doc, &bytes, &error))
+  {
+    wm_set_clipboard_text(str8(bytes.data, bytes.len));
+    wheelhouse_bytes_free(bytes);
+  }
+  uishell_rt_error(&error);
 }
 
 ////////////////////////////////
@@ -2550,6 +3246,9 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
   UIShell_RtTheme *t = &s->theme;
   F32 line = uishell_rt_line_px(t);
   Vec2F32 mouse = ui_mouse();
+  s->hover_key = contains_2f32(content, mouse) ? uishell_rt_hovered(s, pl, sub_2f32(mouse, content.p0)) : 0;
+  UIShell_RtAction actions[3];
+  U64 action_count = uishell_rt_actions(s, pl, actions, ArrayCount(actions));
   for(UI_Event *evt = 0; ui_next_event(&evt);)
   {
     B32 inside = contains_2f32(content, evt->pos);
@@ -2609,6 +3308,21 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
       s->drag_moved = 0;
       s->press_link = 0;
       ui_eat_event(evt);
+      B32 acted = 0;
+      for(U64 i = 0; i < action_count && !acted; i += 1)
+      {
+        if(contains_2f32(actions[i].rect, local)) { uishell_rt_do_action(s, &actions[i]); acted = 1; }
+      }
+      // A Section's header toggles it, or opens its thread.
+      for(U64 i = 0; i < pl->count && !acted; i += 1)
+      {
+        UIShell_RtPlaced *p = &pl->v[i];
+        if(p->part != WHEELHOUSE_RICH_PART_HEADER || p->style == 0 || !(p->style->chrome & UIShell_RtChrome_Header) || !contains_2f32(p->rect, local)) { continue; }
+        UIShell_RtStop stop = {(p->style->chrome & UIShell_RtChrome_Thread) ? UIShell_RtStop_Thread : UIShell_RtStop_Toggle, p->key, 0, 0};
+        uishell_rt_activate_stop(s, &stop);
+        acted = 1;
+      }
+      if(acted) { continue; }
       if(under && under->frame.code && contains_2f32(uishell_rt_copy_button_rect(under, t), in_block))
       {
         UIShell_RtStop stop = {UIShell_RtStop_CopyButton, under->key, 0, 0};
@@ -2864,7 +3578,9 @@ uishell_rt_keys(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UIShell_RtSto
     B32 tab = nav && evt->delta_unit == UI_EventDeltaUnit_Char && evt->delta_2s32.y != 0 && evt->delta_2s32.x == 0 &&
               !(evt->flags & (UI_EventFlag_ExplicitDirectional|UI_EventFlag_KeepMark));
     B32 cancel = evt->kind == UI_EventKind_Press && (evt->slot == UI_EventActionSlot_Cancel || evt->key == WM_Key_Esc);
-    B32 accept = evt->kind == UI_EventKind_Press && (evt->slot == UI_EventActionSlot_Accept || evt->key == WM_Key_Return);
+    B32 accept = evt->kind == UI_EventKind_Press && (evt->slot == UI_EventActionSlot_Accept || evt->key == WM_Key_Return ||
+                                                    (evt->key == WM_Key_Space && s->focus_stop >= 0 &&
+                                                     (s->focus_stop_value.kind == UIShell_RtStop_Toggle || s->focus_stop_value.kind == UIShell_RtStop_Thread)));
     // A focused Embed owns the keys but Tab and Esc (#542, decision 4).
     if(s->focus_embed != 0 && !tab)
     {
@@ -2997,6 +3713,7 @@ uishell_rt_reset(UIShell_RichTextState *s)
   s->arena = arena_alloc();
   s->focus_stop = -1;
   s->match_current = WHEELHOUSE_NONE;
+  s->columns = push_array(s->arena, UIShell_RtColumn, UISHELL_RT_COLUMN_SLOTS);
 }
 
 typedef struct UIShell_RtRange UIShell_RtRange;
@@ -3140,13 +3857,18 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
 
   //- The file, through the content cache: saving it changes its hash, and
   // the reload keeps the reading position (the core's Scroll Anchor).
+  // A conversation shows from its contract file (#616), one thread of it
+  // if the View names a subagent's.
   String8 path = uishell_rt_path_from_expr(scratch.arena, rd_expr_from_cfg(rd_cfg_from_view(ctx->settings.view)));
-  if(!str8_match(path, str8(s->path, s->path_size), 0) && path.size <= sizeof(s->path))
+  String8 thread = wh_view_setting(ctx, str8_lit("thread"));
+  if((!str8_match(path, str8(s->path, s->path_size), 0) || !str8_match(thread, s->thread, 0)) && path.size <= sizeof(s->path))
   {
     uishell_rt_reset(s);
     MemoryCopy(s->path, path.str, path.size);
     s->path_size = path.size;
+    s->thread = push_str8_copy(s->arena, thread);
   }
+  B32 conversation = str8_match(wh_media_type_from_path(path), str8_lit(WH_CONVERSATION_MEDIA_TYPE), 0);
   FileProperties props = properties_from_file_path(path);
   U128 hash = path.size ? c_hash_from_key(fs_key_from_path(path, 0), 0) : u128_zero();
   B32 empty_file = props.modified != 0 && props.size == 0;
@@ -3154,10 +3876,25 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   {
     Access *access = access_open();
     String8 data = u128_match(hash, u128_zero()) ? str8_zero() : c_data_from_hash(access, hash);
+    // A static conversation reopens when its file changes; following one
+    // as it grows is #617's.
+    if(s->doc && conversation)
+    {
+      uishell_rt_reset(s);
+      MemoryCopy(s->path, path.str, path.size);
+      s->path_size = path.size;
+      s->thread = push_str8_copy(s->arena, thread);
+    }
     if(s->doc == 0)
     {
-      s->doc = wheelhouse_rich_text_open(uishell_rt_wt(data), &error);
+      s->conversation = conversation;
+      s->opened_us = now_time_us();
+      if(!conversation) { s->doc = wheelhouse_rich_text_open(uishell_rt_wt(data), &error); }
+      else if(thread.size) { s->doc = wheelhouse_rich_text_open_thread(uishell_rt_wt(data), uishell_rt_wt(thread), &error); }
+      else { s->doc = wheelhouse_rich_text_open_conversation(uishell_rt_wt(data), &error); }
       if(s->doc && !wheelhouse_rich_text_subscribe(s->doc, &s->sub, &error)) { wheelhouse_rich_text_free(s->doc); s->doc = 0; }
+      // A conversation opens at its newest.
+      if(s->doc && conversation) { wheelhouse_rich_text_scroll_to_end(s->doc, s->sub, &error); }
     }
     else
     {
@@ -3171,13 +3908,43 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   }
   rd_workspace_surface_contribute_version(hash.u64[0] ^ hash.u64[1]);
 
-  //- Deltas into the model.
+  //- The Container Style set: the View's, or by its content.
+  UIShell_RtStyleSet *styles = uishell_rt_style_set_from_name(wh_view_setting(ctx, str8_lit("container_styles")));
+  if(styles == 0) { styles = uishell_rt_style_set_from_name(s->conversation ? str8_lit("chat") : str8_lit("document")); }
+  B32 restyled = styles != s->styles;
+  s->styles = styles;
+  s->column_stamp += 1;
+
+  //- Backfill a step a frame, within its budget; then the deltas into the
+  // model.
+  if(s->doc && s->conversation)
+  {
+    U64 left = 0;
+    wheelhouse_rich_text_backfill(s->doc, 0, &left, &error);
+    if(left) { rd_request_frame(); }
+    if(s->copy_all_pending && left == 0)
+    {
+      uishell_rt_copy_all(s);
+      s->copy_all_pending = 0;
+    }
+  }
   if(s->doc)
   {
     WheelhouseRichDelta *delta = wheelhouse_rich_text_poll(s->doc, s->sub, &error);
+    if(restyled) { uishell_rt_collapse_defaults(s); }
     if(delta)
     {
       uishell_rt_model_apply(&s->model, delta);
+      U64 op_count = wheelhouse_rich_delta_op_count(delta);
+      for(U64 i = 0; i < op_count; i += 1)
+      {
+        WheelhouseRichOp op = {0};
+        if(wheelhouse_rich_delta_op(delta, i, &op) && op.kind == WHEELHOUSE_RICH_OP_UPSERT)
+        {
+          UIShell_RtNode *n = uishell_rt_node(&s->model, op.key);
+          if(n) { uishell_rt_collapse_default(s, n); }
+        }
+      }
       wheelhouse_rich_delta_release(delta);
       uishell_rt_prune_tables(s);
       // A reload starts find's scan again.
@@ -3220,6 +3987,11 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       ui_label(str8(s->notice, s->notice_size));
       rd_request_frame_at(s->notice_until_us);
     }
+    if(s->conversation && ui_clicked(ui_buttonf("%s###rich_text_copy_all", s->copy_all_pending ? "Copying..." : "Copy All")))
+    {
+      s->copy_all_pending = 1;
+      rd_request_frame();
+    }
     if(ui_clicked(ui_buttonf("Source###rich_text_source"))) { uishell_cmd("toggle_markdown_source"); }
   }
 
@@ -3229,6 +4001,7 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   F32 margin = floor_f32(px*1.25f);
   F32 content_width = floor_f32(Clamp(px*8, vdim.x - 2*margin, px*48));
   F32 content_x = floor_f32(Max(margin, (vdim.x - content_width)/2));
+  s->content_x = content_x;
   if((F64)vdim.y != s->viewport)
   {
     s->viewport = vdim.y;
@@ -3325,6 +4098,101 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   if(copied_showing) { rd_request_frame_at(s->copied_until_us); }
   UI_Parent(bars.content_box)
   {
+    //- Chrome behind the Blocks: a background over a Container's rows,
+    // from its header to its bottom inset (or as far as the Window goes).
+    {
+      U64 cap = 64, count = 0;
+      UIShell_RtChromeDraw *chromes = push_array(scratch.arena, UIShell_RtChromeDraw, cap);
+      Rng2F32 *rects = push_array(scratch.arena, Rng2F32, cap);
+      for(U64 i = 0; i < pl.count; i += 1)
+      {
+        UIShell_RtPlaced *p = &pl.v[i];
+        UIShell_RtNode *n = p->node ? p->node : p->container;
+        if(n == 0) { continue; }
+        // The row's own Container, then the Containers holding it.
+        UIShell_RtContainerStyle *st = p->style;
+        UIShell_RtNode *c = p->style ? n : 0;
+        if(c == 0) { c = uishell_rt_styled_parent(s, n, &st); }
+        for(; c != 0 && count < cap; c = uishell_rt_styled_parent(s, c, &st))
+        {
+          if(!(st->chrome & UIShell_RtChrome_Background)) { continue; }
+          F32 y0 = p->rect.y0, y1 = p->rect.y1;
+          if(c == n && p->part == WHEELHOUSE_RICH_PART_FOOTER) { y1 = y0 + uishell_rt_em(t, st->inset_bottom); }
+          U64 at = 0;
+          for(; at < count && chromes[at].key != c->key; at += 1) {}
+          Rng1F32 x = uishell_rt_chrome_column(s, c, st);
+          if(at == count)
+          {
+            Vec4F32 color = mix_4f32(t->background, t->text, 0.07f);
+            chromes[count] = (UIShell_RtChromeDraw){c->key, color, uishell_rt_em(t, st->radius)};
+            rects[count++] = r2f32p(x.min, y0, x.max, y1);
+          }
+          else
+          {
+            rects[at].y0 = Min(rects[at].y0, y0);
+            rects[at].y1 = Max(rects[at].y1, y1);
+          }
+        }
+      }
+      for(U64 i = 0; i < count; i += 1)
+      {
+        if(rects[i].y1 <= 0 || rects[i].y0 >= pl.viewport) { continue; }
+        UIShell_RtChromeDraw *d = push_array(ui_build_arena(), UIShell_RtChromeDraw, 1);
+        *d = chromes[i];
+        UI_Box *box = &ui_nil_box;
+        UI_Rect(rects[i]) { box = ui_build_box_from_stringf(UI_BoxFlag_Floating, "###rt_chrome_%llx", (unsigned long long)d->key); }
+        ui_box_equip_custom_draw(box, uishell_rt_chrome_draw, d);
+      }
+    }
+
+    //- Section headers: an icon for the kind, the name, the title and a
+    // status mark.
+    for(U64 i = 0; i < pl.count; i += 1)
+    {
+      UIShell_RtPlaced *p = &pl.v[i];
+      if(!p->visible || p->part != WHEELHOUSE_RICH_PART_HEADER || p->style == 0 || !(p->style->chrome & UIShell_RtChrome_Header)) { continue; }
+      UIShell_RtNode *n = p->container;
+      F32 row = uishell_rt_header_row(t), top = p->rect.y0 + uishell_rt_em(t, p->style->inset_top);
+      UIShell_RtHeaderDraw *d = push_array(ui_build_arena(), UIShell_RtHeaderDraw, 1);
+      d->key = n->key;
+      d->section = n->section;
+      d->status = n->status;
+      d->collapsed = uishell_rt_collapsed(s, n->key);
+      d->hovered = s->hover_key == n->key || contains_2f32(r2f32p(p->rect.x0, top, p->rect.x1, top + row), sub_2f32(ui_mouse(), bars.content_box->rect.p0));
+      d->focused = s->focus_stop >= 0 && s->focus_stop_value.key == n->key &&
+                   (s->focus_stop_value.kind == UIShell_RtStop_Toggle || s->focus_stop_value.kind == UIShell_RtStop_Thread);
+      d->wash = mix_4f32(t->background, t->text, 0.06f);
+      d->focus_color = t->focus;
+      String8 name = n->name;
+      if(n->section == WHEELHOUSE_RICH_SECTION_REASONING) { name = str8_lit("Thinking"); }
+      if(n->section == WHEELHOUSE_RICH_SECTION_SUBAGENT) { name = str8_lit("Subagent"); }
+      B32 thread = (p->style->chrome & UIShell_RtChrome_Thread) != 0;
+      RD_IconKind chevron = thread ? RD_IconKind_RightArrow : d->collapsed ? RD_IconKind_RightCaret : RD_IconKind_DownCaret;
+      RD_IconKind status = uishell_rt_status_icon(n->status);
+      UI_Box *box = &ui_nil_box;
+      UI_Rect(r2f32p(p->rect.x0, top, p->rect.x1, top + row)) UI_ChildLayoutAxis(Axis2_X)
+      {
+        box = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_Clip, "###rt_header_%llx", (unsigned long long)n->key);
+      }
+      ui_box_equip_custom_draw(box, uishell_rt_header_draw, d);
+      UI_Parent(box) UI_PrefHeight(ui_px(row, 1)) UI_TextAlignment(UI_TextAlign_Left)
+      {
+        UI_PrefWidth(ui_em(1.6f, 1)) UI_TagF("weak") RD_Font(RD_FontSlot_Icons) UI_TextAlignment(UI_TextAlign_Center)
+        {
+          ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_chevron", rd_icon_kind_text_table[chevron]);
+          ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_icon", rd_icon_kind_text_table[uishell_rt_tool_icon(n)]);
+        }
+        UI_PrefWidth(ui_text_dim(4, 0)) ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_name", name);
+        if(n->title.size) UI_PrefWidth(ui_text_dim(4, 0)) UI_TagF("weak") { ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_title", n->title); }
+        ui_spacer(ui_pct(1, 0));
+        if(status != RD_IconKind_Null) UI_PrefWidth(ui_em(1.8f, 1)) RD_Font(RD_FontSlot_Icons) UI_TextAlignment(UI_TextAlign_Center)
+          UI_TagF(n->status == WHEELHOUSE_RICH_STATUS_OK ? "weak" : "")
+        {
+          ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_status", rd_icon_kind_text_table[status]);
+        }
+      }
+    }
+
     for(U64 i = 0; i < pl.count; i += 1)
     {
       UIShell_RtPlaced *p = &pl.v[i];
@@ -3411,8 +4279,22 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       }
       else if(stop_here && s->focus_stop_value.kind == UIShell_RtStop_Embed) { d->focused = 1; }
     }
+
+    //- The hovered Container's actions, over everything.
+    UIShell_RtAction actions[3];
+    U64 action_count = uishell_rt_actions(s, &pl, actions, ArrayCount(actions));
+    for(U64 i = 0; i < action_count; i += 1)
+    {
+      B32 copied = copied_showing && s->copied_key == actions[i].key && s->copied_action == actions[i].action;
+      UI_Rect(actions[i].rect) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
+      {
+        ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground,
+                                  "%S###rt_action_%u", copied ? str8_lit("Copied") : uishell_rt_action_label(actions[i].action), actions[i].action);
+      }
+    }
   }
   if(s->selecting || s->table_capture) { rd_request_frame(); }
+  if(s->conversation && s->first_tail_us == 0 && s->stats.blocks_boxed != 0 && pl.at_end) { s->first_tail_us = now_time_us(); }
   uishell_rt_prune_buckets(s);
   scratch_end(scratch);
 }

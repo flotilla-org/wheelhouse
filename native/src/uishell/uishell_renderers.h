@@ -67,7 +67,9 @@ enum
 #define UISHELL_RICH_TEXT_SETTINGS \
   "@inherit(tab)" \
   "x:{" \
-  "@description(\"The markdown file shown as Rich Text.\") 'expression': expr_string," \
+  "@description(\"The markdown file, or conversation, shown as Rich Text.\") 'expression': expr_string," \
+  "@optional @display_name('Thread') @description(\"A conversation's subagent thread to show alone.\") 'thread': string," \
+  "@optional @display_name('Container Styles') @description(\"How Containers present: document or chat; by default chat for a conversation.\") 'container_styles': string," \
   "@no_callee_helper @no_revert @default(0) @display_name('Transient') @description(\"Controls whether or not this tab will be automatically replaced.\") 'auto': bool," \
   "}"
 #define UISHELL_NO_SETTINGS ""
@@ -186,6 +188,7 @@ enum
   X(luchs, WH_Content_Url, "http https file", "", web, "luchs", \
     "--endpoint {endpoint} --size {width}x{height} {page}") \
   X(markdown, WH_Content_File, "", "text/markdown", rich_text, "", "") \
+  X(conversation, WH_Content_File, "", WH_CONVERSATION_MEDIA_TYPE, rich_text, "", "") \
   X(table_embed, WH_Content_Embed, "", "application/vnd.flotilla.table", table, "", "")
 
 // Each Renderer's place in the list.

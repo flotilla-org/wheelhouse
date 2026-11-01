@@ -59,7 +59,7 @@ fn any_split_gives_the_whole_files_tree(tc: TestCase) {
     let items = 1 + c.below(10);
     let events = generate::conversation::events(&mut c, items);
     let bytes = generate::conversation::jsonl(&events);
-    let reference = whole(&bytes);
+    let mut reference = whole(&bytes);
     let expected = canon(reference.doc());
     let (variant, lines) = match c.below(3) {
         0 => (bytes, false),
@@ -79,6 +79,8 @@ fn any_split_gives_the_whole_files_tree(tc: TestCase) {
     rich.doc().assert_rows();
     assert_eq!(outline(rich.doc()), outline(reference.doc()));
     assert_eq!(canon(rich.doc()), expected);
+    // Copy All reads the items, not the order they came in.
+    assert_eq!(rich.copy_all(), reference.copy_all());
 }
 
 #[hegel::test(test_cases = 300)]
@@ -291,4 +293,101 @@ fn a_tool_call_is_pending_until_its_result() {
     assert_eq!(status(&rich), ToolStatus::Pending);
     rich.append(&line(r#"{"type":"ToolCallResult","threadId":"t","seq":2,"toolCallId":"c","status":"awaiting_approval","content":""}"#));
     assert_eq!(status(&rich), ToolStatus::AwaitingApproval);
+}
+
+/// A node's subtree below it, as [`canon`] has it.
+fn canon_under(doc: &Tree, id: NodeId, out: &mut Vec<(NodeContent, Vec<Key>)>) {
+    for child in doc.children(id) {
+        let mut content = doc.content(child);
+        content.version = 0;
+        out.push((content, doc.children(child).map(|c| doc.key(c)).collect()));
+        canon_under(doc, child, out);
+    }
+}
+
+// A subagent's thread opened as its own View shows what its Section holds
+// in the whole conversation, at its root, and nothing else: however the
+// file is cut into a tail and backfill. Generated conversations without a
+// subagent have nothing to check.
+#[hegel::test(test_cases = 300)]
+fn a_threads_view_is_what_its_section_holds(tc: TestCase) {
+    let mut c = Draws(&tc);
+    let items = 4 + c.below(12);
+    let events = generate::conversation::events(&mut c, items);
+    let threads: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            conversation_events::Event::RunStarted(r) if r.parent.is_some() => Some(r.thread_id.clone()),
+            _ => None,
+        })
+        .collect();
+    if threads.is_empty() {
+        return;
+    }
+    let thread = &threads[c.below(threads.len())];
+    let bytes = generate::conversation::jsonl(&events);
+    let reference = whole(&bytes);
+    let doc = reference.doc();
+    let section = doc.get(Key::named(&[thread, "thread"])).expect("a subagent's Section");
+    let mut expected = vec![];
+    canon_under(doc, section, &mut expected);
+    let mut rich = RichText::tuned_thread(&bytes, RING_CAPACITY, tuning(&mut c), Some(thread));
+    while rich.backfill(Duration::ZERO) > 0 {}
+    rich.doc().assert_rows();
+    let mut shown = vec![];
+    canon_under(rich.doc(), rich.doc().root().unwrap(), &mut shown);
+    assert_eq!(shown, expected);
+}
+
+#[test]
+fn copy_actions_copy_a_message_a_tool_output_and_a_command() {
+    let rich = whole(CONVERSATION);
+    let copy = |thread: &str, kind: &str, id: &str, action| rich.copy_action(Key::named(&[thread, kind, id]), action);
+    // A message's markdown, as plain text.
+    assert_eq!(
+        copy("t1", "message", "m1", CopyAction::Message).as_deref(),
+        Some("Why does `ka lo` fail? See [the log][log].\n\n[log]: https://example.com/log")
+    );
+    // Output as shown: the carriage return's rewrite, without escapes.
+    assert_eq!(copy("t1", "tool", "c1", CopyAction::ToolOutput).as_deref(), Some("error: ka lo\n100%\nsee the docs"));
+    assert_eq!(copy("t1", "tool", "c1", CopyAction::Command).as_deref(), Some("cargo test"));
+    // A diff's patch and a markdown result as they came.
+    assert_eq!(copy("t1", "tool", "c2", CopyAction::ToolOutput).as_deref(), Some("--- a/src/lib.rs\n+++ b/src/lib.rs\n-ka\n+lo"));
+    assert_eq!(copy("t1", "tool", "c3", CopyAction::ToolOutput).as_deref(), Some("# Notes\n\n- one\n- two"));
+    // What doesn't apply copies nothing: an image's output, a call with no
+    // command, a pending call's output, a message's output, reasoning.
+    assert_eq!(copy("t1", "tool", "c4", CopyAction::ToolOutput), None);
+    assert_eq!(copy("t1", "tool", "c2", CopyAction::Command), None);
+    assert_eq!(copy("t1", "tool", "c5", CopyAction::ToolOutput), None);
+    assert_eq!(copy("t1", "message", "m1", CopyAction::ToolOutput), None);
+    assert_eq!(copy("t1", "reasoning", "rs1", CopyAction::Message), None);
+    // What can be copied is exactly what copies something.
+    for id in rich.doc().preorder() {
+        for action in CopyAction::ALL {
+            let key = rich.doc().key(id);
+            assert_eq!(rich.can_copy(key, action), rich.copy_action(key, action).is_some(), "{key:?} {action:?}");
+        }
+    }
+    // Markdown has no conversation to copy from.
+    assert_eq!(RichText::open("# hi").copy_action(Key::ROOT, CopyAction::Message), None);
+}
+
+#[test]
+fn copy_all_is_the_transcript_without_reasoning() {
+    let tuning = Tuning { tail_items: 2, tail_bytes: usize::MAX, step: Some(64) };
+    let mut rich = RichText::tuned_conversation(CONVERSATION, RING_CAPACITY, tuning);
+    // Copied before backfill reaches the start, it still has all of it.
+    assert!(rich.backfill_remaining() > 0);
+    insta::assert_snapshot!("transcript", rich.copy_all().unwrap());
+    assert_eq!(RichText::open("# hi").copy_all(), None);
+}
+
+// Pasted as markdown, a notice stays one quote, every line of it, and a
+// Divider isn't read as a rule or a heading.
+#[test]
+fn copy_all_quotes_a_notice_whole_and_keeps_a_divider_out_of_headings() {
+    let error = line(r#"{"type":"RunError","threadId":"t","seq":1,"message":"first line\nsecond line"}"#);
+    let compaction = line(r#"{"type":"Custom","threadId":"t","seq":2,"name":"compaction","value":{}}"#);
+    let all = RichText::open_conversation(&[line(HELLO), error, compaction].concat()).copy_all().unwrap();
+    assert_eq!(all, "> first line\n> second line\n\n*— compaction —*");
 }
