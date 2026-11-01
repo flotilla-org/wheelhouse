@@ -1288,6 +1288,10 @@ struct UIShell_RichTextState
   B32 show_copied;
   U64 copied_key;
   U64 copied_until_us;
+  // A followed link's missing file, named in the bar until notice_until_us.
+  U8 notice[256];
+  U64 notice_size;
+  U64 notice_until_us;
 };
 
 internal void
@@ -1987,8 +1991,16 @@ uishell_rt_follow_link(UIShell_RichTextState *s, String8 target)
       uishell_rt_error(&error);
     } break;
     case UIShell_RtLink_External: { wm_open_in_browser(resolved); } break;
-    // A new View, which resolves through the Handlers as any opened file.
-    case UIShell_RtLink_File: { uishell_cmd("open", .file_path = push_str8_copy(rd_frame_arena(), resolved)); } break;
+    // A new View, which resolves through the Handlers as any opened file;
+    // a missing one opens nothing, and the bar says so.
+    case UIShell_RtLink_File:
+    {
+      if(file_path_exists(resolved)) { uishell_cmd("open", .file_path = push_str8_copy(rd_frame_arena(), resolved)); break; }
+      String8 notice = push_str8f(scratch.arena, "%S doesn't exist", str8_skip_chop_whitespace(target));
+      s->notice_size = Min(notice.size, sizeof(s->notice));
+      MemoryCopy(s->notice, notice.str, s->notice_size);
+      s->notice_until_us = now_time_us() + 4000000;
+    } break;
   }
   scratch_end(scratch);
 }
@@ -3111,6 +3123,11 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     ui_spacer(ui_pct(1, 0));
     String8 find_label = uishell_rt_find_label(scratch.arena, s);
     if(find_label.size) { UI_TagF("weak") ui_label(find_label); }
+    if(s->notice_until_us > now_time_us())
+    {
+      ui_label(str8(s->notice, s->notice_size));
+      rd_request_frame_at(s->notice_until_us);
+    }
     if(ui_clicked(ui_buttonf("Source###rich_text_source"))) { uishell_cmd("toggle_markdown_source"); }
   }
 

@@ -247,6 +247,46 @@ uishell_rt_diag_click(UIShell_RtDiag *d, Vec2F32 at, WM_Modifiers mods, U32 clic
   return uishell_rt_diag_frames(d, 2);
 }
 
+// Clicks a Block's text at `byte`, and returns the file the click opened,
+// read from the commands the release's frame queued; empty for none.
+internal String8
+uishell_rt_diag_click_opens(UIShell_RtDiag *d, UIShell_RichTextState *s, U64 key, U32 byte, Arena *arena)
+{
+  d->now_us += 2000000;
+  Vec2F32 p = uishell_rt_diag_point(d, s, key, byte);
+  d->mouse = p;
+  uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = p});
+  UI_EventNode node = {.v = (UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = p, .timestamp_us = d->now_us += 20000}};
+  UI_EventList events = {&node, &node, 1};
+  UI_AnimationInfo animation = {0};
+  ui_begin_build(d->ws->os, &events, &d->ws->ui->icon_info, d->ws->theme, &animation, 1.f/60, 1.f/60);
+  ui_state->mouse = p;
+  UIShell_RegsScope(.window = d->ws->cfg_id, .panel = d->panel, .tab = d->address, .view = d->address)
+  UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+  {
+    wh_view_ui_direct(wh_renderer_from_name(str8_lit("rich_text")), d->address, d->rect);
+  }
+  ui_end_build();
+  String8 opened = str8_zero();
+  for(UIShell_CmdNode *n = rd_state->cmds[0].first; n; n = n->next)
+  {
+    if(str8_match(n->cmd.name, str8_lit("open"), 0)) { opened = push_str8_copy(arena, n->cmd.regs->file_path); }
+  }
+  MemoryZeroStruct(&rd_state->cmds[0]);
+  return opened;
+}
+
+// A label this frame built whose text has `needle`.
+internal B32
+uishell_rt_diag_label_with(String8 needle)
+{
+  for(UI_Box *b = ui_state->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_state->root).next)
+  {
+    if((b->flags & UI_BoxFlag_DrawText) && str8_find_needle(b->string, 0, needle, 0) < b->string.size) { return 1; }
+  }
+  return 0;
+}
+
 internal String8
 uishell_rt_diag_copy(UIShell_RtDiag *d)
 {
@@ -283,6 +323,7 @@ uishell_rt_diag_fixture(Arena *arena, U64 paragraphs, String8 extra_in_paragraph
   str8_list_pushf(arena, &out, "---\ntitle: The harbour log\n---\n\n");
   str8_list_pushf(arena, &out, "# The harbour log\n\n");
   str8_list_pushf(arena, &out, "Opening words with a [relative link](notes.md), a [web link](https://example.com/tides) and [[Harbour Master]].\n\n");
+  str8_list_pushf(arena, &out, "![A lighthouse](lighthouse.png)\n\n");
   str8_list_pushf(arena, &out, "```rust\nfn main() {\n    println!(\"fenced\");\n}\n```\n\n");
   str8_list_pushf(arena, &out, "| Vessel | Berth | Tonnage |\n|:-------|:-----:|--------:|\n| Kestrel | 4 | 1200 |\n| Plover | 7 | 950 |\n| Tern | 2 | 30 |\n\n");
   str8_list_pushf(arena, &out, "- a tight item\n- another item\n\n> A quote holds a paragraph.\n\n");
@@ -323,6 +364,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
   U64 paragraphs = 60;
   write_data_to_file_path(path, uishell_rt_diag_fixture(arena, paragraphs, str8_zero(), 0));
   write_data_to_file_path(note, str8_lit("# Harbour Master\n\nA note beside the log.\n"));
+  write_data_to_file_path(push_str8f(arena, "%S/notes.md", dir), str8_lit("# Notes\n"));
   char *error = 0;
 
   //- Opening: text/markdown resolves through the Handlers to Rich Text.
@@ -661,32 +703,21 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
               path_match_normalized(resolved, push_str8f(scratch.arena, "%S/No Such Note", dir)), "a missing wikilink names its path, without inventing a note");
     // Clicking the relative link opens it as a new View.
     UIShell_RtNode *opening = uishell_rt_diag_block_with(s, str8_lit("Opening words"));
-    U32 at = opening ? (U32)str8_find_needle(opening->text, 0, str8_lit("relative"), 0) + 3 : 0;
     if(opening)
     {
-      d->now_us += 2000000;
-      Vec2F32 p = uishell_rt_diag_point(d, s, opening->key, at);
-      d->mouse = p;
-      uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = p});
-      // The release's frame queues the command; read it before the next.
-      UI_EventNode node = {.v = (UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = p, .timestamp_us = d->now_us += 20000}};
-      UI_EventList events = {&node, &node, 1};
-      UI_AnimationInfo animation = {0};
-      ui_begin_build(d->ws->os, &events, &d->ws->ui->icon_info, d->ws->theme, &animation, 1.f/60, 1.f/60);
-      ui_state->mouse = p;
-      UIShell_RegsScope(.window = d->ws->cfg_id, .panel = d->panel, .tab = d->address, .view = d->address)
-      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-      {
-        wh_view_ui_direct(wh_renderer_from_name(str8_lit("rich_text")), d->address, d->rect);
-      }
-      ui_end_build();
-      B32 opened = 0;
-      for(UIShell_CmdNode *n = rd_state->cmds[0].first; n; n = n->next)
-      {
-        opened |= str8_match(n->cmd.name, str8_lit("open"), 0) && path_match_normalized(n->cmd.regs->file_path, push_str8f(scratch.arena, "%S/notes.md", dir));
-      }
-      MemoryZeroStruct(&rd_state->cmds[0]);
-      RichCheck(opened, "a click on a relative .md link opens it as a new View");
+      U32 at = (U32)str8_find_needle(opening->text, 0, str8_lit("relative"), 0) + 3;
+      String8 opened = uishell_rt_diag_click_opens(d, s, opening->key, at, scratch.arena);
+      RichCheck(path_match_normalized(opened, push_str8f(scratch.arena, "%S/notes.md", dir)), "a click on a relative .md link opens it as a new View");
+    }
+    // A link to a file that isn't there opens nothing, and says so.
+    UIShell_RtNode *image = uishell_rt_diag_block_with(s, str8_lit("A lighthouse"));
+    RichCheck(image != 0, "an image shows as its alt text");
+    if(image)
+    {
+      String8 opened = uishell_rt_diag_click_opens(d, s, image->key, 3, scratch.arena);
+      s = uishell_rt_diag_frames(d, 1);
+      RichCheck(opened.size == 0 && uishell_rt_diag_label_with(str8_lit("lighthouse.png doesn't exist")),
+                "a click on a link to a missing file opens nothing and says the file doesn't exist");
     }
     scratch_end(scratch);
   }
