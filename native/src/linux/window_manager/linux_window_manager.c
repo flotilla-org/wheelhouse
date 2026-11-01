@@ -286,6 +286,9 @@ wm_init(void)
   //- rjf: open im
   lnx_wm_state->xim = XOpenIM(lnx_wm_state->display, 0, 0, 0);
   
+  //- rjf: held keys repeat as presses alone, as on Windows, instead of release+press pairs
+  XkbSetDetectableAutoRepeat(lnx_wm_state->display, True, 0);
+  
   //- rjf: fill out gfx info
   lnx_wm_state->gfx_info.double_click_time = 0.5f;
   lnx_wm_state->gfx_info.caret_blink_time = 0.5f;
@@ -564,11 +567,18 @@ wm_set_application_icon(Vec2S32 dim, U8 *rgba)
   S32 w = dim.x, h = dim.y;
   U8 *level = push_array_no_zero(scratch.arena, U8, (U64)w*h*4);
   MemoryCopy(level, rgba, (U64)w*h*4);
+  // Both sides must fit, or a long, thin image could still overflow a request.
+  U64 capacity = 0;
+  for(S32 lw = w, lh = h;; lw /= 2, lh /= 2)
+  {
+    if(lw <= 128 && lh <= 128) { capacity += 2 + (U64)lw*lh; }
+    if(lw/2 < 32 || lh/2 < 32) { break; }
+  }
   U64 count = 0;
-  long *data = push_array_no_zero(scratch.arena, long, 2*8 + (U64)w*h);
+  long *data = push_array_no_zero(scratch.arena, long, capacity);
   for(;;)
   {
-    if(w <= 128 || h <= 128)
+    if(w <= 128 && h <= 128)
     {
       data[count++] = w;
       data[count++] = h;
@@ -590,8 +600,12 @@ wm_set_application_icon(Vec2S32 dim, U8 *rgba)
     }
     level = half; w = hw; h = hh;
   }
+  if(count > lnx_wm_state->icon_data_capacity)
+  {
+    lnx_wm_state->icon_data = push_array_no_zero(lnx_wm_state->arena, long, count);
+    lnx_wm_state->icon_data_capacity = count;
+  }
   lnx_wm_state->icon_data_count = count;
-  lnx_wm_state->icon_data = push_array_no_zero(lnx_wm_state->arena, long, count);
   MemoryCopy(lnx_wm_state->icon_data, data, count*sizeof(long));
   scratch_end(scratch);
   for(LNX_WM_Window *window = lnx_wm_state->first_window; window != 0; window = window->next) { lnx_wm_window_apply_icon(window); }

@@ -17,6 +17,11 @@
 #include <X11/extensions/sync.h>
 #include <X11/extensions/Xrandr.h>
 #include <X11/Xutil.h>
+// XKBstr.h has a field named `internal`, which base_core.h defines as `static`.
+#pragma push_macro("internal")
+#undef internal
+#include <X11/XKBlib.h>
+#pragma pop_macro("internal")
 #include <X11/keysym.h>
 #include <X11/keysymdef.h>
 
@@ -107,6 +112,7 @@ struct LNX_WM_State
   Atom net_wm_icon_atom;
   long *icon_data;
   U64 icon_data_count;
+  U64 icon_data_capacity;
   WM_Modifiers modifiers;
   U64 key_down[(WM_Key_COUNT+63)/64];
   Arena *selection_arena;
