@@ -1,0 +1,14 @@
+{"type":"Hello","contract":1}
+{"type":"RunStarted","threadId":"88888888-8888-4888-8888-888888888888","seq":1,"runId":"u0001-88888888"}
+{"type":"TextMessageStart","threadId":"88888888-8888-4888-8888-888888888888","seq":2,"messageId":"u0001-88888888","role":"user"}
+{"type":"TextMessageContent","threadId":"88888888-8888-4888-8888-888888888888","seq":3,"messageId":"u0001-88888888","delta":"Hello."}
+{"type":"TextMessageEnd","threadId":"88888888-8888-4888-8888-888888888888","seq":4,"messageId":"u0001-88888888"}
+{"type":"TextMessageStart","threadId":"88888888-8888-4888-8888-888888888888","seq":5,"messageId":"msg_unk_a","role":"assistant"}
+{"type":"TextMessageContent","threadId":"88888888-8888-4888-8888-888888888888","seq":6,"messageId":"msg_unk_a","delta":"Hi there."}
+{"type":"TextMessageEnd","threadId":"88888888-8888-4888-8888-888888888888","seq":7,"messageId":"msg_unk_a"}
+{"type":"RunFinished","threadId":"88888888-8888-4888-8888-888888888888","seq":8,"runId":"u0001-88888888","outcome":"completed"}
+{"type":"RunStarted","threadId":"88888888-8888-4888-8888-888888888888","seq":9,"runId":"u0007-88888888"}
+{"type":"TextMessageStart","threadId":"88888888-8888-4888-8888-888888888888","seq":10,"messageId":"u0007-88888888","role":"user"}
+{"type":"TextMessageContent","threadId":"88888888-8888-4888-8888-888888888888","seq":11,"messageId":"u0007-88888888","delta":"Bye."}
+{"type":"TextMessageEnd","threadId":"88888888-8888-4888-8888-888888888888","seq":12,"messageId":"u0007-88888888"}
+{"type":"RunFinished","threadId":"88888888-8888-4888-8888-888888888888","seq":13,"runId":"u0007-88888888","outcome":"completed"}

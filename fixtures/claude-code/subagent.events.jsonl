@@ -1,0 +1,37 @@
+{"type":"Hello","contract":1}
+{"type":"RunStarted","threadId":"55555555-5555-4555-8555-555555555555","seq":1,"runId":"u0001-55555555"}
+{"type":"TextMessageStart","threadId":"55555555-5555-4555-8555-555555555555","seq":2,"messageId":"u0001-55555555","role":"user"}
+{"type":"TextMessageContent","threadId":"55555555-5555-4555-8555-555555555555","seq":3,"messageId":"u0001-55555555","delta":"Survey the repo with a helper."}
+{"type":"TextMessageEnd","threadId":"55555555-5555-4555-8555-555555555555","seq":4,"messageId":"u0001-55555555"}
+{"type":"ToolCallStart","threadId":"55555555-5555-4555-8555-555555555555","seq":5,"toolCallId":"toolu_spawn","toolCallName":"Agent","title":"Survey the repo","kind":"agent","parentMessageId":"msg_sub_a"}
+{"type":"ToolCallArgs","threadId":"55555555-5555-4555-8555-555555555555","seq":6,"toolCallId":"toolu_spawn","delta":"{\"description\":\"Survey the repo\",\"prompt\":\"List the crates.\",\"subagent_type\":\"Explore\"}"}
+{"type":"ToolCallEnd","threadId":"55555555-5555-4555-8555-555555555555","seq":7,"toolCallId":"toolu_spawn"}
+{"type":"ToolCallResult","threadId":"55555555-5555-4555-8555-555555555555","seq":8,"toolCallId":"toolu_spawn","messageId":"toolu_spawn-result","status":"ok","mediaType":"text/plain","content":"There are two crates.","truncated":null}
+{"type":"TextMessageStart","threadId":"55555555-5555-4555-8555-555555555555","seq":9,"messageId":"msg_sub_b","role":"assistant"}
+{"type":"TextMessageContent","threadId":"55555555-5555-4555-8555-555555555555","seq":10,"messageId":"msg_sub_b","delta":"The helper found two crates."}
+{"type":"TextMessageEnd","threadId":"55555555-5555-4555-8555-555555555555","seq":11,"messageId":"msg_sub_b"}
+{"type":"RunStarted","threadId":"agent-a1b2c3","seq":1,"runId":"a1b2c3-0001","parent":{"threadId":"55555555-5555-4555-8555-555555555555","toolCallId":"toolu_spawn"}}
+{"type":"TextMessageStart","threadId":"agent-a1b2c3","seq":2,"messageId":"a1b2c3-0001","role":"user"}
+{"type":"TextMessageContent","threadId":"agent-a1b2c3","seq":3,"messageId":"a1b2c3-0001","delta":"List the crates."}
+{"type":"TextMessageEnd","threadId":"agent-a1b2c3","seq":4,"messageId":"a1b2c3-0001"}
+{"type":"ToolCallStart","threadId":"agent-a1b2c3","seq":5,"toolCallId":"toolu_child_ls","toolCallName":"Bash","title":"ls crates","kind":"shell","parentMessageId":"msg_child_a"}
+{"type":"ToolCallArgs","threadId":"agent-a1b2c3","seq":6,"toolCallId":"toolu_child_ls","delta":"{\"command\":\"ls crates\"}"}
+{"type":"ToolCallEnd","threadId":"agent-a1b2c3","seq":7,"toolCallId":"toolu_child_ls"}
+{"type":"ToolCallResult","threadId":"agent-a1b2c3","seq":8,"toolCallId":"toolu_child_ls","messageId":"toolu_child_ls-result","status":"ok","mediaType":"text/x-ansi","content":"core\ncli\n","truncated":null}
+{"type":"ToolCallStart","threadId":"agent-a1b2c3","seq":9,"toolCallId":"toolu_child_spawn","toolCallName":"Agent","title":"Read core","kind":"agent","parentMessageId":"msg_child_b"}
+{"type":"ToolCallArgs","threadId":"agent-a1b2c3","seq":10,"toolCallId":"toolu_child_spawn","delta":"{\"description\":\"Read core\",\"prompt\":\"Summarise core.\"}"}
+{"type":"ToolCallEnd","threadId":"agent-a1b2c3","seq":11,"toolCallId":"toolu_child_spawn"}
+{"type":"ToolCallResult","threadId":"agent-a1b2c3","seq":12,"toolCallId":"toolu_child_spawn","messageId":"toolu_child_spawn-result","status":"ok","mediaType":"text/plain","content":"Core parses input.","truncated":null}
+{"type":"TextMessageStart","threadId":"agent-a1b2c3","seq":13,"messageId":"msg_child_c","role":"assistant"}
+{"type":"TextMessageContent","threadId":"agent-a1b2c3","seq":14,"messageId":"msg_child_c","delta":"There are two crates."}
+{"type":"TextMessageEnd","threadId":"agent-a1b2c3","seq":15,"messageId":"msg_child_c"}
+{"type":"RunStarted","threadId":"agent-d4e5f6","seq":1,"runId":"d4e5f6-0001","parent":{"threadId":"agent-a1b2c3","toolCallId":"toolu_child_spawn"}}
+{"type":"TextMessageStart","threadId":"agent-d4e5f6","seq":2,"messageId":"d4e5f6-0001","role":"user"}
+{"type":"TextMessageContent","threadId":"agent-d4e5f6","seq":3,"messageId":"d4e5f6-0001","delta":"Summarise core."}
+{"type":"TextMessageEnd","threadId":"agent-d4e5f6","seq":4,"messageId":"d4e5f6-0001"}
+{"type":"TextMessageStart","threadId":"agent-d4e5f6","seq":5,"messageId":"msg_nested_a","role":"assistant"}
+{"type":"TextMessageContent","threadId":"agent-d4e5f6","seq":6,"messageId":"msg_nested_a","delta":"Core parses input."}
+{"type":"TextMessageEnd","threadId":"agent-d4e5f6","seq":7,"messageId":"msg_nested_a"}
+{"type":"RunFinished","threadId":"55555555-5555-4555-8555-555555555555","seq":12,"runId":"u0001-55555555","outcome":"completed"}
+{"type":"RunFinished","threadId":"agent-a1b2c3","seq":16,"runId":"a1b2c3-0001","outcome":"completed"}
+{"type":"RunFinished","threadId":"agent-d4e5f6","seq":8,"runId":"d4e5f6-0001","outcome":"completed"}

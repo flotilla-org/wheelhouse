@@ -1,0 +1,23 @@
+{"type":"Hello","contract":1}
+{"type":"RunStarted","threadId":"11111111-1111-4111-8111-111111111111","seq":1,"runId":"u0002-11111111"}
+{"type":"TextMessageStart","threadId":"11111111-1111-4111-8111-111111111111","seq":2,"messageId":"u0002-11111111","role":"user"}
+{"type":"TextMessageContent","threadId":"11111111-1111-4111-8111-111111111111","seq":3,"messageId":"u0002-11111111","delta":"Explain the **parser** layout."}
+{"type":"TextMessageEnd","threadId":"11111111-1111-4111-8111-111111111111","seq":4,"messageId":"u0002-11111111"}
+{"type":"ReasoningMessageStart","threadId":"11111111-1111-4111-8111-111111111111","seq":5,"messageId":"msg_split_a.reasoning"}
+{"type":"ReasoningMessageContent","threadId":"11111111-1111-4111-8111-111111111111","seq":6,"messageId":"msg_split_a.reasoning","delta":"The user wants an overview; start with the module list."}
+{"type":"ReasoningMessageEnd","threadId":"11111111-1111-4111-8111-111111111111","seq":7,"messageId":"msg_split_a.reasoning"}
+{"type":"TextMessageStart","threadId":"11111111-1111-4111-8111-111111111111","seq":8,"messageId":"msg_split_a","role":"assistant"}
+{"type":"TextMessageContent","threadId":"11111111-1111-4111-8111-111111111111","seq":9,"messageId":"msg_split_a","delta":"The parser has two stages."}
+{"type":"TextMessageEnd","threadId":"11111111-1111-4111-8111-111111111111","seq":10,"messageId":"msg_split_a"}
+{"type":"TextMessageStart","threadId":"11111111-1111-4111-8111-111111111111","seq":11,"messageId":"msg_split_a.1","role":"assistant"}
+{"type":"TextMessageContent","threadId":"11111111-1111-4111-8111-111111111111","seq":12,"messageId":"msg_split_a.1","delta":"First it **tokenises**, then it builds the tree."}
+{"type":"TextMessageEnd","threadId":"11111111-1111-4111-8111-111111111111","seq":13,"messageId":"msg_split_a.1"}
+{"type":"RunFinished","threadId":"11111111-1111-4111-8111-111111111111","seq":14,"runId":"u0002-11111111","outcome":"completed"}
+{"type":"RunStarted","threadId":"11111111-1111-4111-8111-111111111111","seq":15,"runId":"u0007-11111111"}
+{"type":"TextMessageStart","threadId":"11111111-1111-4111-8111-111111111111","seq":16,"messageId":"u0007-11111111","role":"user"}
+{"type":"TextMessageContent","threadId":"11111111-1111-4111-8111-111111111111","seq":17,"messageId":"u0007-11111111","delta":"And the tests?"}
+{"type":"TextMessageEnd","threadId":"11111111-1111-4111-8111-111111111111","seq":18,"messageId":"u0007-11111111"}
+{"type":"TextMessageStart","threadId":"11111111-1111-4111-8111-111111111111","seq":19,"messageId":"msg_split_b","role":"assistant"}
+{"type":"TextMessageContent","threadId":"11111111-1111-4111-8111-111111111111","seq":20,"messageId":"msg_split_b","delta":"They live beside each stage."}
+{"type":"TextMessageEnd","threadId":"11111111-1111-4111-8111-111111111111","seq":21,"messageId":"msg_split_b"}
+{"type":"RunFinished","threadId":"11111111-1111-4111-8111-111111111111","seq":22,"runId":"u0007-11111111","outcome":"completed"}
