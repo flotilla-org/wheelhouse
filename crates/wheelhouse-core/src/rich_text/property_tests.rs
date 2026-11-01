@@ -144,7 +144,7 @@ fn the_height_index_agrees_with_a_prefix_sum(tc: TestCase) {
     let height = |tc: &TestCase| tc.draw(gs::integers::<u32>().max_value(40)) as f32;
     for _ in 0..tc.draw(gs::integers::<usize>().max_value(40)) {
         let len = naive.len();
-        match tc.draw(gs::integers::<u8>().max_value(6)) {
+        match tc.draw(gs::integers::<u8>().max_value(7)) {
             0 | 1 => {
                 let at = tc.draw(gs::integers::<usize>().max_value(len));
                 let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(if tc.draw(gs::booleans()) { 3 } else { 700 }));
@@ -171,6 +171,14 @@ fn the_height_index_agrees_with_a_prefix_sum(tc: TestCase) {
                 for (at, row) in naive.iter_mut().enumerate().take(end).skip(start) {
                     *row = row.with_hidden(hide);
                     index.set(at, *row);
+                }
+            }
+            7 => {
+                let base = height(&tc);
+                let remeasure = |i: usize, row: Row| Row::measured(base + (i % 3) as f32, 2).with_hidden(row.hidden());
+                index.update_all(remeasure);
+                for (i, row) in naive.iter_mut().enumerate() {
+                    *row = remeasure(i, *row);
                 }
             }
             _ => index.push({

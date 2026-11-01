@@ -245,6 +245,19 @@ impl HeightIndex {
         self.refresh(c, 0);
     }
 
+    /// Replaces every entry with `f(index, entry)`: O(n), where a `set` each
+    /// would re-total a chunk each.
+    pub fn update_all(&mut self, mut f: impl FnMut(usize, Entry) -> Entry) {
+        let mut index = 0;
+        for c in 0..self.chunks.len() {
+            for slot in self.slots(c) {
+                self.pool[slot] = f(index, self.pool[slot]);
+                index += 1;
+            }
+        }
+        self.rebuild();
+    }
+
     pub fn push(&mut self, entry: Entry) {
         self.insert(self.len, &[entry]);
     }

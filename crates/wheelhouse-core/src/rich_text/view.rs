@@ -1,6 +1,6 @@
 //! A subscriber's View state (#541). Heights are `f32` in the frontend's
 //! units, distances `f64`.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::find::Find;
 use super::heights::{Entry as Row, HeightIndex};
@@ -90,8 +90,8 @@ pub(crate) struct AnchorWas {
 pub struct View {
     pub(crate) heights: HeightIndex,
     metrics: Metrics,
-    /// Width tags: index 0 is "never measured".
-    widths: Vec<f32>,
+    /// Width tags by width's bits; tag 0 is "never measured".
+    tags: HashMap<u32, u16>,
     tag: u16,
     viewport: f64,
     anchor: Option<Anchor>,
@@ -126,7 +126,7 @@ impl View {
         let mut view = View {
             heights: HeightIndex::default(),
             metrics: Metrics::default(),
-            widths: vec![0.0],
+            tags: HashMap::new(),
             tag: 0,
             viewport: 0.0,
             anchor: None,
@@ -165,14 +165,15 @@ impl View {
     }
 
     fn tag_for(&mut self, width: f32) -> u16 {
-        if let Some(tag) = self.widths.iter().skip(1).position(|&w| w == width) {
-            return tag as u16 + 1;
+        if let Some(&tag) = self.tags.get(&width.to_bits()) {
+            return tag;
         }
-        if self.widths.len() > u16::MAX as usize {
-            self.widths.truncate(1);
+        if self.tags.len() == usize::from(u16::MAX) {
+            self.tags.clear();
         }
-        self.widths.push(width);
-        (self.widths.len() - 1) as u16
+        let tag = self.tags.len() as u16 + 1;
+        self.tags.insert(width.to_bits(), tag);
+        tag
     }
 
     /// A collapsed Container keeps its header row.
@@ -238,7 +239,8 @@ impl View {
     }
 
     /// Keys are parent plus ordinal, so an edit above the anchor can give its
-    /// key to another Block: find the anchored Block by its content hash.
+    /// key to another Block: find the anchored Block by its content hash,
+    /// the nearest one if several Blocks are the same.
     fn restore_anchor(&mut self, doc: &Tree, was: Option<AnchorWas>) {
         let (Some(anchor), Some(was)) = (self.anchor.as_mut(), was) else { return };
         if doc.get(anchor.key).is_some_and(|id| doc.node(id).hash == was.hash) {
@@ -376,14 +378,14 @@ impl View {
         self.metrics = metrics;
         self.tag = self.tag_for(metrics.width);
         let scale = if old.width > 0.0 && metrics.width > 0.0 { old.width / metrics.width } else { 1.0 };
-        for (i, &entry) in doc.entries().iter().enumerate() {
-            let row = self.heights.get(i);
+        let (entries, tag) = (doc.entries(), self.tag);
+        self.heights.update_all(|i, row| {
             let next = if row.width == 0 {
-                Row::estimated(estimate(doc, entry, &metrics), 0)
+                Row::estimated(estimate(doc, entries[i], &metrics), 0)
             } else if old.width != metrics.width {
                 let mut scaled = row.stale();
                 scaled.height *= scale;
-                if scaled.width == self.tag {
+                if scaled.width == tag {
                     // Back at the width it was measured at.
                     scaled = Row::measured(scaled.height, scaled.width);
                 }
@@ -391,8 +393,8 @@ impl View {
             } else {
                 row
             };
-            self.heights.set(i, next.with_hidden(row.hidden()));
-        }
+            next.with_hidden(row.hidden())
+        });
         if old.width != metrics.width {
             self.line_top *= scale;
         }

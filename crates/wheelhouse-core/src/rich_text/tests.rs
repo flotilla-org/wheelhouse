@@ -227,6 +227,28 @@ fn collapsing_a_container_hides_its_range() {
 }
 
 #[test]
+fn a_collapsed_container_hides_the_rows_a_reload_adds_to_it() {
+    let mut rich = RichText::open("intro\n\n- one\n- two\n\nafter\n");
+    let id = rich.subscribe();
+    let list = Key::ROOT.child(1);
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.set_viewport(1000.0);
+    view.set_collapsed(doc, list, true).unwrap();
+    rich.reload("intro\n\n- one\n- two, edited\n- three\n\n  more\n\nafter\n");
+    let (doc, view) = rich.view_mut(id).unwrap();
+    assert!(view.is_collapsed(list));
+    let (first, end) = doc.entry_range(doc.get(list).unwrap());
+    for i in first + 1..end {
+        assert!(view.heights().get(i).hidden(), "entry {i} of the collapsed list is shown");
+    }
+    let rows = block_rows(doc, view);
+    assert!(rows.iter().any(|r| r.0 == list && r.1 == Part::Header));
+    assert_eq!(rows.iter().filter(|r| r.0 != list).count(), 2, "{rows:?}");
+    view.set_collapsed(doc, list, false).unwrap();
+    assert!(block_rows(doc, view).iter().any(|r| r.0 == find(doc, "three")));
+}
+
+#[test]
 fn the_window_holds_the_viewport_and_half_a_viewport_each_side() {
     let source: String = (0..100).map(|i| format!("Paragraph {i}.\n\n")).collect();
     let mut rich = RichText::open(&source);
