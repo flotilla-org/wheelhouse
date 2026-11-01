@@ -55,6 +55,7 @@ struct UIShell_SidebarIntent
 };
 #include "ingress.h"
 global WheelhouseIngress *uishell_ingress;
+internal WheelhouseIngressView uishell_automation_view(Arena *arena, CFG_Node *view); // uishell_automation.c
 global String8 uishell_sidebar_live_config;
 global B32 uishell_sidebar_live;
 global B32 uishell_sidebar_fixture;
@@ -1054,7 +1055,7 @@ uishell_sidebar_workdirs(Arena *arena, UIShell_ControlledSplit *split)
         dir->value = (WheelhouseIngressWorkdir){w->id, view->id,
           uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_kind"))->first->string),
           uishell_ingress_text(cfg_node_child_from_string(workspace, str8_lit("sidebar_entity_id"))->first->string),
-          uishell_ingress_text(cwd), {0}};
+          uishell_ingress_text(cwd), {0}, uishell_automation_view(arena, view)};
         dir->workspace = w->workspace_id;
         SLLQueuePush(result.first, result.last, dir);
         result.count++;

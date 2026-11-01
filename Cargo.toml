@@ -33,6 +33,8 @@ binnacle-described = { git = "https://github.com/flotilla-org/binnacle.git", rev
 binnacle-described-http = { git = "https://github.com/flotilla-org/binnacle.git", rev = "1024708f9292d9f88e79a97eceec712ef436aced" }
 binnacle-format = { git = "https://github.com/flotilla-org/binnacle.git", rev = "1024708f9292d9f88e79a97eceec712ef436aced" }
 binnacle-testkit = { git = "https://github.com/flotilla-org/binnacle.git", rev = "1024708f9292d9f88e79a97eceec712ef436aced" }
+# Shared crates (flotilla ADR 0068), pinned once here.
+flotilla-cbor = { git = "https://github.com/flotilla-org/rigging", rev = "8c5fef84c6ce9c01ea56fb680a83986c1f14941d" }
 ansi_term = "0.12"
 crossterm = "0.28.1"
 insta = "1"

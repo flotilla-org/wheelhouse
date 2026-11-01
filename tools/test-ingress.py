@@ -10,6 +10,7 @@ import uuid
 import os
 from pathlib import Path
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -101,13 +102,57 @@ def publish(path, value):
     finally:
         connection.close()
 
+def cbor_decode(data):
+    """A CBOR value, as the Automation Endpoint sends it: definite lengths,
+    text keys, no tags."""
+    def item(at):
+        initial = data[at]
+        major, info, at = initial >> 5, initial & 0x1f, at + 1
+        if major == 7:
+            if info in (20, 21, 22):
+                return {20: False, 21: True, 22: None}[info], at
+            size = {25: 2, 26: 4, 27: 8}[info]
+            raw = data[at:at + size]
+            return struct.unpack('>' + {2: 'e', 4: 'f', 8: 'd'}[size], raw)[0], at + size
+        if info < 24:
+            n = info
+        else:
+            size = {24: 1, 25: 2, 26: 4, 27: 8}[info]
+            n, at = int.from_bytes(data[at:at + size], 'big'), at + size
+        if major == 0:
+            return n, at
+        if major == 1:
+            return -1 - n, at
+        if major == 3:
+            return data[at:at + n].decode(), at + n
+        if major == 4:
+            items = []
+            for _ in range(n):
+                value, at = item(at)
+                items.append(value)
+            return items, at
+        if major == 5:
+            entries = {}
+            for _ in range(n):
+                key, at = item(at)
+                assert isinstance(key, str), key
+                entries[key], at = item(at)
+            return entries, at
+        raise AssertionError('unexpected CBOR major type %d' % major)
+    value, end = item(0)
+    assert end == len(data)
+    return value
+
+
 WAKE = C.CFUNCTYPE(None)
 APPLY = C.CFUNCTYPE(C.c_uint32, C.c_void_p, C.c_void_p, C.c_size_t)
 class Text(C.Structure):
     _fields_ = [('data', C.c_void_p), ('len', C.c_size_t)]
+class View(C.Structure):
+    _fields_ = [('owner', C.c_uint32), ('id', C.c_uint8 * 16), ('key', Text), ('previous', C.c_uint32)]
 class Workdir(C.Structure):
     _fields_ = [('workspace_id', C.c_uint64), ('view_id', C.c_uint64)] + [
-        (key, Text) for key in ['entity_kind', 'entity_id', 'cwd', 'live_cwd']]
+        (key, Text) for key in ['entity_kind', 'entity_id', 'cwd', 'live_cwd']] + [('view', View)]
 EMIT = C.CFUNCTYPE(None, C.c_void_p, C.POINTER(Workdir))
 OBSERVE = C.CFUNCTYPE(C.c_uint32, C.c_void_p, EMIT, C.c_void_p)
 RETRACT = C.CFUNCTYPE(C.c_uint32, C.c_void_p)
@@ -164,9 +209,12 @@ class IngressTests(unittest.TestCase):
         def observe(_, emit, context):
             self.observed += 1
             for workspace_id, view_id, *strings in self.workdirs:
-                buffers = [C.create_string_buffer(value.encode()) if value else None for value in strings]
+                # A View, by owner, ID, key and whether it is the previous instance.
+                owner, id, key, previous = strings[4] if len(strings) > 4 else (0, '0' * 32, None, 0)
+                buffers = [C.create_string_buffer(value.encode()) if value else None for value in strings[:4] + [key]]
                 texts = [Text(C.cast(buf, C.c_void_p), len(buf.value)) if buf else Text() for buf in buffers]
-                emit(context, C.byref(Workdir(workspace_id, view_id, *texts)))
+                view = View(owner, (C.c_uint8 * 16)(*uuid.UUID(id).bytes), texts[4], previous)
+                emit(context, C.byref(Workdir(workspace_id, view_id, *texts[:4], view)))
             return int(self.available)
         self.observe = OBSERVE(observe)
         self.server = self.start()
@@ -361,22 +409,25 @@ class IngressTests(unittest.TestCase):
 
     def test_observed_directories_change_and_omit_unknown_views(self):
         self.workdirs = [
-            (42, 81, 'worktree', 'one', '/saved/"quoted"/東京', None),
-            (42, 82, 'worktree', 'one', '/saved/two', '/live/two'),
+            (42, 81, 'worktree', 'one', '/saved/"quoted"/東京', None, (1, '0192f1a2-3b4c-7d5e-8f60-718293a4b5c6', 'u:1', 1)),
+            (42, 82, 'worktree', 'one', '/saved/two', '/live/two', (2, '0192f1a2-3b4c-7d5e-8f60-718293a4b5c6', 'u:2', 0)),
             (43, 83, None, None, None, None),
         ]
         status, body, content_type = self.request(read=True)
         self.assertEqual(status, 200)
         self.assertEqual(content_type, 'application/json')
         self.assertEqual(json.loads(body), {'workdirs': [
-            dict(workspace_id=42, view_id=81, entity_kind='worktree', entity_id='one', cwd='/saved/"quoted"/東京', live_cwd=None),
-            dict(workspace_id=42, view_id=82, entity_kind='worktree', entity_id='one', cwd='/saved/two', live_cwd='/live/two'),
+            dict(workspace_id=42, view_id=81, entity_kind='worktree', entity_id='one', cwd='/saved/"quoted"/東京', live_cwd=None,
+                 view='workspace/0192f1a2-3b4c-7d5e-8f60-718293a4b5c6/view/u:1@previous'),
+            dict(workspace_id=42, view_id=82, entity_kind='worktree', entity_id='one', cwd='/saved/two', live_cwd='/live/two',
+                 view='window/0192f1a2-3b4c-7d5e-8f60-718293a4b5c6/view/u:2'),
         ]})
         self.workdirs[1] = (42, 82, 'worktree', 'one', '/saved/two', '/changed')
         self.assertEqual(json.loads(self.request(read=True)[1])['workdirs'][1]['live_cwd'], '/changed')
         self.workdirs = [(43, 83, None, None, None, '/live/only')]
         row = json.loads(self.request(read=True)[1])['workdirs'][0]
         self.assertIsNone(row['cwd'])
+        self.assertIsNone(row['view'])
         self.assertIsNone(row['entity_id'])
         self.workdirs = []
         self.assertEqual(json.loads(self.request(read=True)[1]), {'workdirs': []})
@@ -386,7 +437,7 @@ class IngressTests(unittest.TestCase):
         raw = C.create_string_buffer(b'/bad/\xff')
         def invalid(_, emit, context):
             emit(context, C.byref(Workdir(1, 2, Text(), Text(),
-                 Text(C.cast(raw, C.c_void_p), len(raw.value)), Text())))
+                 Text(C.cast(raw, C.c_void_p), len(raw.value)), Text(), View())))
             return 1
         self.observe = OBSERVE(invalid)
         self.assertEqual(self.request(read=True)[0], 503)
@@ -659,6 +710,136 @@ class IngressTests(unittest.TestCase):
         self.assertEqual(self.launch_nested('off-explicit', '--automation_socket:' + explicit, automation='Off'), (explicit, 'unset'))
         # A value it doesn't know is taken as off.
         self.assertEqual(self.launch_nested('unknown', automation='of'), ('', 'unset'))
+
+    def start_automation(self, name, *args, user=''):
+        """Wheelhouse with one workspace of a terminal and a View of a Cleat
+        session, listening at its own socket; returns the socket's path, the
+        Workspace ID and Wheelhouse's directory."""
+        path = os.path.join(self.dir.name, name + '.sock')
+        session = {'content': {'Local': {'CleatSession': {'transport': 'local', 'host': 'nowhere', 'runtime_root': str(Path(self.dir.name, 'cleat')),
+                                                           'daemon': 'none', 'session': 'agent-session'}}}, 'presentation': 'terminal'}
+        process, root, workspace, failure = self.launch(name, '--automation_socket:' + path, *args, user=user, label='Automated',
+                                                        specs=[workspace_seed.terminal('read answer', '/tmp'), session])
+        self.serve(path, process, failure)
+        return path, workspace, root
+
+    def get(self, path, target, cbor=False):
+        connection = UnixHTTPConnection(path)
+        try:
+            connection.request('GET', target, headers={'Accept': 'application/cbor'} if cbor else {})
+            response = connection.getresponse()
+            body = response.read()
+            if response.status != 200:
+                return response.status, None
+            self.assertEqual(response.getheader('content-type'), 'application/cbor' if cbor else 'application/json')
+            return 200, cbor_decode(body) if cbor else json.loads(body)
+        finally:
+            connection.close()
+
+    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_automation_routes_serve_the_semantic_tree_in_json_and_cbor(self):
+        path, workspace, root = self.start_automation('routes', '--ingress_record')
+        w = 'workspace/' + workspace
+        for cbor in (False, True):
+            status, tree = self.get(path, '/v1/observed/semantic', cbor)
+            self.assertEqual(status, 200)
+            self.assertEqual(tree['schema'], 1)
+            self.assertIsInstance(tree['generation'], int)
+            [node] = tree['nodes']
+            self.assertEqual((node['id'], node['kind'], node['name'], node['durable']), (w, 'workspace', 'Automated', True))
+            self.assertIn('selected', node['state'])
+            [panel] = node['children']
+            self.assertEqual((panel['id'], panel['kind']), (w + '/panel/1', 'panel'))
+            terminal, cleat = panel['children']
+            self.assertEqual((terminal['id'], terminal['kind'], terminal['state']), (w + '/view/u:1', 'view', ['selected']))
+            self.assertEqual(terminal['props']['content'], 'terminal')
+            self.assertEqual(terminal['props']['terminal']['cwd'], '/tmp')
+            self.assertEqual(terminal['props']['terminal']['process'], 'read answer')
+            self.assertEqual(cleat['props']['terminal']['session'], 'agent-session')
+            # A subtree, by its Automation ID.
+            status, sub = self.get(path, '/v1/observed/semantic?root=' + w + '/view/u:2', cbor)
+            self.assertEqual(sub['nodes'], [cleat])
+            self.assertEqual(self.get(path, '/v1/observed/semantic?root=' + w + '/panel/9', cbor)[0], 404)
+            # Caller Context: the views showing a session.
+            status, caller = self.get(path, '/v1/observed/self?session=agent-session', cbor)
+            self.assertEqual((caller['schema'], caller['session']), (1, 'agent-session'))
+            self.assertEqual(caller['views'], [{'id': w + '/view/u:2', 'workspace': w}])
+            self.assertEqual(self.get(path, '/v1/observed/self?session=elsewhere', cbor)[1]['views'], [])
+        self.assertEqual(self.get(path, '/v1/observed/self')[0], 400)
+        # The event stream: a snapshot first, in NDJSON or ADR 0063 frames.
+        connection = UnixHTTPConnection(path)
+        connection.request('GET', '/v1/observed/events?root=' + w)
+        response = connection.getresponse()
+        self.assertEqual(response.getheader('content-type'), 'application/x-ndjson')
+        event = json.loads(response.readline())
+        self.assertEqual(event['event']['kind'], 'snapshot')
+        self.assertEqual(event['event']['tree']['nodes'][0]['id'], w)
+        self.assertRegex(event['cursor'], r'^[0-9a-f-]{36}:%d$' % event['event']['tree']['generation'])
+        connection.close()
+        connection = UnixHTTPConnection(path)
+        connection.request('GET', '/v1/observed/events', headers={'Accept': 'application/cbor'})
+        response = connection.getresponse()
+        self.assertEqual(response.getheader('content-type'), 'application/cbor')
+        magic, length = struct.unpack('>8sI', response.read(12))
+        self.assertEqual(magic, b'WHEVENTS')
+        frame = cbor_decode(response.read(length))
+        self.assertEqual((frame['type'], frame['event']['kind'], frame['cursor']), ('event', 'snapshot', event['cursor']))
+        connection.close()
+        # The workdirs name each View by its Automation ID.
+        status, workdirs = self.get(path, '/v1/observed/workdirs')
+        self.assertEqual([row['view'] for row in workdirs['workdirs']], [w + '/view/u:1'])
+        # Recorded like the other routes.
+        capture = root / 'logs' / 'ingress.jsonl'
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            paths = [json.loads(line)['path'] for line in capture.read_text().splitlines()] if capture.exists() else []
+            if '/v1/observed/events' in paths:
+                break
+            time.sleep(.05)
+        self.assertIn('/v1/observed/semantic', paths)
+        self.assertIn('/v1/observed/events', paths)
+
+    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    @unittest.skipIf(os.environ.get('WHEELHOUSE_CLEAT_FEATURES') == 'none', 'terminals run no program without a VT engine')
+    def test_a_terminals_screen_is_read_only_when_allowed_and_asked(self):
+        def launch(name, user):
+            # Wide characters, then spaces the row ends with.
+            path = os.path.join(self.dir.name, name + '.sock')
+            process, _, _, failure = self.launch(name, '--automation_socket:' + path, user=user, specs=[
+                workspace_seed.terminal("printf '\\346\\227\\245\\346\\234\\254 x   \\n'; read answer")])
+            self.serve(path, process, failure)
+            return path
+        def terminal(path, target):
+            return self.get(path, target)[1]['nodes'][0]['children'][0]['children'][0]['props']['terminal']
+        path = launch('screen', 'automation_terminal_text: "screen"\n')
+        deadline = time.monotonic() + 10
+        while not terminal(path, '/v1/observed/semantic?include=terminal_text').get('text', [''])[0]:
+            self.assertLess(time.monotonic(), deadline, 'the terminal never showed its line')
+            time.sleep(.1)
+        shown = terminal(path, '/v1/observed/semantic?include=terminal_text')
+        self.assertEqual(shown['text'][0], '\u65e5\u672c x')
+        self.assertEqual(len(shown['text']), shown['rows'])
+        self.assertEqual((shown['cursor']['row'], shown['cursor']['col']), (1, 0))
+        # Not asked for: none.
+        self.assertNotIn('text', terminal(path, '/v1/observed/semantic'))
+        # Not allowed (the default): none, even when asked.
+        path = launch('no-screen', '')
+        self.assertNotIn('text', terminal(path, '/v1/observed/semantic?include=terminal_text'))
+
+    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_automation_off_serves_none_of_its_routes(self):
+        # A value it doesn't know is off too.
+        for value in ('off', 'disabled'):
+            path, _, _ = self.start_automation(value, user='automation: "%s"\n' % value)
+            for target in ['/v1/observed/semantic', '/v1/observed/self?session=agent-session', '/v1/observed/events']:
+                for cbor in (False, True):
+                    self.assertEqual(self.get(path, target, cbor)[0], 404, (value, target))
+            # The metadata routes are not affected.
+            self.assertEqual(self.get(path, '/v1/observed/workdirs')[0], 200)
+            publish(path, patch('project', 'p', {'display.label': 'still served'}))
 
     # A stand-in for `flotilla pm connect` that ignores SIGTERM, as does the
     # child it starts; it appends "<its pid> <child pid>" to $WH_TEST_CONNECTOR.

@@ -111,6 +111,7 @@
 #include "uishell/uishell_rich_text.c"
 #include "uishell/uishell_jackstay.c"
 #include "shell/shell_inc.c"
+#include "uishell/uishell_automation.c"
 #include "uishell/uishell_jackstay_diagnostics.c"
 #include "uishell/uishell_presentation_diagnostics.c"
 #include "uishell/uishell_dashboard.c"
@@ -180,6 +181,7 @@ frame(void)
     rd_frame();
     uishell_terminal_retire_gestures(1);
     uishell_cleat_attachments_end_frame();
+    uishell_automation_frame_end();
     uishell_overview_benchmark_end();
   }
   uishell_jackstay_tick(0,rd_state->quit);

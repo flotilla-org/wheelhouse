@@ -2496,6 +2496,13 @@ uint64_t wheelhouse_sidebar_arrangement_generation(WheelhouseCore *h, char **err
 // it is separate from the snapshot's.
 uint64_t wheelhouse_workspace_content_revision(WheelhouseCore *h, char **error_out);
 
+// The Semantic Tree of the core's registered workspaces, as a JSON array
+// of workspace nodes (docs/protocol/automation-endpoint.md): each its panel
+// tree as shown and the current Views of its Slots. The host adds what
+// only it knows, such as terminals' sizes, by Automation ID. Free the bytes
+// with wheelhouse_bytes_free.
+uint32_t wheelhouse_semantic_workspaces(WheelhouseCore *h, WheelhouseBytes *out, char **error_out);
+
 // Each frame, before reading it: the window's current workspace (zeroes for
 // none), its workspace region's width over height, the time, and whether
 // the camera moves (0 for a setting or the system's reduce motion: every

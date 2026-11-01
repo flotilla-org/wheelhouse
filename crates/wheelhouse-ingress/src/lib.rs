@@ -4,6 +4,8 @@ use std::ffi::c_void;
 #[cfg(any(unix, windows))]
 mod address;
 #[cfg(any(unix, windows))]
+mod automation;
+#[cfg(any(unix, windows))]
 mod connector;
 #[cfg(unix)]
 mod quit;
@@ -24,6 +26,38 @@ pub struct Workdir {
     pub entity_id: Text,
     pub cwd: Text,
     pub live_cwd: Text,
+    /// The View, which the workdirs name by Automation ID.
+    pub view: View,
+}
+/// A View, by its View Address: its owner, the owner's ID, its key and
+/// whether it is a kept previous instance. Rust formats its Automation ID.
+#[repr(C)]
+pub struct View {
+    /// An `AUTOMATION_OWNER_*`; none for a View the address can't name.
+    pub owner: u32,
+    pub id: [u8; 16],
+    pub key: Text,
+    pub previous: u32,
+}
+pub const AUTOMATION_OWNER_NONE: u32 = 0;
+pub const AUTOMATION_OWNER_WORKSPACE: u32 = 1;
+pub const AUTOMATION_OWNER_WINDOW: u32 = 2;
+/// What the UI knows of a terminal View.
+#[repr(C)]
+pub struct Terminal {
+    pub view: View,
+    /// The Cleat session it shows; empty when it has no ID.
+    pub session: Text,
+    /// Its size; 0 before it is drawn.
+    pub cols: u32,
+    pub rows: u32,
+    /// Its visible rows, trailing blanks trimmed: `screen_rows` of them, or
+    /// NULL when the screen isn't to be read.
+    pub screen: *const Text,
+    pub screen_rows: usize,
+    pub cursor_row: u32,
+    pub cursor_col: u32,
+    pub cursor_visible: u32,
 }
 pub type Emit = unsafe extern "C" fn(*mut c_void, *const Workdir);
 pub type Observe = unsafe extern "C" fn(*mut c_void, Emit, *mut c_void) -> u32;
@@ -33,6 +67,30 @@ pub type Apply = unsafe extern "C" fn(*mut c_void, *const u8, usize) -> u32;
 /// is unavailable), 0 when the endpoint has no provider of its own (a snapshot
 /// there is refused).
 pub type Retract = unsafe extern "C" fn(*mut c_void) -> u32;
+
+/// Builds the Semantic Tree on the UI thread, giving it to `out` through
+/// `wheelhouse_ingress_automation_workspaces`, `_selected` and `_terminal`,
+/// with terminals' screens only when `screens` is 1 (a client asked);
+/// returns 1, or 0 when it isn't available now.
+pub type AutomationObserve = unsafe extern "C" fn(context: *mut c_void, out: *mut AutomationBuild, screens: u32) -> u32;
+#[cfg(any(unix, windows))]
+pub use automation::Build as AutomationBuild;
+#[cfg(not(any(unix, windows)))]
+pub enum AutomationBuild {}
+/// The `automation` setting: off serves none of the routes, nor does any
+/// value but these.
+pub const AUTOMATION_OFF: u32 = 0;
+pub const AUTOMATION_OBSERVE: u32 = 1;
+pub const AUTOMATION_FULL: u32 = 2;
+
+/// The host's side of the Automation Endpoint, at a frame's end.
+#[repr(C)]
+pub struct AutomationHost {
+    /// An `AUTOMATION_*` setting.
+    pub mode: u32,
+    pub observe: Option<AutomationObserve>,
+    pub context: *mut c_void,
+}
 
 #[cfg(any(unix, windows))]
 mod transport {
@@ -53,6 +111,8 @@ mod transport {
     };
     use tokio::sync::{oneshot, Notify};
 
+    use crate::automation::{self, Automation, Generation};
+
     pub enum Pending {
         /// One request's patches, applied in one drain so no frame shows part
         /// of them; `replace` retracts the provider's facts first.
@@ -67,6 +127,10 @@ mod transport {
     }
     pub struct Ingress {
         pub queue: mpsc::Receiver<Pending>,
+        pub automation: Arc<Automation>,
+        pub generation: Generation,
+        /// The observer's last tree was malformed; said once, not each frame.
+        pub malformed: bool,
         shutdown: Option<oneshot::Sender<()>>,
         thread: Option<thread::JoinHandle<()>>,
     }
@@ -198,6 +262,8 @@ mod transport {
             // a burst of either may make the other receive 503 and retry. This
             // preserves request ordering and bounds total pending UI work.
             let (queue, receiver) = mpsc::sync_channel(64);
+            let automation = Arc::new(Automation::new(wake));
+            let routes = automation::router(automation.clone());
             let (shutdown, stop) = oneshot::channel();
             let thread = thread::Builder::new()
                 .name("wheelhouse-ingress".into())
@@ -213,7 +279,8 @@ mod transport {
                             .route("/v1/metadata/patch", post(patch))
                             .route("/v1/metadata/snapshot", post(snapshot))
                             .route("/v1/observed/workdirs", get(workdirs))
-                            .with_state(Shared { queue, wake, published: published.clone() });
+                            .with_state(Shared { queue, wake, published: published.clone() })
+                            .merge(routes);
                         if let Some((path, bytes, files)) = recording {
                             let recorder = crate::recording::Recorder::start(path, bytes, files);
                             app = app.layer(axum::middleware::from_fn_with_state(recorder, crate::recording::capture));
@@ -233,7 +300,14 @@ mod transport {
                     });
                 })
                 .map_err(|e| e.to_string())?;
-            Ok(Self { queue: receiver, shutdown: Some(shutdown), thread: Some(thread) })
+            Ok(Self {
+                queue: receiver,
+                automation,
+                generation: Generation::default(),
+                malformed: false,
+                shutdown: Some(shutdown),
+                thread: Some(thread),
+            })
         }
     }
     impl Drop for Ingress {
@@ -328,7 +402,14 @@ mod transport {
                 (true, None, 1, UNSUPPORTED, &[][..]),
             ] {
                 let (queue, receiver) = mpsc::sync_channel(4);
-                let mut server = Ingress { queue: receiver, shutdown: None, thread: None };
+                let mut server = Ingress {
+                    queue: receiver,
+                    automation: Arc::new(Automation::new(noop)),
+                    generation: Generation::default(),
+                    malformed: false,
+                    shutdown: None,
+                    thread: None,
+                };
                 let (reply, ack) = oneshot::channel();
                 queue.send(Pending::Patch { bodies: vec![Bytes::new(), Bytes::new()], replace, reply }).unwrap();
                 let mut host = Calls(Vec::new(), retracted);
@@ -395,6 +476,7 @@ mod transport {
             drop(Ingress::start(shared.join("socket"), wake, None).unwrap());
             std::fs::remove_dir_all(&root).unwrap();
         }
+        extern "C" fn noop() {}
         #[derive(Default)]
         struct Host {
             reads: u32,
@@ -421,6 +503,7 @@ mod transport {
                     entity_id: empty(),
                     live_cwd: empty(),
                     cwd: Text { data: b"/repo".as_ptr(), len: 5 },
+                    view: View { owner: AUTOMATION_OWNER_NONE, id: [0; 16], key: empty(), previous: 0 },
                 },
             );
             1
@@ -430,10 +513,42 @@ mod transport {
             assert!(queue.send(Pending::Workdirs { reply }).is_ok());
             response
         }
+        // An observer that gives part of the tree and then fails publishes
+        // none of it.
+        #[test]
+        fn a_failed_automation_observer_publishes_nothing() {
+            unsafe extern "C" fn observe(context: *mut c_void, out: *mut AutomationBuild, _: u32) -> u32 {
+                let json = br#"[{"id":"workspace/w","kind":"workspace","durable":true}]"#;
+                wheelhouse_ingress_automation_workspaces(out, Text { data: json.as_ptr(), len: json.len() });
+                *(context as *const u32)
+            }
+            let (_queue, receiver) = mpsc::sync_channel(1);
+            let mut server = Ingress {
+                queue: receiver,
+                automation: Arc::new(Automation::new(noop)),
+                generation: Generation::default(),
+                malformed: false,
+                shutdown: None,
+                thread: None,
+            };
+            server.automation.streams.store(1, std::sync::atomic::Ordering::SeqCst);
+            for (result, published) in [(0u32, false), (1, true)] {
+                let host = AutomationHost { mode: AUTOMATION_FULL, observe: Some(observe), context: &result as *const u32 as *mut c_void };
+                unsafe { wheelhouse_ingress_automation(&mut server, &host) };
+                assert_eq!(server.automation.published.borrow().tree.is_some(), published);
+            }
+        }
         #[test]
         fn failed_observation_is_shared_only_within_the_drain() {
             let (queue, receiver) = mpsc::sync_channel(64);
-            let mut server = Ingress { queue: receiver, shutdown: None, thread: None };
+            let mut server = Ingress {
+                queue: receiver,
+                automation: Arc::new(Automation::new(noop)),
+                generation: Generation::default(),
+                malformed: false,
+                shutdown: None,
+                thread: None,
+            };
             let mut host = Host { fail: true, ..Host::default() };
             let reads: Vec<_> = (0..4).map(|_| read(&queue)).collect();
             unsafe {
@@ -454,7 +569,14 @@ mod transport {
         #[test]
         fn burst_reads_share_snapshot_but_patches_invalidate_it() {
             let (queue, receiver) = mpsc::sync_channel(64);
-            let mut server = Ingress { queue: receiver, shutdown: None, thread: None };
+            let mut server = Ingress {
+                queue: receiver,
+                automation: Arc::new(Automation::new(noop)),
+                generation: Generation::default(),
+                malformed: false,
+                shutdown: None,
+                thread: None,
+            };
             let mut host = Host::default();
             let mut reads = Vec::new();
             drop(read(&queue)); // Cancelled reads do not call the observer.
@@ -846,13 +968,6 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
         unsafe extern "C" fn emit(context: *mut c_void, record: *const Workdir) {
             let snapshot = &mut *(context as *mut Snapshot);
             let r = &*record;
-            unsafe fn text(t: &Text) -> Result<Option<&str>, std::str::Utf8Error> {
-                if t.len == 0 {
-                    Ok(None)
-                } else {
-                    std::str::from_utf8(std::slice::from_raw_parts(t.data, t.len)).map(Some)
-                }
-            }
             let (Ok(cwd), Ok(live_cwd), Ok(kind), Ok(id)) = (text(&r.cwd), text(&r.live_cwd), text(&r.entity_kind), text(&r.entity_id))
             else {
                 snapshot.valid = false;
@@ -861,7 +976,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
             if cwd.is_none() && live_cwd.is_none() {
                 return;
             }
-            snapshot.values.push(serde_json::json!({"workspace_id": r.workspace_id, "view_id": r.view_id,
+            snapshot.values.push(serde_json::json!({"workspace_id": r.workspace_id, "view_id": r.view_id, "view": r.view.automation_id(),
                 "entity_kind": kind, "entity_id": id, "cwd": cwd, "live_cwd": live_cwd}));
         }
         // Coalesce adjacent reads within this UI drain. A patch invalidates the
@@ -893,6 +1008,130 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
     }
     #[cfg(not(any(unix, windows)))]
     let _ = (server, apply, retract, observe, context);
+}
+
+/// At a frame's end, the host's `automation` setting, and while a client
+/// wants it the Semantic Tree, which the host's observer gives (automation.rs).
+///
+/// # Safety
+/// `server` must be NULL or a live handle, exclusively accessed by this
+/// call; `host` NULL or valid for the call. The observer must give to `out`
+/// synchronously, with valid records, and must not unwind.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_automation(server: *mut Ingress, host: *const AutomationHost) {
+    #[cfg(any(unix, windows))]
+    if let (Some(server), Some(host)) = (server.as_mut(), host.as_ref()) {
+        let malformed = &mut server.malformed;
+        automation::frame_end(&server.automation, &mut server.generation, host.mode, |screens| {
+            let observe = host.observe?;
+            let mut build = AutomationBuild { valid: true, ..Default::default() };
+            let ok = observe(host.context, &mut build, u32::from(screens)) == 1;
+            if ok && !build.valid && !*malformed {
+                eprintln!("wheelhouse ingress: the Semantic Tree's observer gave malformed JSON or text; answering 503");
+            }
+            if ok {
+                *malformed = !build.valid;
+            }
+            (ok && build.valid).then(|| build.assemble())
+        });
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = (server, host);
+}
+
+/// Gives `out` a core's workspaces: a JSON array of workspace nodes
+/// (wheelhouse_semantic_workspaces).
+///
+/// # Safety
+/// `out` is the observer's; `json` valid for its length.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_automation_workspaces(out: *mut AutomationBuild, json: Text) {
+    #[cfg(any(unix, windows))]
+    if let Some(out) = out.as_mut() {
+        match text(&json).ok().flatten().map(serde_json::from_str::<Vec<wheelhouse_core::automation::Node>>) {
+            Some(Ok(nodes)) => out.workspaces.extend(nodes),
+            _ => out.valid = false,
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = (out, json);
+}
+
+/// Gives `out` a workspace a window shows, by its Workspace ID.
+///
+/// # Safety
+/// `out` is the observer's; `id` 16 readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_automation_selected(out: *mut AutomationBuild, id: *const [u8; 16]) {
+    #[cfg(any(unix, windows))]
+    if let (Some(out), Some(id)) = (out.as_mut(), id.as_ref()) {
+        out.selected.push(wheelhouse_core::WorkspaceId::from_bytes(*id));
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = (out, id);
+}
+
+/// Gives `out` what the UI knows of a terminal View.
+///
+/// # Safety
+/// `out` is the observer's; `terminal` valid, its texts and `screen` for
+/// their lengths.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_ingress_automation_terminal(out: *mut AutomationBuild, terminal: *const Terminal) {
+    #[cfg(any(unix, windows))]
+    if let (Some(out), Some(t)) = (out.as_mut(), terminal.as_ref()) {
+        use wheelhouse_core::automation::{Cursor, Terminal};
+        let screen = (!t.screen.is_null()).then(|| std::slice::from_raw_parts(t.screen, t.screen_rows));
+        let rows: Option<Result<Vec<String>, _>> =
+            screen.map(|rows| rows.iter().map(|row| text(row).map(|row| row.unwrap_or_default().to_owned())).collect());
+        let (Ok(session), Ok(rows)) = (text(&t.session), rows.transpose()) else {
+            out.valid = false;
+            return;
+        };
+        // A View no address names keeps its node, without what the UI knows.
+        let Some(id) = t.view.automation_id() else {
+            return;
+        };
+        let known = Terminal {
+            session: session.map(str::to_owned),
+            cols: (t.cols != 0).then_some(t.cols),
+            rows: (t.rows != 0).then_some(t.rows),
+            cursor: rows.is_some().then_some(Cursor { row: t.cursor_row, col: t.cursor_col, visible: t.cursor_visible != 0 }),
+            text: rows,
+            ..Terminal::default()
+        };
+        out.terminals.push((id, known));
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = (out, terminal);
+}
+
+/// `t`'s text: `None` when empty, an error when it isn't UTF-8.
+unsafe fn text(t: &Text) -> Result<Option<&str>, std::str::Utf8Error> {
+    if t.len == 0 || t.data.is_null() {
+        return Ok(None);
+    }
+    std::str::from_utf8(std::slice::from_raw_parts(t.data, t.len)).map(Some)
+}
+
+impl View {
+    /// The View's Automation ID, mirroring its View Address; `None` for one
+    /// the address can't name.
+    #[cfg(any(unix, windows))]
+    unsafe fn automation_id(&self) -> Option<String> {
+        use wheelhouse_core::{
+            automation::{ViewAddress, ViewOwner},
+            WorkspaceId,
+        };
+        let id = WorkspaceId::from_bytes(self.id);
+        let owner = match self.owner {
+            AUTOMATION_OWNER_WORKSPACE => ViewOwner::Workspace(id),
+            AUTOMATION_OWNER_WINDOW => ViewOwner::Window(id),
+            _ => return None,
+        };
+        let key = text(&self.key).ok()??.to_owned();
+        Some(ViewAddress { owner, key, previous: self.previous != 0 }.automation_id())
+    }
 }
 
 /// One request's patches, between frames: a snapshot retracts the provider's
