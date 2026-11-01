@@ -162,6 +162,7 @@ uishell_text_view_diagnostics(RD_WindowState *ws)
     TextCheck(top > (S64)line_count - 100, "the wheel scrolls it to its end");
     ws->ui = saved_window_ui;
     ui_select_state(saved_ui);
+    delete_file_at_path(path);
   }
 
   c_root_release(root);
