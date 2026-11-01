@@ -27,6 +27,14 @@ pub struct Metrics {
     pub digit: f32,
 }
 
+impl Metrics {
+    /// These measures at least a pixel each: the Grid needs positive sizes,
+    /// whatever the host measured.
+    fn positive(self) -> Metrics {
+        Metrics { line: self.line.max(1.0), digit: self.digit.max(1.0) }
+    }
+}
+
 const RECORDS: usize = 1000;
 /// The most records the source hides, fewer than the Grid's own cap.
 const RECORD_HIDE_CAP: usize = 100;
@@ -200,6 +208,8 @@ enum Kind {
 /// A canned table: its Table Source and the text its cells draw.
 pub struct Table {
     kind: Kind,
+    /// The measures its Grid's sizes are in, as last set.
+    metrics: Metrics,
 }
 
 /// Where a cell's text sits across it.
@@ -254,7 +264,7 @@ impl Table {
                 let id = source.support(Axis::Rows, Key(0)).with_text(None).with_one_of(false).with_compare(None);
                 grid.set_support(Axis::Rows, Key(0), id);
                 let kind = Kind::Records { rows, source: Box::new(source) };
-                Some((Table { kind }, grid))
+                Some((Table { kind, metrics }, grid))
             }
             "huge" => {
                 let digits = HUGE_ROWS.to_string().len() as f32;
@@ -267,14 +277,14 @@ impl Table {
                     grid.set_support(Axis::Rows, Key(c), none);
                 }
                 let kind = Kind::Huge(Huge { rows: IdentitySource::new(HUGE_ROWS), cols: IdentitySource::new(HUGE_COLS) });
-                Some((Table { kind }, grid))
+                Some((Table { kind, metrics }, grid))
             }
             "live" => {
                 let grid = Grid::new(
                     AxisConfig::new(TICKERS as u64, line).header(line),
                     AxisConfig::new(TICKER_HEADERS.len() as u64, 12.0 * digit).header(5.0 * digit).gap(1.0),
                 );
-                Some((Table { kind: Kind::Live(Live::new()) }, grid))
+                Some((Table { kind: Kind::Live(Live::new()), metrics }, grid))
             }
             _ => None,
         }
@@ -284,8 +294,7 @@ impl Table {
     /// their text and those `right` aligned to the right. It has no row
     /// numbers. Short rows read as empty cells.
     pub fn from_cells(header: Vec<String>, rows: Vec<Vec<String>>, right: Vec<bool>, metrics: Metrics) -> (Table, Grid) {
-        // The Grid needs positive sizes, whatever the host measured.
-        let metrics = Metrics { line: metrics.line.max(1.0), digit: metrics.digit.max(1.0) };
+        let metrics = metrics.positive();
         let columns = header.len().max(rows.iter().map(Vec::len).max().unwrap_or(0));
         let mut source = MemorySource::<Vec<String>>::new(rows.len(), columns);
         for c in 0..columns {
@@ -311,7 +320,7 @@ impl Table {
             grid.set_support(Axis::Rows, Key(c), source.support(Axis::Rows, Key(c)));
         }
         let kind = Kind::Cells(Cells { header, rows, right, source: Box::new(source) });
-        (Table { kind }, grid)
+        (Table { kind, metrics }, grid)
     }
 
     /// The described table at `link` and an empty Grid for it, sized in
@@ -324,7 +333,30 @@ impl Table {
             AxisConfig::new(0, metrics.line).header(metrics.line),
             AxisConfig::new(0, 14.0 * metrics.digit).header(5.0 * metrics.digit).gap(1.0),
         );
-        Some((Table { kind: Kind::Described(Box::new(described)) }, grid))
+        Some((Table { kind: Kind::Described(Box::new(described)), metrics }, grid))
+    }
+
+    /// Resizes `grid` for new `metrics`, as when the host's text size
+    /// changes: rows and the column header band by the change in the line,
+    /// columns and the row header band by the change in the digit, Size
+    /// Overrides (a user's and a given table's) as well as defaults. The
+    /// first row and column shown stay first.
+    pub fn set_metrics(&mut self, grid: &mut Grid, metrics: Metrics) {
+        let metrics = metrics.positive();
+        let old = std::mem::replace(&mut self.metrics, metrics);
+        // The Rows axis's header band is the column headers, a line high;
+        // the Cols axis's is the row numbers, counted in digits.
+        for (axis, scale) in [(Axis::Rows, metrics.line / old.line), (Axis::Cols, metrics.digit / old.digit)] {
+            if scale == 1.0 {
+                continue;
+            }
+            let overrides: Vec<_> = grid.size_overrides(axis).collect();
+            for (key, size) in overrides {
+                grid.set_size(axis, key, size * scale);
+            }
+            grid.set_default_size(axis, grid.default_size(axis) * scale);
+            grid.set_header(axis, grid.header(axis) * scale);
+        }
     }
 
     /// What the host shows about the table above it, if anything: a

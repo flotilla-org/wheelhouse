@@ -11,6 +11,10 @@ typedef struct UIShell_TableState UIShell_TableState;
 struct UIShell_TableState
 {
   WheelhouseTable *table;
+  // The text line and digit width the table was last sized for: a zoom or
+  // layout scale changes them, and the table follows.
+  F32 line;
+  F32 digit;
   // The table's name or link, as the View's expression has it.
   U8 name[1024];
   U64 name_size;
@@ -370,6 +374,8 @@ WH_VIEW_UI_FUNCTION_DEF(table)
     if(!state->abi_mismatch)
     {
       state->table = uishell_table_open(name, line, digit);
+      state->line = line;
+      state->digit = digit;
       MemoryCopy(state->name, name.str, name.size);
       state->name_size = name.size;
     }
@@ -412,6 +418,13 @@ WH_VIEW_UI_FUNCTION_DEF(table)
     }
     scratch_end(scratch);
     return;
+  }
+
+  if(line != state->line || digit != state->digit)
+  {
+    wheelhouse_table_set_metrics(state->table, line, digit);
+    state->line = line;
+    state->digit = digit;
   }
 
   BinnacleGrid *grid = wheelhouse_table_grid(state->table);

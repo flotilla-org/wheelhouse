@@ -77,6 +77,10 @@ uishell_table_diag_bench(String8 name, F32 line, F32 digit)
   return us;
 }
 
+// The font size uishell_table_diag_view_frame builds the View at, as a
+// zoom sets it.
+global F32 uishell_table_diag_font_size = 12;
+
 // One frame of the table View at 900x600 in `style`, with `event` at
 // `mouse`. Returns the grid box (the scroll region's content, so its key is
 // the region's); `part` gets the vertical bar's part named by `which`.
@@ -95,7 +99,7 @@ uishell_table_diag_view_frame(RD_WindowState *ws, CFG_Node *view, UI_ScrollBarSt
   ui_state->mouse = mouse;
   // Overlay bars show only once scrolled, or always where reserved.
   ui_state->scroll_bars_reserved = 1;
-  UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+  UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(uishell_table_diag_font_size)
   {
     wh_view_ui_direct(wh_renderer_from_name(str8_lit("table")), rd_view_address_from_cfg(view), r2f32p(0, 0, 900, 600));
   }
@@ -503,6 +507,57 @@ uishell_table_diagnostics(RD_WindowState *ws)
         grid_box = uishell_table_diag_click_bar(ws, view, style, UIShell_TableDiagBar_Down, &arrow);
         TableCheck(!ui_box_is_nil(grid_box) && ((UIShell_TableDraw *)grid_box->custom_draw_user_data)->snap.axes[BINNACLE_ROWS].anchor.position == from+1,
                    "the arrow below the track scrolls one row down");
+      }
+    }
+
+    // A zoom (the font size grown by half) resizes the open table's rows,
+    // columns and header bands with the text, and the first row shown
+    // stays first.
+    {
+      CFG_Node *view = rd_fixture_view(panel, str8_lit("table"), str8_lit("records"), 1);
+      UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = rd_view_address_from_cfg(view), .view = rd_view_address_from_cfg(view))
+      {
+        UI_Event none = {0};
+        Vec2F32 away = v2f32(450, 300);
+        UI_Box *thumb = &ui_nil_box, *grid_box = &ui_nil_box;
+        for(U32 frame = 0; frame < 3; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Overlay, none, away, UIShell_TableDiagBar_Thumb, &thumb); }
+        UIShell_TableDraw *d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+        BinnacleAction scroll = {sizeof(scroll), BINNACLE_ACTION_SCROLL_TO};
+        scroll.args.scroll_to = (BinnacleScrollTo){BINNACLE_ROWS, 0.5};
+        if(d) { binnacle_grid_action(wheelhouse_table_grid(d->table), &scroll); }
+        for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Overlay, none, away, UIShell_TableDiagBar_Thumb, &thumb); }
+        d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+        // The Snapshot's arrays are the Grid's, so the sizes are kept as
+        // values: [first row, row header band, first column, column header band].
+        F32 before[4] = {0}, after[4] = {0};
+        U64 first_before = 0, first_after = 0;
+        B32 shown = d && d->snap.axes[BINNACLE_ROWS].strip_len > 1 && d->snap.axes[BINNACLE_COLS].strip_len > 0;
+        if(shown)
+        {
+          BinnacleAxisSnapshot *rows = &d->snap.axes[BINNACLE_ROWS], *cols = &d->snap.axes[BINNACLE_COLS];
+          F32 sizes[4] = {rows->strip[1].size, rows->header, cols->strip[0].size, cols->header};
+          MemoryCopyArray(before, sizes);
+          first_before = rows->anchor.position;
+        }
+        uishell_table_diag_font_size = 18;
+        for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Overlay, none, away, UIShell_TableDiagBar_Thumb, &thumb); }
+        uishell_table_diag_font_size = 12;
+        d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+        shown = shown && d && d->snap.axes[BINNACLE_ROWS].strip_len > 1 && d->snap.axes[BINNACLE_COLS].strip_len > 0;
+        if(shown)
+        {
+          BinnacleAxisSnapshot *rows = &d->snap.axes[BINNACLE_ROWS], *cols = &d->snap.axes[BINNACLE_COLS];
+          F32 sizes[4] = {rows->strip[1].size, rows->header, cols->strip[0].size, cols->header};
+          MemoryCopyArray(after, sizes);
+          first_after = rows->anchor.position;
+        }
+        printf("TABLE_ZOOM row=%.1f->%.1f col=%.1f->%.1f first=%llu->%llu\n", before[0], after[0], before[2], after[2],
+               (unsigned long long)first_before, (unsigned long long)first_after);
+        TableCheck(shown && first_before > 0 && first_after == first_before, "a zoom keeps the first row shown");
+        TableCheck(shown && abs_f32(after[0] - before[0]*1.5f) < 1.f && abs_f32(after[1] - before[1]*1.5f) < 1.f,
+                   "a zoom resizes the rows and the header row with the text");
+        TableCheck(shown && after[2] > before[2]*1.3f && after[3] > before[3]*1.3f,
+                   "a zoom resizes the columns and the row numbers with the text");
       }
     }
     ui_set_active_scroll_bar_style(saved_style);

@@ -119,6 +119,21 @@ pub unsafe extern "C" fn wheelhouse_table_grid(table: *mut WheelhouseTable) -> *
     unsafe { table.as_ref() }.map_or(ptr::null_mut(), |t| t.grid)
 }
 
+/// Resizes the table for text line pixels high whose digits are digit
+/// pixels wide, as when the host's font size changes: its rows, columns and
+/// header bands, a user's resizes too, scale with the text. The first row
+/// and column shown stay first.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_set_metrics(table: *mut WheelhouseTable, line: f32, digit: f32) {
+    // SAFETY: the caller's contract.
+    let Some(t) = (unsafe { table.as_mut() }) else {
+        return;
+    };
+    // SAFETY: the handle owns its Grid until wheelhouse_table_free.
+    let handle = unsafe { &mut *t.grid };
+    t.table.set_metrics(handle.grid_mut(), Metrics { line, digit });
+}
+
 /// Starts a frame of width by height pixels at now_us on the host's
 /// monotonic clock: answers the Effects the table's source answers, passing
 /// the others on to binnacle_grid_poll_effect, advances a live table, then

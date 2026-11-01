@@ -84,12 +84,12 @@ dependencies = [
 [[package]]
 name = "binnacle-core"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=1024708f9292d9f88e79a97eceec712ef436aced#1024708f9292d9f88e79a97eceec712ef436aced"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 
 [[package]]
 name = "binnacle-described"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=1024708f9292d9f88e79a97eceec712ef436aced#1024708f9292d9f88e79a97eceec712ef436aced"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "binnacle-format",
@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "binnacle-described-http"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=1024708f9292d9f88e79a97eceec712ef436aced#1024708f9292d9f88e79a97eceec712ef436aced"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-described",
  "bytes",
@@ -117,7 +117,7 @@ dependencies = [
 [[package]]
 name = "binnacle-ffi"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=1024708f9292d9f88e79a97eceec712ef436aced#1024708f9292d9f88e79a97eceec712ef436aced"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "binnacle-described",
@@ -131,15 +131,16 @@ dependencies = [
 [[package]]
 name = "binnacle-format"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=1024708f9292d9f88e79a97eceec712ef436aced#1024708f9292d9f88e79a97eceec712ef436aced"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "serde_json",
+ "unicode-segmentation",
 ]
 
 [[package]]
 name = "binnacle-group"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=1024708f9292d9f88e79a97eceec712ef436aced#1024708f9292d9f88e79a97eceec712ef436aced"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "binnacle-memory",
@@ -148,7 +149,7 @@ dependencies = [
 [[package]]
 name = "binnacle-layout"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=1024708f9292d9f88e79a97eceec712ef436aced#1024708f9292d9f88e79a97eceec712ef436aced"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "ciborium",
@@ -160,7 +161,7 @@ dependencies = [
 [[package]]
 name = "binnacle-memory"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=1024708f9292d9f88e79a97eceec712ef436aced#1024708f9292d9f88e79a97eceec712ef436aced"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "regex",
@@ -169,7 +170,7 @@ dependencies = [
 [[package]]
 name = "binnacle-testkit"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=1024708f9292d9f88e79a97eceec712ef436aced#1024708f9292d9f88e79a97eceec712ef436aced"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "binnacle-described",
@@ -1701,6 +1702,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "unicode-width"
