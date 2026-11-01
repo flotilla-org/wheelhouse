@@ -50,6 +50,8 @@ pub(crate) struct Ring {
     weight: usize,
     capacity: usize,
     /// A subscriber at this generation or later is served from the ring.
+    /// Eviction may leave part of the floor's own generation behind, which
+    /// is fine: a subscriber at the floor has seen all of it.
     floor: u64,
 }
 
@@ -78,6 +80,11 @@ impl Ring {
 
     pub fn floor(&self) -> u64 {
         self.floor
+    }
+
+    #[cfg(test)]
+    pub fn oldest(&self) -> Option<u64> {
+        self.changes.front().map(|c| c.generation)
     }
 }
 

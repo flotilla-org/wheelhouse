@@ -62,6 +62,7 @@ impl RichText {
     /// Returns whether anything changed. Offsets are `u32`, so markdown is
     /// under 4 GiB.
     pub fn reload(&mut self, markdown: &str) -> bool {
+        assert!(u32::try_from(markdown.len()).is_ok(), "markdown under 4 GiB");
         let staged = ingest::parse(markdown);
         let changed = self.doc.reconcile(staged, markdown, &mut self.ring, self.generation + 1);
         if changed {

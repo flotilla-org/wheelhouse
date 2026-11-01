@@ -110,6 +110,21 @@ fn a_subscriber_that_falls_off_the_ring_gets_a_snapshot() {
 }
 
 #[test]
+fn a_subscriber_at_a_partly_evicted_generation_is_served_from_the_ring() {
+    let mut rich = RichText::with_ring_capacity("a\n\nb\n\nc\n\nd\n", 4);
+    let id = rich.subscribe();
+    rich.reload("a2\n\nb2\n\nc\n\nd\n");
+    rich.poll(id).unwrap();
+    rich.reload("a2\n\nb3\n\nc3\n\nd3\n");
+    assert_eq!((rich.ring.floor(), rich.ring.oldest()), (2, Some(2)), "half of generation 2 was evicted");
+    let delta = rich.poll(id).unwrap().unwrap();
+    assert!(!delta.snapshot);
+    let upserted: Vec<Key> = delta.ops.iter().filter_map(|op| if let Op::Upsert(c) = op { Some(c.key) } else { None }).collect();
+    assert_eq!(upserted, [1, 2, 3].map(|i| Key::ROOT.child(i)), "{:?}", delta.ops);
+    assert_eq!(delta.ops.len(), 3, "{:?}", delta.ops);
+}
+
+#[test]
 fn polls_need_a_live_subscription() {
     let mut rich = RichText::open(GFM);
     let id = rich.subscribe();
