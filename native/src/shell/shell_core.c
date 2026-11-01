@@ -6585,18 +6585,18 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           // A clip box draws a pixel inside its rect, so a View would never
           // draw the body's top row, and under the selected tab's notch that
           // row showed as a strip of bare background, which read as the tab
-          // reaching into the View (#586). With top tabs the View starts a
-          // pixel higher, so it draws that row; the frame, built before it and
-          // so painted over it, covers the row except under the notch. Not for
+          // reaching into the View (#586). With top tabs the panel box clips
+          // to its rect and shifts its contents up a pixel, so the View's own
+          // clip lands on that row; the frame, built before the panel box and
+          // so painted over it, covers the row except under the notch. The
+          // panel box keeps its rect, so the tab bar keeps its clicks. Not for
           // bottom tabs: there the row would show whatever scrolls past the
           // View's last pixel, and a table's row rule would close the notch.
+          B32 view_reaches_tab = (panel_border_px >= 1.f && chrome_plan->selected_tab_visible && panel->tab_side != Side_Max);
           Rng2F32 view_rect = content_rect;
-          if(panel_border_px >= 1.f && chrome_plan->selected_tab_visible && panel->tab_side != Side_Max)
-          {
-            view_rect.y0 -= 1.f;
-          }
+          if(view_reaches_tab) { view_rect.y0 -= 1.f; }
           UI_Box *panel_box = &ui_nil_box;
-          if(build_panel) UI_Rect(view_rect) UI_ChildLayoutAxis(Axis2_Y) UI_CornerRadius(0) UI_Focus(UI_FocusKind_On)
+          if(build_panel) UI_Rect(content_rect) UI_ChildLayoutAxis(Axis2_Y) UI_CornerRadius(0) UI_Focus(UI_FocusKind_On)
           {
             UI_Key panel_key = ui_key_from_stringf(rd_panel_ui_key(panel->address), "panel_box");
             // uishell: panel frame is now drawn by the dock as thin edge segments
@@ -6604,10 +6604,12 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             // is retired in favour of inactive-panel dimming (always DisableFocusBorder).
             panel_box = ui_build_box_from_key(UI_BoxFlag_MouseClickable|
                                               UI_BoxFlag_Clip|
+                                              view_reaches_tab*UI_BoxFlag_ClipToRect|
                                               UI_BoxFlag_DisableFocusOverlay|
                                               UI_BoxFlag_DisableFocusBorder|
                                               ((DEV_draw_panel_surface && panel_tree.focused == panel)*UI_BoxFlag_RenderToSurface),
                                               panel_key);
+            panel_box->view_off.y = panel_box->view_off_target.y = view_reaches_tab ? 1.f : 0.f;
           }
           
           //////////////////////////
@@ -10429,7 +10431,7 @@ rd_window_frame(void)
       if(box->flags & UI_BoxFlag_Clip)
       {
         Rng2F32 top_clip = dr_top_clip();
-        Rng2F32 new_clip = pad_2f32(box->rect, -1);
+        Rng2F32 new_clip = (box->flags & UI_BoxFlag_ClipToRect) ? box->rect : pad_2f32(box->rect, -1);
         if(top_clip.x1 != 0 || top_clip.y1 != 0)
         {
           new_clip = intersect_2f32(new_clip, top_clip);
