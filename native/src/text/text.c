@@ -2310,6 +2310,7 @@ txt_pt_from_info_off__linear_scan(TXT_TextInfo *info, U64 off)
       {
         pt.line = (S64)line_idx + 1;
         pt.column = (S64)(off - info->lines_ranges[line_idx].min) + 1;
+        break;
       }
     }
   }
@@ -2336,6 +2337,44 @@ txt_token_array_from_info_line_num__linear_scan(TXT_TextInfo *info, S64 line_num
         line_tokens.count += 1;
       }
       else if(line_tokens.v != 0)
+      {
+        break;
+      }
+    }
+  }
+  return line_tokens;
+}
+
+// Tokens are sorted and don't overlap, so the line's first token is found by
+// a binary search on token start: the last token starting before the line
+// is the only earlier one that can reach into it (a block comment, say).
+internal TXT_TokenArray
+txt_token_array_from_info_line_num(TXT_TextInfo *info, S64 line_num)
+{
+  TXT_TokenArray line_tokens = {0};
+  if(1 <= line_num && line_num <= info->lines_count)
+  {
+    Rng1U64 line_range = info->lines_ranges[line_num-1];
+    U64 lo = 0, hi = info->tokens.count;
+    while(lo < hi)
+    {
+      U64 mid = lo + (hi-lo)/2;
+      if(info->tokens.v[mid].range.min < line_range.min) { lo = mid+1; }
+      else { hi = mid; }
+    }
+    for(U64 token_idx = lo > 0 ? lo-1 : 0; token_idx < info->tokens.count; token_idx += 1)
+    {
+      Rng1U64 token_range = info->tokens.v[token_idx].range;
+      Rng1U64 token_x_line = intersect_1u64(token_range, line_range);
+      if(token_x_line.max > token_x_line.min)
+      {
+        if(line_tokens.v == 0)
+        {
+          line_tokens.v = info->tokens.v+token_idx;
+        }
+        line_tokens.count += 1;
+      }
+      else if(line_tokens.v != 0 || token_range.min >= line_range.max)
       {
         break;
       }
@@ -2844,13 +2883,13 @@ txt_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U64 *gen_ou
         if(tokens.v[idx].kind == TXT_TokenKind_Symbol)
         {
           String8 token_string = str8_substr(data, tokens.v[idx].range);
-          B32 is_opener = (token_string.str[0] == '{' ||
-                           token_string.str[0] == '(' ||
-                           token_string.str[0] == '[');
-          B32 is_closer = (token_string.str[0] == '}' ||
-                           token_string.str[0] == ')' ||
-                           token_string.str[0] == ']');
-          if(token_string.size == 1 && (is_opener || is_closer))
+          B32 is_opener = token_string.size == 1 && (token_string.str[0] == '{' ||
+                                                     token_string.str[0] == '(' ||
+                                                     token_string.str[0] == '[');
+          B32 is_closer = token_string.size == 1 && (token_string.str[0] == '}' ||
+                                                     token_string.str[0] == ')' ||
+                                                     token_string.str[0] == ']');
+          if(is_opener || is_closer)
           {
             lane_scope_pt_count += 1;
             lane_scope_pt_opener_count += !!is_opener;
@@ -2865,8 +2904,9 @@ txt_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U64 *gen_ou
     //- rjf: allocate & fill scope data
     if(lane_idx() == 0)
     {
-      shared->info.scope_pts.v = push_array_no_zero(shared->arena, TXT_ScopePt, shared->info.scope_pts.count);
-      shared->info.scope_nodes.v = push_array_no_zero(shared->arena, TXT_ScopeNode, shared->info.scope_nodes.count);
+      // Zeroed: a scope without a parent or children leaves its links unset.
+      shared->info.scope_pts.v = push_array(shared->arena, TXT_ScopePt, shared->info.scope_pts.count);
+      shared->info.scope_nodes.v = push_array(shared->arena, TXT_ScopeNode, shared->info.scope_nodes.count);
       {
         typedef struct ScopeTask ScopeTask;
         struct ScopeTask
@@ -2887,13 +2927,15 @@ txt_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U64 *gen_ou
           }
           if(tokens.v[token_idx].kind == TXT_TokenKind_Symbol)
           {
+            // As the count above: one-byte brackets only, or this writes
+            // past the scopes counted.
             String8 token_string = str8_substr(data, tokens.v[token_idx].range);
-            B32 is_opener = (token_string.str[0] == '{' ||
-                             token_string.str[0] == '(' ||
-                             token_string.str[0] == '[');
-            B32 is_closer = (token_string.str[0] == '}' ||
-                             token_string.str[0] == ')' ||
-                             token_string.str[0] == ']');
+            B32 is_opener = token_string.size == 1 && (token_string.str[0] == '{' ||
+                                                       token_string.str[0] == '(' ||
+                                                       token_string.str[0] == '[');
+            B32 is_closer = token_string.size == 1 && (token_string.str[0] == '}' ||
+                                                       token_string.str[0] == ')' ||
+                                                       token_string.str[0] == ']');
             
             // rjf: opener symbols -> push scope
             if(is_opener)
@@ -2950,6 +2992,13 @@ txt_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U64 *gen_ou
               SLLStackPush(free_scope_task, popped);
             }
           }
+        }
+        // A closer with no scope open was counted but has no point; a
+        // scope never closed runs to the last token.
+        shared->info.scope_pts.count = pt_idx;
+        for(ScopeTask *open = top_scope_task; open != 0; open = open->next)
+        {
+          shared->info.scope_nodes.v[open->scope_idx].token_idx_range.max = tokens.count ? tokens.count-1 : 0;
         }
         scratch_end(scratch);
       }

@@ -212,6 +212,7 @@ internal TXT_TokenArray txt_token_array_from_string__disasm_arm64(Arena *arena, 
 internal U64 txt_off_from_info_pt(TXT_TextInfo *info, TxtPt pt);
 internal TxtPt txt_pt_from_info_off__linear_scan(TXT_TextInfo *info, U64 off);
 internal TXT_TokenArray txt_token_array_from_info_line_num__linear_scan(TXT_TextInfo *info, S64 line_num);
+internal TXT_TokenArray txt_token_array_from_info_line_num(TXT_TextInfo *info, S64 line_num);
 internal Rng1U64 txt_expr_off_range_from_line_off_range_string_tokens(U64 off, Rng1U64 line_range, String8 line_text, TXT_TokenArray *line_tokens);
 internal Rng1U64 txt_expr_off_range_from_info_data_pt(TXT_TextInfo *info, String8 data, TxtPt pt);
 internal String8 txt_string_from_info_data_txt_rng(TXT_TextInfo *info, String8 data, TxtRng rng);
