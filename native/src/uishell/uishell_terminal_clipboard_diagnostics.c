@@ -233,6 +233,32 @@ uishell_terminal_clipboard_host_diagnostics(void)
   return ok;
 }
 
+// Windows' "HTML Format" (wm_cf_html_from_fragment): its header's offsets
+// find the document and the fragment, whatever the fragment's length.
+internal B32
+uishell_cf_html_diagnostics(void)
+{
+  B32 ok = 1;
+  Temp scratch = scratch_begin(0, 0);
+  String8 fragments[] = {str8_lit(""), str8_lit("<p>a <em>b</em></p>"), str8_lit("<p>caf\xc3\xa9 \xe2\x9c\x93</p>")};
+  for EachElement(i, fragments)
+  {
+    String8 envelope = wm_cf_html_from_fragment(scratch.arena, fragments[i]);
+    U64 offsets[4] = {0};
+    String8 names[4] = {str8_lit("StartHTML:"), str8_lit("EndHTML:"), str8_lit("StartFragment:"), str8_lit("EndFragment:")};
+    for EachElement(n, names)
+    {
+      U64 at = str8_find_needle(envelope, 0, names[n], 0) + names[n].size;
+      offsets[n] = u64_from_str8(str8_substr(envelope, r1u64(at, at+10)), 10);
+    }
+    B32 right = (offsets[1] == envelope.size && str8_match(str8_substr(envelope, r1u64(offsets[0], offsets[0]+6)), str8_lit("<html>"), 0) &&
+                 str8_match(str8_substr(envelope, r1u64(offsets[2], offsets[3])), fragments[i], 0));
+    if(!right) { fprintf(stderr, "CF_HTML: offsets miss the fragment %llu\n", (unsigned long long)i); ok = 0; }
+  }
+  scratch_end(scratch);
+  return ok;
+}
+
 internal B32
 uishell_terminal_clipboard_diagnostics(void)
 {
@@ -382,6 +408,7 @@ uishell_terminal_clipboard_diagnostics(void)
   uishell_terminal_clipboard_views = saved;
 #undef ClipboardCheck
   ok = uishell_terminal_clipboard_host_diagnostics() && ok;
+  ok = uishell_cf_html_diagnostics() && ok;
   fprintf(stderr, "terminal clipboard diagnostics %s\n", ok ? "passed" : "failed");
   scratch_end(scratch);
   return ok;

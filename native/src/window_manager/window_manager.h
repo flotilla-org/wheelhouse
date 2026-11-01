@@ -236,11 +236,19 @@ struct WM_ClipboardIO
   void *user;
   void (*write)(void *user, String8 text);
   String8 (*read)(void *user, Arena *arena);
+  // Optional: rich writes; without it, write gets their plain text.
+  void (*write_rich)(void *user, String8 text, String8 html);
 };
 global WM_ClipboardIO wm_clipboard_io; // optional OS-boundary override for diagnostics
-internal void wm_set_clipboard_text_impl(String8 string);
+// html empty: plain text only.
+internal void wm_set_clipboard_text_impl(String8 string, String8 html);
 internal String8 wm_get_clipboard_text_impl(Arena *arena);
 internal void    wm_set_clipboard_text(String8 string);
+// Plain text, and HTML for apps that paste rich text.
+internal void    wm_set_clipboard_rich_text(String8 text, String8 html);
+// Windows' "HTML Format": an HTML fragment in the envelope whose header gives
+// its byte offsets.
+internal String8 wm_cf_html_from_fragment(Arena *arena, String8 fragment);
 internal String8 wm_get_clipboard_text(Arena *arena);
 // Selection ("primary") buffer, distinct from the standard clipboard: set on
 // text selection, pasted by middle-click. On macOS this is the shared named

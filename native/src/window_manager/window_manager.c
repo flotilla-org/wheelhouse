@@ -406,8 +406,33 @@ wm_menu_hash(WM_MenuArray menus, B32 native)
 internal void
 wm_set_clipboard_text(String8 text)
 {
-  if(wm_clipboard_io.write) { wm_clipboard_io.write(wm_clipboard_io.user, text); }
-  else { wm_set_clipboard_text_impl(text); }
+  wm_set_clipboard_rich_text(text, str8_zero());
+}
+
+internal void
+wm_set_clipboard_rich_text(String8 text, String8 html)
+{
+  if(wm_clipboard_io.write_rich && html.size) { wm_clipboard_io.write_rich(wm_clipboard_io.user, text, html); }
+  else if(wm_clipboard_io.write) { wm_clipboard_io.write(wm_clipboard_io.user, text); }
+  else { wm_set_clipboard_text_impl(text, html); }
+}
+
+internal String8
+wm_cf_html_from_fragment(Arena *arena, String8 fragment)
+{
+  // Every offset is ten digits, so the header's length is known before them.
+  char *header_format = "Version:0.9\r\nStartHTML:%010llu\r\nEndHTML:%010llu\r\nStartFragment:%010llu\r\nEndFragment:%010llu\r\n";
+  String8 before = str8_lit("<html><body>\r\n<!--StartFragment-->");
+  String8 after = str8_lit("<!--EndFragment-->\r\n</body></html>");
+  U64 header_size = push_str8f(arena, header_format, 0ull, 0ull, 0ull, 0ull).size;
+  U64 start_html = header_size;
+  U64 start_fragment = start_html + before.size;
+  U64 end_fragment = start_fragment + fragment.size;
+  U64 end_html = end_fragment + after.size;
+  return push_str8f(arena, "%S%S%S%S",
+                    push_str8f(arena, header_format, (unsigned long long)start_html, (unsigned long long)end_html,
+                               (unsigned long long)start_fragment, (unsigned long long)end_fragment),
+                    before, fragment, after);
 }
 
 internal String8

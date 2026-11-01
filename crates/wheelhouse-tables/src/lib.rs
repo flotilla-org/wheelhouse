@@ -1,7 +1,8 @@
 //! Tables for the native table control: canned ones (#506), binnacle
 //! In-Memory Table Sources over data generated here, as binnacle's ratatui
-//! demo (`binnacle-demo`) has them, and described ones (#529), read live
-//! from a server by their link. Each is a Table Source and the text its
+//! demo (`binnacle-demo`) has them, described ones (#529), read live
+//! from a server by their link, and given ones: plain-text cells, as a
+//! Rich Text table Embed has them (#561). Each is a Table Source and the text its
 //! cells draw; the Grid over it is the host's, which pumps it each frame.
 
 mod described;
@@ -176,8 +177,21 @@ impl PumpSource for Huge {
     }
 }
 
+/// A given table's columns size to their text, within these many digits.
+const CELLS_MIN_DIGITS: f32 = 4.0;
+const CELLS_MAX_DIGITS: f32 = 40.0;
+
+/// A given table's cells, the header row apart.
+struct Cells {
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+    right: Vec<bool>,
+    source: Box<MemorySource<Vec<String>>>,
+}
+
 enum Kind {
     Records { rows: Vec<Record>, source: Box<MemorySource<Record>> },
+    Cells(Cells),
     Huge(Huge),
     Live(Live),
     Described(Box<described::Described>),
@@ -266,6 +280,40 @@ impl Table {
         }
     }
 
+    /// A table of `header` and `rows` of plain text, its columns sized to
+    /// their text and those `right` aligned to the right. It has no row
+    /// numbers. Short rows read as empty cells.
+    pub fn from_cells(header: Vec<String>, rows: Vec<Vec<String>>, right: Vec<bool>, metrics: Metrics) -> (Table, Grid) {
+        // The Grid needs positive sizes, whatever the host measured.
+        let metrics = Metrics { line: metrics.line.max(1.0), digit: metrics.digit.max(1.0) };
+        let columns = header.len().max(rows.iter().map(Vec::len).max().unwrap_or(0));
+        let mut source = MemorySource::<Vec<String>>::new(rows.len(), columns);
+        for c in 0..columns {
+            source = source.bytes_column(Key(c as u64), move |r: &Vec<String>| r.get(c).map(|t| Cow::Borrowed(t.as_bytes())));
+        }
+        let mut grid = Grid::new(
+            AxisConfig::new(rows.len() as u64, metrics.line).header(metrics.line),
+            AxisConfig::new(columns as u64, 14.0 * metrics.digit).gap(1.0),
+        );
+        for c in 0..columns {
+            let longest = std::iter::once(header.get(c)).chain(rows.iter().map(|r| r.get(c))).flatten().map(|t| t.chars().count()).max();
+            // Characters, not columns: wide and combining characters make it
+            // an approximation, near enough for a column's starting width.
+            // Two digits of padding, as the View draws cells.
+            let digits = (longest.unwrap_or(0) as f32 + 2.0).clamp(CELLS_MIN_DIGITS, CELLS_MAX_DIGITS);
+            grid.set_size(Axis::Cols, Key(c as u64), digits * metrics.digit);
+        }
+        for axis in Axis::ALL {
+            grid.set_quick_filter_support(axis, source.quick_filter(axis));
+        }
+        grid.set_find_support(source.find_support());
+        for c in 0..columns as u64 {
+            grid.set_support(Axis::Rows, Key(c), source.support(Axis::Rows, Key(c)));
+        }
+        let kind = Kind::Cells(Cells { header, rows, right, source: Box::new(source) });
+        (Table { kind }, grid)
+    }
+
     /// The described table at `link` and an empty Grid for it, sized in
     /// `metrics`, its dates drawn `utc_offset` seconds east of UTC. `wake`
     /// is called from another thread whenever data comes; the host then
@@ -323,6 +371,7 @@ impl Table {
         };
         match &mut self.kind {
             Kind::Records { rows, source } => source.pump(rows, grid, &mut seen),
+            Kind::Cells(Cells { rows, source, .. }) => source.pump(rows, grid, &mut seen),
             Kind::Huge(huge) => pump(grid, huge, &mut seen),
             Kind::Live(Live { rows, source, .. }) => source.pump(rows, grid, &mut seen),
             Kind::Described(d) => d.pump(grid, &mut seen),
@@ -340,6 +389,7 @@ impl Table {
     fn window(&mut self, axis: Axis, range: Range<u64>) -> Vec<Key> {
         match &mut self.kind {
             Kind::Records { source, .. } => source.window(axis, range),
+            Kind::Cells(cells) => cells.source.window(axis, range),
             Kind::Huge(huge) => huge.axis(axis).window(range),
             Kind::Live(live) => live.source.window(axis, range),
             Kind::Described(d) => d.source.window(axis, range).keys,
@@ -364,6 +414,10 @@ impl Table {
                     _ => left(r.shipped.map(|d| Scalar::Date(d).to_string()).unwrap_or_default()),
                 }
             }
+            Kind::Cells(cells) => {
+                let text = cells.rows.get(row.0 as usize).and_then(|r| r.get(col.0 as usize)).cloned().unwrap_or_default();
+                Cell { text, align: if cells.right.get(col.0 as usize) == Some(&true) { Align::Right } else { Align::Left } }
+            }
             Kind::Huge(_) => right(format!("r{}c{}", row.0, col.0)),
             Kind::Described(d) => d.cell(row, col),
             Kind::Live(live) => {
@@ -384,6 +438,7 @@ impl Table {
     pub fn header(&self, axis: Axis, key: Key, position: u64) -> String {
         match (axis, &self.kind) {
             (_, Kind::Described(d)) => d.header(axis, key, position),
+            (Axis::Cols, Kind::Cells(cells)) => cells.header.get(key.0 as usize).cloned().unwrap_or_default(),
             (Axis::Cols, Kind::Records { .. }) => HEADERS.get(key.0 as usize).copied().unwrap_or_default().into(),
             (Axis::Cols, Kind::Huge(_)) => format!("col {}", key.0),
             (Axis::Cols, Kind::Live(_)) => TICKER_HEADERS.get(key.0 as usize).copied().unwrap_or_default().into(),

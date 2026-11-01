@@ -1,7 +1,8 @@
 //! Tables for the native table control (#506): the core owns each table's
 //! source and its binnacle Grid, and the host draws and drives that Grid
 //! through binnacle.h. A table is a canned one (#506) or a described one
-//! read live from a server by its link (#529).
+//! read live from a server by its link (#529), or one of given cells, as a
+//! Rich Text table Embed shows (#561).
 use super::*;
 use binnacle_core::{Axis, Key, Viewport};
 use binnacle_ffi::BinnacleGrid;
@@ -61,6 +62,47 @@ pub unsafe extern "C" fn wheelhouse_table_open(
     let opened = match Link::parse(&name) {
         Some(link) => Table::open_described(&link, metrics, utc_offset, Box::new(move || wake.map_or((), |wake| wake()))),
         None => Table::open(&name, metrics),
+    };
+    let Some((table, grid)) = opened else {
+        return ptr::null_mut();
+    };
+    let grid = Box::into_raw(BinnacleGrid::from_grid(grid));
+    Box::into_raw(Box::new(WheelhouseTable { table, grid, text: String::new() }))
+}
+
+/// Opens a table of row_count rows of column_count plain-text cells, row by
+/// row, the first row its header; right (if not NULL) has column_count
+/// entries, 1 for a column aligned right. Sized as wheelhouse_table_open's
+/// are. Returns NULL for a NULL cells with cells to read, or text that
+/// isn't UTF-8. Free it with wheelhouse_table_free.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_open_cells(
+    cells: *const Text,
+    column_count: usize,
+    row_count: usize,
+    right: *const u32,
+    line: f32,
+    digit: f32,
+) -> *mut WheelhouseTable {
+    // SAFETY: the caller's contract.
+    let opened = unsafe {
+        pure(ptr::null_mut(), || {
+            // A table with no cells is an empty one, whatever its sizes say:
+            // nothing is sized from them before cells are read.
+            let count = column_count.checked_mul(row_count).ok_or("too many cells")?;
+            if count == 0 {
+                return Ok(Table::from_cells(vec![], vec![], vec![], Metrics { line, digit }));
+            }
+            let cells = slice(cells, count)?;
+            let right = if right.is_null() { &[][..] } else { slice(right, column_count)? };
+            let mut rows = vec![];
+            for row in cells.chunks(column_count) {
+                rows.push(row.iter().map(|t| t.read()).collect::<Result<Vec<_>, _>>()?);
+            }
+            let header = rows.remove(0);
+            let right = right.iter().map(|&r| r != 0).collect();
+            Ok(Table::from_cells(header, rows, right, Metrics { line, digit }))
+        })
     };
     let Some((table, grid)) = opened else {
         return ptr::null_mut();
