@@ -593,3 +593,18 @@ fn a_life_is_seeded_once() {
     assert!(!sidebar.seed_life(id, true, Home::default()).unwrap());
     assert_eq!(sidebar.workspace_life(id).unwrap().0, seeded);
 }
+
+/// A row dropped on a project, then back on the Workspaces group, goes back
+/// to the group it lived in before the project; a drop on a group clears
+/// the project.
+#[test]
+fn a_drop_back_on_workspaces_returns_to_the_group() {
+    let mut home = Home { group: Some("builds".into()), project: None };
+    home.edit(HomeEdit::Project(Some("p".into())));
+    assert_eq!(home, Home { group: Some("builds".into()), project: Some("p".into()) });
+    home.edit(HomeEdit::Project(None));
+    assert_eq!(home, Home { group: Some("builds".into()), project: None });
+    home.edit(HomeEdit::Project(Some("p".into())));
+    home.edit(HomeEdit::Group("tests".into()));
+    assert_eq!(home, Home { group: Some("tests".into()), project: None });
+}

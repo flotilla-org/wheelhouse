@@ -71,7 +71,9 @@ pub enum Intent {
     },
     /// Open a new subjectless workspace with the Workspace ID the host made,
     /// named `name`, else the lowest "Workspace N" not in use, living in
-    /// `home` (a group that is the default group is no home of its own).
+    /// `home`. A group that is the default group is no home of its own: the
+    /// workspace lives in whichever group is the default, so it follows a
+    /// new default.
     NewWorkspace {
         workspace: WorkspaceId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -81,11 +83,16 @@ pub enum Intent {
     },
     /// Close an open workspace: keep it when `keep`, it has a subject and the
     /// subject hasn't ended (lifecycle::close_outcome), else destroy it.
+    /// Open is as last observed: a workspace the host hasn't observed open
+    /// (or a kept one) is refused, and nothing changes, so a host observes
+    /// before it closes.
     CloseWorkspace {
         workspace: WorkspaceId,
         keep: bool,
     },
-    /// Re-home a local workspace, as a row's drop does.
+    /// Re-home a local workspace, as a row's drop does. Only its record
+    /// changes: the host places its row, publishing the home it reads
+    /// (wheelhouse_workspace_life) when `life_generation` moves.
     SetWorkspaceHome {
         workspace: WorkspaceId,
         edit: HomeEdit,
@@ -735,8 +742,6 @@ impl Sidebar {
         let entry = self.workspaces.get_mut(&id).expect("just registered");
         entry.record.life.follow(&mut self.clock, |life| *life = Life { kept: Some(false), home });
         entry.record.set_name(&mut self.clock, Some(name.clone()));
-        self.refresh_workspace_records();
-        self.refresh_content();
         Ok(vec![HostEffect::OpenWorkspace { workspace: id, name }])
     }
 

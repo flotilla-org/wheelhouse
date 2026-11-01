@@ -152,7 +152,9 @@ pub fn effective_home(record: &WorkspaceRecord, groups: &Groups) -> Option<Effec
 /// workspace, open or kept, uses, so two never share one.
 pub fn default_name<'a>(names_in_use: impl IntoIterator<Item = &'a str>) -> String {
     let used: BTreeSet<&str> = names_in_use.into_iter().collect();
-    (1u64..).map(|n| format!("Workspace {n}")).find(|name| !used.contains(name.as_str())).expect("a free number")
+    // Finitely many names are in use, so some N among the first
+    // `used.len() + 1` is free.
+    (1..=used.len() as u64 + 1).map(|n| format!("Workspace {n}")).find(|name| !used.contains(name.as_str())).expect("a free number")
 }
 
 /// The workspace shown after `closing` closes, over the open workspaces in
