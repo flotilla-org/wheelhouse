@@ -1255,6 +1255,9 @@ struct UIShell_RichTextState
   // Keyboard: the selection's focus moves from here.
   U64 caret_key;
   U32 caret_byte;
+  // Which side of caret_byte the caret shows on, where its two sides
+  // differ on screen (at a change of direction).
+  B32 caret_upstream;
   B32 has_caret;
   // The focused table Embed, or 0.
   U64 focus_embed;
@@ -2200,6 +2203,7 @@ uishell_rt_find_move(UIShell_RichTextState *s, B32 forward)
     s->find_pending_step = 0;
     s->caret_key = match.key;
     s->caret_byte = match.end;
+    s->caret_upstream = 0;
     s->has_caret = 1;
   }
   else
@@ -2486,6 +2490,7 @@ uishell_rt_select_point(UIShell_RichTextState *s, U64 key, U32 byte, B32 extend)
   uishell_rt_error(&error);
   s->caret_key = key;
   s->caret_byte = byte;
+  s->caret_upstream = 0;
   s->has_caret = 1;
 }
 
@@ -2667,10 +2672,37 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
   uishell_rt_error(&error);
 }
 
+// A character left or right on screen from a caret, on its line: in a
+// right-to-left run, that is backwards or forwards in the text. 0 at the
+// line's end, with `rtl_out` the caret's direction.
+internal B32
+uishell_rt_visual_step(WhTextLayout *l, U32 byte, B32 upstream, S32 dx, U32 *byte_out, B32 *upstream_out, B32 *rtl_out)
+{
+  WhTextCaret caret = {0};
+  if(!wh_text_caret_rect(l, byte, upstream ? WH_TEXT_UPSTREAM : WH_TEXT_DOWNSTREAM, &caret) || caret.line >= l->line_count) { return 0; }
+  *rtl_out = !!caret.rtl;
+  WhTextLine *line = &l->lines[caret.line];
+  WhTextCluster *next = 0;
+  for(U64 i = line->cluster_start; i < (U64)line->cluster_start + line->cluster_count && i < l->cluster_count; i += 1)
+  {
+    WhTextCluster *c = &l->clusters[i];
+    if(c->len == 0 || c->advance <= 0.01f || (c->flags & (WH_TEXT_CLUSTER_ELLIPSIS|WH_TEXT_CLUSTER_HARD_BREAK))) { continue; }
+    B32 beside = dx < 0 ? c->x + c->advance <= caret.x + 0.01f : c->x >= caret.x - 0.01f;
+    if(beside && (next == 0 || (dx < 0 ? c->x > next->x : c->x < next->x))) { next = c; }
+  }
+  if(next == 0) { return 0; }
+  // Past it: a left edge is a left-to-right cluster's start, a
+  // right-to-left one's end, which shows on its upstream side.
+  B32 end = (dx < 0) == !!(next->flags & WH_TEXT_CLUSTER_RTL);
+  *byte_out = end ? next->start + next->len : next->start;
+  *upstream_out = end;
+  return 1;
+}
+
 // The selection's focus moved by a key, within the placed Blocks: a
 // character, a word, a line, or to the document's ends.
 internal B32
-uishell_rt_moved_point(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UI_Event *evt, U64 *key_io, U32 *byte_io)
+uishell_rt_moved_point(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UI_Event *evt, U64 *key_io, U32 *byte_io, B32 *upstream_io)
 {
   UIShell_RtNode *n = uishell_rt_node(&s->model, *key_io);
   if(n == 0) { return 0; }
@@ -2687,6 +2719,17 @@ uishell_rt_moved_point(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UI_Eve
     *key_io = to->key;
     *byte_io = end ? (U32)to->text.size : 0;
     return 1;
+  }
+  B32 upstream = *upstream_io;
+  *upstream_io = 0;
+  UIShell_RtPlaced *placed = uishell_rt_placed(pl, n->key);
+  if(dx != 0 && evt->delta_unit == UI_EventDeltaUnit_Char && placed && placed->layout)
+  {
+    B32 rtl = 0;
+    if(uishell_rt_visual_step(&placed->layout->layout->text, byte, upstream, dx, byte_io, upstream_io, &rtl)) { return 1; }
+    // Off the line's end on screen: on in the text, the way the caret's
+    // direction runs.
+    if(rtl) { dx = -dx; }
   }
   if(dx != 0 && (evt->delta_unit == UI_EventDeltaUnit_Char || evt->delta_unit == UI_EventDeltaUnit_Word))
   {
@@ -2840,11 +2883,13 @@ uishell_rt_keys(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UIShell_RtSto
       }
       U64 anchor_key = has ? sel.anchor_key : key;
       U32 anchor_byte = has ? sel.anchor_byte : byte;
-      if(uishell_rt_moved_point(s, pl, evt, &key, &byte))
+      B32 upstream = s->has_caret && s->caret_key == key && s->caret_byte == byte && s->caret_upstream;
+      if(uishell_rt_moved_point(s, pl, evt, &key, &byte, &upstream))
       {
         wheelhouse_rich_text_select(s->doc, s->sub, anchor_key, anchor_byte, key, byte, &error);
         s->caret_key = key;
         s->caret_byte = byte;
+        s->caret_upstream = upstream;
         s->has_caret = 1;
         UIShell_RtPlaced *p = uishell_rt_placed(pl, key);
         if(p == 0 || p->rect.y0 < 0 || p->rect.y1 > pl->viewport) { wheelhouse_rich_text_reveal(s->doc, s->sub, key, byte, &error); }
@@ -2984,7 +3029,7 @@ uishell_rt_overlays(Arena *arena, UIShell_RichTextState *s, UIShell_RtPlaced *p,
     if(focused && s->has_caret && s->caret_key == p->key)
     {
       WhTextCaret caret = {0};
-      if(wh_text_caret_rect(l, Min(s->caret_byte, (U32)p->node->text.size), WH_TEXT_DOWNSTREAM, &caret))
+      if(wh_text_caret_rect(l, Min(s->caret_byte, (U32)p->node->text.size), s->caret_upstream ? WH_TEXT_UPSTREAM : WH_TEXT_DOWNSTREAM, &caret))
       {
         UISHELL_RT_QUAD(r2f32p(o.x + caret.x, o.y + caret.y, o.x + caret.x + 1.5f, o.y + caret.y + caret.height), t->text);
       }

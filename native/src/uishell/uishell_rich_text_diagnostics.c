@@ -795,6 +795,46 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     s = uishell_rt_diag_open(d, path);
   }
 
+  //- Inside a right-to-left run, a drag and Shift with an arrow select
+  // what they pass over on screen.
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    String8 rtl_path = push_str8f(arena, "%S/rich-text-rtl.md", dir);
+    // Hebrew between English: its second word starts at byte 16, a letter
+    // two bytes.
+    write_data_to_file_path(rtl_path, str8_lit("Before \xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D \xD7\xA2\xD7\x95\xD7\x9C\xD7\x9D \xD7\x98\xD7\x95\xD7\x91 after.\n"));
+    s = uishell_rt_diag_open(d, rtl_path);
+    UIShell_RtNode *n = uishell_rt_diag_block_with(s, str8_lit("Before"));
+    RichCheck(n != 0, "a paragraph with a right-to-left run opens");
+    if(n)
+    {
+      Vec2F32 from = uishell_rt_diag_point(d, s, n->key, 16), to = uishell_rt_diag_point(d, s, n->key, 20);
+      for(U32 keys = 0; keys < 2; keys += 1)
+      {
+        d->now_us += 2000000;
+        d->mouse = from;
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = from});
+        if(!keys) { d->mouse = to; s = uishell_rt_diag_frames(d, 2); }
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = d->mouse});
+        for(U32 i = 0; keys && i < 2; i += 1)
+        {
+          s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional,
+                                                  .delta_unit = UI_EventDeltaUnit_Char, .delta_2s32 = v2s32(-1, 0)});
+        }
+        s = uishell_rt_diag_frames(d, 1);
+        // The two letters left of the press, from its caret to theirs.
+        UIShell_RtDiagBox box = uishell_rt_diag_box(scratch.arena, n->key);
+        B32 spans = box.draw && box.draw->selection_quads == 1 &&
+                    abs_f32(box.box->rect.x0 + box.draw->quads[0].x0 - (to.x - 1)) < 0.5f &&
+                    abs_f32(box.box->rect.x0 + box.draw->quads[0].x1 - (from.x - 1)) < 0.5f;
+        RichCheck(spans && str8_match(uishell_rt_diag_copy(d), str8_lit("\xD7\xA2\xD7\x95"), 0),
+                  keys ? "Shift with Left inside a right-to-left run selects leftwards on screen"
+                       : "a drag inside a right-to-left run selects what it passes over");
+      }
+    }
+    scratch_end(scratch);
+  }
+
   //- Timing: the 10k-line generated document, scrolled through a frame at a time.
   {
     WheelhouseBytes bytes = {0};
