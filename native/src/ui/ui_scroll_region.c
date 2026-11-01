@@ -203,6 +203,10 @@ ui_scroll_region_build_thumbs(UI_Box *parent, UI_Key key, UI_ScrollRegion *regio
         bar_rect.p0.v[axis] = Max(bar_rect.p0.v[axis], start + axes[axis].span.min);
         bar_rect.p1.v[axis] = Min(bar_rect.p1.v[axis], start + axes[axis].span.max);
       }
+      // Whole pixels: the bar's parts size and draw on pixels, so a
+      // fractional edge leaves a gap at one end and covers a pixel past the
+      // span at the other.
+      bar_rect = r2f32p(round_f32(bar_rect.x0), round_f32(bar_rect.y0), round_f32(bar_rect.x1), round_f32(bar_rect.y1));
       Vec2F32 bar_dim = dim_2f32(bar_rect);
       if(bar_dim.x <= 0 || bar_dim.y <= 0) { continue; }
       // A fading bar is drawn but takes no clicks: they reach what's under it.
@@ -211,7 +215,10 @@ ui_scroll_region_build_thumbs(UI_Box *parent, UI_Key key, UI_ScrollRegion *regio
       {
         ui_set_next_rect(bar_rect);
         ui_set_next_child_layout_axis(axis);
-        UI_Box *bar = ui_build_box_from_key(UI_BoxFlag_Floating, bar_key);
+        // Over content that runs under the gutters, a classic bar fills its
+        // gutter where it spans, as a reserved gutter would show.
+        UI_BoxFlags fill = (!overlay && region->params.content_under_gutters) ? UI_BoxFlag_DrawBackground : 0;
+        UI_Box *bar = ui_build_box_from_key(UI_BoxFlag_Floating|fill, bar_key);
         UI_Parent(bar)
         {
           // Fixed geometry applies to the widget container only. A scoped
@@ -224,6 +231,15 @@ ui_scroll_region_build_thumbs(UI_Box *parent, UI_Key key, UI_ScrollRegion *regio
         }
       }
       if(!showing) { ui_pop_flags(); }
+    }
+    // The corner between two classic bars, filled with them.
+    if(!overlay && region->params.content_under_gutters && visible[Axis2_X] && visible[Axis2_Y])
+    {
+      Rng2F32 corner = r2f32(region->viewport.p1, region->params.rect.p1);
+      if(corner.x1 > corner.x0 && corner.y1 > corner.y0) UI_Rect(corner)
+      {
+        ui_build_box_from_key(UI_BoxFlag_Floating|UI_BoxFlag_DrawBackground, ui_key_from_string(key, str8_lit("scroll_region_corner")));
+      }
     }
     UI_Rect(region->content)
     {

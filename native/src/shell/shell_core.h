@@ -448,6 +448,9 @@ struct RD_ViewState
   void *user_data;
   U64 user_data_size;
   void (*release_user_data)(void *);
+  // Builds the View's part of its query row, after the field (a table's
+  // find count and toggles), from user_data. The View sets it as it builds.
+  void (*query_extras)(void *);
 
   // Commands sent to the View while its Slot waits for content, held by the
   // Slot Host until it shows the Renderer (wh_slot_host_ui).
