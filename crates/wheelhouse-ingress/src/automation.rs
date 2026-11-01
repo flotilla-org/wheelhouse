@@ -457,7 +457,7 @@ impl Build {
 }
 
 impl Screens {
-    /// `nodes` with their terminals' screens.
+    /// `nodes` with their terminals' screens; an Automation ID names one node.
     pub fn merge(mut self, mut nodes: Vec<Node>) -> Vec<Node> {
         for node in &mut nodes {
             node.visit_mut(&mut |node| {
