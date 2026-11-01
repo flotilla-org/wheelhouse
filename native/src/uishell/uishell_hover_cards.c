@@ -8,7 +8,6 @@ enum
   UIShell_HoverCardTransitionUS = 100000,
   UIShell_HoverCardCorridorPaddingPT = 12,
   UIShell_HoverCardNearGapPT = 16,
-  UIShell_HoverCardInitialPathCapacity = 32,
   UIShell_HoverCardSourceDropPaddingPT = 12,
   UIShell_HoverCardInlineFallbackHeightEM = 8,
   UIShell_HoverCardPinnedMinimumHeightEM = 4,
@@ -38,7 +37,7 @@ uishell_sidebar_card_entity_copy(Arena *arena, WheelhouseEntity entity)
                                 push_str8_copy(arena, uishell_sidebar_string(entity.id)));
 }
 
-// Labels change independently of the retained navigation path. Reuse their
+// Labels change independently of the retained subject. Reuse their
 // arena so a long-running card does not accumulate every previous live label.
 internal void
 uishell_sidebar_card_retain_label(UIShell_HoverCard *card, String8 label)
@@ -184,7 +183,7 @@ internal void
 uishell_sidebar_card_close(UIShell_HoverCard *card)
 {
   card->dismissed = card->source;
-  card->open = card->engaged = card->focused = 0;
+  card->open = card->engaged = 0;
   card->candidate = (WheelhouseEntity){0};
   card->candidate_since = card->left_at = 0;
   card->corridor_active = 0;
@@ -237,14 +236,11 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, UIShell_SidebarNode node, UI_K
                         String8 context, B32 contains_current, U64 now)
 {
   Temp scratch = scratch_begin(0, 0);
-  WheelhouseEntity previous = card->open && card->depth ? uishell_sidebar_card_entity_copy(scratch.arena, card->path[card->depth-1]) : (WheelhouseEntity){0};
+  WheelhouseEntity previous = card->open ? uishell_sidebar_card_entity_copy(scratch.arena, card->subject) : (WheelhouseEntity){0};
   if(!card->arena) { card->arena = arena_alloc(); }
   arena_clear(card->arena);
   card->previous = uishell_sidebar_card_entity_copy(card->arena, previous);
-  card->capacity = UIShell_HoverCardInitialPathCapacity;
-  card->path = push_array(card->arena, WheelhouseEntity, card->capacity);
-  card->path[0] = uishell_sidebar_card_entity_copy(card->arena, uishell_sidebar_card_entity(node));
-  card->depth = 1;
+  card->subject = uishell_sidebar_card_entity_copy(card->arena, uishell_sidebar_card_entity(node));
   // A new subject starts without a pending Pin another or its own menu.
   card->menu = ui_key_zero();
   card->context = push_str8_copy(card->arena, context);
@@ -253,7 +249,7 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, UIShell_SidebarNode node, UI_K
   card->contains_current = contains_current;
   card->source = source;
   card->dismissed = ui_key_zero();
-  card->candidate = card->path[0];
+  card->candidate = card->subject;
   card->changed_at = now;
   card->anchor_x = ui_state->mouse.x;
   // Replacement glides from retained bounds; a fresh open has no previous
@@ -263,22 +259,21 @@ uishell_sidebar_card_set(UIShell_HoverCard *card, UIShell_SidebarNode node, UI_K
   card->corridor_active = 0;
   card->scroll = 0;
   card->open = 1;
-  card->engaged = card->focused = card->enriched = 0;
+  card->engaged = card->enriched = 0;
   scratch_end(scratch);
 }
 
 // Hovering `sig` opens the node's hover card after the delay. Any row may
 // offer it; only the node's home row is its source (card_source_at).
 internal void
-uishell_sidebar_card_hover_at(UIShell_SidebarState *state, UIShell_SidebarNode node,
+uishell_sidebar_card_hover_in(UIShell_SidebarState *state, UIShell_HoverCard *card, UIShell_SidebarNode node,
                               UI_Signal sig, String8 context, B32 contains_current, U64 now)
 {
-  if(ui_any_ctx_menu_is_open() || !ui_hovering(sig) || state->row_drag_key.size) { return; }
-  UIShell_HoverCard *card = &state->cards[0];
-  if(card->focused || ui_key_match(card->dismissed, sig.box->key)) { return; }
+  if(ui_any_ctx_menu_is_open() || !ui_hovering(sig) || state->row_drag_key.size || state->drag_card) { return; }
+  if(ui_key_match(card->dismissed, sig.box->key)) { return; }
   if(card->corridor_active) { return; }
   WheelhouseEntity key = uishell_sidebar_card_entity(node);
-  if(card->open && card->depth && uishell_sidebar_card_entity_match(card->path[0], key))
+  if(card->open && uishell_sidebar_card_entity_match(card->subject, key))
   { card->source_seen = 1; return; }
   if(!uishell_sidebar_card_entity_match(card->candidate, key))
   {
@@ -300,6 +295,13 @@ uishell_sidebar_card_hover_at(UIShell_SidebarState *state, UIShell_SidebarNode n
   // Waiting to open is a clock, not motion: one frame at the delay. An open
   // card animates by its own requests, and the pointer's moves wake the rest.
   if(!card->open) { rd_request_frame_at(card->candidate_since + UIShell_HoverCardOpenDelayUS); }
+}
+
+internal void
+uishell_sidebar_card_hover_at(UIShell_SidebarState *state, UIShell_SidebarNode node,
+                              UI_Signal sig, String8 context, B32 contains_current, U64 now)
+{
+  uishell_sidebar_card_hover_in(state, &state->cards[0], node, sig, context, contains_current, now);
 }
 
 // The node's home row: it anchors the node's inline and detached cards, and
@@ -337,16 +339,16 @@ uishell_sidebar_card_tick(UIShell_HoverCard *card, Vec2F32 mouse, U64 now)
     if(at_source && !inside) { card->departure = mouse; }
   }
   else if(!card->left_at) { card->left_at = now; }
-  if(card->placement == UIShell_CardPlacement_Transient && !card->moving && !card->focused && card->left_at && now-card->left_at >= UIShell_HoverCardLeaveDelayUS)
+  if(card->placement == UIShell_CardPlacement_Transient && !card->moving && card->left_at && now-card->left_at >= UIShell_HoverCardLeaveDelayUS)
   { uishell_sidebar_card_close(card); }
   card->corridor_active = uishell_sidebar_card_corridor(card, mouse, now);
 }
 
 internal void uishell_sidebar_detached_bounds(RD_WindowState *ws);
 
-// Run before physical terminal routing. Click focus persists on mouse-out and
-// returns to the previous View on an outside click or Escape. Own both Escape
-// edges even though its press removes the card.
+// Run before physical terminal routing: a card drag owns the release ending
+// it, and Escape cancels it, both of whose edges it takes. Cards never take
+// keyboard focus (#269), so nothing else is the card's.
 internal B32
 uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
 {
@@ -363,85 +365,30 @@ uishell_sidebar_card_wm_event(RD_WindowState *ws, WM_Event *event)
   if(state->drag_card && event->kind == WM_EventKind_Press && event->key == WM_Key_Esc)
   {
     rd_drag_kill();
-    state->drag_card->moving = state->drag_card->drag_released = state->drag_card->focused = 0;
+    state->drag_card->moving = state->drag_card->drag_released = 0;
     state->drag_card = 0; state->drop_panel = rd_nil_panel_address;
-    state->card_escape_down = 1; ws->ui->hover_card_focus = 0;
+    state->card_escape_down = 1;
     rd_request_frame();
     return 1;
   }
   if(state->drag_card && event->kind == WM_EventKind_WindowLoseFocus) { rd_drag_kill(); }
   if(state->drag_card && event->kind == WM_EventKind_Release && event->key == WM_Key_LeftMouseButton)
   { state->drag_card->drag_released = 1; rd_request_frame(); return 1; }
-  UIShell_HoverCard *float_hit = 0, *section_hit = 0;
-  for(UIShell_HoverCard *c = state->detached; c; c = c->next)
-  {
-    if(c->open && dim_2f32(c->rect).x > 0 && dim_2f32(c->rect).y > 0 && contains_2f32(uishell_sidebar_card_hit_rect(c), event->pos))
-    {
-      if(c->placement == UIShell_CardPlacement_Float || c->moving) { if(!float_hit) { float_hit = c; } }
-      else if(!section_hit) { section_hit = c; }
-    }
-    if(event->kind == WM_EventKind_WindowLoseFocus ||
-       (event->key == WM_Key_Esc && event->kind == WM_EventKind_Press)) { c->focused = 0; }
-  }
-  if(event->kind == WM_EventKind_WindowLoseFocus)
-  {
-    state->card_escape_down = 0;
-    for(U64 i = 0; i < ArrayCount(state->cards); i++)
-    { if(state->cards[i].focused) { uishell_sidebar_card_close(&state->cards[i]); } }
-    ws->ui->hover_card_focus = 0;
-    return 0;
-  }
-  if(event->key == WM_Key_Esc &&
-     (event->kind == WM_EventKind_Press || event->kind == WM_EventKind_Release))
-  {
-    if(state->card_escape_down)
-    {
-      if(event->kind == WM_EventKind_Release) { state->card_escape_down = 0; }
-      return 1;
-    }
-    if(ws->ui->hover_card_focus && event->kind == WM_EventKind_Press)
-    {
-      state->card_escape_down = 1;
-      for(U64 i = 0; i < ArrayCount(state->cards); i++)
-      { if(state->cards[i].focused) { uishell_sidebar_card_close(&state->cards[i]); } }
-      ws->ui->hover_card_focus = 0;
-      rd_request_frame();
-      return 1;
-    }
-  }
-  if(event->kind == WM_EventKind_Press &&
+  if(event->kind == WM_EventKind_WindowLoseFocus) { state->card_escape_down = 0; }
+  // A press outside every hover card closes them, and still reaches what
+  // it's on.
+  if(event->kind == WM_EventKind_Press && !state->drag_card &&
      (event->key == WM_Key_LeftMouseButton || event->key == WM_Key_RightMouseButton || event->key == WM_Key_MiddleMouseButton))
   {
-    S64 hit = -1;
+    B32 inside = 0;
     for(U64 i = 0; i < ArrayCount(state->cards); i++)
-    { if(state->cards[i].open && contains_2f32(uishell_sidebar_card_hit_rect(&state->cards[i]), event->pos)) { hit = (S64)i; } }
-    UIShell_HoverCard *detached_hit = float_hit ? float_hit : hit >= 0 ? 0 : section_hit;
-    for(UIShell_HoverCard *c = state->detached; c; c = c->next) { c->focused = c->open && c == detached_hit; }
-    for(U64 i = 0; i < ArrayCount(state->cards); i++)
-    {
-      UIShell_HoverCard *card = &state->cards[i];
-      if(card->focused && (hit < 0 || detached_hit)) { uishell_sidebar_card_close(card); }
-      card->focused = !detached_hit && card->open && hit == (S64)i;
-    }
-    ws->ui->hover_card_focus = hit >= 0 || detached_hit != 0;
+    { inside |= state->cards[i].open && contains_2f32(uishell_sidebar_card_hit_rect(&state->cards[i]), event->pos); }
+    for(U64 i = 0; i < ArrayCount(state->cards) && !inside; i++)
+    { if(state->cards[i].open) { uishell_sidebar_card_close(&state->cards[i]); } }
   }
+  if(event->key == WM_Key_Esc && event->kind == WM_EventKind_Release && state->card_escape_down)
+  { state->card_escape_down = 0; return 1; }
   return 0;
-}
-
-internal void
-uishell_sidebar_card_navigate(UIShell_HoverCard *card, WheelhouseEntity key, U64 now)
-{
-  if(card->depth >= card->capacity)
-  {
-    WheelhouseEntity *path = push_array(card->arena, WheelhouseEntity, card->capacity*2);
-    MemoryCopy(path, card->path, card->depth*sizeof(WheelhouseEntity));
-    card->path = path; card->capacity *= 2;
-  }
-  card->previous = card->path[card->depth-1];
-  card->path[card->depth++] = uishell_sidebar_card_entity_copy(card->arena, key);
-  card->changed_at = now;
-  card->glide_from = card->rect.p0;
-  card->scroll = 0;
 }
 
 internal String8 uishell_sidebar_icon(String8 icon, String8 kind, B32 *icon_font);
@@ -566,8 +513,8 @@ uishell_sidebar_card_header(UIShell_SidebarState *state, UIShell_HoverCard *card
     }
   }
   if(!str8_match(identity, title, 0)) { ui_label_multiline(width, title); }
-  if(card->context.size && card->depth == 1) { UI_TagF("weak") { ui_label_multiline(width, card->context); } }
-  if(card->contains_current && card->depth == 1) { UI_TagF("weak") { ui_label(str8_lit("Contains current workspace")); } }
+  if(card->context.size) { UI_TagF("weak") { ui_label_multiline(width, card->context); } }
+  if(card->contains_current) { UI_TagF("weak") { ui_label(str8_lit("Contains current workspace")); } }
   if(detail.error.len) { ui_label_multiline(width, uishell_sidebar_string(detail.error)); }
 
 }
@@ -631,6 +578,60 @@ uishell_sidebar_card_facts(UIShell_SidebarState *state, UIShell_HoverCard *card,
 
 }
 
+// A related item behaves as a chip does on a row (#269): hovering it shows its
+// own card beside this one (one level: not from that card), a click runs its
+// primary action, and a drag lifts its card, to float or ghost it.
+internal void
+uishell_sidebar_card_related_signal(UIShell_SidebarState *state, UIShell_HoverCard *card,
+                                    UIShell_SidebarNode related, UI_Signal sig)
+{
+  UIShell_HoverCard *beside = &state->cards[1];
+  WheelhouseEntity entity = uishell_sidebar_card_entity(related);
+  if(card != beside) { uishell_sidebar_card_hover_in(state, beside, related, sig, str8_zero(), 0, now_time_us()); }
+  B32 lifting = ui_dragging(sig) && length_2f32(ui_drag_delta()) > UIShell_DragThresholdPT;
+  if(lifting && !state->drag_card && !rd_drag_is_active())
+  {
+    // Its card beside, shown now if it wasn't, under the pointer as the
+    // press left it; the card it was in steps aside as a row's does.
+    if(!beside->open || !uishell_sidebar_card_entity_match(beside->subject, entity))
+    {
+      uishell_sidebar_card_set(beside, related, sig.box->key, str8_zero(), 0, now_time_us());
+      F32 em = ui_top_font_size();
+      beside->rect = r2f32p(sig.box->rect.x0, sig.box->rect.y0, sig.box->rect.x0+em*34, sig.box->rect.y0+em*8);
+    }
+    beside->engaged = 1;
+    beside->move_origin = sub_2f32(beside->rect.p0, ui_drag_delta());
+    uishell_sidebar_card_drag_from(beside, sig);
+    if(card->placement == UIShell_CardPlacement_Transient && card != beside) { uishell_sidebar_card_close(card); }
+  }
+  if(ui_clicked(sig) && !beside->moving)
+  {
+    uishell_sidebar_card_queue_action(state, related, 0);
+    if(card->placement == UIShell_CardPlacement_Transient) { uishell_sidebar_card_close(card); }
+    if(beside->open && card != beside) { uishell_sidebar_card_close(beside); }
+    rd_request_frame();
+  }
+}
+
+// What doesn't act on its own (a fact, the preview, the title) focuses the
+// card's entity when clicked; a hover card then closes, as after an action.
+internal void
+uishell_sidebar_card_body(UIShell_SidebarState *state, UIShell_HoverCard *card, UIShell_SidebarNode node, U64 index, UI_Box *body)
+{
+  body->flags |= UI_BoxFlag_MouseClickable;
+  B32 clicked = ui_clicked(ui_signal_from_box(body)) || card->title_clicked;
+  card->title_clicked = 0;
+  if(clicked && index != WHEELHOUSE_NONE && !card->moving)
+  {
+    UIShell_SidebarIntent focus = uishell_sidebar_activate_intent(node);
+    focus.entity = uishell_sidebar_card_entity_copy(ui_build_arena(), focus.entity);
+    focus.key = push_str8_copy(ui_build_arena(), focus.key);
+    state->card_focus = focus;
+    if(card->placement == UIShell_CardPlacement_Transient) { uishell_sidebar_card_close(card); }
+    rd_request_frame();
+  }
+}
+
 internal void
 uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *card,
                              U64 slot, U64 index, WheelhouseCardInfo detail, F32 width, B32 interactive)
@@ -653,7 +654,7 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
     for(U64 r = 0; r < field.relation_count; r++)
     {
       WheelhouseCardRelation relation = {0};
-      if(!uishell_sidebar_card_relation(state, index, f, r, card->path, card->depth, &relation)) { continue; }
+      if(!uishell_sidebar_card_relation(state, index, f, r, &card->subject, 1, &relation)) { continue; }
       U64 hash = u64_hash_from_str8(uishell_sidebar_string(relation.entity.kind)) ^
         (u64_hash_from_str8(uishell_sidebar_string(relation.entity.id))*0x9e3779b97f4a7c15ull);
       U64 bucket = hash & (table_capacity-1);
@@ -676,27 +677,18 @@ uishell_sidebar_card_related(UIShell_SidebarState *state, UIShell_HoverCard *car
         UI_PrefWidth(ui_em(1.5f, 1))
         { uishell_sidebar_card_icon_label(available ? related.icon : (WheelhouseText){0}, relation.entity.kind); }
         F32 badge_width = Min(width*0.3f, ui_top_font_size()*10);
-        UI_Signal link = {0};
         UI_PrefWidth(ui_px(Max(0.f, width-ui_top_font_size()*1.5f-badge_width), 1))
         {
           if(interactive && available)
-          { link = uishell_sidebar_button(push_str8f(ui_build_arena(), "%S###related_%I64u_%I64u_%S_%I64u_%S_%I64u_%S", uishell_sidebar_string(relation.display_text), slot, relation.entity.provider.len, uishell_sidebar_string(relation.entity.provider), relation.entity.kind.len, uishell_sidebar_string(relation.entity.kind), relation.entity.id.len, uishell_sidebar_string(relation.entity.id))); }
+          {
+            UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawText|UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects,
+              "%S###related_%I64u_%I64u_%S_%I64u_%S_%I64u_%S", uishell_sidebar_string(relation.display_text), slot, relation.entity.provider.len, uishell_sidebar_string(relation.entity.provider), relation.entity.kind.len, uishell_sidebar_string(relation.entity.kind), relation.entity.id.len, uishell_sidebar_string(relation.entity.id));
+            uishell_sidebar_card_related_signal(state, card, related, ui_signal_from_box(box));
+          }
           else { UI_TagF("weak") { ui_label(uishell_sidebar_string(relation.display_text)); } }
         }
         UI_PrefWidth(ui_px(badge_width, 1)) UI_TagF("weak")
         { ui_label(available ? uishell_sidebar_card_role_text(state, related_index, WHEELHOUSE_DETAIL_STATE) : str8_lit("Unavailable")); }
-        if(ui_clicked(link))
-        {
-          if(link.event_flags & (WM_Modifier_Super|WM_Modifier_Ctrl))
-          {
-            UIShell_HoverCard *separate = &state->cards[1];
-            uishell_sidebar_card_set(separate, related, ui_key_zero(), str8_zero(), 0, now_time_us());
-            separate->source_rect = card->rect;
-            separate->engaged = separate->focused = 1; card->focused = 0;
-          }
-          else { uishell_sidebar_card_navigate(card, relation.entity, now_time_us()); }
-          rd_request_frame();
-        }
       }
     }
   }
@@ -726,22 +718,17 @@ uishell_sidebar_card_preview(RD_WindowState *ws, U64 slot, UIShell_SidebarNode n
 
 internal void uishell_sidebar_detached_finish(RD_WindowState *ws);
 
-// Back, after in-card navigation; and the entity actions, while the cap shows,
-// when it is too narrow to hold them (uishell_sidebar_card_cap).
+// The entity actions, while the cap shows, when it is too narrow to hold them
+// (uishell_sidebar_card_cap).
 internal size_t
 uishell_sidebar_card_footer(UIShell_SidebarState *state, UIShell_HoverCard *card, U64 index, F32 width)
 {
   size_t action = WHEELHOUSE_NONE;
   B32 actions = card->cap_footer && card->cap_shown;
-  if(card->depth <= 1 && !actions) { return action; }
+  if(!actions) { return action; }
   ui_spacer(ui_em(0.5f, 1));
-  if(card->depth > 1 && ui_clicked(uishell_sidebar_button(str8_lit("← Back###card_back"))))
-  {
-    card->previous = card->path[card->depth-1]; card->depth--;
-    card->changed_at = now_time_us(); card->glide_from = card->rect.p0; card->scroll = 0; rd_request_frame();
-  }
   // Labels and enabled controls come from the core. The footer packs the
-  // controls into one row; the text label remains the keyboard target.
+  // controls into one row.
   WheelhouseCardAction controls[UIShell_HoverCardActionCount] = {0};
   size_t control_index[UIShell_HoverCardActionCount] = {0};
   U64 control_count = 0;
@@ -1004,9 +991,9 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
   state->card_has_action = 0;
   state->card_action_target = (WheelhouseEntity){0};
   state->card_action_intent = str8_zero();
+  state->card_focus = (UIShell_SidebarIntent){0};
   Rng2F32 window = wm_client_rect_from_window(ws->os);
   Vec2F32 mouse = ui_state->mouse;
-  ui_state->hover_card_focus = 0;
   MemoryZeroArray(ui_state->hover_card_keys);
   MemoryZeroArray(ui_state->hover_card_rects);
   // Masks live in window-owned cards, not the per-build arena. Retain them
@@ -1022,8 +1009,6 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     // Hidden sources dismiss transient cards; floats remain independently visible.
     // Close before constructing controls, including the source-less second card.
     for(U64 i = 0; i < ArrayCount(state->cards); i++) { uishell_sidebar_card_close(&state->cards[i]); }
-    for(UIShell_HoverCard *c = state->detached; c; c = c->next)
-    { if(c->placement != UIShell_CardPlacement_Float) { c->focused = 0; } }
   }
   B32 outside = uishell_hover_cards_outside || rd_setting_b32_from_name(str8_lit("hover_cards_outside_sidebar"));
   if(!window_focused) { state->card_escape_down = 0; }
@@ -1067,7 +1052,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     if(!eligible || reveal <= 0) { continue; }
     if(reveal < 1) { rd_request_frame(); }
     UIShell_SidebarNode node = {0};
-    U64 index = uishell_sidebar_card_find(state, c->path[c->depth-1], &node);
+    U64 index = uishell_sidebar_card_find(state, c->subject, &node);
     size_t action = WHEELHOUSE_NONE;
     UI_Box *outline;
     UI_Parent(ui_state->root) { outline = uishell_sidebar_card_outline_begin(c->mask.key); }
@@ -1129,13 +1114,12 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     // Slots are reused: a card opening here starts with its cap in.
     UI_Key reveal_key = ui_key_from_stringf(ui_key_zero(), "card_cap_reveal_%p", card);
     if(!card->open) { ui_anim(reveal_key, 0, .initial = 0, .reset = 1); continue; }
-    if(!window_focused && floating) { card->focused = 0; }
     // Another menu dismisses the card; its own (the Pin menu) keeps it.
     B32 other_menu = ui_any_ctx_menu_is_open() && !ui_ctx_menu_is_open(card->menu);
-    if(!floating && (other_menu || (!window_focused && card->focused)))
+    if(!floating && other_menu)
     { uishell_sidebar_card_close(card); continue; }
     UIShell_SidebarNode node = {0};
-    U64 index = uishell_sidebar_card_find(state, card->path[card->depth-1], &node);
+    U64 index = uishell_sidebar_card_find(state, card->subject, &node);
     if(index == WHEELHOUSE_NONE && !floating) { uishell_sidebar_card_close(card); continue; }
     if(!floating && !card->moving && !ui_key_match(card->source, ui_key_zero()))
     {
@@ -1152,7 +1136,6 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     card->cap_shown = card->cap_drawn = 0;
     if(!card->open) { continue; }
     if(card->left_at && card->placement == UIShell_CardPlacement_Transient) { rd_request_frame_at(card->left_at + UIShell_HoverCardLeaveDelayUS); }
-    ui_state->hover_card_focus |= card->focused;
     UI_Key key = slot >= ArrayCount(state->cards) ? card->mask.key : ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", slot);
     UI_Key content_key = ui_key_from_stringf(key, "content");
     UI_Box *old_content = ui_box_from_key(content_key);
@@ -1190,7 +1173,7 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     B32 cap_below = cap && uishell_sidebar_card_cap_below(card->rect, window);
     F32 radius = em*0.25f, top = cap && !cap_below ? 0 : radius, bottom = cap_below ? 0 : radius;
     UI_Parent(ui_state->root) UI_TagF("floating")
-    UI_Focus(card->focused ? UI_FocusKind_On : UI_FocusKind_Off) UI_CornerRadius(radius)
+    UI_CornerRadius(radius)
     {
       UI_Box *root;
       UI_Rect(card->rect) UI_CornerRadius00(top) UI_CornerRadius10(top) UI_CornerRadius01(bottom) UI_CornerRadius11(bottom)
@@ -1198,16 +1181,14 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
           UI_BoxFlag_DrawBackgroundBlur|UI_BoxFlag_DefaultFocusNavY|
           UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder, key); }
       if(cap) UI_Parent(root) { outline = uishell_sidebar_card_outline_begin(key); }
-      if(cap) UI_Parent(root) UI_FocusActive(card->focused ? UI_FocusKind_Root : UI_FocusKind_Off)
-      UI_FocusHot(card->focused ? UI_FocusKind_Root : UI_FocusKind_Off)
+      if(cap) UI_Parent(root)
       { cap_action = uishell_sidebar_card_cap(state, card, index, card->rect, window, card->rect.p0, radius, reveal, live); }
       UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(8, 8, width-8, height-8), UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Auto);
       params.content_dim_px = v2f32(width-16, content_height);
       UI_ScrollRegion region = ui_scroll_region_layout(params);
       UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
       axes[Axis2_Y] = (UI_ScrollRegionAxis){ui_scroll_pt((S64)card->scroll, 0), r1s64(0, Max(0, (S64)(content_height-dim_2f32(region.viewport).y))), (S64)dim_2f32(region.viewport).y};
-      UI_Parent(root) UI_FocusActive(card->focused ? UI_FocusKind_Root : UI_FocusKind_Off)
-      UI_FocusHot(card->focused ? UI_FocusKind_Root : UI_FocusKind_Off)
+      UI_Parent(root)
       {
         UI_ScrollRegionSignal scroll = ui_scroll_region_build(root, ui_key_from_stringf(key, "scroll"), &region, axes, UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise);
         F32 content_width = dim_2f32(region.viewport).x;
@@ -1262,10 +1243,9 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
         }
         UI_Signal wheel = ui_signal_from_box(scroll.content_box);
         card->scroll = Clamp(0.f, card->scroll+wheel.scroll.y*em*2, (F32)axes[Axis2_Y].range.max);
-        // Consume background clicks after child buttons, so a card never opens
+        // Take background clicks after child buttons, so a card never opens
         // the sidebar row or sends a mouse press to the terminal underneath.
-        root->flags |= UI_BoxFlag_MouseClickable;
-        ui_signal_from_box(root);
+        uishell_sidebar_card_body(state, card, node, index, root);
       }
     }
     if(action == WHEELHOUSE_NONE) { action = cap_action; }
@@ -1296,13 +1276,6 @@ uishell_sidebar_cards_ui_at(RD_WindowState *ws, U64 now, B32 window_focused, B32
     if(action != WHEELHOUSE_NONE) { uishell_sidebar_card_queue_action(state, node, action); rd_request_frame(); }
   }
   uishell_sidebar_detached_finish(ws);
-  // Buttons can close a card or transfer focus while building its content.
-  // Update before the selected View gets any remaining keyboard events.
-  ui_state->hover_card_focus = 0;
-  for(U64 i = 0; i < ArrayCount(state->cards); i++)
-  { ui_state->hover_card_focus |= state->cards[i].open && state->cards[i].focused; }
-  for(UIShell_HoverCard *c = state->detached; c; c = c->next)
-  { ui_state->hover_card_focus |= c->open && c->focused; }
 }
 
 // Call once after all window Views have built. Resolve semantic intent against
@@ -1315,6 +1288,8 @@ uishell_sidebar_cards_dispatch(RD_WindowState *ws)
   uishell_sidebar_section_drop_apply(ws);
   uishell_sidebar_drag_finish(ws);
   UIShell_SidebarIntent pending = uishell_sidebar_card_take_action(state);
+  if(!pending.some) { pending = state->card_focus; }
+  state->card_focus = (UIShell_SidebarIntent){0};
   if(pending.some && state->core)
   {
     Temp scratch = scratch_begin(0, 0);

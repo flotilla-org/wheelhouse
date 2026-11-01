@@ -6423,7 +6423,6 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                 !query_is_open &&
                                 !ui_any_ctx_menu_is_open() &&
                                 !ws->hover_eval_focused &&
-                                !ws->ui->hover_card_focus &&
                                 panel_tree.focused == panel &&
                                 rd_dock_host_kind_from_panel_owner(panel->address.owner) == active_host_kind);
         RD_ViewAddress selected_tab = panel->selected_tab;
@@ -12377,7 +12376,7 @@ uishell_route_content_activation(RD_WindowState *ws, WM_Event *event, B32 allow_
 {
   if(!ws || ws == &rd_nil_window_state ||
      (!wm_window_match(event->window, wm_window_zero()) && !wm_window_match(event->window, ws->os)) ||
-     rd_state->popup_active || ws->query_is_active || ws->menu_bar_focused || ws->ui->hover_card_focus) { return 0; }
+     rd_state->popup_active || ws->query_is_active || ws->menu_bar_focused) { return 0; }
   if(uishell_jackstay_release_event(uishell_regs()->view,event)) { return 1; }
   if(event->kind == WM_EventKind_Press && event->key > WM_Key_Null && event->key < WM_Key_COUNT)
   {
@@ -12832,7 +12831,6 @@ rd_frame(void)
                                        !rd_state->popup_active &&
                                        !ws->query_is_active &&
                                        !ws->menu_bar_focused &&
-                                       !ws->ui->hover_card_focus &&
                                        !ui_text_field_focus_in(ws->ui) &&
                                        str8_match(focused_view->string, str8_lit("terminal"), 0));
       B32 terminal_claims_keyboard_input = (terminal_input_is_focused &&
