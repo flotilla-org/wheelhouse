@@ -70,6 +70,23 @@ typedef struct BinnacleGrid BinnacleGrid;"""
 "LocalEntityView" = "WheelhouseLocalEntity"
 "SiblingOrderView" = "WheelhouseSiblingOrder"
 "DashboardView" = "WheelhouseDashboard"
+# wheelhouse-text's output arrays, which wh_text_layout writes as they are.
+"Line" = "WhTextLine"
+"Run" = "WhTextRun"
+"Glyph" = "WhTextGlyph"
+"Cluster" = "WhTextCluster"
+"PlacedBox" = "WhTextBox"
+"Rect" = "WhTextRect"
+"Segment" = "WhTextSegment"
+
+[export]
+# Only its slot numbers cross the ABI.
+exclude = ["Family"]
+
+[parse]
+# wheelhouse-text defines the repr(C) arrays a text layout writes.
+parse_deps = true
+include = ["wheelhouse-text"]
 
 [fn]
 sort_by = "None"

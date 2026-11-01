@@ -31,6 +31,7 @@ pub mod slots;
 pub mod stream;
 pub mod strip;
 pub mod tables;
+pub mod text;
 pub use arrangement::*;
 pub use card::*;
 pub use dashboard::*;
@@ -40,6 +41,7 @@ pub use overview::*;
 pub use slots::*;
 pub use stream::*;
 pub use strip::*;
+pub use text::*;
 
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
 

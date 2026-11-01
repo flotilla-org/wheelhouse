@@ -1,5 +1,6 @@
 //! Decides whether a width change can keep shaping again (#544, decision 4).
-//! `WHEELHOUSE_TEXT_BENCH_MB` sets the document's size (default 8).
+//! `WHEELHOUSE_TEXT_BENCH_MB` sets the document's size (default 8). The FFI's
+//! benchmark (wheelhouse-ffi's `text`) times the same with the copy into C memory.
 mod common;
 use std::time::Instant;
 
