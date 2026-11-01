@@ -287,6 +287,33 @@ uishell_rt_diag_label_with(String8 needle)
   return 0;
 }
 
+// A box this frame built whose key string has `needle`.
+internal UI_Box *
+uishell_rt_diag_box_named(String8 needle)
+{
+  UI_Box *result = &ui_nil_box;
+  for(UI_Box *b = ui_state->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_state->root).next)
+  {
+    if(str8_find_needle(b->string, 0, needle, 0) < b->string.size) { result = b; }
+  }
+  return result;
+}
+
+// A code Embed's text area on screen, as its Block's box was placed.
+internal Rng2F32
+uishell_rt_diag_code_rect(UIShell_RichTextState *s, UIShell_RtNode *n, Rng2F32 block)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_RtPlaced p = {0};
+  p.rect = block;
+  p.frame = uishell_rt_frame(scratch.arena, &s->model, &s->theme, n);
+  UIShell_RtCode *c = uishell_rt_code_of(s, n->key);
+  B32 capped = 0;
+  Rng2F32 r = shift_2f32(uishell_rt_code_rect(&p, uishell_rt_code_height(n, c && c->expanded, &capped)), block.p0);
+  scratch_end(scratch);
+  return r;
+}
+
 internal String8
 uishell_rt_diag_copy(UIShell_RtDiag *d)
 {
@@ -648,11 +675,13 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       UIShell_RtNode *n = uishell_rt_node(&s->model, s->model.block_keys[i]);
       if(n && n->kind == WHEELHOUSE_RICH_KIND_CODE && !n->hidden) { code = n; }
     }
-    UI_Box *button = &ui_nil_box;
-    for(UI_Box *b = ui_state->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_state->root).next)
+    // Its controls show while the pointer is over it.
+    if(code)
     {
-      if(str8_find_needle(b->string, 0, str8_lit("###rt_copy"), 0) < b->string.size) { button = b; }
+      d->mouse = center_2f32(uishell_rt_diag_box(scratch.arena, code->key).box->rect);
+      s = uishell_rt_diag_frames(d, 2);
     }
+    UI_Box *button = uishell_rt_diag_box_named(str8_lit("###rt_copy"));
     RichCheck(code && !ui_box_is_nil(button), "a code Block has a copy button");
     if(!ui_box_is_nil(button))
     {
@@ -803,6 +832,266 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     uishell_rt_toggle_source(d->address);
     RichCheck(str8_match(rd_cfg_from_view(d->address)->string, str8_lit("rich_text"), 0), "and toggles back to Rich Text");
     s = uishell_rt_diag_open(d, path);
+  }
+
+  //- Code Blocks are Embedded Views of the text view (#622).
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    String8 code_path = push_str8f(arena, "%S/rich-text-code.md", dir);
+    String8List md = {0};
+    str8_list_pushf(scratch.arena, &md, "# Code\n\nBefore the code.\n\n```rust\nfn main() {\n    println!(\"fenced\");\n}\n```\n\n");
+    str8_list_pushf(scratch.arena, &md, "```brainfuck\n+++.\n```\n\n```c\n");
+    U64 long_lines = 40;
+    for(U64 i = 1; i <= long_lines; i += 1)
+    {
+      str8_list_pushf(scratch.arena, &md, i == 35 ? "int osprey_%llu = %llu; /* a long line, wider than the column it sits in, so that it scrolls sideways rather than wrapping: tide, mooring, berth, hawser, capstan, ensign, tide, mooring, berth, hawser, capstan, ensign */\n" : "int berth_%llu = %llu;\n",
+                      (unsigned long long)i, (unsigned long long)i);
+    }
+    str8_list_pushf(scratch.arena, &md, "```\n\nAfter the code.\n");
+    write_data_to_file_path(code_path, str8_list_join(scratch.arena, &md, 0));
+    RichCheck(str8_match(wh_handler_from_media_type(WH_Content_Embed, str8_lit(UISHELL_RT_CODE_MEDIA_TYPE))->renderer, str8_lit("text"), 0),
+              "a code Block's media type resolves to the text view");
+    s = uishell_rt_diag_open(d, code_path);
+    UIShell_RtNode *rust = uishell_rt_diag_block_with(s, str8_lit("fn main"));
+    UIShell_RtNode *plain = uishell_rt_diag_block_with(s, str8_lit("+++."));
+    UIShell_RtNode *longc = uishell_rt_diag_block_with(s, str8_lit("int berth_1 "));
+    UIShell_RtNode *before = uishell_rt_diag_block_with(s, str8_lit("Before the code"));
+    UIShell_RtNode *after = uishell_rt_diag_block_with(s, str8_lit("After the code"));
+    RichCheck(rust && plain && longc && before && after, "the code fixture opens");
+    if(rust && plain && longc && before && after)
+    {
+      // Lexed off the main thread: a few frames, as the View waits.
+      for(U32 i = 0; i < 400; i += 1)
+      {
+        s = uishell_rt_diag_frame(d, 0);
+        UIShell_RtCode *c = uishell_rt_code_of(s, rust->key);
+        if(c && c->lines_built.max > c->lines_built.min) { break; }
+        sleep_ms(5);
+      }
+      UIShell_RtCode *rc = uishell_rt_code_of(s, rust->key), *pc = uishell_rt_code_of(s, plain->key);
+      UIShell_RtDiagBox rb = uishell_rt_diag_box(scratch.arena, rust->key);
+      UI_Box *view = &ui_nil_box;
+      for(UI_Box *b = ui_box_is_nil(rb.box) ? &ui_nil_box : rb.box->first; !ui_box_is_nil(b); b = b->next)
+      {
+        if(b->flags & UI_BoxFlag_Clip) { view = b; }
+      }
+      RichCheck(rc && uishell_rt_code_lang(rc) == TXT_LangKind_Rust && !ui_box_is_nil(view) && rc->lines_built.max == 3,
+                "a fenced Rust Block is an Embedded View of the text view, with the Rust lexer");
+      RichCheck(pc && uishell_rt_code_lang(pc) == TXT_LangKind_Null, "a fence in a language with no lexer stays plain");
+      B32 aliases = 1;
+      struct { char *name; TXT_LangKind kind; } names[] =
+      {
+        {"rs", TXT_LangKind_Rust}, {"Rust", TXT_LangKind_Rust}, {"c", TXT_LangKind_C}, {"h", TXT_LangKind_C}, {"cpp", TXT_LangKind_CPlusPlus},
+        {"c++", TXT_LangKind_CPlusPlus}, {"cc", TXT_LangKind_CPlusPlus}, {"cxx", TXT_LangKind_CPlusPlus}, {"hpp", TXT_LangKind_CPlusPlus},
+        {"zig", TXT_LangKind_Zig}, {"odin", TXT_LangKind_Odin}, {"jai", TXT_LangKind_Jai}, {"python", TXT_LangKind_Null}, {"", TXT_LangKind_Null},
+      };
+      for EachElement(i, names) { aliases &= uishell_rt_lang_from_fence(str8_cstring(names[i].name)) == names[i].kind; }
+      RichCheck(aliases, "fence names map through the alias and extension tables");
+      uishell_rt_code_set_lang(s, plain->key, TXT_LangKind_C);
+      RichCheck(uishell_rt_code_lang(pc) == TXT_LangKind_C, "a Block's language can be overridden in View state");
+      pc->has_override = 0;
+
+      // Inline, at most 30 lines and no line numbers; expanded, every line.
+      F32 row = uishell_text_row_height();
+      UIShell_RtCode *lc = uishell_rt_code_of(s, longc->key);
+      UIShell_RtDiagBox lb = uishell_rt_diag_box(scratch.arena, longc->key);
+      Rng2F32 lr = ui_box_is_nil(lb.box) ? r2f32p(0, 0, 0, 0) : uishell_rt_diag_code_rect(s, longc, lb.box->rect);
+      RichCheck(lc && abs_f32(dim_2f32(lr).y - row*UISHELL_RT_CODE_INLINE_LINES) < 0.5f && !lc->line_numbers,
+                "inline, a long code Block is capped at 30 lines, without line numbers");
+      // A long line scrolls sideways, unfocused too; the document doesn't move.
+      d->mouse = center_2f32(lr);
+      WheelhouseRichWindow before_wheel = {0};
+      wheelhouse_rich_text_window(s->doc, s->sub, &before_wheel, &error);
+      F64 top_before = before_wheel.top;
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Scroll, .pos = d->mouse, .delta_2f32 = v2f32(1, 0)});
+      s = uishell_rt_diag_frames(d, 2);
+      wheelhouse_rich_text_window(s->doc, s->sub, &before_wheel, &error);
+      RichCheck(lc->scroll.x > 0 && before_wheel.top == top_before && lc->content_dim.x > dim_2f32(lr).x,
+                "a line wider than the Block scrolls sideways, without wrapping");
+      lc->scroll.x = 0;
+      s = uishell_rt_diag_frames(d, 2);
+      UI_Box *expand = uishell_rt_diag_box_named(str8_lit("###rt_expand"));
+      RichCheck(!ui_box_is_nil(expand), "a capped code Block offers to expand");
+      if(!ui_box_is_nil(expand)) { d->now_us += 2000000; s = uishell_rt_diag_click(d, center_2f32(expand->rect), 0, 1); }
+      lb = uishell_rt_diag_box(scratch.arena, longc->key);
+      WheelhouseRichWindow w = {0};
+      F32 entry_height = 0;
+      wheelhouse_rich_text_window(s->doc, s->sub, &w, &error);
+      for(U64 i = 0; i < w.entry_count; i += 1) { if(w.entries[i].key == longc->key) { entry_height = w.entries[i].height; } }
+      RichCheck(lc->expanded && lc->line_numbers && entry_height > row*long_lines, "expanded, it is every line tall, with line numbers");
+      // Its end, scrolled to: the last line is built, and only what shows.
+      wheelhouse_rich_text_reveal(s->doc, s->sub, after->key, 0, &error);
+      s = uishell_rt_diag_frames(d, 3);
+      Rng1S64 built = lc->lines_built;
+      fprintf(stderr, "RICH_TEXT_CODE expanded built=%lld..%lld of %llu\n", (long long)built.min, (long long)built.max, (unsigned long long)long_lines);
+      RichCheck(built.max == (S64)long_lines && built.min > 0, "scrolled to its end, the expanded embed builds its last lines, not its first");
+      wheelhouse_rich_text_reveal(s->doc, s->sub, longc->key, 0, &error);
+      s = uishell_rt_diag_frames(d, 3);
+      d->mouse = add_2f32(uishell_rt_diag_box(scratch.arena, longc->key).box->rect.p0, v2f32(20, 20));
+      s = uishell_rt_diag_frames(d, 2);
+      expand = uishell_rt_diag_box_named(str8_lit("###rt_expand"));
+      if(!ui_box_is_nil(expand)) { d->now_us += 2000000; s = uishell_rt_diag_click(d, center_2f32(expand->rect), 0, 1); }
+      RichCheck(!lc->expanded, "and collapses again");
+
+      // Focus: a click enters it, Esc leaves with the Block selected, and Tab
+      // reaches it.
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .delta_unit = UI_EventDeltaUnit_Whole, .delta_2s32 = v2s32(0, -1)});
+      s = uishell_rt_diag_frames(d, 3);
+      rb = uishell_rt_diag_box(scratch.arena, rust->key);
+      Rng2F32 rr = uishell_rt_diag_code_rect(s, rust, rb.box->rect);
+      d->now_us += 2000000;
+      s = uishell_rt_diag_click(d, v2f32(rr.x0 + 40, rr.y0 + row*0.5f), 0, 1);
+      RichCheck(s->focus_embed == rust->key, "a click focuses the code Embed");
+      // Inside, the code view's own keys select.
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .delta_unit = UI_EventDeltaUnit_Whole, .delta_2s32 = v2s32(0, -1)});
+      for(U32 i = 0; i < 2; i += 1)
+      {
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional,
+                                                .delta_unit = UI_EventDeltaUnit_Char, .delta_2s32 = v2s32(1, 0)});
+      }
+      RichCheck(str8_match(uishell_rt_diag_copy(d), str8_lit("fn"), 0), "focused, selection inside it is the code view's, and Copy copies it");
+      WheelhouseRichSelection sel = {0};
+      s = uishell_rt_diag_cmd(d, str8_lit("copy_markdown"), str8_zero());
+      RichCheck(str8_match(d->clip.text, str8_lit("```rust\nfn main() {\n    println!(\"fenced\");\n}\n```"), 0), "Copy as Markdown gives the fence with its language");
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Esc, .slot = UI_EventActionSlot_Cancel});
+      B32 selected = wheelhouse_rich_text_selection(s->doc, s->sub, &sel, &error);
+      RichCheck(s->focus_embed == 0 && selected && sel.anchor_key == rust->key && sel.focus_key == rust->key, "Esc leaves it, the Block selected");
+      B32 reached = 0;
+      for(U32 i = 0; i < 12 && !reached; i += 1)
+      {
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .flags = UI_EventFlag_Secondary, .delta_unit = UI_EventDeltaUnit_Char, .delta_2s32 = v2s32(0, 1)});
+        reached = s->focus_embed == rust->key;
+      }
+      RichCheck(reached, "Tab reaches the code Embed");
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Esc, .slot = UI_EventActionSlot_Cancel});
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Esc, .slot = UI_EventActionSlot_Cancel});
+
+      // A drag from the paragraph before into the code takes all of it.
+      d->now_us += 2000000;
+      Vec2F32 from = uishell_rt_diag_point(d, s, before->key, 0);
+      rb = uishell_rt_diag_box(scratch.arena, rust->key);
+      rr = uishell_rt_diag_code_rect(s, rust, rb.box->rect);
+      d->mouse = from;
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = from});
+      // Its first line: the Block's upper half, whose nearest end is its start.
+      d->mouse = v2f32(rr.x0 + 30, rr.y0 + row*0.5f);
+      s = uishell_rt_diag_frames(d, 2);
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = d->mouse});
+      String8 crossed = uishell_rt_diag_copy(d);
+      U32 start = 0, end = 0;
+      selected = wheelhouse_rich_text_selection(s->doc, s->sub, &sel, &error);
+      B32 whole = selected && uishell_rt_selected_range(s, &sel, rust, &start, &end) && start == 0 && end == rust->text.size;
+      fprintf(stderr, "RICH_TEXT_CODE crossed=\"%.*s\"\n", (int)Min(crossed.size, 200), crossed.str);
+      RichCheck(whole && uishell_rt_diag_contains(crossed, str8_lit("Before the code.")) && uishell_rt_diag_contains(crossed, str8_lit("println!(\"fenced\");\n}")),
+                "a document selection that reaches into the code Block takes all of it");
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Esc, .slot = UI_EventActionSlot_Cancel});
+      // Shift with an arrow crosses it in one step, all of it selected.
+      d->now_us += 2000000;
+      s = uishell_rt_diag_click(d, uishell_rt_diag_point(d, s, before->key, (U32)before->text.size), 0, 1);
+      for(U32 i = 0; i < 2; i += 1)
+      {
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .flags = UI_EventFlag_KeepMark|UI_EventFlag_ExplicitDirectional,
+                                                .delta_unit = UI_EventDeltaUnit_Char, .delta_2s32 = v2s32(1, 0)});
+      }
+      String8 stepped = uishell_rt_diag_copy(d);
+      RichCheck(uishell_rt_diag_contains(stepped, str8_lit("println!(\"fenced\");\n}")), "Shift with an arrow takes the code Block whole");
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Esc, .slot = UI_EventActionSlot_Cancel});
+
+      // Find reaches inside, and hands the match to the code view.
+      s = uishell_rt_diag_cmd(d, str8_lit("search"), str8_lit("osprey"));
+      for(U32 i = 0; i < 50 && (s->match_count == 0 || s->match_current == WHEELHOUSE_NONE); i += 1) { s = uishell_rt_diag_frame(d, 0); }
+      s = uishell_rt_diag_frames(d, 3);
+      B32 found = s->match_current < s->match_count && s->matches[s->match_current].key == longc->key;
+      UIShell_RtDiagBox fb = uishell_rt_diag_box(scratch.arena, longc->key);
+      fprintf(stderr, "RICH_TEXT_CODE find matches=%llu cursor=%lld:%lld scroll=%.1f built=%lld..%lld\n", (unsigned long long)s->match_count,
+              (long long)lc->tv.cursor.line, (long long)lc->tv.cursor.column, lc->scroll.y, (long long)lc->lines_built.min, (long long)lc->lines_built.max);
+      RichCheck(found && fb.draw && fb.draw->current_find_quads > 0, "document find reaches a match inside the code Block");
+      RichCheck(lc->tv.mark.line == 35 && lc->tv.cursor.line == 35 && lc->lines_built.min < 35 && lc->lines_built.max >= 35 && lc->scroll.y > 0,
+                "and hands it to the code view, which selects it and scrolls to it");
+      s = uishell_rt_diag_cmd(d, str8_lit("search"), str8_zero());
+
+      // Open in a new View: a click opens a tab with the same content; a
+      // drag carries one to where it drops.
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .delta_unit = UI_EventDeltaUnit_Whole, .delta_2s32 = v2s32(0, -1)});
+      s = uishell_rt_diag_frames(d, 3);
+      d->mouse = center_2f32(uishell_rt_diag_box(scratch.arena, rust->key).box->rect);
+      s = uishell_rt_diag_frames(d, 2);
+      UI_Box *open = uishell_rt_diag_box_named(str8_lit("###rt_open"));
+      U64 tabs = rd_fixture_count(d->panel.owner, str8_lit("text"));
+      if(!ui_box_is_nil(open)) { d->now_us += 2000000; s = uishell_rt_diag_click(d, center_2f32(open->rect), 0, 1); }
+      MemoryZeroStruct(&rd_state->cmds[0]);
+      CFG_Node *opened = rd_fixture_find(d->panel.owner, str8_lit("text"));
+      RD_ViewAddress opened_view = rd_view_address_from_cfg(opened);
+      RichCheck(!ui_box_is_nil(open) && rd_fixture_count(d->panel.owner, str8_lit("text")) == tabs+1 &&
+                str8_match(rd_view_setting_from_view(opened_view, str8_lit("text")), rust->text, 0) &&
+                str8_match(rd_view_setting_from_view(opened_view, str8_lit("lang")), str8_lit("rs"), 0),
+                "\"Open\" opens a text View tab with the Block's code and language");
+      // The tab shows it, from its own content key.
+      B32 shows = 0;
+      for(U32 i = 0; i < 400 && !shows; i += 1)
+      {
+        UI_EventList none = {0};
+        UI_AnimationInfo animation = {0};
+        ui_begin_build(d->ws->os, &none, &d->ws->ui->icon_info, d->ws->theme, &animation, 1.f/60, 1.f/60);
+        UIShell_RegsScope(.window = d->ws->cfg_id, .panel = d->panel, .tab = opened_view, .view = opened_view)
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+        {
+          wh_view_ui_direct(wh_renderer_from_name(str8_lit("text")), opened_view, d->rect);
+        }
+        for(UI_Box *b = ui_state->root; !ui_box_is_nil(b) && !shows; b = ui_box_rec_df_pre(b, ui_state->root).next)
+        {
+          shows = str8_match(ui_box_display_string(b), str8_lit("3 lines"), 0);
+        }
+        ui_end_build();
+        if(!shows) { sleep_ms(5); }
+      }
+      RichCheck(shows, "the new View shows the code");
+      s = uishell_rt_diag_frames(d, 2);
+      d->mouse = center_2f32(uishell_rt_diag_box(scratch.arena, rust->key).box->rect);
+      s = uishell_rt_diag_frames(d, 2);
+      open = uishell_rt_diag_box_named(str8_lit("###rt_open"));
+      if(!ui_box_is_nil(open))
+      {
+        d->now_us += 2000000;
+        d->mouse = center_2f32(open->rect);
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = d->mouse});
+        d->mouse = add_2f32(d->mouse, v2f32(0, 60));
+        s = uishell_rt_diag_frames(d, 2);
+      }
+      B32 dragging = rd_drag_is_active() && rd_state->drag_drop_commit == uishell_rt_code_drop && str8_match(rd_state->drag_drop_creation_name, str8_lit("text"), 0);
+      if(dragging) { rd_state->drag_drop_commit(d->panel, Dir2_Invalid, rd_nil_view_address); }
+      rd_drag_kill();
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = d->mouse});
+      MemoryZeroStruct(&rd_state->cmds[0]);
+      RichCheck(dragging && rd_fixture_count(d->panel.owner, str8_lit("text")) == tabs+2, "dragging \"Open\" out carries the code to a new View where it drops");
+    }
+
+    // Streaming: a fence still open takes a new content key as text arrives.
+    String8 stream_path = push_str8f(arena, "%S/rich-text-stream.md", dir);
+    write_data_to_file_path(stream_path, str8_lit("Streaming.\n\n```rs\nlet tide = 1;\n"));
+    s = uishell_rt_diag_open(d, stream_path);
+    UIShell_RtNode *open_fence = uishell_rt_diag_block_with(s, str8_lit("let tide"));
+    UIShell_RtCode *oc = open_fence ? uishell_rt_code_of(s, open_fence->key) : 0;
+    C_Key key_before = oc ? oc->content : (C_Key){0};
+    for(U32 i = 0; oc && i < 400 && oc->lines_built.max != 1; i += 1) { s = uishell_rt_diag_frame(d, 0); sleep_ms(5); }
+    S64 lines_before = oc ? oc->lines_built.max : 0;
+    U64 generation = s->model.generation;
+    // Past the file time's granularity, so the append reads as a change.
+    sleep_ms(1100);
+    write_data_to_file_path(stream_path, str8_lit("Streaming.\n\n```rs\nlet tide = 1;\nlet berth = 2;\n"));
+    for(U32 i = 0; i < 1000 && s->model.generation == generation; i += 1) { s = uishell_rt_diag_frame(d, 0); sleep_ms(5); }
+    s = uishell_rt_diag_frames(d, 3);
+    open_fence = uishell_rt_diag_block_with(s, str8_lit("let tide"));
+    oc = open_fence ? uishell_rt_code_of(s, open_fence->key) : 0;
+    B32 grew = 0;
+    for(U32 i = 0; oc && i < 400 && !grew; i += 1)
+    {
+      s = uishell_rt_diag_frame(d, 0);
+      grew = oc->lines_built.max == 2;
+      if(!grew) { sleep_ms(5); }
+    }
+    RichCheck(oc && lines_before == 1 && !c_key_match(oc->content, key_before) && grew, "a Block whose fence is still open updates its content key as text arrives");
+    scratch_end(scratch);
   }
 
   //- Inside a right-to-left run, a drag and Shift with an arrow select

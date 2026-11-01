@@ -4205,7 +4205,7 @@ read_only global String8 rd_view_logical_settings[] =
   // Identity, and the arrangement's mark.
   str8_lit_comp("slot"), str8_lit_comp("previous_of"), str8_lit_comp("section"), str8_lit_comp("resource_id"), str8_lit_comp("selected"),
   // The View Spec (uishell_workspace_store.c, "View Specs").
-  str8_lit_comp("expression"), str8_lit_comp("cwd"), str8_lit_comp("content"), str8_lit_comp("url"),
+  str8_lit_comp("expression"), str8_lit_comp("cwd"), str8_lit_comp("content"), str8_lit_comp("url"), str8_lit_comp("text"),
   str8_lit_comp("source_endpoint"), str8_lit_comp("source_socket"), str8_lit_comp("input_endpoint"), str8_lit_comp("input_socket"),
   str8_lit_comp("media_endpoint"), str8_lit_comp("media_socket"), str8_lit_comp("d3d11_endpoint"), str8_lit_comp("porthole_endpoint"),
   // The portable Target Resolutions, and the daemon hosting a terminal.

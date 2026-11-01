@@ -695,6 +695,9 @@ struct UIShell_RtFrame
   String8 label;
   B32 label_above;
   B32 code;
+  // A code Block shown as an Embedded View of the text view (#622), not
+  // laid out here.
+  B32 code_embed;
   B32 rule;
   B32 table;
 };
@@ -709,6 +712,37 @@ internal F32
 uishell_rt_line_px(UIShell_RtTheme *t)
 {
   return floor_f32(uishell_rt_px(t)*1.45f);
+}
+
+// A code Block's media type: it is an Embedded View while a Handler shows
+// it, laid out as text otherwise.
+#define UISHELL_RT_CODE_MEDIA_TYPE "application/vnd.flotilla.code"
+
+internal B32
+uishell_rt_code_embedded(UIShell_RtNode *n)
+{
+  return n->kind == WHEELHOUSE_RICH_KIND_CODE &&
+         wh_handler_from_media_type(WH_Content_Embed, str8_lit(UISHELL_RT_CODE_MEDIA_TYPE))->renderer.size != 0;
+}
+
+// Selected whole or not at all (#546; #607, decision 2).
+internal B32
+uishell_rt_atomic(UIShell_RtNode *n)
+{
+  return n->kind == WHEELHOUSE_RICH_KIND_EMBED || n->kind == WHEELHOUSE_RICH_KIND_RULE || uishell_rt_code_embedded(n);
+}
+
+// A code Embed's hover controls, and the gap around them.
+internal F32
+uishell_rt_control_h(UIShell_RtTheme *t)
+{
+  return floor_f32(uishell_rt_px(t)*1.3f);
+}
+
+internal F32
+uishell_rt_control_gap(UIShell_RtTheme *t)
+{
+  return floor_f32(uishell_rt_px(t)*0.25f);
 }
 
 internal UIShell_RtFrame
@@ -777,9 +811,12 @@ uishell_rt_frame(Arena *arena, UIShell_RtModel *m, UIShell_RtTheme *t, UIShell_R
     case WHEELHOUSE_RICH_KIND_CODE:
     {
       f.code = 1;
+      f.code_embed = uishell_rt_code_embedded(n);
       f.inset_x = floor_f32(px*0.7f);
       f.inset_y = floor_f32(px*0.5f);
-      f.pad_top = floor_f32(px*0.15f);
+      // An embed's hover controls sit outside it, above its top right: room
+      // is kept for them, so showing them moves nothing.
+      f.pad_top = f.code_embed ? uishell_rt_control_h(t) + 2*uishell_rt_control_gap(t) : floor_f32(px*0.15f);
       f.pad_bottom = floor_f32(px*0.75f);
       if(str8_match(n->language, str8_lit("mermaid"), StringMatchFlag_CaseInsensitive))
       {
@@ -1176,6 +1213,32 @@ struct UIShell_RtTable
   U64 last_frame;
 };
 
+// A code Embed (#607; #622): the text view's lines over the Block's text,
+// which is in the content cache under its hash. Kept while its Block lives,
+// with what the code view keeps: its cursor, selection and scroll.
+typedef struct UIShell_RtCode UIShell_RtCode;
+struct UIShell_RtCode
+{
+  UIShell_RtCode *next;
+  U64 key;
+  U64 version;
+  U128 hash;
+  C_Key content;
+  TXT_LangKind fence_lang;
+  // A language chosen for this Block instead of its fence's.
+  B32 has_override;
+  TXT_LangKind lang_override;
+  B32 expanded;
+  Vec2F32 scroll;
+  UIShell_TextViewState tv;
+  B32 contain_cursor;
+  // What the last frame built: its lines, and the content's size.
+  Rng1S64 lines_built;
+  B32 line_numbers;
+  Vec2F32 content_dim;
+  F32 text_x;
+};
+
 // A Block's retained draw bucket, in the Block's own coordinates.
 typedef struct UIShell_RtBucket UIShell_RtBucket;
 struct UIShell_RtBucket
@@ -1206,6 +1269,7 @@ enum
   UIShell_RtStop_Embed,
   UIShell_RtStop_CopyButton,
   UIShell_RtStop_Expand,
+  UIShell_RtStop_Open,
 };
 
 typedef struct UIShell_RtStop UIShell_RtStop;
@@ -1244,6 +1308,8 @@ struct UIShell_RichTextState
   UIShell_RtBucket *buckets;
   UIShell_RtBucket *free_bucket;
   UIShell_RtTable *tables;
+  UIShell_RtCode *codes;
+  C_Root code_root;
   UIShell_RtTheme theme;
   F32 width;
   F64 viewport;
@@ -1292,6 +1358,10 @@ struct UIShell_RichTextState
   B32 press_link;
   // The table Embed a press went to, which gets the drag and release.
   U64 table_capture;
+  // A press on a code Embed's "open" control: a click opens a new View, a
+  // drag carries one out.
+  U64 open_press;
+  Vec2F32 open_press_pos;
   UIShell_RtStats stats;
   B32 show_copied;
   U64 copied_key;
@@ -1317,6 +1387,8 @@ uishell_rt_release(void *user_data)
 {
   UIShell_RichTextState *s = (UIShell_RichTextState *)user_data;
   uishell_rt_free_tables(s);
+  s->codes = 0;
+  if(s->code_root.u64[0] != 0) { c_root_release(s->code_root); s->code_root = (C_Root){0}; }
   for(UIShell_RtBucket *b = s->buckets; b != 0; b = b->next) { if(b->arena) { arena_release(b->arena); } }
   for(UIShell_RtBucket *b = s->free_bucket; b != 0; b = b->next) { if(b->arena) { arena_release(b->arena); } }
   s->buckets = s->free_bucket = 0;
@@ -1423,6 +1495,238 @@ uishell_rt_table_height(UIShell_RtTheme *t, UIShell_RtNode *n, B32 expanded, F64
 }
 
 ////////////////////////////////
+//~ Code Embeds (#607; #622)
+
+// A fence's info string to a lexer: these names, then the extension table;
+// anything else is plain.
+internal TXT_LangKind
+uishell_rt_lang_from_fence(String8 info)
+{
+  read_only local_persist struct { String8 name; TXT_LangKind kind; } aliases[] =
+  {
+    {str8_lit_comp("rs"), TXT_LangKind_Rust}, {str8_lit_comp("rust"), TXT_LangKind_Rust},
+    {str8_lit_comp("c"), TXT_LangKind_C}, {str8_lit_comp("h"), TXT_LangKind_C},
+    {str8_lit_comp("cpp"), TXT_LangKind_CPlusPlus}, {str8_lit_comp("c++"), TXT_LangKind_CPlusPlus},
+    {str8_lit_comp("cc"), TXT_LangKind_CPlusPlus}, {str8_lit_comp("cxx"), TXT_LangKind_CPlusPlus},
+    {str8_lit_comp("zig"), TXT_LangKind_Zig}, {str8_lit_comp("odin"), TXT_LangKind_Odin}, {str8_lit_comp("jai"), TXT_LangKind_Jai},
+  };
+  for EachElement(i, aliases)
+  {
+    if(str8_match(info, aliases[i].name, StringMatchFlag_CaseInsensitive)) { return aliases[i].kind; }
+  }
+  return txt_lang_kind_from_extension(info);
+}
+
+internal UIShell_RtCode *
+uishell_rt_code_of(UIShell_RichTextState *s, U64 key)
+{
+  for(UIShell_RtCode *c = s->codes; c != 0; c = c->next) { if(c->key == key) { return c; } }
+  return 0;
+}
+
+internal TXT_LangKind
+uishell_rt_code_lang(UIShell_RtCode *c)
+{
+  return c->has_override ? c->lang_override : c->fence_lang;
+}
+
+// The Block's embed, its text in the content cache keyed by its hash: a
+// Block still streaming, its fence open, moves to a new key as text arrives.
+internal UIShell_RtCode *
+uishell_rt_code(UIShell_RichTextState *s, UIShell_RtNode *n)
+{
+  UIShell_RtCode *c = uishell_rt_code_of(s, n->key);
+  if(c == 0)
+  {
+    c = push_array(s->arena, UIShell_RtCode, 1);
+    c->key = n->key;
+    c->tv.cursor = c->tv.mark = txt_pt(1, 1);
+    c->tv.preferred_column = 1;
+    SLLStackPush(s->codes, c);
+  }
+  if(c->version != n->version || c->content.root.u64[0] == 0)
+  {
+    U128 hash = u128_hash_from_str8(n->text);
+    if(!u128_match(hash, c->hash) || c->content.root.u64[0] == 0)
+    {
+      if(s->code_root.u64[0] == 0) { s->code_root = c_root_alloc(); }
+      if(c->content.root.u64[0] != 0) { c_close_key(c->content); }
+      c->content = c_key_make(s->code_root, c_id_make(hash.u64[0], hash.u64[1]));
+      Arena *data_arena = arena_alloc();
+      c->hash = c_submit_data(c->content, &data_arena, push_str8_copy(data_arena, n->text));
+    }
+    c->fence_lang = uishell_rt_lang_from_fence(n->language);
+    c->version = n->version;
+  }
+  return c;
+}
+
+internal void
+uishell_rt_code_set_lang(UIShell_RichTextState *s, U64 key, TXT_LangKind lang)
+{
+  UIShell_RtNode *n = uishell_rt_node(&s->model, key);
+  if(n == 0 || !uishell_rt_code_embedded(n)) { return; }
+  UIShell_RtCode *c = uishell_rt_code(s, n);
+  c->has_override = 1;
+  c->lang_override = lang;
+}
+
+// The embeds whose Blocks have gone go with them, and their content keys.
+internal void
+uishell_rt_prune_codes(UIShell_RichTextState *s)
+{
+  for(UIShell_RtCode **at = &s->codes; *at != 0;)
+  {
+    UIShell_RtNode *n = uishell_rt_node(&s->model, (*at)->key);
+    if(n == 0 || !uishell_rt_code_embedded(n))
+    {
+      if((*at)->content.root.u64[0] != 0) { c_close_key((*at)->content); }
+      if(s->focus_embed == (*at)->key) { s->focus_embed = 0; }
+      *at = (*at)->next;
+    }
+    else { at = &(*at)->next; }
+  }
+}
+
+internal U64
+uishell_rt_code_line_count(String8 text)
+{
+  U64 lines = 1;
+  for(U64 i = 0; i < text.size; i += 1) { lines += text.str[i] == '\n'; }
+  return lines;
+}
+
+// Shown at most this many lines inline, unless expanded.
+#define UISHELL_RT_CODE_INLINE_LINES 30
+
+// The code's own height, from its text so it holds before the lexer is
+// done, and whether the cap cut it (so it offers "expand").
+internal F32
+uishell_rt_code_height(UIShell_RtNode *n, B32 expanded, B32 *capped_out)
+{
+  U64 lines = uishell_rt_code_line_count(n->text);
+  *capped_out = lines > UISHELL_RT_CODE_INLINE_LINES;
+  return uishell_text_row_height()*(expanded ? lines : Min(lines, UISHELL_RT_CODE_INLINE_LINES));
+}
+
+internal TxtPt
+uishell_rt_pt_from_byte(String8 text, U64 byte)
+{
+  TxtPt pt = txt_pt(1, 1);
+  U64 line_start = 0;
+  for(U64 i = 0; i < Min(byte, text.size); i += 1)
+  {
+    if(text.str[i] == '\n') { pt.line += 1; line_start = i+1; }
+  }
+  pt.column = (S64)(Min(byte, text.size) - line_start) + 1;
+  return pt;
+}
+
+internal U64
+uishell_rt_byte_from_pt(String8 text, TxtPt pt)
+{
+  U64 byte = 0;
+  for(S64 line = 1; line < pt.line && byte < text.size; byte += 1) { line += text.str[byte] == '\n'; }
+  return Min(byte + (U64)Max(pt.column - 1, 0), text.size);
+}
+
+// Find hands a match in a code Embed to the code view: its selection on
+// the match, scrolled to it, and its own highlighting of the query.
+internal void
+uishell_rt_code_show_match(UIShell_RichTextState *s, U64 key, U32 start, U32 end)
+{
+  UIShell_RtNode *n = uishell_rt_node(&s->model, key);
+  if(n == 0 || !uishell_rt_code_embedded(n)) { return; }
+  UIShell_RtCode *c = uishell_rt_code(s, n);
+  c->tv.mark = uishell_rt_pt_from_byte(n->text, start);
+  c->tv.cursor = uishell_rt_pt_from_byte(n->text, end);
+  c->tv.preferred_column = c->tv.cursor.column;
+  c->contain_cursor = 1;
+}
+
+internal String8 uishell_rt_copy_block(Arena *arena, UIShell_RichTextState *s, U64 key, U32 format);
+
+// The copy hook (#542, decision 7): what an Embed gives to copy. A code
+// Block gives its text, or what is selected inside it while it has focus;
+// as markdown, its fence with its language. The core gives the rest.
+internal String8
+uishell_rt_embed_copy(Arena *arena, UIShell_RichTextState *s, U64 key, U32 format)
+{
+  UIShell_RtNode *n = uishell_rt_node(&s->model, key);
+  if(n && uishell_rt_code_embedded(n) && format == WHEELHOUSE_RICH_COPY_PLAIN)
+  {
+    UIShell_RtCode *c = uishell_rt_code(s, n);
+    if(s->focus_embed == key && !txt_pt_match(c->tv.cursor, c->tv.mark))
+    {
+      TxtRng r = txt_rng(c->tv.cursor, c->tv.mark);
+      U64 a = uishell_rt_byte_from_pt(n->text, r.min), b = uishell_rt_byte_from_pt(n->text, r.max);
+      return push_str8_copy(arena, str8_substr(n->text, r1u64(a, b)));
+    }
+    return push_str8_copy(arena, n->text);
+  }
+  return uishell_rt_copy_block(arena, s, key, format);
+}
+
+// The code a creation drag carries to where it drops: drag_drop_commit
+// takes nothing of the drag's own.
+global Arena *uishell_rt_code_drag_arena = 0;
+global String8 uishell_rt_code_drag_text = {0};
+global TXT_LangKind uishell_rt_code_drag_lang = TXT_LangKind_Null;
+
+// "Open in a new View" (#542, decision 10): a text View tab in `panel`
+// showing the code by value, as content parsed from the Rich Text is.
+internal RD_ViewAddress
+uishell_rt_code_open_in(RD_PanelAddress panel, String8 text, TXT_LangKind lang)
+{
+  RD_ViewAddress tab = rd_nil_view_address;
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, panel.owner);
+  if(rd_arrangement_panel_from_id(arrangement, panel.id) != &rd_nil_arrangement_panel)
+  {
+    tab = rd_new_view_tab(arrangement, panel.id, str8_lit("text"), str8_zero());
+    rd_view_setting_set(tab, str8_lit("text"), text);
+    if(lang != TXT_LangKind_Null) { rd_view_setting_set(tab, str8_lit("lang"), txt_extension_from_lang_kind(lang)); }
+    rd_arrangement_set(arrangement);
+  }
+  scratch_end(scratch);
+  return tab;
+}
+
+internal void
+uishell_rt_code_open(UIShell_RichTextState *s, U64 key)
+{
+  UIShell_RtNode *n = uishell_rt_node(&s->model, key);
+  if(n == 0 || !uishell_rt_code_embedded(n)) { return; }
+  RD_ViewAddress tab = uishell_rt_code_open_in(uishell_regs()->panel, n->text, uishell_rt_code_lang(uishell_rt_code(s, n)));
+  if(!rd_view_address_is_nil(tab)) { uishell_cmd("focus_tab", .view = tab, .tab = tab, .panel = uishell_regs()->panel); }
+}
+
+internal void
+uishell_rt_code_drop(RD_PanelAddress destination, Dir2 direction, RD_ViewAddress previous_tab)
+{
+  (void)previous_tab;
+  RD_ViewAddress tab = uishell_rt_code_open_in(destination, uishell_rt_code_drag_text, uishell_rt_code_drag_lang);
+  if(!rd_view_address_is_nil(tab) && direction != Dir2_Invalid)
+  {
+    uishell_cmd("split_panel", .dst_panel = destination, .panel = destination, .view = tab, .dir2 = direction);
+  }
+}
+
+internal void
+uishell_rt_code_drag_begin(UIShell_RichTextState *s, U64 key)
+{
+  UIShell_RtNode *n = uishell_rt_node(&s->model, key);
+  if(n == 0 || rd_drag_is_active()) { return; }
+  if(uishell_rt_code_drag_arena == 0) { uishell_rt_code_drag_arena = arena_alloc(); }
+  arena_clear(uishell_rt_code_drag_arena);
+  uishell_rt_code_drag_text = push_str8_copy(uishell_rt_code_drag_arena, n->text);
+  uishell_rt_code_drag_lang = uishell_rt_code_lang(uishell_rt_code(s, n));
+  rd_drag_begin(UIShell_ContextRegSlot_View);
+  rd_state->drag_drop_creation_name = str8_lit("text");
+  rd_state->drag_drop_commit = uishell_rt_code_drop;
+}
+
+////////////////////////////////
 //~ Measuring
 
 internal F32
@@ -1452,6 +1756,12 @@ uishell_rt_block_height(UIShell_RichTextState *s, UIShell_RtNode *n, F32 content
     inner = uishell_rt_table_height(&s->theme, n, t && t->expanded, s->viewport, &capped);
     // "Expand" or "Collapse" sits on a line under a capped table.
     if(capped || (t && t->expanded)) { inner += uishell_rt_line_px(&s->theme); }
+  }
+  else if(f.code_embed)
+  {
+    UIShell_RtCode *c = uishell_rt_code_of(s, n->key);
+    B32 capped = 0;
+    inner = uishell_rt_code_height(n, c && c->expanded, &capped);
   }
   else
   {
@@ -1786,6 +2096,32 @@ struct UIShell_RtPlacement
   F32 content_width;
 };
 
+// In a Block's coordinates: the code, and its hover controls right to left
+// from the Block's top right, above it.
+internal Rng2F32
+uishell_rt_code_rect(UIShell_RtPlaced *p, F32 code_height)
+{
+  F32 y0 = p->frame.pad_top + p->frame.inset_y;
+  return r2f32p(p->frame.indent, y0, dim_2f32(p->rect).x, y0 + code_height);
+}
+
+// A source/rendered switch, for a language with a Renderer of its own
+// (mermaid, LaTeX), would take the next slot.
+enum
+{
+  UIShell_RtControl_Copy,
+  UIShell_RtControl_Open,
+  UIShell_RtControl_Expand,
+};
+
+internal Rng2F32
+uishell_rt_control_rect(UIShell_RtPlaced *p, UIShell_RtTheme *t, U32 slot)
+{
+  F32 w = floor_f32(uishell_rt_px(t)*3.8f), h = uishell_rt_control_h(t), gap = uishell_rt_control_gap(t);
+  F32 x1 = dim_2f32(p->rect).x - slot*(w + gap), y1 = p->frame.pad_top - gap;
+  return r2f32p(x1 - w, y1 - h, x1, y1);
+}
+
 internal Vec2F32
 uishell_rt_text_origin(UIShell_RtPlaced *p)
 {
@@ -1874,7 +2210,7 @@ uishell_rt_selected_range(UIShell_RichTextState *s, WheelhouseRichSelection *sel
   if(n->order < lo_order || n->order > hi_order) { return 0; }
   *start = n->order == lo_order ? lo_byte : 0;
   *end = n->order == hi_order ? hi_byte : (U32)n->text.size;
-  if(n->kind == WHEELHOUSE_RICH_KIND_EMBED || n->kind == WHEELHOUSE_RICH_KIND_RULE)
+  if(uishell_rt_atomic(n))
   {
     // Atomic: selected when the range spans it.
     B32 spans = (n->order > lo_order && n->order < hi_order) || (lo_order != hi_order) || *end > *start;
@@ -2088,16 +2424,23 @@ uishell_rt_copy_block(Arena *arena, UIShell_RichTextState *s, U64 key, U32 forma
   return result;
 }
 
-// Copy: plain text and HTML for the clipboard. A focused table Embed copies
-// whole, as TSV.
+// Copy: plain text and HTML for the clipboard. A focused Embed copies
+// through its copy hook: a table whole, as TSV; code what is selected in it,
+// or all of it.
 internal void
 uishell_rt_copy_to_clipboard(UIShell_RichTextState *s)
 {
   Temp scratch = scratch_begin(0, 0);
-  if(s->focus_embed != 0)
+  UIShell_RtCode *code = s->focus_embed ? uishell_rt_code_of(s, s->focus_embed) : 0;
+  if(code && !txt_pt_match(code->tv.cursor, code->tv.mark))
   {
-    String8 plain = uishell_rt_copy_block(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_PLAIN);
-    String8 html = uishell_rt_copy_block(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_HTML);
+    // Selected inside a focused code Embed: that, as the code view copies.
+    wm_set_clipboard_text(uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_PLAIN));
+  }
+  else if(s->focus_embed != 0)
+  {
+    String8 plain = uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_PLAIN);
+    String8 html = uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_HTML);
     wm_set_clipboard_rich_text(plain, html);
   }
   else
@@ -2252,6 +2595,7 @@ uishell_rt_find_move(UIShell_RichTextState *s, B32 forward)
     s->caret_byte = match.end;
     s->caret_upstream = 0;
     s->has_caret = 1;
+    uishell_rt_code_show_match(s, match.key, match.start, match.end);
   }
   else
   {
@@ -2413,7 +2757,17 @@ uishell_rt_stops(Arena *arena, UIShell_RichTextState *s, UIShell_RtPlacement *pl
       uishell_rt_table_height(&s->theme, p->node, t && t->expanded, s->viewport, &capped);
       if(capped || (t && t->expanded)) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Expand, p->key, 1, 0}; }
     }
-    if(p->frame.code) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_CopyButton, p->key, 0, 0}; }
+    if(p->frame.code_embed)
+    {
+      more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Embed, p->key, 0, 0};
+      more[more_count++] = (UIShell_RtStop){UIShell_RtStop_CopyButton, p->key, 0, 0};
+      more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Open, p->key, 0, 0};
+      UIShell_RtCode *c = uishell_rt_code_of(s, p->key);
+      B32 capped = 0;
+      uishell_rt_code_height(p->node, c && c->expanded, &capped);
+      if(capped) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Expand, p->key, 1, 0}; }
+    }
+    else if(p->frame.code) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_CopyButton, p->key, 0, 0}; }
     for(U64 sp = 0; sp < p->node->span_count && more_count < ArrayCount(more); sp += 1)
     {
       WheelhouseRichSpan *span = &p->node->spans[sp];
@@ -2455,12 +2809,15 @@ uishell_rt_activate_stop(UIShell_RichTextState *s, UIShell_RtStop *stop)
     case UIShell_RtStop_Expand:
     {
       UIShell_RtTable *t = uishell_rt_table_of(s, stop->key);
+      UIShell_RtCode *c = uishell_rt_code_of(s, stop->key);
       if(t) { t->expanded = !t->expanded; }
+      if(c) { c->expanded = !c->expanded; }
     } break;
+    case UIShell_RtStop_Open: { uishell_rt_code_open(s, stop->key); } break;
     case UIShell_RtStop_CopyButton:
     {
       Temp scratch = scratch_begin(0, 0);
-      wm_set_clipboard_text(uishell_rt_copy_block(scratch.arena, s, stop->key, WHEELHOUSE_RICH_COPY_PLAIN));
+      wm_set_clipboard_text(uishell_rt_embed_copy(scratch.arena, s, stop->key, WHEELHOUSE_RICH_COPY_PLAIN));
       s->copied_key = stop->key;
       s->copied_until_us = now_time_us() + 1500000;
       scratch_end(scratch);
@@ -2508,6 +2865,14 @@ uishell_rt_select_point(UIShell_RichTextState *s, U64 key, U32 byte, B32 extend)
   char *error = 0;
   UIShell_RtNode *n = uishell_rt_node(&s->model, key);
   if(n == 0) { return; }
+  WheelhouseRichSelection sel = {0};
+  if(extend && uishell_rt_atomic(n) && wheelhouse_rich_text_selection(s->doc, s->sub, &sel, &error))
+  {
+    // A selection that reaches an atomic Block takes all of it: its far end
+    // from the anchor.
+    UIShell_RtNode *anchor = uishell_rt_node(&s->model, sel.anchor_key);
+    byte = anchor && anchor->order > n->order ? 0 : (U32)n->text.size;
+  }
   if(s->select_unit == 2 && n)
   {
     Rng1U32 word = uishell_rt_word_at(n->text, byte);
@@ -2569,6 +2934,15 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
       table_height = uishell_rt_table_height(t, under->node, table && table->expanded, s->viewport, &capped);
     }
     B32 in_table = table && contains_2f32(uishell_rt_table_rect(under, table_height), in_block);
+    UIShell_RtCode *code = 0;
+    F32 code_height = 0;
+    B32 code_capped = 0;
+    if(under && under->frame.code_embed)
+    {
+      code = uishell_rt_code(s, under->node);
+      code_height = uishell_rt_code_height(under->node, code->expanded, &code_capped);
+    }
+    B32 in_code = code && contains_2f32(uishell_rt_code_rect(under, code_height), in_block);
     if(evt->kind == UI_EventKind_Scroll && inside)
     {
       Vec2F32 delta = evt->delta_2f32;
@@ -2582,7 +2956,16 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
       // A table takes the wheel only while focused; sideways, always
       // (#542, decision 4).
       B32 to_table = in_table && table->table && (s->focus_embed == under->key || (px_delta.x != 0 && px_delta.y == 0));
-      if(to_table)
+      // Code scrolls sideways always, and down only while focused and
+      // capped: expanded, it is all in the document already.
+      B32 code_focused = in_code && s->focus_embed == under->key;
+      B32 code_down = code_focused && code_capped && !code->expanded && px_delta.y != 0;
+      if(in_code && (code_down || (px_delta.x != 0 && px_delta.y == 0)))
+      {
+        code->scroll.x += px_delta.x;
+        if(code_down) { code->scroll.y += px_delta.y; }
+      }
+      else if(to_table)
       {
         BinnacleAction a = {0};
         a.kind = BINNACLE_ACTION_SCROLL;
@@ -2608,8 +2991,37 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
       s->last_press_pos = evt->pos;
       s->drag_moved = 0;
       s->press_link = 0;
+      if(in_code)
+      {
+        // The click that focuses is the code view's too (#542, decision 5):
+        // left for its own selection to take.
+        s->focus_embed = under->key;
+        s->focus_stop = -1;
+        s->selecting = 0;
+        continue;
+      }
       ui_eat_event(evt);
-      if(under && under->frame.code && contains_2f32(uishell_rt_copy_button_rect(under, t), in_block))
+      if(code)
+      {
+        if(contains_2f32(uishell_rt_control_rect(under, t, UIShell_RtControl_Copy), in_block))
+        {
+          UIShell_RtStop stop = {UIShell_RtStop_CopyButton, under->key, 0, 0};
+          uishell_rt_activate_stop(s, &stop);
+          continue;
+        }
+        if(contains_2f32(uishell_rt_control_rect(under, t, UIShell_RtControl_Open), in_block))
+        {
+          s->open_press = under->key;
+          s->open_press_pos = evt->pos;
+          continue;
+        }
+        if(code_capped && contains_2f32(uishell_rt_control_rect(under, t, UIShell_RtControl_Expand), in_block))
+        {
+          code->expanded = !code->expanded;
+          continue;
+        }
+      }
+      if(under && under->frame.code && !under->frame.code_embed && contains_2f32(uishell_rt_copy_button_rect(under, t), in_block))
       {
         UIShell_RtStop stop = {UIShell_RtStop_CopyButton, under->key, 0, 0};
         uishell_rt_activate_stop(s, &stop);
@@ -2642,6 +3054,14 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
       if(!extend && s->press_count == 1 && uishell_rt_link_at(uishell_rt_node(&s->model, key), byte, &target, 0)) { s->press_link = 1; }
       uishell_rt_select_point(s, key, byte, extend);
       s->selecting = 1;
+      continue;
+    }
+    if(evt->kind == UI_EventKind_Release && s->open_press)
+    {
+      // Released before it became a drag: a click.
+      uishell_rt_code_open(s, s->open_press);
+      s->open_press = 0;
+      ui_eat_event(evt);
       continue;
     }
     if(evt->kind == UI_EventKind_Release && s->table_capture)
@@ -2698,6 +3118,12 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
       if(uishell_rt_hit(pl, v2f32(local.x, Clamp(0, local.y, dim_2f32(content).y)), &key, &byte)) { uishell_rt_select_point(s, key, byte, 1); }
       rd_request_frame();
     }
+  }
+  // Dragged past the threshold: the code goes where it drops, as a new View.
+  if(s->open_press && length_2f32(sub_2f32(mouse, s->open_press_pos)) > UIShell_DragThresholdPT)
+  {
+    uishell_rt_code_drag_begin(s, s->open_press);
+    s->open_press = 0;
   }
   if(s->table_capture)
   {
@@ -2769,6 +3195,19 @@ uishell_rt_moved_point(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UI_Eve
   }
   B32 upstream = *upstream_io;
   *upstream_io = 0;
+  if(uishell_rt_atomic(n) && (dx != 0 || dy != 0))
+  {
+    // Across an atomic Block in one step: to its far end, then on.
+    B32 forward = dx > 0 || dy > 0;
+    if(forward ? byte < text.size : byte > 0) { *byte_io = forward ? (U32)text.size : 0; return 1; }
+    S64 order = (S64)n->order + (forward ? 1 : -1);
+    if(order < 0 || order >= (S64)m->block_count) { return 0; }
+    UIShell_RtNode *to = uishell_rt_node(m, m->block_keys[order]);
+    if(to == 0) { return 0; }
+    *key_io = to->key;
+    *byte_io = forward ? 0 : (U32)to->text.size;
+    return 1;
+  }
   UIShell_RtPlaced *placed = uishell_rt_placed(pl, n->key);
   if(dx != 0 && evt->delta_unit == UI_EventDeltaUnit_Char && placed && placed->layout)
   {
@@ -2876,6 +3315,7 @@ uishell_rt_keys(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UIShell_RtSto
         ui_eat_event(evt);
       }
       else if(table && table->table && uishell_table_key(wheelhouse_table_grid(table->table), evt)) { ui_eat_event(evt); }
+      // A code Embed's keys go to the code view, after this loop.
       continue;
     }
     if(tab)
@@ -2963,6 +3403,20 @@ uishell_rt_keys(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UIShell_RtSto
     }
     ui_eat_event(evt);
   }
+  UIShell_RtCode *code = s->focus_embed ? uishell_rt_code_of(s, s->focus_embed) : 0;
+  if(code)
+  {
+    Access *access = access_open();
+    U128 hash = {0};
+    TXT_TextInfo info = txt_text_info_from_key_lang(access, code->content, uishell_rt_code_lang(code), &hash);
+    String8 data = c_data_from_hash(access, hash);
+    S64 page = (S64)(pl->viewport/uishell_text_row_height());
+    if(info.lines_count != 0 && rd_do_txt_controls(&info, data, (U64)ClampBot(1, page-1), &code->tv.cursor, &code->tv.mark, &code->tv.preferred_column))
+    {
+      code->contain_cursor = 1;
+    }
+    access_close(access);
+  }
   uishell_rt_error(&error);
 }
 
@@ -3030,7 +3484,7 @@ uishell_rt_overlays(Arena *arena, UIShell_RichTextState *s, UIShell_RtPlaced *p,
   U32 sel_start = 0, sel_end = 0;
   if(has_sel && uishell_rt_selected_range(s, sel, p->node, &sel_start, &sel_end))
   {
-    if(l == 0 || p->node->kind == WHEELHOUSE_RICH_KIND_EMBED || p->node->kind == WHEELHOUSE_RICH_KIND_RULE)
+    if(l == 0 || uishell_rt_atomic(p->node))
     {
       UISHELL_RT_QUAD(r2f32p(p->frame.indent, 0, dim_2f32(p->rect).x, p->height), t->selection);
       d->selection_quads += 1;
@@ -3180,6 +3634,7 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       uishell_rt_model_apply(&s->model, delta);
       wheelhouse_rich_delta_release(delta);
       uishell_rt_prune_tables(s);
+      uishell_rt_prune_codes(s);
       // A reload starts find's scan again.
       s->match_count = 0;
     }
@@ -3255,7 +3710,7 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     }
     else if(str8_match(cmd->name, str8_lit("copy_markdown"), 0))
     {
-      String8 markdown = s->focus_embed ? uishell_rt_copy_block(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_MARKDOWN)
+      String8 markdown = s->focus_embed ? uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_MARKDOWN)
                                         : uishell_rt_copy(scratch.arena, s, WHEELHOUSE_RICH_COPY_MARKDOWN);
       if(markdown.size) { wm_set_clipboard_text(markdown); }
     }
@@ -3323,6 +3778,8 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   F32 digit = Max(1.f, fnt_dim_from_tag_size_string(ui_top_font(), ui_top_font_size(), 0, 0, str8_lit("0")).x);
   B32 copied_showing = s->copied_until_us > now_time_us();
   if(copied_showing) { rd_request_frame_at(s->copied_until_us); }
+  Access *access = access_open();
+  Vec2F32 mouse = ui_mouse();
   UI_Parent(bars.content_box)
   {
     for(U64 i = 0; i < pl.count; i += 1)
@@ -3361,7 +3818,91 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       ui_box_equip_custom_draw(box, uishell_rt_block_draw, d);
       s->stats.blocks_boxed += 1;
       B32 stop_here = s->focus_stop >= 0 && s->focus_stop_value.key == p->key;
-      if(p->frame.code)
+      if(p->frame.code_embed)
+      {
+        UIShell_RtCode *c = uishell_rt_code(s, p->node);
+        B32 capped = 0;
+        F32 code_height = uishell_rt_code_height(p->node, c->expanded, &capped);
+        Rng2F32 cr = uishell_rt_code_rect(p, code_height);
+        B32 focused_here = s->focus_embed == p->key;
+        d->focused = focused_here;
+        // Line numbers come on when the whole of it shows.
+        c->line_numbers = c->expanded;
+        U128 hash = {0};
+        TXT_TextInfo info = txt_text_info_from_key_lang(access, c->content, uishell_rt_code_lang(c), &hash);
+        String8 data = c_data_from_hash(access, hash);
+        F32 row = uishell_text_row_height();
+        if(info.lines_count == 0) { rd_request_frame(); }
+        else
+        {
+          // Expanded, it scrolls with the document: only the part in the
+          // viewport is built.
+          if(c->expanded) { c->scroll.y = 0; }
+          if(c->contain_cursor)
+          {
+            c->contain_cursor = 0;
+            F32 y = (c->tv.cursor.line-1)*row;
+            if(!c->expanded)
+            {
+              if(y < c->scroll.y) { c->scroll.y = y; }
+              if(y + row > c->scroll.y + code_height) { c->scroll.y = y + row - code_height; }
+            }
+            F32 advance = fnt_column_size_from_tag_size(rd_font_from_slot(RD_FontSlot_Code), rd_font_size());
+            F32 x = c->text_x + (c->tv.cursor.column-1)*advance;
+            if(x < c->scroll.x) { c->scroll.x = Max(0, x - advance*4); }
+            if(x > c->scroll.x + dim_2f32(cr).x - advance*2) { c->scroll.x = x - dim_2f32(cr).x + advance*4; }
+          }
+          c->scroll.x = Clamp(0, c->scroll.x, Max(0, c->content_dim.x - dim_2f32(cr).x));
+          c->scroll.y = Clamp(0, c->scroll.y, Max(0, row*info.lines_count - code_height));
+          F32 viewport_top = -p->rect.y0, viewport_bottom = (F32)pl.viewport - p->rect.y0;
+          UIShell_TextEmbedParams params = {0};
+          params.info = &info;
+          params.data = data;
+          params.rect = cr;
+          params.visible = r2f32p(cr.x0, Max(cr.y0, viewport_top), cr.x1, Min(cr.y1, viewport_bottom));
+          params.scroll = c->scroll;
+          params.show_line_numbers = c->line_numbers;
+          params.search_query = s->find_active ? str8(s->find_query, s->find_query_size) : str8_zero();
+          UIShell_TextEmbedSignal sig = {0};
+          UI_Parent(box) { sig = uishell_text_embed(&params, &c->tv, str8_lit("###rt_code")); }
+          c->lines_built = sig.lines_built;
+          c->content_dim = sig.content_dim;
+          c->text_x = sig.text_x;
+          if(ui_dragging(sig.base)) { rd_request_frame(); }
+        }
+        if(p->frame.label_above)
+        {
+          UI_Parent(box) UI_Rect(r2f32p(p->frame.indent + p->frame.inset_x, p->frame.pad_top, cr.x1, cr.y0)) UI_TagF("weak")
+          {
+            ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText, "%S###rt_code_label", p->frame.label);
+          }
+        }
+        // The hover controls, outside it: shown while the pointer is over the
+        // Block, or it or one of them has focus.
+        Rng2F32 screen = shift_2f32(p->rect, content_rect.p0);
+        B32 controls_stop = stop_here && s->focus_stop_value.kind != UIShell_RtStop_Link;
+        if(contains_2f32(screen, mouse) || focused_here || controls_stop)
+        {
+          B32 copied = copied_showing && s->copied_key == p->key;
+          struct { U32 slot; UIShell_RtStopKind stop; char *label; char *key; } controls[] =
+          {
+            {UIShell_RtControl_Copy, UIShell_RtStop_CopyButton, copied ? "Copied" : "Copy", "rt_copy"},
+            {UIShell_RtControl_Open, UIShell_RtStop_Open, "Open", "rt_open"},
+            {UIShell_RtControl_Expand, UIShell_RtStop_Expand, c->expanded ? "Collapse" : "Expand", "rt_expand"},
+          };
+          for EachElement(k, controls)
+          {
+            if(controls[k].slot == UIShell_RtControl_Expand && !capped) { continue; }
+            B32 on = stop_here && s->focus_stop_value.kind == controls[k].stop;
+            UI_Parent(box) UI_Rect(uishell_rt_control_rect(p, t, controls[k].slot)) UI_TextAlignment(UI_TextAlign_Center) UI_TagF(on ? "hover" : "weak")
+            {
+              ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText|UI_BoxFlag_DrawBorder|(on ? UI_BoxFlag_DrawBackground : 0),
+                                        "%s###%s", controls[k].label, controls[k].key);
+            }
+          }
+        }
+      }
+      else if(p->frame.code)
       {
         B32 copied = copied_showing && s->copied_key == p->key;
         UI_Parent(box) UI_Rect(uishell_rt_copy_button_rect(p, t)) UI_TextAlignment(UI_TextAlign_Center)
@@ -3412,7 +3953,8 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       else if(stop_here && s->focus_stop_value.kind == UIShell_RtStop_Embed) { d->focused = 1; }
     }
   }
-  if(s->selecting || s->table_capture) { rd_request_frame(); }
+  access_close(access);
+  if(s->selecting || s->table_capture || s->open_press) { rd_request_frame(); }
   uishell_rt_prune_buckets(s);
   scratch_end(scratch);
 }

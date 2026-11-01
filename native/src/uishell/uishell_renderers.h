@@ -34,6 +34,7 @@ enum
   "x:{" \
   "@description(\"An expression to describe data which should be viewed as text or code.\") 'expression': expr_string," \
   "@optional @description(\"The language that the text should be interpreted as being within.\") 'lang': code_string," \
+  "@optional @no_callee_helper @description(\"Text shown by value, without an expression: a code Block opened in a new View.\") 'text': string," \
   "@no_callee_helper @default(1) @description(\"Controls whether or not line numbers are shown.\") 'show_line_numbers': bool," \
   "@no_callee_helper @default(1) @display_name('Line Wrapping') @description(\"Splits textual lines into multiple visual lines.\") 'line_wrapping': bool," \
   "@no_callee_helper @default(0) @display_name('Scroll To Bottom On Change') @description(\"Scrolls to the bottom if the text is changed.\") 'scroll_to_bottom_on_change': bool," \
@@ -100,7 +101,7 @@ enum
 // finishes after its View has gone. The terminal fixture is the terminal with
 // fixture input. A web View shows a page a Handler's program renders.
 #define WH_RENDERERS(X) \
-  X(text, shell_text, WH_STATE(UIShell_TextViewState), WH_Content_File|WH_Content_Page, \
+  X(text, shell_text, WH_STATE(UIShell_TextViewState), WH_Content_File|WH_Content_Page|WH_Content_Embed, \
     RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview|RD_ViewTrait_Visualizer|RD_ViewTrait_LegacyEval|RD_ViewTrait_VersionedSurface|RD_ViewTrait_Listed, \
     0, WorkspaceRegion, WH_EXPAND(shell_text), UISHELL_TEXT_SETTINGS, WH_NO_PLACEHOLDER) \
   X(binary, binary, WH_STATE(UIShell_BinaryViewState), WH_Content_Page, \
@@ -186,7 +187,8 @@ enum
   X(luchs, WH_Content_Url, "http https file", "", web, "luchs", \
     "--endpoint {endpoint} --size {width}x{height} {page}") \
   X(markdown, WH_Content_File, "", "text/markdown", rich_text, "", "") \
-  X(table_embed, WH_Content_Embed, "", "application/vnd.flotilla.table", table, "", "")
+  X(table_embed, WH_Content_Embed, "", "application/vnd.flotilla.table", table, "", "") \
+  X(code_embed, WH_Content_Embed, "", "application/vnd.flotilla.code", text, "", "")
 
 // Each Renderer's place in the list.
 typedef enum WH_RendererIndex
