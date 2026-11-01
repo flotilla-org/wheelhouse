@@ -28,6 +28,12 @@ struct MAC_FP_Font
   CGDataProviderRef provider;
   CGFontRef cg_font;
   B32 has_color_tables;
+  // The colour tables, borrowed in place, read on first use.
+  B32 color_tables_read;
+  CFDataRef colr;
+  CFDataRef cblc;
+  CFDataRef cbdt;
+  B32 has_sbix;
 };
 
 typedef struct MAC_FP_State MAC_FP_State;

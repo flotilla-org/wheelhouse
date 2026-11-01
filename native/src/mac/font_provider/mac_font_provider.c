@@ -36,6 +36,9 @@ mac_fp_font_release(MAC_FP_Font *font)
 {
   if(font != 0)
   {
+    if(font->colr != 0) { CFRelease(font->colr); }
+    if(font->cblc != 0) { CFRelease(font->cblc); }
+    if(font->cbdt != 0) { CFRelease(font->cbdt); }
     if(font->cg_font != 0)
     {
       CGFontRelease(font->cg_font);
@@ -508,6 +511,30 @@ mac_fp_table(Arena *arena, CGFontRef cg_font, char *tag)
   return result;
 }
 
+internal String8
+mac_fp_data_string(CFDataRef data)
+{
+  String8 result = {0};
+  if(data != 0) { result = str8((U8 *)CFDataGetBytePtr(data), (U64)CFDataGetLength(data)); }
+  return result;
+}
+
+// Read once per font: an emoji font's CBDT is megabytes.
+internal void
+mac_fp_read_color_tables(MAC_FP_Font *font)
+{
+  if(!font->color_tables_read && font->has_color_tables)
+  {
+    font->colr = CGFontCopyTableForTag(font->cg_font, fp_tag_from_string("COLR"));
+    font->cblc = CGFontCopyTableForTag(font->cg_font, fp_tag_from_string("CBLC"));
+    font->cbdt = CGFontCopyTableForTag(font->cg_font, fp_tag_from_string("CBDT"));
+    CFDataRef sbix = CGFontCopyTableForTag(font->cg_font, fp_tag_from_string("sbix"));
+    font->has_sbix = (sbix != 0);
+    if(sbix != 0) { CFRelease(sbix); }
+  }
+  font->color_tables_read = 1;
+}
+
 // CoreText doesn't hint, so the hinting flag has nothing to change here.
 fp_hook FP_GlyphRaster
 fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
@@ -551,10 +578,13 @@ fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
     //- CBDT, which CoreText doesn't draw: its PNG, decoded and scaled
     CGGlyph glyph = (CGGlyph)params->glyph_id;
     B32 done = 0;
-    if(font->has_color_tables)
+    // A colour bitmap is drawn as it is: embolden, skew and the subpixel
+    // offset don't apply to emoji, though they still part its cache keys.
+    mac_fp_read_color_tables(font);
+    if(font->cblc != 0)
     {
-      String8 cblc = mac_fp_table(scratch.arena, font->cg_font, "CBLC");
-      String8 cbdt = mac_fp_table(scratch.arena, font->cg_font, "CBDT");
+      String8 cblc = mac_fp_data_string(font->cblc);
+      String8 cbdt = mac_fp_data_string(font->cbdt);
       String8 png = {0};
       S16 left = 0, top = 0;
       U32 ppem = 0;
@@ -603,10 +633,7 @@ fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
     B32 color = 0;
     if(font->has_color_tables)
     {
-      String8 colr = mac_fp_table(scratch.arena, font->cg_font, "COLR");
-      String8 sbix = mac_fp_table(scratch.arena, font->cg_font, "sbix");
-      String8 cbdt = mac_fp_table(scratch.arena, font->cg_font, "CBDT");
-      color = fp_colr_glyph_has_layers(colr, params->glyph_id) || sbix.size != 0 || cbdt.size != 0;
+      color = fp_colr_glyph_has_layers(mac_fp_data_string(font->colr), params->glyph_id) || font->has_sbix || font->cbdt != 0;
     }
     
     if(!done && rect.size.width > 0 && rect.size.height > 0 && w > 0 && h > 0 && w < 4096 && h < 4096)

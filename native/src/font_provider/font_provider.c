@@ -133,7 +133,8 @@ internal B32
 fp_cbdt_png(String8 cblc, String8 cbdt, U32 glyph_id, F32 size_px, String8 *png_out, S16 *left_out, S16 *top_out, U32 *ppem_out)
 {
   B32 result = 0;
-  U64 sizes = fp_be32(cblc, 4);
+  // Counts are capped by what the table can hold, against a corrupt header.
+  U64 sizes = Min(fp_be32(cblc, 4), cblc.size/48);
   U64 best = max_U64;
   U32 best_ppem = 0;
   for EachIndex(idx, sizes)
@@ -149,7 +150,7 @@ fp_cbdt_png(String8 cblc, String8 cbdt, U32 glyph_id, F32 size_px, String8 *png_
   if(best != max_U64)
   {
     U64 array = fp_be32(cblc, best);
-    U64 count = fp_be32(cblc, best + 8);
+    U64 count = Min(fp_be32(cblc, best + 8), cblc.size/8);
     for EachIndex(idx, count)
     {
       U64 entry = array + idx*8;
@@ -168,7 +169,7 @@ fp_cbdt_png(String8 cblc, String8 cbdt, U32 glyph_id, F32 size_px, String8 *png_
         case 3: { offset = fp_be16(cblc, sub + 8 + n*2); end = fp_be16(cblc, sub + 10 + n*2); }break;
         case 4:
         {
-          U64 glyphs = fp_be32(cblc, sub + 8);
+          U64 glyphs = Min(fp_be32(cblc, sub + 8), cblc.size/4);
           for EachIndex(g, glyphs)
           {
             if(fp_be16(cblc, sub + 12 + g*4) == glyph_id)
@@ -190,7 +191,7 @@ fp_cbdt_png(String8 cblc, String8 cbdt, U32 glyph_id, F32 size_px, String8 *png_
       }
       U64 at = image_base + offset;
       U64 data_len = 0, data_at = 0;
-      if(end > offset && image_base + end <= cbdt.size)
+      if(end > offset && image_base + end <= cbdt.size && at + 12 <= cbdt.size)
       {
         switch(image_format)
         {
