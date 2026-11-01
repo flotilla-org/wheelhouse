@@ -131,6 +131,12 @@ flag = "rich_text"
 prefix = "rich-text"
 os = ["linux", "macos", "windows"]
 
+# The text view's token lookup and its 10k-line timing test (#622).
+[[diagnostic]]
+flag = "text_view"
+prefix = "text-view"
+os = ["linux", "macos", "windows"]
+
 # See the remote-terminal and shared-terminal checks above for why this is
 # macOS-only.
 [[diagnostic]]

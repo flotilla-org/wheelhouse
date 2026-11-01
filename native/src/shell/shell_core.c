@@ -1736,6 +1736,12 @@ wh_view_ui_direct(WH_Renderer *renderer, RD_ViewAddress view, Rng2F32 rect)
   Temp scratch = scratch_begin(0, 0);
   RD_ViewState *vs = rd_view_state_from_view(view, 0);
   WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, view, renderer, rd_view_user_data(vs, renderer->state_size), rect);
+  // As the panel's View container does: a legacy-eval Renderer reads its
+  // content from its expression's evaluation.
+  if(wh_renderer_has_trait(renderer, RD_ViewTrait_LegacyEval))
+  {
+    ctx.legacy_eval = e_eval_from_string(rd_expr_from_cfg(rd_cfg_from_view(view)));
+  }
   wh_slot_host_ui(renderer, &ctx, vs);
   scratch_end(scratch);
 }
