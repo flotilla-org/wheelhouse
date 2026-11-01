@@ -145,7 +145,10 @@ impl RichText {
     }
 
     /// The whole conversation as markdown, backfilled first so none of it
-    /// is missing; None for markdown, which a selection copies.
+    /// is missing; None for markdown, which a selection copies. The backfill
+    /// runs to the end here, without yielding: a frontend that mustn't wait
+    /// on a large file backfills a step a frame and copies once
+    /// [`RichText::backfill_remaining`] is 0.
     pub fn copy_all(&mut self) -> Option<String> {
         self.conversation.as_ref()?;
         while self.backfill(Duration::from_secs(1)) > 0 {}

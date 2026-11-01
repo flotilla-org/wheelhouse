@@ -1016,8 +1016,10 @@ impl Conversation {
                     parts.push(part);
                 }
                 Body::Subagent { .. } => parts.push(format!("**Subagent** {}", item.thread)),
-                Body::Divider { text } => parts.push(format!("--- {text} ---")),
-                Body::Notice { text } => parts.push(format!("> {text}")),
+                // Emphasis, not dashes: `--- x ---` pastes as a rule or a
+                // setext heading.
+                Body::Divider { text } => parts.push(format!("*— {} —*", text.replace('*', "\\*"))),
+                Body::Notice { text } => parts.push(text.split('\n').map(|line| format!("> {line}")).collect::<Vec<_>>().join("\n")),
             }
             self.transcript_into(key, parts);
         }

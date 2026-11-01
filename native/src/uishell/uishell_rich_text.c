@@ -1493,8 +1493,14 @@ struct UIShell_RichTextState
   U64 notice_until_us;
   // A conversation (#616), and the one thread it shows if a subagent's.
   B32 conversation;
-  U8 thread[256];
-  U64 thread_size;
+  // On `arena`, whole: an id is the file's, of any length.
+  String8 thread;
+  // Copy All waits for backfill to finish, a step a frame.
+  B32 copy_all_pending;
+  // The hovered Container's copy actions, as of this generation.
+  U64 actions_key;
+  U64 actions_generation;
+  U32 actions_mask;
   // The Container Style set it draws with, and where its column is.
   UIShell_RtStyleSet *styles;
   F32 content_x;
@@ -1554,7 +1560,8 @@ uishell_rt_error(char **error)
 //~ Collapsing, and opening a thread
 
 // Whether `key` is newly in the set of Containers already collapsed by
-// default.
+// default. A doubling leaves the old table in `arena`: a geometric series,
+// so under twice what the last table takes.
 internal B32
 uishell_rt_defaulted_insert(UIShell_RichTextState *s, U64 key)
 {
@@ -3098,11 +3105,17 @@ uishell_rt_actions(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UIShell_Rt
     if(p->part == (header ? WHEELHOUSE_RICH_PART_HEADER : WHEELHOUSE_RICH_PART_FOOTER)) { row = p; }
   }
   if(row == 0) { return 0; }
-  char *error = 0;
-  U32 mask = 0;
-  wheelhouse_rich_text_copy_actions(s->doc, s->hover_key, &mask, &error);
-  uishell_rt_error(&error);
-  mask &= row->style->actions;
+  // Asked once per Container and generation, not every frame it is hovered.
+  if(s->actions_key != s->hover_key || s->actions_generation != s->model.generation)
+  {
+    char *error = 0;
+    s->actions_mask = 0;
+    wheelhouse_rich_text_copy_actions(s->doc, s->hover_key, &s->actions_mask, &error);
+    uishell_rt_error(&error);
+    s->actions_key = s->hover_key;
+    s->actions_generation = s->model.generation;
+  }
+  U32 mask = s->actions_mask & row->style->actions;
   B32 header = row->part == WHEELHOUSE_RICH_PART_HEADER;
   F32 y0 = row->rect.y0 + uishell_rt_em(t, header ? row->style->inset_top : row->style->inset_bottom);
   F32 h = header ? uishell_rt_header_row(t) : uishell_rt_action_row(t);
@@ -3135,7 +3148,9 @@ uishell_rt_do_action(UIShell_RichTextState *s, UIShell_RtAction *a)
   uishell_rt_error(&error);
 }
 
-// Copy All: the whole transcript, backfilled first.
+// Copy All: the whole transcript. The core backfills what is left before it
+// copies, so the View asks only once its per-frame backfill has finished,
+// and the window never waits on a large file's read.
 internal void
 uishell_rt_copy_all(UIShell_RichTextState *s)
 {
@@ -3845,14 +3860,13 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   // A conversation shows from its contract file (#616), one thread of it
   // if the View names a subagent's.
   String8 path = uishell_rt_path_from_expr(scratch.arena, rd_expr_from_cfg(rd_cfg_from_view(ctx->settings.view)));
-  String8 thread = str8_prefix(wh_view_setting(ctx, str8_lit("thread")), sizeof(s->thread));
-  if((!str8_match(path, str8(s->path, s->path_size), 0) || !str8_match(thread, str8(s->thread, s->thread_size), 0)) && path.size <= sizeof(s->path))
+  String8 thread = wh_view_setting(ctx, str8_lit("thread"));
+  if((!str8_match(path, str8(s->path, s->path_size), 0) || !str8_match(thread, s->thread, 0)) && path.size <= sizeof(s->path))
   {
     uishell_rt_reset(s);
     MemoryCopy(s->path, path.str, path.size);
     s->path_size = path.size;
-    MemoryCopy(s->thread, thread.str, thread.size);
-    s->thread_size = thread.size;
+    s->thread = push_str8_copy(s->arena, thread);
   }
   B32 conversation = str8_match(wh_media_type_from_path(path), str8_lit(WH_CONVERSATION_MEDIA_TYPE), 0);
   FileProperties props = properties_from_file_path(path);
@@ -3869,8 +3883,7 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       uishell_rt_reset(s);
       MemoryCopy(s->path, path.str, path.size);
       s->path_size = path.size;
-      MemoryCopy(s->thread, thread.str, thread.size);
-      s->thread_size = thread.size;
+      s->thread = push_str8_copy(s->arena, thread);
     }
     if(s->doc == 0)
     {
@@ -3909,6 +3922,11 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     U64 left = 0;
     wheelhouse_rich_text_backfill(s->doc, 0, &left, &error);
     if(left) { rd_request_frame(); }
+    if(s->copy_all_pending && left == 0)
+    {
+      uishell_rt_copy_all(s);
+      s->copy_all_pending = 0;
+    }
   }
   if(s->doc)
   {
@@ -3969,7 +3987,11 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       ui_label(str8(s->notice, s->notice_size));
       rd_request_frame_at(s->notice_until_us);
     }
-    if(s->conversation && ui_clicked(ui_buttonf("Copy All###rich_text_copy_all"))) { uishell_rt_copy_all(s); }
+    if(s->conversation && ui_clicked(ui_buttonf("%s###rich_text_copy_all", s->copy_all_pending ? "Copying..." : "Copy All")))
+    {
+      s->copy_all_pending = 1;
+      rd_request_frame();
+    }
     if(ui_clicked(ui_buttonf("Source###rich_text_source"))) { uishell_cmd("toggle_markdown_source"); }
   }
 

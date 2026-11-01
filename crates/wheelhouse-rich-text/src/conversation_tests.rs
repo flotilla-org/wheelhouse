@@ -381,3 +381,13 @@ fn copy_all_is_the_transcript_without_reasoning() {
     insta::assert_snapshot!("transcript", rich.copy_all().unwrap());
     assert_eq!(RichText::open("# hi").copy_all(), None);
 }
+
+// Pasted as markdown, a notice stays one quote, every line of it, and a
+// Divider isn't read as a rule or a heading.
+#[test]
+fn copy_all_quotes_a_notice_whole_and_keeps_a_divider_out_of_headings() {
+    let error = line(r#"{"type":"RunError","threadId":"t","seq":1,"message":"first line\nsecond line"}"#);
+    let compaction = line(r#"{"type":"Custom","threadId":"t","seq":2,"name":"compaction","value":{}}"#);
+    let all = RichText::open_conversation(&[line(HELLO), error, compaction].concat()).copy_all().unwrap();
+    assert_eq!(all, "> first line\n> second line\n\n*— compaction —*");
+}

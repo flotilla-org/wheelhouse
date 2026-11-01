@@ -74,9 +74,9 @@ src/a.rs:3: flaky
 
 **Bash** cargo build
 
---- compaction ---
+*— compaction —*
 
---- interrupted ---
+*— interrupted —*
 
 ## User
 

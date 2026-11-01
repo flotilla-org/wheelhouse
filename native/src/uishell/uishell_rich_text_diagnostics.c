@@ -989,7 +989,8 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
               str8_match(wh_handler_from_media_type(WH_Content_File, str8_lit("application/vnd.wheelhouse.conversation+jsonl"))->renderer,
                          str8_lit("rich_text"), 0),
               "a conversation's file and media type resolve to the Rich Text Renderer");
-    RichCheck(wh_media_type_from_path(str8_lit("/tmp/plain.jsonl")).size == 0, "other JSON Lines resolve to no Handler");
+    RichCheck(wh_media_type_from_path(str8_lit("/tmp/plain.jsonl")).size == 0 && wh_media_type_from_path(str8_lit("/tmp/.events.jsonl")).size == 0,
+              "other JSON Lines, and a file named only .events.jsonl, resolve to no Handler");
     d->rect = r2f32p(0, 0, 900, 900);
     s = uishell_rt_diag_open(d, chat);
     RichCheck(s && s->doc && s->conversation && s->styles == uishell_rt_style_set_from_name(str8_lit("chat")),
@@ -1130,8 +1131,11 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
         RichCheck(!ui_box_is_nil(all), "a conversation's bar has Copy All");
         if(!ui_box_is_nil(all))
         {
+          // Backfilled first, a step a frame; then copied.
           d->now_us += 2000000;
+          U64 writes = d->clip.writes;
           s = uishell_rt_diag_click(d, center_2f32(all->rect), 0, 1);
+          for(U32 i = 0; i < 1000 && d->clip.writes == writes; i += 1) { s = uishell_rt_diag_frame(d, 0); }
           String8 text = d->clip.text;
           RichCheck(str8_match(str8_prefix(text, 9), str8_lit("## User\n\n"), 0) && uishell_rt_diag_contains(text, str8_lit("Please run the *harbour* tests.")) &&
                     uishell_rt_diag_contains(text, str8_lit("```sh\ncargo test harbour\n```")) && uishell_rt_diag_contains(text, str8_lit("Find the free berth.")) &&
