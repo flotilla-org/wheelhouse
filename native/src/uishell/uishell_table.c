@@ -29,6 +29,9 @@ struct UIShell_TableState
   UI_ScrollThumb thumb[Axis2_COUNT];
   F32 content_px[Axis2_COUNT];
   F32 page_px[Axis2_COUNT];
+  // Where the scrolling Strip draws, which the bar keeps to: it scrolls only
+  // what moves, clear of the headers and pinned items.
+  Rng1F32 scrolling[Axis2_COUNT];
   // Bumped when either Thumb moves, which keeps an overlay bar up a while.
   U64 scrolled;
   // The fraction a thumb drag last asked for, so a held thumb asks once.
@@ -422,7 +425,8 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   for EachEnumVal(Axis2, axis)
   {
     axes[axis] = (UI_ScrollRegionThumbAxis){state->thumb[axis], (F32)(state->scrolled & 0xffff),
-                                            &state->thumb[axis].fraction, sizeof(state->thumb[axis].fraction)};
+                                            &state->thumb[axis].fraction, sizeof(state->thumb[axis].fraction),
+                                            state->scrolling[axis]};
   }
   UI_ScrollRegionThumbSignal bars = ui_scroll_region_build_thumbs(root, ui_key_from_string(root->key, str8_lit("table_grid")), &region, axes,
                                                                   UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise|UI_BoxFlag_Clip);
@@ -529,6 +533,7 @@ WH_VIEW_UI_FUNCTION_DEF(table)
     if(thumb.fraction != state->thumb[axis].fraction) { state->scrolled += 1; }
     state->thumb[axis] = thumb;
     state->page_px[axis] = body;
+    state->scrolling[axis] = r1f32(a->scrolling_start, a->scrolling_end);
     state->content_px[axis] = thumb.size >= 1 || thumb.size <= 0 ? 0 : a->extent - body + (F32)(body/thumb.size);
   }
   ui_box_equip_custom_draw(box, uishell_table_draw, draw);

@@ -410,6 +410,11 @@ uishell_table_diagnostics(RD_WindowState *ws)
         TableCheck(!ui_box_is_nil(grid_box) && grid_box->rect.x1 <= 900 && (style == UI_ScrollBarStyle_Overlay || grid_box->rect.x1 < 900),
                    "a classic bar takes its gutter from the grid; an overlay one floats");
         if(ui_box_is_nil(thumb) || ui_box_is_nil(grid_box)) { continue; }
+        {
+          UIShell_TableDraw *first = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          F32 scrolling_start = grid_box->rect.y0 + first->snap.axes[BINNACLE_ROWS].scrolling_start;
+          TableCheck(thumb->parent->rect.y0 >= scrolling_start - 0.5f, "the vertical bar keeps clear of the column headers");
+        }
         // Drag the thumb past the end of its track.
         Vec2F32 grab = center_2f32(thumb->rect);
         Rng2F32 track = thumb->parent->rect;

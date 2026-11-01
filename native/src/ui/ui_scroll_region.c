@@ -196,6 +196,12 @@ ui_scroll_region_build_thumbs(UI_Box *parent, UI_Key key, UI_ScrollRegion *regio
       }
       if(vis <= 0.001f && !dragging) { continue; }
       Rng2F32 bar_rect = ui_scroll_region_bar_rect(region, axis, thickness, visible[axis2_flip(axis)]);
+      if(axes[axis].span.max > axes[axis].span.min)
+      {
+        F32 start = region->viewport.p0.v[axis];
+        bar_rect.p0.v[axis] = Max(bar_rect.p0.v[axis], start + axes[axis].span.min);
+        bar_rect.p1.v[axis] = Min(bar_rect.p1.v[axis], start + axes[axis].span.max);
+      }
       Vec2F32 bar_dim = dim_2f32(bar_rect);
       if(bar_dim.x <= 0 || bar_dim.y <= 0) { continue; }
       // A fading bar is drawn but takes no clicks: they reach what's under it.

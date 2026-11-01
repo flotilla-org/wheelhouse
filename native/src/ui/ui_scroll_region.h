@@ -55,8 +55,10 @@ struct UI_ScrollRegionSignal
 
 // An axis in no units, for content that scrolls by something other than a
 // UI_ScrollPt: its thumb; `activity`, any value that changes when the content
-// scrolls (an overlay bar shows for a while after it does); and what a drag
-// begins from (see ui_scroll_bar_styled).
+// scrolls (an overlay bar shows for a while after it does); what a drag
+// begins from (see ui_scroll_bar_styled); and `span`, the part of the
+// viewport along the axis that scrolls (from its start; empty: all of it),
+// which the bar keeps to, clear of content that stays put.
 typedef struct UI_ScrollRegionThumbAxis UI_ScrollRegionThumbAxis;
 struct UI_ScrollRegionThumbAxis
 {
@@ -64,6 +66,7 @@ struct UI_ScrollRegionThumbAxis
   F32 activity;
   void *drag_origin;
   U64 drag_origin_size;
+  Rng1F32 span;
 };
 
 typedef struct UI_ScrollRegionThumbSignal UI_ScrollRegionThumbSignal;
