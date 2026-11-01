@@ -309,8 +309,8 @@ pub unsafe extern "C" fn wh_text_coords(ctx: *const WhText, coords: u32, out: *m
     coords.len()
 }
 
-/// Entries in any one scratch array, a few MB in all, past which a thread
-/// drops its scratch after the call rather than keep it.
+/// Entries in any one scratch or input array, a few MB in all, past which a
+/// thread drops its buffers after the call, failed or not, rather than keep them.
 const SCRATCH_KEEP: usize = 1 << 16;
 
 thread_local! {
@@ -400,32 +400,38 @@ pub unsafe extern "C" fn wh_text_layout(
                 };
                 SCRATCH.with(|scratch| {
                     let mut p = scratch.borrow_mut();
-                    t.ctx.layout_into(&input, width, &mut p).map_err(|e| e.to_string())?;
-                    *out = WhTextLayout {
-                        lines: copy_out(&alloc, &p.lines)?,
-                        line_count: p.lines.len(),
-                        runs: copy_out(&alloc, &p.runs)?,
-                        run_count: p.runs.len(),
-                        glyphs: copy_out(&alloc, &p.glyphs)?,
-                        glyph_count: p.glyphs.len(),
-                        clusters: copy_out(&alloc, &p.clusters)?,
-                        cluster_count: p.clusters.len(),
-                        boxes: copy_out(&alloc, &p.boxes)?,
-                        box_count: p.boxes.len(),
-                        width: p.width,
-                        height: p.height,
-                        epoch: p.epoch,
-                        rtl: p.rtl as u32,
-                    };
+                    let copied = (|| {
+                        t.ctx.layout_into(&input, width, &mut p).map_err(|e| e.to_string())?;
+                        *out = WhTextLayout {
+                            lines: copy_out(&alloc, &p.lines)?,
+                            line_count: p.lines.len(),
+                            runs: copy_out(&alloc, &p.runs)?,
+                            run_count: p.runs.len(),
+                            glyphs: copy_out(&alloc, &p.glyphs)?,
+                            glyph_count: p.glyphs.len(),
+                            clusters: copy_out(&alloc, &p.clusters)?,
+                            cluster_count: p.clusters.len(),
+                            boxes: copy_out(&alloc, &p.boxes)?,
+                            box_count: p.boxes.len(),
+                            width: p.width,
+                            height: p.height,
+                            epoch: p.epoch,
+                            rtl: p.rtl as u32,
+                        };
+                        Ok(())
+                    })();
                     if [p.lines.capacity(), p.runs.capacity(), p.glyphs.capacity(), p.clusters.capacity(), p.boxes.capacity()]
                         .iter()
                         .any(|&c| c > SCRATCH_KEEP)
                     {
                         *p = Paragraph::default();
                     }
-                    Ok(())
+                    copied
                 })
             })();
+            if runs.capacity() > SCRATCH_KEEP || boxes.capacity() > SCRATCH_KEEP {
+                (runs, boxes) = Default::default();
+            }
             INPUTS.with(|inputs| *inputs.borrow_mut() = (runs, boxes));
             laid_out
         })
