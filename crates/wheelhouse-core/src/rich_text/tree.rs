@@ -384,6 +384,10 @@ impl Tree {
         &self.source
     }
 
+    pub(crate) fn source_info(&self, id: NodeId) -> &SourceInfo {
+        &self.sources[id.0 as usize]
+    }
+
     pub fn content(&self, id: NodeId) -> NodeContent {
         let node = self.node(id);
         let side = self.side(id);

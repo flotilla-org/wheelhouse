@@ -1,6 +1,7 @@
 //! Find, in budgeted slices over every Block, collapsed or not (#546).
 use regex::{Regex, RegexBuilder};
 
+use super::select::Point;
 use super::tree::{Key, Part, Tree};
 use super::view::View;
 
@@ -125,6 +126,7 @@ impl View {
         };
         find.current = Some(current);
         let m = find.matches[current];
+        self.select(doc, Point { key: m.key, byte: m.start }, Point { key: m.key, byte: m.end }).ok()?;
         self.reveal(doc, m.key, m.start).ok()?;
         Some(m)
     }

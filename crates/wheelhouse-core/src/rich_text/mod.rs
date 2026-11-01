@@ -10,6 +10,7 @@ pub mod heights;
 mod ingest;
 mod pages;
 mod ring;
+mod select;
 mod tree;
 mod view;
 
@@ -23,6 +24,7 @@ mod tests;
 pub use find::{Find, FindOptions, FindStatus, Match, FIND_BUDGET, MATCH_LIMIT};
 pub use pages::PAGE;
 pub use ring::{Delta, Op, RING_CAPACITY};
+pub use select::{copy_block, rendered, Format, Point, Selection};
 pub use tree::{
     Alert, Align, Attr, Cell, Children, Color, Detail, Entry, InlineObject, Key, Kind, NodeContent, NodeId, Part, Span, Table, Tree,
     NO_STRING, TABLE_MEDIA_TYPE,

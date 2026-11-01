@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::find::Find;
 use super::heights::{Entry as Row, HeightIndex};
+use super::select::Selection;
 use super::tree::{Detail, Entry, Key, Kind, NodeId, Part, Tree};
 
 /// For estimates.
@@ -99,6 +100,7 @@ pub struct View {
     line_top: f32,
     at_end: bool,
     collapsed: HashSet<Key>,
+    pub(crate) selection: Option<Selection>,
     pub(crate) find: Option<Find>,
 }
 
@@ -133,6 +135,7 @@ impl View {
             line_top: 0.0,
             at_end: false,
             collapsed: HashSet::new(),
+            selection: None,
             find: None,
         };
         let rows: Vec<Row> = doc.entries().iter().map(|&e| Row::estimated(estimate(doc, e, &view.metrics), 0)).collect();
@@ -229,6 +232,9 @@ impl View {
         self.heights.insert(prefix, &rows);
         debug_assert_eq!(self.heights.len(), after.len());
         self.restore_anchor(doc, anchor);
+        if let Some(selection) = &mut self.selection {
+            selection.clamp(doc, before);
+        }
         if let Some(find) = &mut self.find {
             find.restart();
         }
