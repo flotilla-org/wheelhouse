@@ -192,10 +192,13 @@ jobs:
           host=$(rustc -vV | sed -n 's/^host: //p')
           if [ "$RUNNER_OS" = Windows ]; then
             python tools/test-ingress.py "target/$host/debug"
+            python tools/test-table-startup.py
           elif [ "$RUNNER_OS" = Linux ]; then
             python3 tools/test-native-sidebar.py "target/$host/debug/libwheelhouse_ffi.so"
             xvfb-run -a python3 tools/test-ingress.py "target/$host/debug"
+            xvfb-run -a python3 tools/test-table-startup.py
           else
             python3 tools/test-native-sidebar.py "target/$host/debug/libwheelhouse_ffi.dylib"
             python3 tools/test-ingress.py "target/$host/debug"
+            python3 tools/test-table-startup.py
           fi

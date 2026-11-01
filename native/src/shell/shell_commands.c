@@ -860,9 +860,19 @@ uishell_dispatch_tab_command(String8 name)
       }
       if(window != &cfg_nil_node)
       {
-        UIShell_WorkspaceMount workspace_mount = uishell_workspace_mount_from_cfg(scratch.arena, window);
-        RD_PanelTree panel_tree = workspace_mount.panel_tree;
-        panel = panel_tree.focused->address;
+        // A restored workspace's panels come from the window's core, which a
+        // command given at startup (--table) runs before.
+        uishell_sidebar_init(rd_window_state_from_cfg(window));
+        UIShell_MaterializedWorkspace *workspace = uishell_root_controlled_split_from_window(scratch.arena, window).inventory.selected;
+        RD_PanelTree panel_tree = workspace ? workspace->mount.panel_tree : (RD_PanelTree){&rd_nil_panel_node, &rd_nil_panel_node};
+        // Nothing is focused until a frame picks a panel; the first will do.
+        RD_PanelNode *target = panel_tree.focused;
+        for(RD_PanelNode *p = panel_tree.root; target == &rd_nil_panel_node && p != &rd_nil_panel_node;
+            p = rd_panel_node_rec__depth_first_pre(panel_tree.root, p).next)
+        {
+          if(p->first == &rd_nil_panel_node) { target = p; }
+        }
+        panel = target->address;
       }
     }
     if(!rd_panel_exists(panel))

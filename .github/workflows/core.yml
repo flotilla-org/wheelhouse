@@ -90,6 +90,9 @@ jobs:
     name: Web sidebar
     runs-on: ubuntu-latest
     needs: fmt
+    # About 2 minutes when well; a stalled browser download otherwise holds
+    # the job for GitHub's 6 hours.
+    timeout-minutes: 15
     # The page under web/ follows the core's change stream; its test checks
     # the page's model against fresh snapshots in a real browser.
     defaults:
@@ -113,6 +116,7 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
+        timeout-minutes: 5
       # The test's server builds the core and the page first.
       - run: pnpm test
 
