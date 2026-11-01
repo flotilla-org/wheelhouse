@@ -53,3 +53,24 @@ fp_system_color_emoji_fonts(void)
   FP_SystemFontArray result = {0};
   return result;
 }
+
+fp_hook FP_Handle
+fp_font_open_face(String8 path, U32 face_index)
+{
+  FP_Handle result = {0};
+  return result;
+}
+
+fp_hook FP_Handle
+fp_font_open_face_from_memory(String8 data, U32 face_index)
+{
+  FP_Handle result = {0};
+  return result;
+}
+
+fp_hook FP_GlyphRaster
+fp_raster_glyph(Arena *arena, FP_Handle font, FP_GlyphRasterParams *params)
+{
+  FP_GlyphRaster result = {0};
+  return result;
+}

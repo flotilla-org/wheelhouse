@@ -26,6 +26,13 @@ prefix = "shared"
 args = ['--shared_ui_fixture_dir:"$task_dir"']
 os = ["linux", "macos", "windows"]
 
+# Glyph-id rasterization through each OS's font provider, into CPU buffers
+# (#560).
+[[diagnostic]]
+flag = "glyph_raster"
+prefix = "glyph-raster"
+os = ["linux", "macos", "windows"]
+
 [[diagnostic]]
 flag = "terminal_selection"
 prefix = "selection"

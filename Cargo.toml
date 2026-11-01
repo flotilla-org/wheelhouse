@@ -4,6 +4,7 @@ members = [
     "crates/wheelhouse-rich-text",
     "crates/wheelhouse-stream",
     "crates/wheelhouse-arrangement-oracle",
+    "crates/wheelhouse-glyph-cache",
     "crates/wheelhouse-ffi",
     "crates/wheelhouse-git-watcher",
     "crates/wheelhouse-html",

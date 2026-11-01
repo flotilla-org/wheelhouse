@@ -117,6 +117,7 @@
 #include "uishell/uishell_logical_state.c"
 #include "uishell/uishell_terminal_clipboard.c"
 #include "uishell/uishell_terminal_clipboard_diagnostics.c"
+#include "uishell/uishell_glyph_raster_diagnostics.c"
 #include "uishell/uishell_terminal_selection_diagnostics.c"
 #include "uishell/uishell_edit_diagnostics.c"
 #include "uishell/uishell_query_diagnostics.c"
@@ -218,6 +219,8 @@ entry_point(CmdLine *cmd_line)
 #endif
   if(cmd_line_has_flag(cmd_line, str8_lit("terminal_clipboard_diagnostics")))
   { abort_self(uishell_terminal_clipboard_diagnostics() ? 0 : 1); }
+  if(cmd_line_has_flag(cmd_line, str8_lit("glyph_raster_diagnostics")))
+  { abort_self(uishell_glyph_raster_diagnostics() ? 0 : 1); }
   // Pure terminal model checks also run in headless build environments.
   if(cmd_line_has_flag(cmd_line, str8_lit("terminal_link_diagnostics")))
   { abort_self(uishell_terminal_link_diagnostics() ? 0 : 1); }
@@ -542,6 +545,7 @@ entry_point(CmdLine *cmd_line)
                                     "--terminal_fixture\n"
                                     "Open the deterministic terminal glyph fixture on startup.\n\n"
                                     "--terminal_clipboard_diagnostics\nCheck live clipboard effect policy, ownership, bounds and consumption with fake sinks and exit.\n\n"
+                                    "--glyph_raster_diagnostics\nRasterize glyphs by id into CPU buffers through this OS's font provider, check them and exit.\n\n"
                                     "--terminal_selection_diagnostics\nCheck terminal selection bounds, lifetime, Copy and gesture traces and exit.\n\n"
                                     "--terminal_glyph_diagnostics\n"
                                     "Run terminal glyph placement diagnostics and exit.\n\n"

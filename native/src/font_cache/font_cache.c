@@ -10,6 +10,8 @@
 # include "third_party/xxHash/xxhash.h"
 #endif
 
+#include "font_cache/font_glyph_cache.c"
+
 internal U128
 fnt_hash_from_string(String8 string)
 {
@@ -58,7 +60,7 @@ fnt_tag_zero(void)
 internal B32
 fnt_tag_match(FNT_Tag a, FNT_Tag b)
 {
-  return a.u64[0] == b.u64[0] && a.u64[1] == b.u64[1];
+  return a.u64[0] == b.u64[0] && a.u64[1] == b.u64[1] && a.face_index == b.face_index;
 }
 
 internal FP_Handle
@@ -122,14 +124,21 @@ fnt_tag_has_codepoint(FNT_Tag tag, U32 codepoint)
 internal FNT_Tag
 fnt_tag_from_path(String8 path)
 {
+  return fnt_tag_from_path_face(path, 0);
+}
+
+internal FNT_Tag
+fnt_tag_from_path_face(String8 path, U32 face_index)
+{
   ProfBeginFunction();
   
   //- rjf: produce tag from hash of path
   FNT_Tag result = {0};
   {
     U128 hash = fnt_hash_from_string(path);
-    MemoryCopy(&result, &hash, sizeof(result));
+    MemoryCopy(&result.u64, &hash, sizeof(result.u64));
     result.u64[1] |= bit64;
+    result.face_index = face_index;
   }
   
   //- rjf: tag -> slot index
@@ -151,7 +160,7 @@ fnt_tag_from_path(String8 path)
   //- rjf: allocate & push new node if we don't have an existing one
   if(existing_node == 0)
   {
-    FP_Handle handle = fp_font_open(path);
+    FP_Handle handle = (face_index == 0 ? fp_font_open(path) : fp_font_open_face(path, face_index));
     FNT_FontHashSlot *slot = &fnt_state->font_hash_table[slot_idx];
     existing_node = push_array(fnt_state->permanent_arena, FNT_FontHashNode, 1);
     existing_node->tag = result;
@@ -181,7 +190,7 @@ fnt_tag_from_static_data_string(String8 *data_ptr)
   FNT_Tag result = {0};
   {
     U128 hash = fnt_hash_from_string(str8((U8 *)&data_ptr, sizeof(String8 *)));
-    MemoryCopy(&result, &hash, sizeof(result));
+    MemoryCopy(&result.u64, &hash, sizeof(result.u64));
     result.u64[1] &= ~bit64;
   }
   
@@ -216,6 +225,42 @@ fnt_tag_from_static_data_string(String8 *data_ptr)
   
   //- rjf: return
   ProfEnd();
+  return result;
+}
+
+// Bytes that outlive the cache, such as a face wh_text_font resolved: its
+// identity is where they are, so asking again opens nothing. Bytes freed
+// while the cache lives would leave a tag that a later buffer at the same
+// address matches, so callers pass only bytes that live as long as fnt.
+internal FNT_Tag
+fnt_tag_from_memory_face(String8 data, U32 face_index)
+{
+  FNT_Tag result = {0};
+  U64 key[] = {(U64)data.str, data.size};
+  U128 hash = fnt_hash_from_string(str8((U8 *)key, sizeof(key)));
+  MemoryCopy(&result.u64, &hash, sizeof(result.u64));
+  result.u64[1] &= ~bit64;
+  result.face_index = face_index;
+  U64 slot_idx = result.u64[1] % fnt_state->font_hash_table_size;
+  FNT_FontHashNode *existing_node = 0;
+  for(FNT_FontHashNode *n = fnt_state->font_hash_table[slot_idx].first; n != 0 ; n = n->hash_next)
+  {
+    if(MemoryMatchStruct(&result, &n->tag)) { existing_node = n; break; }
+  }
+  if(existing_node == 0)
+  {
+    FNT_FontHashSlot *slot = &fnt_state->font_hash_table[slot_idx];
+    existing_node = push_array(fnt_state->permanent_arena, FNT_FontHashNode, 1);
+    existing_node->tag = result;
+    existing_node->handle = fp_font_open_face_from_memory(data, face_index);
+    existing_node->metrics = fp_metrics_from_font(existing_node->handle);
+    existing_node->path = str8_lit("");
+    SLLQueuePush_N(slot->first, slot->last, existing_node, hash_next);
+  }
+  if(fp_handle_match(existing_node->handle, fp_handle_zero()))
+  {
+    MemoryZeroStruct(&result);
+  }
   return result;
 }
 
@@ -1145,6 +1190,66 @@ fnt_char_pos_from_tag_size_string_p(FNT_Tag tag, F32 size, F32 base_align_px, F3
 }
 
 ////////////////////////////////
+//~ Glyphs By Id
+
+internal FNT_GlyphRaster
+fnt_glyph_backend_rasterize(void *user, Arena *arena, FNT_GlyphKey *key, FNT_GlyphParams *params)
+{
+  FP_GlyphRasterParams fp_params = {0};
+  fp_params.glyph_id = key->glyph_id;
+  fp_params.size_px = (F32)key->size_64/64.f;
+  fp_params.subpixel_x = (F32)key->subpixel_bin/FNT_GLYPH_SUBPIXEL_BINS;
+  fp_params.coords = params->coords;
+  fp_params.coord_count = params->coord_count;
+  fp_params.embolden = !!(key->synthesis & FNT_GlyphSynthesis_Embolden);
+  fp_params.skew = (F32)key->skew_64/64.f;
+  fp_params.flags = FP_RasterFlag_Smooth | (key->hinting == FNT_GlyphHinting_Vertical ? FP_RasterFlag_Hinted : 0);
+  FP_GlyphRaster raster = fp_raster_glyph(arena, fnt_handle_from_tag(key->tag), &fp_params);
+  FNT_GlyphRaster result = {0};
+  result.kind = (raster.kind == FP_RasterKind_RGBA ? FNT_GlyphKind_Color : FNT_GlyphKind_Mask);
+  result.dim = raster.dim;
+  result.left = raster.left;
+  result.top = raster.top;
+  result.pixels = raster.pixels;
+  return result;
+}
+
+internal U64
+fnt_glyph_backend_page_alloc(void *user, FNT_GlyphKind kind, Vec2S16 dim)
+{
+  R_Tex2DFormat format = (kind == FNT_GlyphKind_Color ? R_Tex2DFormat_RGBA8 : R_Tex2DFormat_R8);
+  R_Handle texture = r_tex2d_alloc(R_ResourceKind_Dynamic, v2s32(dim.x, dim.y), format, 0);
+  return texture.u64[0];
+}
+
+internal void
+fnt_glyph_backend_page_fill(void *user, U64 page, FNT_GlyphKind kind, Rng2S16 rect, U8 *pixels)
+{
+  R_Handle texture = {page};
+  r_fill_tex2d_region(texture, r2s32p(rect.x0, rect.y0, rect.x1, rect.y1), pixels);
+}
+
+internal FNT_GlyphCache *
+fnt_glyph_cache(void)
+{
+  if(fnt_state->glyph_cache == 0)
+  {
+    FNT_GlyphBackend backend = {0, fnt_glyph_backend_rasterize, fnt_glyph_backend_page_alloc, fnt_glyph_backend_page_fill};
+    fnt_state->glyph_cache = fnt_glyph_cache_alloc(backend, &fnt_state->glyph_cache_params);
+  }
+  return fnt_state->glyph_cache;
+}
+
+internal FNT_GlyphDraw
+fnt_glyph(FNT_GlyphParams *params)
+{
+  FNT_GlyphDraw result = {0};
+  result.glyph = fnt_glyph_from_params(fnt_glyph_cache(), params);
+  result.texture.u64[0] = result.glyph.page;
+  return result;
+}
+
+////////////////////////////////
 //~ rjf: Metrics
 
 internal FNT_Metrics
@@ -1193,6 +1298,7 @@ fnt_init(void)
   fnt_state->frame_arena = arena_alloc();
   fnt_state->font_hash_table_size = 64;
   fnt_state->font_hash_table = push_array(fnt_state->permanent_arena, FNT_FontHashSlot, fnt_state->font_hash_table_size);
+  fnt_state->glyph_cache_params = fnt_glyph_cache_default_params();
   fnt_reset();
 }
 
@@ -1214,4 +1320,8 @@ fnt_frame(void)
 {
   fnt_state->frame_index += 1;
   arena_clear(fnt_state->frame_arena);
+  if(fnt_state->glyph_cache != 0)
+  {
+    fnt_glyph_cache_frame(fnt_state->glyph_cache);
+  }
 }

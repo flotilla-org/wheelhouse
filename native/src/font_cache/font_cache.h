@@ -23,14 +23,7 @@ enum
   FNT_RasterKind_RGBA,
 };
 
-////////////////////////////////
-//~ rjf: Handles & Tags
-
-typedef struct FNT_Tag FNT_Tag;
-struct FNT_Tag
-{
-  U64 u64[2];
-};
+#include "font_cache/font_glyph_cache.h"
 
 ////////////////////////////////
 //~ rjf: Draw Package Types (For Cache Queries)
@@ -213,6 +206,19 @@ struct FNT_Atlas
 };
 
 ////////////////////////////////
+//~ Glyphs By Id
+
+typedef struct FNT_GlyphDraw FNT_GlyphDraw;
+struct FNT_GlyphDraw
+{
+  FNT_Glyph glyph;
+  R_Handle texture;
+};
+
+internal FNT_GlyphDraw fnt_glyph(FNT_GlyphParams *params);
+internal FNT_GlyphCache *fnt_glyph_cache(void);
+
+////////////////////////////////
 //~ rjf: Metrics
 
 typedef struct FNT_Metrics FNT_Metrics;
@@ -250,6 +256,10 @@ struct FNT_State
   // A character a run's font lacks comes from the first of these that has it.
   FNT_Tag fallbacks[8];
   U64 fallback_count;
+  
+  // Made on first use, so its pages cost nothing until something draws by glyph id.
+  FNT_GlyphCache *glyph_cache;
+  FNT_GlyphCacheParams glyph_cache_params;
 };
 
 ////////////////////////////////
@@ -273,6 +283,8 @@ internal FP_Handle fnt_handle_from_tag(FNT_Tag tag);
 internal FP_Metrics fnt_fp_metrics_from_tag(FNT_Tag tag);
 internal B32 fnt_tag_has_codepoint(FNT_Tag tag, U32 codepoint);
 internal FNT_Tag fnt_tag_from_path(String8 path);
+internal FNT_Tag fnt_tag_from_path_face(String8 path, U32 face_index);
+internal FNT_Tag fnt_tag_from_memory_face(String8 data, U32 face_index);
 internal FNT_Tag fnt_tag_from_static_data_string(String8 *data_ptr);
 internal String8 fnt_path_from_tag(FNT_Tag tag);
 internal void fnt_set_fallbacks(FNT_Tag *tags, U64 count);

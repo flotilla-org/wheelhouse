@@ -128,6 +128,39 @@ typedef struct IDWriteFontCollection           { struct { void* tbl[]; }* v; } I
 typedef struct IDWriteFontFamily               { struct { void* tbl[]; }* v; } IDWriteFontFamily;
 typedef struct IDWriteFont                     { struct { void* tbl[]; }* v; } IDWriteFont;
 typedef struct IDWriteLocalFontFileLoader      { struct { void* tbl[]; }* v; } IDWriteLocalFontFileLoader;
+typedef struct IDWriteGlyphRunAnalysis         { struct { void* tbl[]; }* v; } IDWriteGlyphRunAnalysis;
+typedef struct IDWriteFontFace4                { struct { void* tbl[]; }* v; } IDWriteFontFace4;
+typedef struct IDWriteFontFace5                { struct { void* tbl[]; }* v; } IDWriteFontFace5;
+typedef struct IDWriteFontResource             { struct { void* tbl[]; }* v; } IDWriteFontResource;
+
+// Values and layouts from dwrite_3.h; named here as the SDKs disagree on
+// which of them dcommon.h declares.
+#define FP_DWRITE_TEXTURE_ALIASED_1x1 0
+#define FP_DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE 0
+#define FP_DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE 1
+#define FP_DWRITE_GLYPH_IMAGE_FORMATS_PNG 0x10
+#define FP_DWRITE_E_NOCOLOR ((HRESULT)0x8898500CL)
+
+typedef struct FP_DWrite_GlyphImageData FP_DWrite_GlyphImageData;
+struct FP_DWrite_GlyphImageData
+{
+  void const *image_data;
+  UINT32 image_data_size;
+  UINT32 unique_data_id;
+  UINT32 pixels_per_em;
+  UINT32 pixel_size[2];
+  LONG horizontal_left_origin[2];
+  LONG horizontal_right_origin[2];
+  LONG vertical_top_origin[2];
+  LONG vertical_bottom_origin[2];
+};
+
+typedef struct FP_DWrite_FontAxisValue FP_DWrite_FontAxisValue;
+struct FP_DWrite_FontAxisValue
+{
+  UINT32 axis_tag;
+  FLOAT value;
+};
 
 //- rjf: structs
 
@@ -202,6 +235,8 @@ typedef struct DWRITE_MATRIX {
 DEFINE_GUID(IID_IDWriteFactory,                  0xb859ee5a, 0xd838, 0x4b5b, 0xa2, 0xe8, 0x1a, 0xdc, 0x7d, 0x93, 0xdb, 0x48);
 DEFINE_GUID(IID_IDWriteFactory1,                 0x30572f99, 0xdac6, 0x41db, 0xa1, 0x6e, 0x04, 0x86, 0x30, 0x7e, 0x60, 0x6a);
 DEFINE_GUID(IID_IDWriteFactory2,                 0x0439fc60, 0xca44, 0x4994, 0x8d, 0xee, 0x3a, 0x9a, 0xf7, 0xb7, 0x32, 0xec);
+DEFINE_GUID(IID_IDWriteFontFace4,                0x27f2a904, 0x4eb8, 0x441d, 0x96, 0x78, 0x05, 0x63, 0xf5, 0x3e, 0x3e, 0x2f);
+DEFINE_GUID(IID_IDWriteFontFace5,                0x98eff3a5, 0xb667, 0x479a, 0xb1, 0x45, 0xe2, 0xfa, 0x5b, 0x9f, 0xdc, 0x29);
 DEFINE_GUID(IID_IDWriteLocalFontFileLoader,      0xb2d9f3ec, 0xc9fe, 0x4a11, 0xa2, 0xec, 0xd8, 0x62, 0x08, 0xf7, 0xc0, 0xa2);
 
 //- rjf: functions
@@ -251,6 +286,26 @@ static inline UINT32                            IDWriteLocalFontFileLoader_Relea
 static inline HRESULT                           IDWriteLocalFontFileLoader_GetFilePathLengthFromKey          (IDWriteLocalFontFileLoader* this_, const void* fontFileReferenceKey, UINT32 fontFileReferenceKeySize, UINT32* filePathLength) { return ((HRESULT (WINAPI*)(IDWriteLocalFontFileLoader*, const void*, UINT32, UINT32*))this_->v->tbl[4])(this_, fontFileReferenceKey, fontFileReferenceKeySize, filePathLength); }
 static inline HRESULT                           IDWriteLocalFontFileLoader_GetFilePathFromKey                (IDWriteLocalFontFileLoader* this_, const void* fontFileReferenceKey, UINT32 fontFileReferenceKeySize, WCHAR* filePath, UINT32 filePathSize) { return ((HRESULT (WINAPI*)(IDWriteLocalFontFileLoader*, const void*, UINT32, WCHAR*, UINT32))this_->v->tbl[5])(this_, fontFileReferenceKey, fontFileReferenceKeySize, filePath, filePathSize); }
 static inline HRESULT                           IDWriteColorGlyphRunEnumerator_GetCurrentRun                 (IDWriteColorGlyphRunEnumerator* this_, const DWRITE_COLOR_GLYPH_RUN** colorGlyphRun) { return ((HRESULT (WINAPI*)(IDWriteColorGlyphRunEnumerator*, const DWRITE_COLOR_GLYPH_RUN**))this_->v->tbl[4])(this_, colorGlyphRun); }
+
+
+//- glyph-id rasterization (vtable slots from dwrite.h, dwrite_2.h and dwrite_3.h)
+
+static inline HRESULT IDWriteFactory2_CreateGlyphRunAnalysis(IDWriteFactory2 *this_, const DWRITE_GLYPH_RUN *run, const DWRITE_MATRIX *transform, DWRITE_RENDERING_MODE rendering_mode, DWRITE_MEASURING_MODE measuring_mode, DWRITE_GRID_FIT_MODE grid_fit_mode, UINT32 antialias_mode, FLOAT origin_x, FLOAT origin_y, IDWriteGlyphRunAnalysis **analysis) { return ((HRESULT (WINAPI*)(IDWriteFactory2*, const DWRITE_GLYPH_RUN*, const DWRITE_MATRIX*, DWRITE_RENDERING_MODE, DWRITE_MEASURING_MODE, DWRITE_GRID_FIT_MODE, UINT32, FLOAT, FLOAT, IDWriteGlyphRunAnalysis**))this_->v->tbl[30])(this_, run, transform, rendering_mode, measuring_mode, grid_fit_mode, antialias_mode, origin_x, origin_y, analysis); }
+static inline UINT32  IDWriteGlyphRunAnalysis_Release(IDWriteGlyphRunAnalysis *this_) { return ((UINT32 (WINAPI*)(IDWriteGlyphRunAnalysis*))this_->v->tbl[2])(this_); }
+static inline HRESULT IDWriteGlyphRunAnalysis_GetAlphaTextureBounds(IDWriteGlyphRunAnalysis *this_, UINT32 texture_type, RECT *bounds) { return ((HRESULT (WINAPI*)(IDWriteGlyphRunAnalysis*, UINT32, RECT*))this_->v->tbl[3])(this_, texture_type, bounds); }
+static inline HRESULT IDWriteGlyphRunAnalysis_CreateAlphaTexture(IDWriteGlyphRunAnalysis *this_, UINT32 texture_type, const RECT *bounds, BYTE *alpha, UINT32 size) { return ((HRESULT (WINAPI*)(IDWriteGlyphRunAnalysis*, UINT32, const RECT*, BYTE*, UINT32))this_->v->tbl[4])(this_, texture_type, bounds, alpha, size); }
+static inline HRESULT IDWriteFontFace_QueryInterface(IDWriteFontFace *this_, const GUID *iid, void **out) { return ((HRESULT (WINAPI*)(IDWriteFontFace*, const GUID*, void**))this_->v->tbl[0])(this_, iid, out); }
+static inline DWRITE_FONT_FACE_TYPE IDWriteFontFace_GetType(IDWriteFontFace *this_) { return ((DWRITE_FONT_FACE_TYPE (WINAPI*)(IDWriteFontFace*))this_->v->tbl[3])(this_); }
+static inline HRESULT IDWriteFontFace_TryGetFontTable(IDWriteFontFace *this_, UINT32 tag, const void **data, UINT32 *size, void **context, BOOL *exists) { return ((HRESULT (WINAPI*)(IDWriteFontFace*, UINT32, const void**, UINT32*, void**, BOOL*))this_->v->tbl[12])(this_, tag, data, size, context, exists); }
+static inline void    IDWriteFontFace_ReleaseFontTable(IDWriteFontFace *this_, void *context) { ((void (WINAPI*)(IDWriteFontFace*, void*))this_->v->tbl[13])(this_, context); }
+static inline UINT32  IDWriteFontFace4_Release(IDWriteFontFace4 *this_) { return ((UINT32 (WINAPI*)(IDWriteFontFace4*))this_->v->tbl[2])(this_); }
+static inline HRESULT IDWriteFontFace4_GetGlyphImageFormats(IDWriteFontFace4 *this_, UINT16 glyph, UINT32 ppem_first, UINT32 ppem_last, UINT32 *formats) { return ((HRESULT (WINAPI*)(IDWriteFontFace4*, UINT16, UINT32, UINT32, UINT32*))this_->v->tbl[49])(this_, glyph, ppem_first, ppem_last, formats); }
+static inline HRESULT IDWriteFontFace4_GetGlyphImageData(IDWriteFontFace4 *this_, UINT16 glyph, UINT32 ppem, UINT32 format, FP_DWrite_GlyphImageData *data, void **context) { return ((HRESULT (WINAPI*)(IDWriteFontFace4*, UINT16, UINT32, UINT32, FP_DWrite_GlyphImageData*, void**))this_->v->tbl[51])(this_, glyph, ppem, format, data, context); }
+static inline void    IDWriteFontFace4_ReleaseGlyphImageData(IDWriteFontFace4 *this_, void *context) { ((void (WINAPI*)(IDWriteFontFace4*, void*))this_->v->tbl[52])(this_, context); }
+static inline UINT32  IDWriteFontFace5_Release(IDWriteFontFace5 *this_) { return ((UINT32 (WINAPI*)(IDWriteFontFace5*))this_->v->tbl[2])(this_); }
+static inline HRESULT IDWriteFontFace5_GetFontResource(IDWriteFontFace5 *this_, IDWriteFontResource **resource) { return ((HRESULT (WINAPI*)(IDWriteFontFace5*, IDWriteFontResource**))this_->v->tbl[56])(this_, resource); }
+static inline UINT32  IDWriteFontResource_Release(IDWriteFontResource *this_) { return ((UINT32 (WINAPI*)(IDWriteFontResource*))this_->v->tbl[2])(this_); }
+static inline HRESULT IDWriteFontResource_CreateFontFace(IDWriteFontResource *this_, DWRITE_FONT_SIMULATIONS simulations, const FP_DWrite_FontAxisValue *values, UINT32 count, IDWriteFontFace5 **face) { return ((HRESULT (WINAPI*)(IDWriteFontResource*, DWRITE_FONT_SIMULATIONS, const FP_DWrite_FontAxisValue*, UINT32, IDWriteFontFace5**))this_->v->tbl[13])(this_, simulations, values, count, face); }
 
 ////////////////////////////////
 //~ rjf: Font Provider Implementation Types
