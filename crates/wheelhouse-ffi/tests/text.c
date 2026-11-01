@@ -2,6 +2,8 @@
  * the bundled fonts from the data directory (argv[1]), and the output
  * arrays read back as C structs. Layout behaviour is tested in Rust
  * (crates/wheelhouse-text/tests); this checks what only C sees. */
+/* The checks are asserts: keep them in a release build too. */
+#undef NDEBUG
 #include "wheelhouse.h"
 #include <assert.h>
 #include <stdalign.h>

@@ -331,87 +331,90 @@ pub unsafe extern "C" fn wh_text_layout(
             let out = out.as_mut().ok_or("null output")?;
             let text = str::from_utf8(slice(input.text.data, input.text.len)?).map_err(|e| e.to_string())?;
             let (mut runs, mut boxes) = INPUTS.with(|inputs| mem::take(&mut *inputs.borrow_mut()));
-            runs.clear();
-            runs.extend(slice(input.runs, input.run_count)?.iter().map(|r| StyleRun {
-                start: r.start as usize,
-                len: r.len as usize,
-                style: r.style as usize,
-            }));
-            let raw_styles = slice(input.styles, input.style_count)?;
-            let features = raw_styles
-                .iter()
-                .map(|s| {
-                    slice(s.features, s.feature_count)?
-                        .iter()
-                        .map(|f| {
-                            let value = u16::try_from(f.value).map_err(|_| format!("feature value {} is above 65535", f.value))?;
-                            Ok(Feature { tag: f.tag, value })
-                        })
-                        .collect()
-                })
-                .collect::<Result<Vec<Vec<_>>, String>>()?;
-            let styles = raw_styles
-                .iter()
-                .zip(&features)
-                .map(|(s, features)| {
-                    Ok(Style {
-                        family: Family::from_slot(s.family).ok_or_else(|| format!("unknown family slot {}", s.family))?,
-                        size: s.size,
-                        weight: s.weight,
-                        italic: s.italic != 0,
-                        features,
-                        letter_spacing: s.letter_spacing,
+            // Called at once, so the buffers go back even when the input is refused.
+            let laid_out = (|| {
+                runs.clear();
+                runs.extend(slice(input.runs, input.run_count)?.iter().map(|r| StyleRun {
+                    start: r.start as usize,
+                    len: r.len as usize,
+                    style: r.style as usize,
+                }));
+                let raw_styles = slice(input.styles, input.style_count)?;
+                let features = raw_styles
+                    .iter()
+                    .map(|s| {
+                        slice(s.features, s.feature_count)?
+                            .iter()
+                            .map(|f| {
+                                let value = u16::try_from(f.value).map_err(|_| format!("feature value {} is above 65535", f.value))?;
+                                Ok(Feature { tag: f.tag, value })
+                            })
+                            .collect()
                     })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            boxes.clear();
-            boxes.extend(slice(input.boxes, input.box_count)?.iter().map(|b| InlineBox {
-                id: b.id,
-                offset: b.offset as usize,
-                width: b.width,
-                height: b.height,
-                baseline: b.baseline,
-            }));
-            let input = Input {
-                text,
-                runs: &runs,
-                styles: &styles,
-                boxes: &boxes,
-                max_lines: input.max_lines as usize,
-                ellipsis: input.ellipsis != 0,
-                align: match input.align {
-                    WH_TEXT_ALIGN_START => Align::Start,
-                    WH_TEXT_ALIGN_END => Align::End,
-                    WH_TEXT_ALIGN_CENTER => Align::Center,
-                    WH_TEXT_ALIGN_JUSTIFY => Align::Justify,
-                    other => return Err(format!("unknown alignment {other}")),
-                },
-                tab_size: input.tab_size,
-            };
-            let laid_out = SCRATCH.with(|scratch| {
-                let mut p = scratch.borrow_mut();
-                t.ctx.layout_into(&input, width, &mut p).map_err(|e| e.to_string())?;
-                *out = WhTextLayout {
-                    lines: copy_out(&alloc, &p.lines)?,
-                    line_count: p.lines.len(),
-                    runs: copy_out(&alloc, &p.runs)?,
-                    run_count: p.runs.len(),
-                    glyphs: copy_out(&alloc, &p.glyphs)?,
-                    glyph_count: p.glyphs.len(),
-                    clusters: copy_out(&alloc, &p.clusters)?,
-                    cluster_count: p.clusters.len(),
-                    boxes: copy_out(&alloc, &p.boxes)?,
-                    box_count: p.boxes.len(),
-                    width: p.width,
-                    height: p.height,
-                    epoch: p.epoch,
-                    rtl: p.rtl as u32,
+                    .collect::<Result<Vec<Vec<_>>, String>>()?;
+                let styles = raw_styles
+                    .iter()
+                    .zip(&features)
+                    .map(|(s, features)| {
+                        Ok(Style {
+                            family: Family::from_slot(s.family).ok_or_else(|| format!("unknown family slot {}", s.family))?,
+                            size: s.size,
+                            weight: s.weight,
+                            italic: s.italic != 0,
+                            features,
+                            letter_spacing: s.letter_spacing,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                boxes.clear();
+                boxes.extend(slice(input.boxes, input.box_count)?.iter().map(|b| InlineBox {
+                    id: b.id,
+                    offset: b.offset as usize,
+                    width: b.width,
+                    height: b.height,
+                    baseline: b.baseline,
+                }));
+                let input = Input {
+                    text,
+                    runs: &runs,
+                    styles: &styles,
+                    boxes: &boxes,
+                    max_lines: input.max_lines as usize,
+                    ellipsis: input.ellipsis != 0,
+                    align: match input.align {
+                        WH_TEXT_ALIGN_START => Align::Start,
+                        WH_TEXT_ALIGN_END => Align::End,
+                        WH_TEXT_ALIGN_CENTER => Align::Center,
+                        WH_TEXT_ALIGN_JUSTIFY => Align::Justify,
+                        other => return Err(format!("unknown alignment {other}")),
+                    },
+                    tab_size: input.tab_size,
                 };
-                if p.glyphs.capacity() > SCRATCH_KEEP || p.clusters.capacity() > SCRATCH_KEEP {
-                    *p = Paragraph::default();
-                }
-                Ok(())
-            });
+                SCRATCH.with(|scratch| {
+                    let mut p = scratch.borrow_mut();
+                    t.ctx.layout_into(&input, width, &mut p).map_err(|e| e.to_string())?;
+                    *out = WhTextLayout {
+                        lines: copy_out(&alloc, &p.lines)?,
+                        line_count: p.lines.len(),
+                        runs: copy_out(&alloc, &p.runs)?,
+                        run_count: p.runs.len(),
+                        glyphs: copy_out(&alloc, &p.glyphs)?,
+                        glyph_count: p.glyphs.len(),
+                        clusters: copy_out(&alloc, &p.clusters)?,
+                        cluster_count: p.clusters.len(),
+                        boxes: copy_out(&alloc, &p.boxes)?,
+                        box_count: p.boxes.len(),
+                        width: p.width,
+                        height: p.height,
+                        epoch: p.epoch,
+                        rtl: p.rtl as u32,
+                    };
+                    if p.glyphs.capacity() > SCRATCH_KEEP || p.clusters.capacity() > SCRATCH_KEEP {
+                        *p = Paragraph::default();
+                    }
+                    Ok(())
+                })
+            })();
             INPUTS.with(|inputs| *inputs.borrow_mut() = (runs, boxes));
             laid_out
         })
