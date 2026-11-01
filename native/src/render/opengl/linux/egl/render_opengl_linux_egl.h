@@ -14,11 +14,26 @@
 #undef glTexSubImage3D
 #undef glActiveTexture
 
+// libwayland-egl, loaded only when the window manager is Wayland's.
+struct wl_egl_window;
+#define R_OGL_LNX_WaylandEGLXList \
+X(struct wl_egl_window *, wl_egl_window_create, (void *surface, int width, int height))\
+X(void, wl_egl_window_destroy, (struct wl_egl_window *window))\
+X(void, wl_egl_window_resize, (struct wl_egl_window *window, int width, int height, int dx, int dy))
+
+#define X(ret, name, params) global ret (*r_ogl_lnx_##name) params = 0;
+R_OGL_LNX_WaylandEGLXList
+#undef X
+
 typedef struct R_OGL_LNX_Window R_OGL_LNX_Window;
 struct R_OGL_LNX_Window
 {
   R_OGL_LNX_Window *next;
   EGLSurface surface;
+  // Wayland: the buffer size, which follows the window's size.
+  struct wl_egl_window *wl_window;
+  Vec2S32 wl_size;
+  B32 swap_interval_set;
 };
 
 typedef struct R_OGL_LNX_State R_OGL_LNX_State;

@@ -3,6 +3,67 @@
 
 //- GENERATED CODE
 
+#if WM_BACKEND_MULTI
+internal WM_SystemInfo * wm_get_system_info(void) { return wm_backend->get_system_info( ); }
+internal B32 wm_apply_clipboard_write(U32 destination, B32 clear, String8 text) { return wm_backend->apply_clipboard_write(destination, clear, text); }
+internal void wm_set_clipboard_text_impl(String8 string, String8 html) { return wm_backend->set_clipboard_text_impl(string, html); }
+internal String8 wm_get_clipboard_text_impl(Arena *arena) { return wm_backend->get_clipboard_text_impl(arena); }
+internal void wm_set_selection_text(String8 string) { return wm_backend->set_selection_text(string); }
+internal String8 wm_get_selection_text(Arena *arena) { return wm_backend->get_selection_text(arena); }
+internal WM_Window wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title) { return wm_backend->window_open(rect, flags, title); }
+internal void wm_window_close(WM_Window window) { return wm_backend->window_close(window); }
+internal void wm_window_set_title(WM_Window window, String8 title) { return wm_backend->window_set_title(window, title); }
+internal void wm_set_application_icon(Vec2S32 dim, U8 *rgba) { return wm_backend->set_application_icon(dim, rgba); }
+internal void wm_window_first_paint(WM_Window window) { return wm_backend->window_first_paint(window); }
+internal void wm_window_focus(WM_Window window) { return wm_backend->window_focus(window); }
+internal B32 wm_window_is_focused(WM_Window window) { return wm_backend->window_is_focused(window); }
+internal B32 wm_window_is_fullscreen(WM_Window window) { return wm_backend->window_is_fullscreen(window); }
+internal void wm_window_set_fullscreen(WM_Window window, B32 fullscreen) { return wm_backend->window_set_fullscreen(window, fullscreen); }
+internal B32 wm_window_is_maximized(WM_Window window) { return wm_backend->window_is_maximized(window); }
+internal void wm_window_set_maximized(WM_Window window, B32 maximized) { return wm_backend->window_set_maximized(window, maximized); }
+internal B32 wm_window_is_minimized(WM_Window window) { return wm_backend->window_is_minimized(window); }
+internal void wm_window_set_minimized(WM_Window window, B32 minimized) { return wm_backend->window_set_minimized(window, minimized); }
+internal void wm_window_bring_to_front(WM_Window window) { return wm_backend->window_bring_to_front(window); }
+internal void wm_window_set_monitor(WM_Window window, WM_Monitor monitor) { return wm_backend->window_set_monitor(window, monitor); }
+internal void wm_window_clear_custom_border_data(WM_Window handle) { return wm_backend->window_clear_custom_border_data(handle); }
+internal void wm_window_push_custom_title_bar(WM_Window handle, F32 thickness) { return wm_backend->window_push_custom_title_bar(handle, thickness); }
+internal void wm_window_push_custom_edges(WM_Window handle, F32 thickness) { return wm_backend->window_push_custom_edges(handle, thickness); }
+internal void wm_window_push_custom_title_bar_client_area(WM_Window handle, Rng2F32 rect) { return wm_backend->window_push_custom_title_bar_client_area(handle, rect); }
+internal B32 wm_window_should_draw_custom_title_bar_controls(WM_Window window) { return wm_backend->window_should_draw_custom_title_bar_controls(window); }
+internal F32 wm_window_native_title_bar_left_padding(WM_Window window) { return wm_backend->window_native_title_bar_left_padding(window); }
+internal Rng2F32 wm_rect_from_window(WM_Window window) { return wm_backend->rect_from_window(window); }
+internal Rng2F32 wm_client_rect_from_window(WM_Window window) { return wm_backend->client_rect_from_window(window); }
+internal F32 wm_dpi_from_window(WM_Window window) { return wm_backend->dpi_from_window(window); }
+internal F32 wm_layout_scale_from_window(WM_Window window) { return wm_backend->layout_scale_from_window(window); }
+internal F32 wm_backing_scale_from_window(WM_Window window) { return wm_backend->backing_scale_from_window(window); }
+internal WM_NativeSurface wm_native_surface(WM_Window window) { return wm_backend->native_surface(window); }
+internal void wm_window_presented(WM_Window window) { return wm_backend->window_presented(window); }
+internal B32 wm_window_frame_ready(WM_Window window) { return wm_backend->window_frame_ready(window); }
+internal B32 wm_window_frame_pending(WM_Window window) { return wm_backend->window_frame_pending(window); }
+internal WM_ExtWindow wm_focused_external_window(void) { return wm_backend->focused_external_window( ); }
+internal void wm_focus_external_window(WM_ExtWindow ext_window) { return wm_backend->focus_external_window(ext_window); }
+internal WM_MonitorArray wm_push_monitors_array(Arena *arena) { return wm_backend->push_monitors_array(arena); }
+internal WM_Monitor wm_primary_monitor(void) { return wm_backend->primary_monitor( ); }
+internal WM_Monitor wm_monitor_from_window(WM_Window window) { return wm_backend->monitor_from_window(window); }
+internal String8 wm_name_from_monitor(Arena *arena, WM_Monitor monitor) { return wm_backend->name_from_monitor(arena, monitor); }
+internal Vec2F32 wm_dim_from_monitor(WM_Monitor monitor) { return wm_backend->dim_from_monitor(monitor); }
+internal F32 wm_dpi_from_monitor(WM_Monitor monitor) { return wm_backend->dpi_from_monitor(monitor); }
+internal void wm_send_wakeup_event(void) { return wm_backend->send_wakeup_event( ); }
+internal WM_EventList wm_get_events(Arena *arena, B32 wait) { return wm_backend->get_events(arena, wait); }
+internal WM_Modifiers wm_get_modifiers(void) { return wm_backend->get_modifiers( ); }
+internal B32 wm_key_is_down(WM_Key key) { return wm_backend->key_is_down(key); }
+internal Vec2F32 wm_mouse_from_window(WM_Window window) { return wm_backend->mouse_from_window(window); }
+internal void wm_set_main_menu(WM_MenuArray menu_array) { return wm_backend->set_main_menu(menu_array); }
+internal B32 wm_application_menu_bar_is_native(void) { return wm_backend->application_menu_bar_is_native( ); }
+internal void wm_set_preferred_window_decorations(B32 enabled) { return wm_backend->set_preferred_window_decorations(enabled); }
+internal void wm_set_preferred_native_menu_bar(B32 enabled) { return wm_backend->set_preferred_native_menu_bar(enabled); }
+internal void wm_set_cursor(WM_Cursor cursor) { return wm_backend->set_cursor(cursor); }
+internal void wm_graphical_message(B32 error, String8 title, String8 message) { return wm_backend->graphical_message(error, title, message); }
+internal String8 wm_graphical_pick_file(Arena *arena, String8 initial_path) { return wm_backend->graphical_pick_file(arena, initial_path); }
+internal void wm_show_in_filesystem_ui(String8 path) { return wm_backend->show_in_filesystem_ui(path); }
+internal void wm_open_in_browser(String8 url) { return wm_backend->open_in_browser(url); }
+internal B32 wm_reduce_motion(void) { return wm_backend->reduce_motion( ); }
+#endif
 C_LINKAGE_BEGIN
 String8 wm_key_display_name_table[143] =
 {

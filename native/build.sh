@@ -203,6 +203,35 @@ print("  [effects_embed.h: %s]" % ", ".join(names))
 PYEOF
 fi
 
+# --- Generate Wayland Protocol Code -------------------------------------------
+# The Wayland window manager's protocol marshalling, from wayland-scanner and
+# the system's protocol XML (wayland, wayland-protocols). Generated outputs are
+# committed, so a build needs neither: `native/build.sh wayland_protocols`
+if [ -n "${wayland_protocols+x}" ]
+then
+  echo "[generating wayland protocol code]"
+  command -v wayland-scanner >/dev/null || { echo "wayland-scanner not found; install wayland (or libwayland-bin)"; exit 1; }
+  wl_core=$(pkg-config --variable=pkgdatadir wayland-scanner 2>/dev/null || echo /usr/share/wayland)
+  wl_protocols=$(pkg-config --variable=pkgdatadir wayland-protocols 2>/dev/null || echo /usr/share/wayland-protocols)
+  gen=native/src/linux/window_manager/wayland/generated
+  mkdir -p "$gen"
+  # tablet-v2 only provides the interface cursor-shape's get_tablet_tool_v2 names.
+  for xml in "$wl_core/wayland.xml" \
+             "$wl_protocols/stable/xdg-shell/xdg-shell.xml" \
+             "$wl_protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml" \
+             "$wl_protocols/staging/cursor-shape/cursor-shape-v1.xml" \
+             "$wl_protocols/stable/tablet/tablet-v2.xml"; do
+    name=$(basename "$xml" .xml)
+    wayland-scanner --include-core-only client-header "$xml" "$gen/$name-protocol.h"
+    wayland-scanner private-code "$xml" "$gen/$name-protocol.c"
+    # The client headers come from third_party, not the system.
+    sed -i.bak 's|#include "wayland-client-core.h"|#include "third_party/wayland/wayland-client-core.h"|; s|#include "wayland-util.h"|#include "third_party/wayland/wayland-util.h"|' "$gen/$name-protocol.h" "$gen/$name-protocol.c"
+    rm -f "$gen/$name-protocol.h.bak" "$gen/$name-protocol.c.bak"
+    echo "  [$name]"
+  done
+  didbuild=1
+fi
+
 # --- Build Everything (@build_targets) ---------------------------------------
 cd build
 sign_app_debug()

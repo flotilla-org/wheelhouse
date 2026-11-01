@@ -829,8 +829,8 @@ w32_wm_monitor_gather_enum_proc(HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM b
 ////////////////////////////////
 //~ rjf: @os_hooks Main Initialization API (Implemented Per-OS)
 
-internal void
-wm_init(void)
+internal B32
+wm_init(CmdLine *cmdln)
 {
   //- rjf: set up base shared state
   Arena *arena = arena_alloc();
@@ -1004,6 +1004,7 @@ wm_init(void)
       w32_wm_state->key_from_vkey_table[i] = (WM_Key)((U64)WM_Key_Ex0 + j);
     }
   }
+  return 1;
 }
 
 ////////////////////////////////

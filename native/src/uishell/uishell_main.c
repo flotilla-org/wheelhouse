@@ -254,7 +254,7 @@ entry_point(CmdLine *cmd_line)
     default:
     case ExecMode_Normal:
     {
-      wm_init();
+      wm_init(cmd_line);
       if(!wheelhouse_quit_signals_install(wm_send_wakeup_event))
       { fprintf(stderr, "Quit signals could not be handled; they end Wheelhouse without stopping its connectors\n"); }
       fp_init();

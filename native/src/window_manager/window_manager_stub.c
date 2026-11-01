@@ -1,9 +1,10 @@
 ////////////////////////////////
 //~ rjf: @os_hooks Main Initialization API (Implemented Per-OS)
 
-internal void
-wm_init(void)
+internal B32
+wm_init(CmdLine *cmdln)
 {
+  return 1;
 }
 
 ////////////////////////////////
@@ -200,6 +201,18 @@ wm_native_surface(WM_Window window)
 internal void
 wm_window_presented(WM_Window window)
 {
+}
+
+internal B32
+wm_window_frame_ready(WM_Window window)
+{
+  return 1;
+}
+
+internal B32
+wm_window_frame_pending(WM_Window window)
+{
+  return 0;
 }
 
 ////////////////////////////////

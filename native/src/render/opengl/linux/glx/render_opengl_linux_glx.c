@@ -121,3 +121,17 @@ r_ogl_os_window_swap(WM_Window os, R_Handle r)
 {
   glXSwapBuffers(r_ogl_lnx_display, (Window)wm_native_surface(os).x11.window);
 }
+
+// Admission comes from the surface where the window manager has a signal
+// for it (Wayland's frame callbacks); the swap paces frames otherwise.
+internal B32
+r_ogl_os_window_frame_ready(WM_Window os)
+{
+  return wm_window_frame_ready(os);
+}
+
+internal B32
+r_ogl_os_window_frame_pending(WM_Window os)
+{
+  return wm_window_frame_pending(os);
+}

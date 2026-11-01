@@ -610,7 +610,9 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
                 uishell_rt_diag_contains(html, str8_lit("<table")), "the copy's HTML has the link and the table");
 #if OS_LINUX
       Temp read = scratch_begin(&arena, 1);
-      RichCheck(str8_match(wm_get_selection_text(read.arena), plain, 0) && lnx_wm_state->selection_owned, "the selection also went to PRIMARY");
+      // Wayland's PRIMARY stays in the process until the data-device protocols are in.
+      B32 x11 = wm_native_surface(wm_window_zero()).kind == WM_NativeSurfaceKind_X11;
+      RichCheck(str8_match(wm_get_selection_text(read.arena), plain, 0) && (!x11 || lnx_wm_state->selection_owned), "the selection also went to PRIMARY");
       scratch_end(read);
 #endif
       s = uishell_rt_diag_cmd(d, str8_lit("copy_markdown"), str8_zero());

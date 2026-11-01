@@ -75,7 +75,7 @@ main_thread_base_entry_point(int arguments_count, char **arguments)
   d_init();
 #endif
 #if defined(WINDOW_MANAGER_H) && !defined(WM_INIT_MANUAL)
-  wm_init();
+  wm_init(&cmdline);
 #endif
 #if defined(FONT_PROVIDER_H) && !defined(FP_INIT_MANUAL)
   fp_init();
