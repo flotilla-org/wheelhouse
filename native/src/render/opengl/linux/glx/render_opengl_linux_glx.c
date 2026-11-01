@@ -75,7 +75,11 @@ r_ogl_os_init(CmdLine *cmdln)
     r_ogl_lnx_ctx = glXCreateContextAttribsARB(lnx_wm_state->display, framebuffer_config, 0, 1, context_options);
   }
   
-  glXMakeCurrent(lnx_wm_state->display, 0, r_ogl_lnx_ctx);
+  // Bind a 1x1 pbuffer until the first window: NVIDIA's GLX never gives a window a working
+  // framebuffer once the context has been current with no drawable (#605).
+  int pbuffer_options[] = {GLX_PBUFFER_WIDTH, 1, GLX_PBUFFER_HEIGHT, 1, None};
+  GLXPbuffer pbuffer = glXCreatePbuffer(lnx_wm_state->display, framebuffer_config, pbuffer_options);
+  glXMakeCurrent(lnx_wm_state->display, pbuffer, r_ogl_lnx_ctx);
 }
 
 internal R_Handle

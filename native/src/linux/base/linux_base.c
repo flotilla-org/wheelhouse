@@ -485,7 +485,12 @@ internal CondVar
 cond_var_alloc(void)
 {
   LNX_Entity *entity = lnx_entity_alloc(LNX_EntityKind_ConditionVariable);
-  int init_result = pthread_cond_init(&entity->cv.cond_handle, 0);
+  // Deadlines come from now_time_us (CLOCK_MONOTONIC); pthread's default clock is CLOCK_REALTIME.
+  pthread_condattr_t attr;
+  pthread_condattr_init(&attr);
+  pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+  int init_result = pthread_cond_init(&entity->cv.cond_handle, &attr);
+  pthread_condattr_destroy(&attr);
   if(init_result == -1)
   {
     lnx_entity_release(entity);
