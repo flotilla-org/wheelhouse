@@ -562,3 +562,24 @@ fn an_unnamed_terminal_is_left_out() {
     unsafe { crate::wheelhouse_ingress_automation_terminal(&mut build, &terminal(crate::AUTOMATION_OWNER_WORKSPACE, b"\xff")) };
     assert!(!build.valid);
 }
+
+// A stream's screens come with the change or not at all: if the build with
+// screens fails, nothing is published until one succeeds.
+#[test]
+fn a_change_waits_for_its_screens() {
+    extern "C" fn wake() {}
+    let automation = Arc::new(Automation::new(wake));
+    automation.streams.store(1, SeqCst);
+    automation.screen_streams.store(1, SeqCst);
+    let mut generation = Generation::default();
+    let plain = || {
+        let mut nodes = nodes();
+        drop_terminal_text(&mut nodes);
+        nodes
+    };
+    frame_end(&automation, &mut generation, AUTOMATION_FULL, |screens| if screens { None } else { Some(plain()) });
+    assert!(automation.published.borrow().tree.is_none(), "published without its screens");
+    frame_end(&automation, &mut generation, AUTOMATION_FULL, |screens| Some(if screens { nodes() } else { plain() }));
+    let published = automation.published.borrow().clone();
+    assert_eq!(published.tree.as_deref(), Some(&nodes()));
+}

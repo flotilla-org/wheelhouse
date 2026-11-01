@@ -173,6 +173,10 @@ drydock's `/v1/events` does. Each line is one event:
   `include=terminal_text` gets the screens in the snapshots structural
   changes send, not live screen updates.
 - **At most 64 streams** are open at once; more get 503.
+- **No keepalive.** An idle stream sends nothing; the endpoint is a local
+  socket or pipe, with no proxy to time it out. A client that loses its
+  stream reconnects with `since=<last cursor>`: it gets nothing until the
+  next change if it missed none, and a snapshot otherwise.
 
 With `Accept: application/cbor`, each event is an ADR 0063 frame: the magic
 `WHEVENTS`, a big-endian u32 length, then the event as one CBOR map with

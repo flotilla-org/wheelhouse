@@ -173,7 +173,7 @@ impl Automation {
             return Err(StatusCode::NOT_FOUND);
         }
         // Counted before the ticket, so the frame that serves it sees it.
-        let _screens = screens.then(|| Held::new(self, |a| &a.screens).0);
+        let _screens = screens.then(|| Held::new(self, |a| &a.screens));
         let mut published = self.published.subscribe();
         let ticket = self.requested.fetch_add(1, SeqCst) + 1;
         (self.wake)();
@@ -249,9 +249,15 @@ async fn caller(State(automation): State<Arc<Automation>>, Query(params): Query<
 struct Held(Arc<Automation>, fn(&Automation) -> &AtomicUsize);
 
 impl Held {
-    /// Held, and the count before.
-    fn new(automation: &Arc<Automation>, count: fn(&Automation) -> &AtomicUsize) -> (Held, usize) {
-        (Held(automation.clone(), count), count(automation).fetch_add(1, SeqCst))
+    fn new(automation: &Arc<Automation>, count: fn(&Automation) -> &AtomicUsize) -> Held {
+        count(automation).fetch_add(1, SeqCst);
+        Held(automation.clone(), count)
+    }
+
+    /// Held, unless the count is already `max`.
+    fn under(automation: &Arc<Automation>, count: fn(&Automation) -> &AtomicUsize, max: usize) -> Option<Held> {
+        let counted = count(automation).fetch_update(SeqCst, SeqCst, |n| (n < max).then_some(n + 1)).is_ok();
+        counted.then(|| Held(automation.clone(), count))
     }
 }
 
@@ -268,11 +274,10 @@ impl Drop for Held {
 async fn events(State(automation): State<Arc<Automation>>, Query(params): Query<Params>, headers: HeaderMap) -> Response {
     let cbor = cbor_wanted(&headers);
     // The cap first, so a refused client never makes the UI build.
-    let (stream, open) = Held::new(&automation, |a| &a.streams);
-    if open >= MAX_STREAMS {
+    let Some(stream) = Held::under(&automation, |a| &a.streams, MAX_STREAMS) else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-    let screens = params.terminal_text().then(|| Held::new(&automation, |a| &a.screen_streams).0);
+    };
+    let screens = params.terminal_text().then(|| Held::new(&automation, |a| &a.screen_streams));
     let published = match automation.fresh(params.terminal_text()).await {
         Ok(published) => published,
         Err(status) => return status.into_response(),
@@ -462,6 +467,11 @@ pub struct Generation {
 }
 
 impl Generation {
+    /// Forget the last tree, so the next one counts as a change.
+    pub fn forget(&mut self) {
+        self.last = None;
+    }
+
     /// Compare `nodes` with the last tree; whether the generation moved.
     /// The screens are set aside while it is serialised, never copied.
     pub fn observe(&mut self, nodes: &mut [Node]) -> bool {
@@ -521,9 +531,13 @@ pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32
         // Turning off ends the streams.
         None => current.tree.is_some(),
     };
-    // Streams that asked get screens with each change, not every frame.
+    // Streams that asked get screens with each change, not every frame. If
+    // that build fails, nothing is published, and the next frame tries again.
     if changed && tree.is_some() && !screens && automation.screen_streams.load(SeqCst) > 0 {
-        tree = build(true).or(tree);
+        match build(true) {
+            Some(screened) => tree = Some(screened),
+            None => return generation.forget(),
+        }
     }
     if waiting || changed {
         let served = requested.max(current.served);
