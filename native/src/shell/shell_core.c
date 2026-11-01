@@ -13626,6 +13626,7 @@ rd_frame(void)
         r_window_begin_frame(w->os, w->r);
         dr_submit_bucket(w->os, w->r, w->draw_bucket);
         r_window_end_frame(w->os, w->r);
+        wm_window_presented(w->os);
         w->render_pending = 0;
       }
     }

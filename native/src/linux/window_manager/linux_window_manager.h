@@ -133,6 +133,5 @@ global LNX_WM_State *lnx_wm_state = 0;
 //~ rjf: Helpers
 
 internal LNX_WM_Window *lnx_window_from_x11window(Window window);
-internal void lnx_wm_window_presented(LNX_WM_Window *window);
 
 #endif // LINUX_WINDOW_MANAGER_H

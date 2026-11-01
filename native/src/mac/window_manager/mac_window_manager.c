@@ -1266,6 +1266,12 @@ wm_backing_scale_from_window(WM_Window handle)
   return result;
 }
 
+// Nothing to tell the window manager once a frame is presented.
+internal void
+wm_window_presented(WM_Window handle)
+{
+}
+
 ////////////////////////////////
 //~ @os_hooks External Windows (Implemented Per-OS)
 

@@ -25,6 +25,7 @@ uishell_presentation_submit(WM_Window window, R_Handle renderer)
   r_window_begin_frame(window, renderer);
   r_window_submit(window, renderer, &passes);
   r_window_end_frame(window, renderer);
+  wm_window_presented(window);
   r_end_frame();
 }
 #endif

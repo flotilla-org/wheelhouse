@@ -501,8 +501,8 @@ r_end_frame(void)
 r_hook void
 r_window_begin_frame(WM_Window os, R_Handle r)
 {
-  r_ogl_os_select_window(os, r);
   R_OGL_Window *window = (R_OGL_Window *)r.u64[0];
+  r_ogl_os_select_window(os, window->os);
   
   //- rjf: unpack window viewport info
   Rng2F32 client_rect = wm_client_rect_from_window(os);
@@ -572,7 +572,7 @@ r_window_end_frame(WM_Window os, R_Handle r)
   }
   
   //- rjf: swap buffers
-  r_ogl_os_window_swap(os, r);
+  r_ogl_os_window_swap(os, window->os);
 }
 
 //- rjf: render pass submission

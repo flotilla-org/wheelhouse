@@ -20,6 +20,7 @@
 #define GLX_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB 0x00000002
 typedef GLXContext (*glXCreateContextAttribsARBProc)(Display*, GLXFBConfig, GLXContext, Bool, const int*);
 
+global Display *r_ogl_lnx_display = 0;
 global GLXContext r_ogl_lnx_ctx = 0;
 
 #endif // RENDER_OPENGL_LINUX_GLX_H

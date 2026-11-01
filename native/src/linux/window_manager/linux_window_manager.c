@@ -109,22 +109,6 @@ lnx_wm_moveresize_code_from_pos(LNX_WM_Window *w, Vec2F32 pos)
   return _NET_WM_MOVERESIZE_SIZE_BOTTOM;
 }
 
-// _NET_WM_SYNC_REQUEST: the window manager holds the next step of an
-// interactive resize until the counter reaches the value it sent, so the
-// counter moves only once a frame at the new size has been swapped.
-internal void
-lnx_wm_window_presented(LNX_WM_Window *w)
-{
-  if(w->sync_pending)
-  {
-    w->sync_pending = 0;
-    XSyncValue value;
-    XSyncIntsToValue(&value, (unsigned int)(w->counter_value & 0xffffffffu), (int)(w->counter_value >> 32));
-    XSyncSetCounter(lnx_wm_state->display, w->counter_xid, value);
-    XFlush(lnx_wm_state->display);
-  }
-}
-
 internal WM_Modifiers
 lnx_wm_modifiers_from_state(unsigned int state)
 {
@@ -814,6 +798,38 @@ internal F32
 wm_backing_scale_from_window(WM_Window handle)
 {
   return 1.f;
+}
+
+internal WM_NativeSurface
+wm_native_surface(WM_Window handle)
+{
+  WM_NativeSurface result = {WM_NativeSurfaceKind_X11};
+  result.x11.display = lnx_wm_state->display;
+  result.x11.visual_id = XVisualIDFromVisual(DefaultVisual(lnx_wm_state->display, DefaultScreen(lnx_wm_state->display)));
+  if(!wm_window_match(handle, wm_window_zero()))
+  {
+    LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+    result.x11.window = w->window;
+  }
+  return result;
+}
+
+// _NET_WM_SYNC_REQUEST: the window manager holds the next step of an
+// interactive resize until the counter reaches the value it sent, so the
+// counter moves only once a frame at the new size has been swapped.
+internal void
+wm_window_presented(WM_Window handle)
+{
+  if(wm_window_match(handle, wm_window_zero())) {return;}
+  LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
+  if(w->sync_pending)
+  {
+    w->sync_pending = 0;
+    XSyncValue value;
+    XSyncIntsToValue(&value, (unsigned int)(w->counter_value & 0xffffffffu), (int)(w->counter_value >> 32));
+    XSyncSetCounter(lnx_wm_state->display, w->counter_xid, value);
+    XFlush(lnx_wm_state->display);
+  }
 }
 
 ////////////////////////////////
