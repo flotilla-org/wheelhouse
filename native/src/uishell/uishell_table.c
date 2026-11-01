@@ -236,22 +236,6 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
                                                      : r2f32p(o.x0, o.y0+snap->drop_offset-1.f, o.x1, o.y0+snap->drop_offset+1.f);
     dr_rect(drop, accent, 0, 0, 0.f);
   }
-
-  // Scroll thumbs: a thin overlay bar along each axis that overflows.
-  F32 thick = Max(3.f, box->font_size*0.3f);
-  Vec4F32 thumb = text_color; thumb.w *= 0.3f;
-  if(rows->thumb.size < 1.0)
-  {
-    F32 travel = dim_2f32(body).y;
-    F32 y0 = body.y0 + (F32)(rows->thumb.fraction*(1.0-rows->thumb.size))*travel;
-    dr_rect(r2f32p(o.x1-thick-2.f, y0, o.x1-2.f, y0+Max(thick*2, (F32)rows->thumb.size*travel)), thumb, thick/2, 0, 1.f);
-  }
-  if(cols->thumb.size < 1.0)
-  {
-    F32 travel = dim_2f32(body).x;
-    F32 x0 = body.x0 + (F32)(cols->thumb.fraction*(1.0-cols->thumb.size))*travel;
-    dr_rect(r2f32p(x0, o.y1-thick-2.f, x0+Max(thick*2, (F32)cols->thumb.size*travel), o.y1-2.f), thumb, thick/2, 0, 1.f);
-  }
 }
 
 internal U32
