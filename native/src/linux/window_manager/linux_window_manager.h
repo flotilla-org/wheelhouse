@@ -53,14 +53,19 @@ struct LNX_WM_State
   WM_SystemInfo gfx_info;
   Arena *clipboard_arena;
   String8 clipboard_text;
+  String8 clipboard_html;
   B32 clipboard_owned;
   B32 clipboard_ascii;
   Window clipboard_owner;
   Atom clipboard_atom;
   Atom clipboard_utf8_atom;
   Atom clipboard_targets_atom;
+  Atom clipboard_html_atom;
   Arena *selection_arena;
   String8 selection_text;
+  // PRIMARY, served from selection_text.
+  B32 selection_owned;
+  B32 selection_ascii;
 };
 
 ////////////////////////////////

@@ -40,6 +40,7 @@ wm_init(void)
   lnx_wm_state->clipboard_atom = XInternAtom(lnx_wm_state->display, "CLIPBOARD", 0);
   lnx_wm_state->clipboard_utf8_atom = XInternAtom(lnx_wm_state->display, "UTF8_STRING", 0);
   lnx_wm_state->clipboard_targets_atom = XInternAtom(lnx_wm_state->display, "TARGETS", 0);
+  lnx_wm_state->clipboard_html_atom = XInternAtom(lnx_wm_state->display, "text/html", 0);
   // A private owner survives closing any one of the application's windows.
   lnx_wm_state->clipboard_owner = XCreateSimpleWindow(lnx_wm_state->display,
     DefaultRootWindow(lnx_wm_state->display), 0, 0, 1, 1, 0, 0, 0);
@@ -91,11 +92,12 @@ wm_get_system_info(void)
 //~ rjf: @os_hooks Clipboards (Implemented Per-OS)
 
 internal void
-wm_set_clipboard_text_impl(String8 string)
+wm_set_clipboard_text_impl(String8 string, String8 html)
 {
   if(lnx_wm_state->clipboard_arena == 0) { lnx_wm_state->clipboard_arena = arena_alloc(); }
   arena_clear(lnx_wm_state->clipboard_arena);
   lnx_wm_state->clipboard_text = push_str8_copy(lnx_wm_state->clipboard_arena, string);
+  lnx_wm_state->clipboard_html = push_str8_copy(lnx_wm_state->clipboard_arena, html);
   lnx_wm_state->clipboard_ascii = 1;
   for(U64 i = 0; i < string.size; i++) { lnx_wm_state->clipboard_ascii &= string.str[i] < 128; }
   XSetSelectionOwner(lnx_wm_state->display, lnx_wm_state->clipboard_atom,
@@ -111,8 +113,9 @@ wm_get_clipboard_text_impl(Arena *arena)
   return result;
 }
 
-// NOTE: process-local selection buffer; X11 PRIMARY selection integration
-// and external clipboard reading are still unimplemented
+// Owns PRIMARY for other applications, small transfers only, as the
+// clipboard is served; pasting reads the process-local copy, as reading
+// another application's selection is still unimplemented (#150).
 internal void
 wm_set_selection_text(String8 string)
 {
@@ -122,6 +125,13 @@ wm_set_selection_text(String8 string)
   }
   arena_clear(lnx_wm_state->selection_arena);
   lnx_wm_state->selection_text = push_str8_copy(lnx_wm_state->selection_arena, string);
+  lnx_wm_state->selection_ascii = 1;
+  for(U64 i = 0; i < string.size; i++) { lnx_wm_state->selection_ascii &= string.str[i] < 128; }
+  if(lnx_wm_state->display == 0) { return; }
+  Window owner = string.size != 0 ? lnx_wm_state->clipboard_owner : None;
+  XSetSelectionOwner(lnx_wm_state->display, XA_PRIMARY, owner, CurrentTime);
+  lnx_wm_state->selection_owned = owner != None && XGetSelectionOwner(lnx_wm_state->display, XA_PRIMARY) == owner;
+  XFlush(lnx_wm_state->display);
 }
 
 internal String8
@@ -134,7 +144,7 @@ internal B32
 wm_apply_clipboard_write(U32 destination, B32 clear, String8 text)
 {
   if(destination > 1 || !lnx_wm_state || !lnx_wm_state->display) { return 0; }
-  // Selection is process-local, not X11 PRIMARY. See wheelhouse#150.
+  // Owns PRIMARY; reading another application's isn't done (#150).
   if(destination == 1) { wm_set_selection_text(clear ? str8_zero() : text); return 1; }
   // UI-thread dispatch is serialized with SelectionClear/SelectionRequest
   // handling in wm_get_events; no provider worker touches the clipboard arena.
@@ -144,6 +154,7 @@ wm_apply_clipboard_write(U32 destination, B32 clear, String8 text)
     lnx_wm_state->clipboard_owned = 0;
     if(lnx_wm_state->clipboard_arena) { arena_clear(lnx_wm_state->clipboard_arena); }
     lnx_wm_state->clipboard_text = str8_zero();
+    lnx_wm_state->clipboard_html = str8_zero();
     XFlush(lnx_wm_state->display);
     return 1;
   }
@@ -538,6 +549,12 @@ wm_get_events(Arena *arena, B32 wait)
           lnx_wm_state->clipboard_owned = 0;
           if(lnx_wm_state->clipboard_arena) { arena_clear(lnx_wm_state->clipboard_arena); }
           lnx_wm_state->clipboard_text = str8_zero();
+          lnx_wm_state->clipboard_html = str8_zero();
+        }
+        // Another application's selection: ours stays for pasting here.
+        if(evt.xselectionclear.selection == XA_PRIMARY)
+        {
+          lnx_wm_state->selection_owned = 0;
         }
       }break;
 
@@ -557,23 +574,36 @@ wm_get_events(Arena *arena, B32 wait)
         response.xselection.time = request->time;
         response.xselection.property = None;
         Atom property = request->property != None ? request->property : request->target;
-        String8 text = lnx_wm_state->clipboard_text;
-        B32 ascii = lnx_wm_state->clipboard_ascii;
-        if(request->selection == lnx_wm_state->clipboard_atom &&
-           request->owner == lnx_wm_state->clipboard_owner && lnx_wm_state->clipboard_owned)
+        B32 primary = request->selection == XA_PRIMARY;
+        String8 text = primary ? lnx_wm_state->selection_text : lnx_wm_state->clipboard_text;
+        String8 html = primary ? str8_zero() : lnx_wm_state->clipboard_html;
+        B32 ascii = primary ? lnx_wm_state->selection_ascii : lnx_wm_state->clipboard_ascii;
+        B32 owned = primary ? lnx_wm_state->selection_owned :
+          (request->selection == lnx_wm_state->clipboard_atom && lnx_wm_state->clipboard_owned);
+        U64 max_bytes = (U64)XMaxRequestSize(lnx_wm_state->display)*4-128;
+        if(owned && request->owner == lnx_wm_state->clipboard_owner)
         {
           if(request->target == lnx_wm_state->clipboard_targets_atom)
           {
-            Atom targets[] = {lnx_wm_state->clipboard_targets_atom, lnx_wm_state->clipboard_utf8_atom, XA_STRING};
+            Atom targets[4] = {lnx_wm_state->clipboard_targets_atom, lnx_wm_state->clipboard_utf8_atom};
+            int count = 2;
+            if(html.size != 0) { targets[count++] = lnx_wm_state->clipboard_html_atom; }
+            if(ascii) { targets[count++] = XA_STRING; }
             XChangeProperty(lnx_wm_state->display, request->requestor, property,
-              XA_ATOM, 32, PropModeReplace, (U8 *)targets, ascii ? 3 : 2);
+              XA_ATOM, 32, PropModeReplace, (U8 *)targets, count);
             response.xselection.property = property;
           }
           else if((request->target == lnx_wm_state->clipboard_utf8_atom || (ascii && request->target == XA_STRING)) &&
-                  text.size < (U64)XMaxRequestSize(lnx_wm_state->display)*4-128)
+                  text.size < max_bytes)
           {
             XChangeProperty(lnx_wm_state->display, request->requestor, property,
               request->target, 8, PropModeReplace, text.str, (int)text.size);
+            response.xselection.property = property;
+          }
+          else if(html.size != 0 && request->target == lnx_wm_state->clipboard_html_atom && html.size < max_bytes)
+          {
+            XChangeProperty(lnx_wm_state->display, request->requestor, property,
+              request->target, 8, PropModeReplace, html.str, (int)html.size);
             response.xselection.property = property;
           }
         }

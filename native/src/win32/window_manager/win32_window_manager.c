@@ -1019,7 +1019,7 @@ wm_get_system_info(void)
 //~ rjf: @os_hooks Clipboards (Implemented Per-OS)
 
 internal void
-wm_set_clipboard_text_impl(String8 string)
+wm_set_clipboard_text_impl(String8 string, String8 html)
 {
   Temp scratch = scratch_begin(0, 0);
   if(OpenClipboard(0))
@@ -1034,6 +1034,21 @@ wm_set_clipboard_text_impl(String8 string)
       copy_buffer[string16.size] = 0;
       GlobalUnlock(string16_copy_handle);
       SetClipboardData(CF_UNICODETEXT, string16_copy_handle);
+    }
+    UINT html_format = html.size != 0 ? RegisterClipboardFormatA("HTML Format") : 0;
+    if(html_format != 0)
+    {
+      // UTF-8, NUL-terminated, as CF_HTML is.
+      String8 envelope = wm_cf_html_from_fragment(scratch.arena, html);
+      HANDLE html_handle = GlobalAlloc(GMEM_MOVEABLE, envelope.size+1);
+      if(html_handle)
+      {
+        U8 *buffer = (U8 *)GlobalLock(html_handle);
+        MemoryCopy(buffer, envelope.str, envelope.size);
+        buffer[envelope.size] = 0;
+        GlobalUnlock(html_handle);
+        if(SetClipboardData(html_format, html_handle) == 0) { GlobalFree(html_handle); }
+      }
     }
     CloseClipboard();
   }

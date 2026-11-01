@@ -2775,6 +2775,14 @@ uint32_t wheelhouse_rich_text_copy_block(WheelhouseRichText *h,
                                          WheelhouseBytes *out,
                                          char **error_out);
 
+// Synthetic markdown of at least `lines` lines, the same for the same seed:
+// the document the scale tests and the native View's timing test read.
+// Free the bytes with wheelhouse_bytes_free.
+uint32_t wheelhouse_rich_text_generate(uint64_t seed,
+                                       size_t lines,
+                                       WheelhouseBytes *out,
+                                       char **error_out);
+
 // Over every Block, collapsed or not: literal and case-insensitive unless
 // `flags` has WHEELHOUSE_RICH_FIND_*. Scan with
 // wheelhouse_rich_text_find_step.
@@ -3041,6 +3049,18 @@ WheelhouseTable *wheelhouse_table_open(WheelhouseText name,
                                        float digit,
                                        int32_t utc_offset,
                                        void (*wake)(void));
+
+// Opens a table of row_count rows of column_count plain-text cells, row by
+// row, the first row its header; right (if not NULL) has column_count
+// entries, 1 for a column aligned right. Sized as wheelhouse_table_open's
+// are. Returns NULL for a NULL cells with cells to read, or text that
+// isn't UTF-8. Free it with wheelhouse_table_free.
+WheelhouseTable *wheelhouse_table_open_cells(const WheelhouseText *cells,
+                                             size_t column_count,
+                                             size_t row_count,
+                                             const uint32_t *right,
+                                             float line,
+                                             float digit);
 
 // The table's Grid, for binnacle.h's calls, live until wheelhouse_table_free.
 // Don't free it with binnacle_grid_free.
