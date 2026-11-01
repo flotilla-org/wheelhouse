@@ -139,6 +139,7 @@ int main(int argc, char **argv) {
     /* A caret hit-tests back to its offset. */
     WhTextCaret caret;
     WhTextPosition hit;
+    assert(wh_text_caret_rect(&layout, 2, WH_TEXT_UPSTREAM + 1, &caret) == 0);
     assert(wh_text_caret_rect(&layout, 2, WH_TEXT_DOWNSTREAM, &caret) == 1);
     assert(caret.line == 0 && caret.x > 0.0f && caret.height == layout.lines[0].height && !caret.rtl);
     assert(wh_text_offset_at(&layout, caret.x, caret.y + caret.height / 2, &hit) == 1);

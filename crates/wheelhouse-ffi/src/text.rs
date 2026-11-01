@@ -313,7 +313,7 @@ thread_local! {
 
 /// Pass width INFINITY for no wrapping: a large finite width aligns RTL or
 /// centred lines against that width, far from 0, where f32 loses precision.
-/// On failure, returns 0 with an error and leaves out untouched.
+/// A NaN width is an error, and a negative one is 0. On failure, returns 0 with an error and leaves out untouched.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_layout(
     ctx: *const WhText,
@@ -456,7 +456,8 @@ unsafe fn view<'a>(layout: *const WhTextLayout) -> Option<View<'a>> {
     }
 }
 
-/// A corrupt layout must return 0, not read past its arrays or overflow.
+/// What the queries index: lines' cluster and run ranges, and clusters' bytes.
+/// A layout corrupt there must return 0, not read past its arrays or overflow.
 fn well_formed(v: &View<'_>) -> bool {
     v.lines.iter().all(|l| {
         (l.cluster_start as usize).checked_add(l.cluster_count as usize).is_some_and(|end| end <= v.clusters.len())
@@ -510,7 +511,8 @@ pub unsafe extern "C" fn wh_text_offset_at(layout: *const WhTextLayout, x: f32, 
 }
 
 /// An offset inside a cluster counts as its start. Returns 0 for a
-/// malformed layout.
+/// malformed layout or an affinity other than WH_TEXT_DOWNSTREAM or
+/// WH_TEXT_UPSTREAM.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_caret_rect(layout: *const WhTextLayout, offset: u32, affinity: u32, out: *mut WhTextCaret) -> u32 {
     // SAFETY: the caller's contract.
@@ -518,7 +520,11 @@ pub unsafe extern "C" fn wh_text_caret_rect(layout: *const WhTextLayout, offset:
     if out.is_none() {
         return 0;
     }
-    let affinity = if affinity == WH_TEXT_UPSTREAM { Affinity::Upstream } else { Affinity::Downstream };
+    let affinity = match affinity {
+        WH_TEXT_DOWNSTREAM => Affinity::Downstream,
+        WH_TEXT_UPSTREAM => Affinity::Upstream,
+        _ => return 0,
+    };
     // SAFETY: the caller's contract.
     let caret = unsafe {
         over(layout, |v| {
