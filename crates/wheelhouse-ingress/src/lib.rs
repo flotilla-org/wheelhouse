@@ -1059,8 +1059,12 @@ pub unsafe extern "C" fn wheelhouse_ingress_automation_terminal(out: *mut Automa
         let screen = (!t.screen.is_null()).then(|| std::slice::from_raw_parts(t.screen, t.screen_rows));
         let rows: Option<Result<Vec<String>, _>> =
             screen.map(|rows| rows.iter().map(|row| text(row).map(|row| row.unwrap_or_default().to_owned())).collect());
-        let (Some(id), Ok(session), Ok(rows)) = (t.view.automation_id(), text(&t.session), rows.transpose()) else {
+        let (Ok(session), Ok(rows)) = (text(&t.session), rows.transpose()) else {
             out.valid = false;
+            return;
+        };
+        // A View no address names keeps its node, without what the UI knows.
+        let Some(id) = t.view.automation_id() else {
             return;
         };
         let known = Terminal {

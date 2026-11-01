@@ -70,7 +70,8 @@ extern void wheelhouse_ingress_poll_observed(WheelhouseIngress *,
 typedef struct WheelhouseIngressAutomationBuild WheelhouseIngressAutomationBuild;
 // A terminal View: its Cleat session (empty: none), its size (0 before it
 // is drawn), and when its screen may be read, screen_rows visible rows,
-// trailing blanks trimmed, and the cursor; screen is NULL otherwise.
+// trailing blanks trimmed, and the cursor; screen is NULL otherwise. One
+// whose View no address names (owner none) is left out.
 typedef struct {
   WheelhouseIngressView view;
   WheelhouseIngressText session;

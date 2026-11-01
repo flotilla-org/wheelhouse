@@ -68,13 +68,10 @@ uishell_automation_screen(Arena *arena, UIShell_TerminalCellCache *cache)
         U8 *utf8 = push_array(arena, U8, 4);
         str8_list_push(arena, &cells, str8(utf8, utf8_encode(utf8, cell->graphemes[g])));
       }
-      kept = cells.node_count;
+      kept = cells.total_size;
     }
     // Trailing blanks go.
-    String8List trimmed = {0};
-    U64 n = 0;
-    for(String8Node *c = cells.first; c && n < kept; c = c->next, n++) { str8_list_push(arena, &trimmed, c->string); }
-    rows[row] = uishell_ingress_text(str8_list_join(arena, &trimmed, 0));
+    rows[row] = uishell_ingress_text(str8_prefix(str8_list_join(arena, &cells, 0), kept));
   }
   return rows;
 }

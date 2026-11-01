@@ -538,3 +538,27 @@ fn a_stream_whose_client_goes_is_released_while_idle() {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+// A terminal whose View no address names is left out, not the whole tree;
+// text that isn't UTF-8 still fails the build.
+#[test]
+fn an_unnamed_terminal_is_left_out() {
+    let terminal = |owner, session: &[u8]| crate::Terminal {
+        view: crate::View { owner, id: [1; 16], key: crate::Text { data: b"u:1".as_ptr(), len: 3 }, previous: 0 },
+        session: crate::Text { data: session.as_ptr(), len: session.len() },
+        cols: 80,
+        rows: 24,
+        screen: std::ptr::null(),
+        screen_rows: 0,
+        cursor_row: 0,
+        cursor_col: 0,
+        cursor_visible: 0,
+    };
+    let mut build = Build { valid: true, ..Build::default() };
+    unsafe { crate::wheelhouse_ingress_automation_terminal(&mut build, &terminal(crate::AUTOMATION_OWNER_NONE, b"s1")) };
+    assert!(build.valid && build.terminals.is_empty());
+    unsafe { crate::wheelhouse_ingress_automation_terminal(&mut build, &terminal(crate::AUTOMATION_OWNER_WORKSPACE, b"s1")) };
+    assert!(build.valid && build.terminals.len() == 1);
+    unsafe { crate::wheelhouse_ingress_automation_terminal(&mut build, &terminal(crate::AUTOMATION_OWNER_WORKSPACE, b"\xff")) };
+    assert!(!build.valid);
+}
