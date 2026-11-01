@@ -447,6 +447,163 @@ uishell_scroll_activity_diagnostics(RD_WindowState *ws)
   return failures == 0;
 }
 
+internal UI_ScrollRegionThumbSignal
+uishell_scroll_test_thumb_frame(RD_WindowState *ws, UI_ScrollRegion *region, UI_ScrollRegionThumbAxis axes[Axis2_COUNT],
+                                Vec2F32 mouse, UI_Event event)
+{
+  UI_IconInfo icons = ws->ui->icon_info;
+  UI_AnimationInfo animation = {0};
+  animation.scroll_animation_rate = animation.hot_animation_rate = 1.f;
+  UI_EventNode node = {.v = event};
+  UI_EventList events = {0};
+  if(event.kind != UI_EventKind_Null) { events.first = events.last = &node; events.count = 1; }
+  ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+  ui_state->mouse = mouse;
+  UI_ScrollRegionThumbSignal result = {0};
+  UI_Font(fnt_tag_from_static_data_string(&rd_default_main_font_bytes)) UI_FontSize(16)
+  {
+    result = ui_scroll_region_build_thumbs(ui_top_parent(), ui_key_make(1001), region, axes, UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise);
+  }
+  ui_end_build();
+  return result;
+}
+
+// A bar over content in no units (a table scrolled by fraction) draws the
+// thumb it is given and reports what the user did, the same in both styles;
+// and the row adapter keeps a huge position exact through a grab.
+internal B32
+uishell_scroll_thumb_diagnostics(RD_WindowState *ws)
+{
+  U32 failures = 0;
+#define ThumbCheck(c, n) do { if(!(c)) { fprintf(stderr, "FAIL: scroll thumb style=%u axis=%u: %s\n", style, (U32)axis, n); failures++; } } while(0)
+  UI_State *saved = ui_state;
+  for(U32 style = 0; style < 2; style++)
+  for EachEnumVal(Axis2, axis)
+  {
+    UI_State *test = ui_state_alloc();
+    ui_select_state(test);
+    UI_ScrollRegionParams params = {.rect = r2f32p(100, 100, 500, 400), .style = style,
+      .axis = {UI_ScrollAxisPolicy_Always, UI_ScrollAxisPolicy_Always},
+      .gutter_px = 24, .overlay_rest_px = 7, .overlay_hover_px = 14, .overlay_inset_px = 3, .overlay_reserve = 1};
+    UI_ScrollRegion region = ui_scroll_region_layout(params);
+    F64 fraction = 0.25;
+    UI_ScrollRegionThumbAxis axes[Axis2_COUNT] = {0};
+    axes[axis].thumb = (UI_ScrollThumb){fraction, 0.2};
+    axes[axis].drag_origin = &fraction;
+    axes[axis].drag_origin_size = sizeof(fraction);
+    UI_Key bar_key = ui_key_from_stringf(ui_key_make(1001), "scroll_region_bar_%i", axis);
+    UI_Key track_key = ui_key_from_stringf(bar_key, "##_scroll_area_%i", axis);
+    UI_Key thumb_key = ui_key_from_stringf(track_key, "##_scroller_%i", axis);
+    UI_Event none = {0};
+    Vec2F32 mouse = v2f32(200, 200);
+    for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, none); }
+    UI_Box *thumb = ui_box_from_key(thumb_key);
+    Rng2F32 track = thumb->parent->rect;
+    F32 travel = dim_2f32(track).v[axis] - dim_2f32(thumb->rect).v[axis];
+    ThumbCheck(abs_f32(dim_2f32(thumb->rect).v[axis] - dim_2f32(track).v[axis]*0.2f) <= 1, "thumb is its size's share of the track");
+    ThumbCheck(abs_f32(thumb->rect.p0.v[axis] - track.p0.v[axis] - travel*0.25f) <= 1, "thumb sits at its fraction of the travel");
+
+    // A grab reports a drag from the origin given at the press, however the
+    // content has moved since.
+    mouse = center_2f32(thumb->rect);
+    for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, none); }
+    UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = mouse};
+    UI_ScrollRegionThumbSignal sig = uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, press);
+    ThumbCheck(sig.bar[axis].kind == UI_ScrollBarActionKind_Drag && !sig.bar[axis].drag_moved && sig.bar[axis].drag_pct == 0,
+               "a stationary grab is a drag that hasn't moved");
+    fraction = 0.9;
+    axes[axis].thumb.fraction = fraction;
+    mouse.v[axis] += 10;
+    sig = uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, none);
+    ThumbCheck(sig.bar[axis].kind == UI_ScrollBarActionKind_Drag && sig.bar[axis].drag_moved &&
+               abs_f32(sig.bar[axis].drag_pct - 10/travel) < 0.01f, "a drag reports its share of the travel");
+    ThumbCheck(sig.bar[axis].drag_origin != 0 && *(F64 *)sig.bar[axis].drag_origin == 0.25, "a drag hands back its origin from the press");
+    ThumbCheck(sig.bar[1-axis].kind == UI_ScrollBarActionKind_None, "the other axis did nothing");
+    UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = mouse};
+    uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, release);
+    sig = uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, none);
+    ThumbCheck(sig.bar[axis].kind == UI_ScrollBarActionKind_None && sig.bar[axis].step == 0, "a released bar reports nothing");
+
+    // Classic arrows step and its track pages, towards either end.
+    if(style == UI_ScrollBarStyle_Classic)
+    {
+      fraction = 0.5;
+      axes[axis].thumb.fraction = fraction;
+      for(U32 direction = 0; direction < 2; direction++)
+      for(U32 page = 0; page < 2; page++)
+      {
+        mouse = v2f32(200, 200);
+        for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, none); }
+        UI_Box *control;
+        if(page)
+        {
+          control = ui_box_from_key(ui_key_from_string(track_key, direction ? str8_lit("##scroll_area_after") : str8_lit("##scroll_area_before")));
+        }
+        else
+        {
+          String8 arrow = ui_icon_string_from_kind(axis == Axis2_X ? (direction ? UI_IconKind_RightArrow : UI_IconKind_LeftArrow) : (direction ? UI_IconKind_DownArrow : UI_IconKind_UpArrow));
+          control = ui_box_from_key(ui_key_from_stringf(bar_key, direction ? "%S##_max_scroll_%i" : "%S##_min_scroll_%i", arrow, axis));
+        }
+        mouse = center_2f32(control->rect);
+        press.pos = release.pos = mouse;
+        sig = uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, press);
+        ThumbCheck(sig.bar[axis].kind == UI_ScrollBarActionKind_None && sig.bar[axis].step == (direction ? 1 : -1) &&
+                   !!sig.bar[axis].page == !!page, "classic arrow steps and track pages");
+        uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, release);
+      }
+    }
+
+    // Everything shown: classic disables its thumb, overlay builds no bar.
+    axes[axis].thumb = (UI_ScrollThumb){0, 1};
+    uishell_scroll_test_thumb_frame(ws, &region, axes, v2f32(200, 200), none);
+    if(style == UI_ScrollBarStyle_Classic)
+    {
+      ThumbCheck(ui_box_from_key(thumb_key)->flags & UI_BoxFlag_Disabled, "classic thumb is disabled with nothing to scroll");
+    }
+    else
+    {
+      UI_Box *bar = ui_box_from_key(bar_key);
+      ThumbCheck(ui_box_is_nil(bar) || bar->last_touched_build_index != test->build_index-1, "overlay builds no bar with nothing to scroll");
+    }
+    ui_select_state(saved);
+    ui_state_release(test);
+  }
+  // The row adapter grabs from the exact position, not a fraction of the
+  // range: 2^60+1 has no F64 neighbour of its own.
+  {
+    U32 style = UI_ScrollBarStyle_Classic;
+    Axis2 axis = Axis2_Y;
+    UI_State *test = ui_state_alloc();
+    ui_select_state(test);
+    UI_ScrollRegionParams params = {.rect = r2f32p(100, 100, 500, 400), .style = style,
+      .axis = {UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always}, .gutter_px = 24};
+    UI_ScrollRegion region = ui_scroll_region_layout(params);
+    S64 huge = (S64)1 << 60;
+    UI_ScrollRegionAxis axes[Axis2_COUNT] = {0};
+    axes[axis] = (UI_ScrollRegionAxis){ui_scroll_pt(huge+1, 0), r1s64(0, (S64)1 << 62), 20};
+    axes[axis].position.target_off = 0.5f;
+    UI_Key track_key = ui_key_from_stringf(ui_key_from_stringf(ui_key_make(1001), "scroll_region_bar_%i", axis), "##_scroll_area_%i", axis);
+    UI_Key thumb_key = ui_key_from_stringf(track_key, "##_scroller_%i", axis);
+    UI_Signal content = {0};
+    UI_Event none = {0};
+    Vec2F32 mouse = v2f32(200, 200);
+    for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_frame(ws, &region, axes, mouse, none, &content); }
+    mouse = center_2f32(ui_box_from_key(thumb_key)->rect);
+    for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_frame(ws, &region, axes, mouse, none, &content); }
+    UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = mouse};
+    UI_ScrollRegionSignal sig = uishell_scroll_test_frame(ws, &region, axes, mouse, press, &content);
+    ThumbCheck(sig.position.v[axis].idx == huge+1 && sig.position.v[axis].target_off == 0.5f,
+               "a grab keeps a huge position exact");
+    UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = mouse};
+    uishell_scroll_test_frame(ws, &region, axes, mouse, release, &content);
+    ui_select_state(saved);
+    ui_state_release(test);
+  }
+  fprintf(stderr, "Scroll thumb diagnostics: %u failures\n", failures);
+#undef ThumbCheck
+  return failures == 0;
+}
+
 internal B32
 uishell_scroll_region_diagnostics(RD_WindowState *ws)
 {
@@ -656,6 +813,7 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
   failures += !uishell_positioned_list_diagnostics(ws);
   failures += !uishell_scroll_controls_diagnostics(ws);
   failures += !uishell_scroll_activity_diagnostics(ws);
+  failures += !uishell_scroll_thumb_diagnostics(ws);
   fprintf(stderr, "Scroll region diagnostics: %u failures\n", failures);
 #undef ScrollCheck
   return failures == 0;

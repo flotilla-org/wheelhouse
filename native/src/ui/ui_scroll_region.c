@@ -103,6 +103,32 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
                        UI_ScrollRegionAxis axes[Axis2_COUNT], UI_BoxFlags content_flags)
 {
   UI_ScrollRegionSignal result = {0};
+  UI_ScrollRegionThumbAxis thumbs[Axis2_COUNT] = {0};
+  UI_ScrollPt origins[Axis2_COUNT] = {0};
+  for EachEnumVal(Axis2, axis)
+  {
+    ui_scroll_pt_clamp_idx(&axes[axis].position, axes[axis].range);
+    origins[axis] = ui_scroll_pt_drag_origin(axes[axis].position, axes[axis].range);
+    thumbs[axis].thumb = ui_scroll_thumb_from_pt(axes[axis].position, axes[axis].range, axes[axis].visible);
+    // Callers that scroll by position rather than view offset change it.
+    thumbs[axis].activity = (F32)axes[axis].position.idx + axes[axis].position.target_off;
+    thumbs[axis].drag_origin = &origins[axis];
+    thumbs[axis].drag_origin_size = sizeof(origins[axis]);
+  }
+  UI_ScrollRegionThumbSignal sig = ui_scroll_region_build_thumbs(parent, key, region, thumbs, content_flags);
+  result.content_box = sig.content_box;
+  for EachEnumVal(Axis2, axis)
+  {
+    result.position.v[axis] = ui_scroll_pt_from_bar_signal(axes[axis].position, axes[axis].range, axes[axis].visible, sig.bar[axis]);
+  }
+  return result;
+}
+
+internal UI_ScrollRegionThumbSignal
+ui_scroll_region_build_thumbs(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
+                              UI_ScrollRegionThumbAxis axes[Axis2_COUNT], UI_BoxFlags content_flags)
+{
+  UI_ScrollRegionThumbSignal result = {0};
   B32 overlay = region->params.style == UI_ScrollBarStyle_Overlay;
   B32 interactive = 1;
   if(overlay) for(UI_Box *box = parent; !ui_box_is_nil(box); box = box->parent)
@@ -112,9 +138,7 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
   B32 visible[Axis2_COUNT] = {0};
   for EachEnumVal(Axis2, axis)
   {
-    ui_scroll_pt_clamp_idx(&axes[axis].position, axes[axis].range);
-    result.position.v[axis] = axes[axis].position;
-    visible[axis] = region->bar_enabled[axis] && (!overlay || axes[axis].range.max > axes[axis].range.min);
+    visible[axis] = region->bar_enabled[axis] && (!overlay || axes[axis].thumb.size < 1);
   }
   UI_Parent(parent)
   {
@@ -157,8 +181,7 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
         // A new view's first offsets are where it starts, not a scroll.
         B32 fresh = ui_box_is_nil(content) || content->first_touched_build_index+1 >= ui_state->build_index;
         F32 target_before = ui_scroll_region_previous(ui_key_from_string(bar_key, str8_lit("target")), target, fresh);
-        // Callers that scroll by position rather than view offset change it.
-        F32 position = (F32)axes[axis].position.idx + axes[axis].position.target_off;
+        F32 position = axes[axis].activity;
         F32 position_before = ui_scroll_region_previous(ui_key_from_string(bar_key, str8_lit("position")), position, fresh);
         B32 moving = !fresh && (abs_f32(target - content->view_off.v[axis]) > 0.5f || abs_f32(target - target_before) > 0.5f ||
                                 abs_f32(position - position_before) > 0.001f);
@@ -189,9 +212,8 @@ ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
           // to that rectangle, bypassing their proportional layout.
           ui_set_next_fixed_width(bar_dim.x);
           ui_set_next_fixed_height(bar_dim.y);
-          result.position.v[axis] = ui_scroll_bar_styled(axis, ui_px(bar_dim.v[axis2_flip(axis)], 1.f),
-                                                        region->params.style, vis, axes[axis].position,
-                                                        axes[axis].range, axes[axis].visible);
+          result.bar[axis] = ui_scroll_bar_styled(axis, ui_px(bar_dim.v[axis2_flip(axis)], 1.f), region->params.style, vis,
+                                                  axes[axis].thumb, axes[axis].drag_origin, axes[axis].drag_origin_size);
         }
       }
       if(!showing) { ui_pop_flags(); }
