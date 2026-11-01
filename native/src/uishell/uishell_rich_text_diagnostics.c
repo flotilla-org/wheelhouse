@@ -293,6 +293,7 @@ uishell_rt_diag_fixture(Arena *arena, U64 paragraphs, String8 extra_in_paragraph
     str8_list_pushf(arena, &out, "%S\n\n", p);
     if(i == 12) { str8_list_pushf(arena, &out, "## Mid-channel\n\n"); }
   }
+  str8_list_pushf(arena, &out, "## Repeat\n\nThe first.\n\n## Repeat\n\nThe second.\n");
   return str8_list_join(arena, &out, 0);
 }
 
@@ -635,6 +636,27 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
               str8_match(resolved, note, 0), "a wikilink resolves to the note beside the file");
     RichCheck(uishell_rt_resolve_link(scratch.arena, s, str8_lit("#mid-channel"), &resolved, &heading) == UIShell_RtLink_Heading && heading != 0,
               "a fragment link resolves to its heading");
+    // Repeated headings take GitHub's suffixes, in document order.
+    U64 first = 0, second = 0;
+    uishell_rt_resolve_link(scratch.arena, s, str8_lit("#repeat"), &resolved, &first);
+    uishell_rt_resolve_link(scratch.arena, s, str8_lit("#repeat-1"), &resolved, &second);
+    UIShell_RtNode *first_node = uishell_rt_node(&s->model, first), *second_node = uishell_rt_node(&s->model, second);
+    RichCheck(first_node && second_node && first_node->order < second_node->order, "a repeated heading's anchors follow document order");
+    // Only the web and mail leave the app.
+    String8 refused[] = {str8_lit("javascript:alert(1)"), str8_lit("vbscript:msgbox"), str8_lit("smb://host/share"), str8_lit("ms-settings:"),
+                         str8_lit("data:text/html,x")};
+    B32 none = 1;
+    for EachElement(i, refused) { none &= uishell_rt_resolve_link(scratch.arena, s, refused[i], &resolved, &heading) == UIShell_RtLink_None; }
+    RichCheck(none, "links with other schemes do nothing");
+    RichCheck(uishell_rt_resolve_link(scratch.arena, s, str8_lit("mailto:harbour@example.com"), &resolved, &heading) == UIShell_RtLink_External,
+              "a mail link opens externally");
+    // A relative link is percent-decoded, its query and fragment dropped.
+    String8 spaced = push_str8f(scratch.arena, "%S/tide tables.md", dir);
+    write_data_to_file_path(spaced, str8_lit("# Tide tables\n"));
+    RichCheck(uishell_rt_resolve_link(scratch.arena, s, str8_lit("tide%20tables.md?rev=2#noon"), &resolved, &heading) == UIShell_RtLink_File &&
+              str8_match(resolved, spaced, 0), "a percent-encoded relative link resolves to its file");
+    RichCheck(uishell_rt_resolve_link(scratch.arena, s, str8_lit("No Such Note"), &resolved, &heading) == UIShell_RtLink_File &&
+              str8_match(resolved, push_str8f(scratch.arena, "%S/No Such Note", dir), 0), "a missing wikilink names its path, without inventing a note");
     // Clicking the relative link opens it as a new View.
     UIShell_RtNode *opening = uishell_rt_diag_block_with(s, str8_lit("Opening words"));
     U32 at = opening ? (U32)str8_find_needle(opening->text, 0, str8_lit("relative"), 0) + 3 : 0;

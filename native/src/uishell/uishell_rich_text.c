@@ -1863,6 +1863,25 @@ uishell_rt_slug(Arena *arena, String8 text)
   return lower_from_str8(arena, str8_list_join(arena, &parts, 0));
 }
 
+// %XX decoded; one that would decode to NUL, or isn't hex, stays as it is.
+internal String8
+uishell_rt_percent_decoded(Arena *arena, String8 s)
+{
+  U8 *out = push_array_no_zero(arena, U8, s.size + 1);
+  U64 size = 0;
+  for(U64 i = 0; i < s.size; i += 1)
+  {
+    U8 c = s.str[i];
+    if(c == '%' && i + 2 < s.size && char_is_digit(s.str[i+1], 16) && char_is_digit(s.str[i+2], 16))
+    {
+      U8 decoded = (U8)u64_from_str8(str8(s.str + i + 1, 2), 16);
+      if(decoded != 0) { c = decoded; i += 2; }
+    }
+    out[size++] = c;
+  }
+  return str8(out, size);
+}
+
 internal B32
 uishell_rt_has_scheme(String8 target)
 {
@@ -1897,16 +1916,24 @@ uishell_rt_resolve_link(Arena *arena, UIShell_RichTextState *s, String8 target, 
   if(target.size == 0) { return UIShell_RtLink_None; }
   if(target.str[0] == '#')
   {
-    String8 slug = uishell_rt_slug(arena, str8_skip(target, 1));
-    for(U64 i = 0; i < s->model.slots_count; i += 1)
+    // GitHub's anchors: headings in document order, the nth repeat of a
+    // slug taking a "-n" suffix.
+    String8 wanted = lower_from_str8(arena, uishell_rt_percent_decoded(arena, str8_skip(target, 1)));
+    U64 count = 0;
+    String8 *seen = push_array(arena, String8, Max(s->model.block_count, 1));
+    for(U64 i = 0; i < s->model.block_count; i += 1)
     {
-      for(UIShell_RtNode *n = s->model.slots[i]; n != 0; n = n->hash_next)
+      UIShell_RtNode *n = uishell_rt_node(&s->model, s->model.block_keys[i]);
+      if(n == 0 || n->kind != WHEELHOUSE_RICH_KIND_HEADING) { continue; }
+      String8 slug = uishell_rt_slug(arena, n->text);
+      U64 repeats = 0;
+      for(U64 j = 0; j < count; j += 1) { repeats += str8_match(seen[j], slug, 0); }
+      seen[count++] = slug;
+      String8 anchor = repeats ? push_str8f(arena, "%S-%llu", slug, (unsigned long long)repeats) : slug;
+      if(str8_match(anchor, wanted, 0))
       {
-        if(n->kind == WHEELHOUSE_RICH_KIND_HEADING && str8_match(uishell_rt_slug(arena, n->text), slug, 0))
-        {
-          *heading_out = n->key;
-          return UIShell_RtLink_Heading;
-        }
+        *heading_out = n->key;
+        return UIShell_RtLink_Heading;
       }
     }
     return UIShell_RtLink_None;
@@ -1917,11 +1944,22 @@ uishell_rt_resolve_link(Arena *arena, UIShell_RichTextState *s, String8 target, 
     {
       String8 path = wh_path_from_file_url(arena, target);
       if(path.size) { *resolved_out = path; return UIShell_RtLink_File; }
+      return UIShell_RtLink_None;
     }
-    return UIShell_RtLink_External;
+    // A document can come from anywhere: only the web and mail leave the
+    // app, never another registered protocol (javascript:, smb:, ...).
+    String8 external[] = {str8_lit("http:"), str8_lit("https:"), str8_lit("mailto:")};
+    for EachElement(i, external)
+    {
+      if(str8_match(str8_prefix(target, external[i].size), external[i], StringMatchFlag_CaseInsensitive)) { return UIShell_RtLink_External; }
+    }
+    return UIShell_RtLink_None;
   }
-  U64 hash = str8_find_needle(target, 0, str8_lit("#"), 0);
-  String8 relative = str8_prefix(target, hash);
+  // A path, percent-encoded as markdown links are, without its query or
+  // fragment.
+  U64 end = Min(str8_find_needle(target, 0, str8_lit("#"), 0), str8_find_needle(target, 0, str8_lit("?"), 0));
+  String8 relative = uishell_rt_percent_decoded(arena, str8_prefix(target, end));
+  if(relative.size == 0) { return UIShell_RtLink_None; }
   String8 dir = str8_chop_last_slash(str8(s->path, s->path_size));
   String8 path = path_absolute_dst_from_relative_dst_src(arena, relative, dir);
   if(!file_path_exists(path))
