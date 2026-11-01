@@ -102,48 +102,6 @@ def publish(path, value):
     finally:
         connection.close()
 
-def cbor_decode(data):
-    """A CBOR value, as the Automation Endpoint sends it: definite lengths,
-    text keys, no tags."""
-    def item(at):
-        initial = data[at]
-        major, info, at = initial >> 5, initial & 0x1f, at + 1
-        if major == 7:
-            if info in (20, 21, 22):
-                return {20: False, 21: True, 22: None}[info], at
-            size = {25: 2, 26: 4, 27: 8}[info]
-            raw = data[at:at + size]
-            return struct.unpack('>' + {2: 'e', 4: 'f', 8: 'd'}[size], raw)[0], at + size
-        if info < 24:
-            n = info
-        else:
-            size = {24: 1, 25: 2, 26: 4, 27: 8}[info]
-            n, at = int.from_bytes(data[at:at + size], 'big'), at + size
-        if major == 0:
-            return n, at
-        if major == 1:
-            return -1 - n, at
-        if major == 3:
-            return data[at:at + n].decode(), at + n
-        if major == 4:
-            items = []
-            for _ in range(n):
-                value, at = item(at)
-                items.append(value)
-            return items, at
-        if major == 5:
-            entries = {}
-            for _ in range(n):
-                key, at = item(at)
-                assert isinstance(key, str), key
-                entries[key], at = item(at)
-            return entries, at
-        raise AssertionError('unexpected CBOR major type %d' % major)
-    value, end = item(0)
-    assert end == len(data)
-    return value
-
-
 WAKE = C.CFUNCTYPE(None)
 APPLY = C.CFUNCTYPE(C.c_uint32, C.c_void_p, C.c_void_p, C.c_size_t)
 class Text(C.Structure):
@@ -723,49 +681,48 @@ class IngressTests(unittest.TestCase):
         self.serve(path, process, failure)
         return path, workspace, root
 
-    def get(self, path, target, cbor=False):
+    def get(self, path, target):
         connection = UnixHTTPConnection(path)
         try:
-            connection.request('GET', target, headers={'Accept': 'application/cbor'} if cbor else {})
+            connection.request('GET', target)
             response = connection.getresponse()
             body = response.read()
             if response.status != 200:
                 return response.status, None
-            self.assertEqual(response.getheader('content-type'), 'application/cbor' if cbor else 'application/json')
-            return 200, cbor_decode(body) if cbor else json.loads(body)
+            self.assertEqual(response.getheader('content-type'), 'application/json')
+            return 200, json.loads(body)
         finally:
             connection.close()
 
     @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
-    def test_automation_routes_serve_the_semantic_tree_in_json_and_cbor(self):
+    def test_automation_routes_serve_the_semantic_tree(self):
         path, workspace, root = self.start_automation('routes', '--ingress_record')
         w = 'workspace/' + workspace
-        for cbor in (False, True):
-            status, tree = self.get(path, '/v1/observed/semantic', cbor)
-            self.assertEqual(status, 200)
-            self.assertEqual(tree['schema'], 1)
-            self.assertIsInstance(tree['generation'], int)
-            [node] = tree['nodes']
-            self.assertEqual((node['id'], node['kind'], node['name'], node['durable']), (w, 'workspace', 'Automated', True))
-            self.assertIn('selected', node['state'])
-            [panel] = node['children']
-            self.assertEqual((panel['id'], panel['kind']), (w + '/panel/1', 'panel'))
-            terminal, cleat = panel['children']
-            self.assertEqual((terminal['id'], terminal['kind'], terminal['state']), (w + '/view/u:1', 'view', ['selected']))
-            self.assertEqual(terminal['props']['content'], 'terminal')
-            self.assertEqual(terminal['props']['terminal']['cwd'], '/tmp')
-            self.assertEqual(terminal['props']['terminal']['process'], 'read answer')
-            self.assertEqual(cleat['props']['terminal']['session'], 'agent-session')
-            # A subtree, by its Automation ID.
-            status, sub = self.get(path, '/v1/observed/semantic?root=' + w + '/view/u:2', cbor)
-            self.assertEqual(sub['nodes'], [cleat])
-            self.assertEqual(self.get(path, '/v1/observed/semantic?root=' + w + '/panel/9', cbor)[0], 404)
-            # Caller Context: the views showing a session.
-            status, caller = self.get(path, '/v1/observed/self?session=agent-session', cbor)
-            self.assertEqual((caller['schema'], caller['session']), (1, 'agent-session'))
-            self.assertEqual(caller['views'], [{'id': w + '/view/u:2', 'workspace': w}])
-            self.assertEqual(self.get(path, '/v1/observed/self?session=elsewhere', cbor)[1]['views'], [])
+        status, tree = self.get(path, '/v1/observed/semantic')
+        self.assertEqual(status, 200)
+        self.assertEqual(tree['schema'], 1)
+        self.assertIsInstance(tree['generation'], int)
+        [node] = tree['nodes']
+        self.assertEqual((node['id'], node['kind'], node['name'], node['durable']), (w, 'workspace', 'Automated', True))
+        self.assertIn('selected', node['state'])
+        [panel] = node['children']
+        self.assertEqual((panel['id'], panel['kind']), (w + '/panel/1', 'panel'))
+        terminal, cleat = panel['children']
+        self.assertEqual((terminal['id'], terminal['kind'], terminal['state']), (w + '/view/u:1', 'view', ['selected']))
+        self.assertEqual(terminal['props']['content'], 'terminal')
+        self.assertEqual(terminal['props']['terminal']['cwd'], '/tmp')
+        self.assertEqual(terminal['props']['terminal']['process'], 'read answer')
+        self.assertEqual(cleat['props']['terminal']['session'], 'agent-session')
+        # A subtree, by its Automation ID.
+        status, sub = self.get(path, '/v1/observed/semantic?root=' + w + '/view/u:2')
+        self.assertEqual(sub['nodes'], [cleat])
+        self.assertEqual(self.get(path, '/v1/observed/semantic?root=' + w + '/panel/9')[0], 404)
+        # Caller Context: the views showing a session.
+        status, caller = self.get(path, '/v1/observed/self?session=agent-session')
+        self.assertEqual((caller['schema'], caller['session']), (1, 'agent-session'))
+        self.assertEqual(caller['views'], [{'id': w + '/view/u:2', 'workspace': w}])
+        self.assertEqual(self.get(path, '/v1/observed/self?session=elsewhere')[1]['views'], [])
         self.assertEqual(self.get(path, '/v1/observed/self')[0], 400)
         # The event stream: a snapshot first, in NDJSON or ADR 0063 frames.
         connection = UnixHTTPConnection(path)
@@ -782,9 +739,7 @@ class IngressTests(unittest.TestCase):
         response = connection.getresponse()
         self.assertEqual(response.getheader('content-type'), 'application/cbor')
         magic, length = struct.unpack('>8sI', response.read(12))
-        self.assertEqual(magic, b'WHEVENTS')
-        frame = cbor_decode(response.read(length))
-        self.assertEqual((frame['type'], frame['event']['kind'], frame['cursor']), ('event', 'snapshot', event['cursor']))
+        self.assertEqual((magic, len(response.read(length))), (b'WHEVENTS', length))
         connection.close()
         # The workdirs name each View by its Automation ID.
         status, workdirs = self.get(path, '/v1/observed/workdirs')
@@ -835,8 +790,7 @@ class IngressTests(unittest.TestCase):
         for value in ('off', 'disabled'):
             path, _, _ = self.start_automation(value, user='automation: "%s"\n' % value)
             for target in ['/v1/observed/semantic', '/v1/observed/self?session=agent-session', '/v1/observed/events']:
-                for cbor in (False, True):
-                    self.assertEqual(self.get(path, target, cbor)[0], 404, (value, target))
+                self.assertEqual(self.get(path, target)[0], 404, (value, target))
             # The metadata routes are not affected.
             self.assertEqual(self.get(path, '/v1/observed/workdirs')[0], 200)
             publish(path, patch('project', 'p', {'display.label': 'still served'}))

@@ -11,6 +11,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    automation::{workspace_node, Node},
     detail::DetailCard,
     host::PaneObservation,
     managed::{ManagedContent, SlotPlan},
@@ -1012,20 +1013,14 @@ impl Sidebar {
     /// Every registered workspace's Semantic Tree (automation.rs): its name,
     /// Workspace Subject, panel tree as shown, and the current Views of its
     /// Slots.
-    pub fn semantic_workspaces(&self) -> Vec<crate::automation::Node> {
+    pub fn semantic_workspaces(&self) -> Vec<Node> {
         self.workspaces
             .iter()
             .map(|(&id, entry)| {
                 let record = &entry.record;
                 let overlay = self.overlay(id).expect("a registered workspace");
                 let arrangement = record.arrangement_view(&planner(&self.state, record));
-                crate::automation::workspace_node(
-                    id,
-                    overlay.name.or(overlay.subject_name),
-                    record.subject(),
-                    &arrangement.doc,
-                    &record.slots.get().slots(),
-                )
+                workspace_node(id, overlay.name.or(overlay.subject_name), record.subject(), &arrangement.doc, &record.slots.get().slots())
             })
             .collect()
     }
