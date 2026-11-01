@@ -9,9 +9,12 @@
 //! Every call that can fail is guarded by `run`. The plain reads, of a
 //! handle's generation and a delta's fields, can't panic and aren't guarded.
 use super::*;
+use std::time::Duration;
+
 use wheelhouse_rich_text::{
     copy_block, Alert, Align, Anchor, Attr, Color, Delta, Detail, FindOptions, FindStatus, Format, Key, ListOp, Match, Metrics,
-    NodeContent, Op, Part, Point, Position, RichText, SubscriptionId, Tree, View, Window, MATCH_LIMIT, NO_STRING,
+    NodeContent, Op, Part, Point, Position, RichText, Role, SectionKind, SubscriptionId, ToolKind, ToolStatus, Tree, View, Window,
+    BACKFILL_BUDGET, MATCH_LIMIT, NO_STRING,
 };
 
 /// A node's content, new or changed: read it with wheelhouse_rich_delta_node.
@@ -27,9 +30,10 @@ pub const WHEELHOUSE_RICH_KIND_LIST_ITEM: u32 = 2;
 pub const WHEELHOUSE_RICH_KIND_QUOTE: u32 = 3;
 /// A footnote's definition: a Container with a label.
 pub const WHEELHOUSE_RICH_KIND_FOOTNOTE: u32 = 4;
-/// A conversation's message.
+/// A conversation's message: its role is the node's `role`.
 pub const WHEELHOUSE_RICH_KIND_TURN: u32 = 5;
-/// A tool call, reasoning, or a subagent's thread.
+/// A tool call, reasoning, or a subagent's thread: the node's `section`,
+/// `name`, `title`, `tool` and `status` give its header.
 pub const WHEELHOUSE_RICH_KIND_SECTION: u32 = 6;
 pub const WHEELHOUSE_RICH_KIND_PARAGRAPH: u32 = 16;
 pub const WHEELHOUSE_RICH_KIND_HEADING: u32 = 17;
@@ -78,6 +82,39 @@ pub const WHEELHOUSE_RICH_ATTR_BACKGROUND_DEFAULT: u32 = 15;
 
 pub const WHEELHOUSE_RICH_DEFAULT_FOREGROUND: u32 = 0;
 pub const WHEELHOUSE_RICH_DEFAULT_BACKGROUND: u32 = 1;
+
+/// A Turn's role; NONE for any other node.
+pub const WHEELHOUSE_RICH_ROLE_NONE: u32 = 0;
+pub const WHEELHOUSE_RICH_ROLE_USER: u32 = 1;
+pub const WHEELHOUSE_RICH_ROLE_ASSISTANT: u32 = 2;
+pub const WHEELHOUSE_RICH_ROLE_SYSTEM: u32 = 3;
+
+/// What a Section is; NONE for any other node.
+pub const WHEELHOUSE_RICH_SECTION_NONE: u32 = 0;
+pub const WHEELHOUSE_RICH_SECTION_TOOL: u32 = 1;
+pub const WHEELHOUSE_RICH_SECTION_REASONING: u32 = 2;
+/// A subagent's thread, inside the tool call that started it; its title is
+/// the thread's id.
+pub const WHEELHOUSE_RICH_SECTION_SUBAGENT: u32 = 3;
+
+/// A Section's tool kind.
+pub const WHEELHOUSE_RICH_TOOL_OTHER: u32 = 0;
+pub const WHEELHOUSE_RICH_TOOL_SHELL: u32 = 1;
+pub const WHEELHOUSE_RICH_TOOL_EDIT: u32 = 2;
+pub const WHEELHOUSE_RICH_TOOL_READ: u32 = 3;
+pub const WHEELHOUSE_RICH_TOOL_SEARCH: u32 = 4;
+pub const WHEELHOUSE_RICH_TOOL_AGENT: u32 = 5;
+pub const WHEELHOUSE_RICH_TOOL_WEB: u32 = 6;
+pub const WHEELHOUSE_RICH_TOOL_MCP: u32 = 7;
+
+/// A Section's status; NONE for any other node.
+pub const WHEELHOUSE_RICH_STATUS_NONE: u32 = 0;
+/// Started, with no result yet (or reasoning still streaming).
+pub const WHEELHOUSE_RICH_STATUS_PENDING: u32 = 1;
+pub const WHEELHOUSE_RICH_STATUS_OK: u32 = 2;
+pub const WHEELHOUSE_RICH_STATUS_FAILED: u32 = 3;
+pub const WHEELHOUSE_RICH_STATUS_INTERRUPTED: u32 = 4;
+pub const WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL: u32 = 5;
 
 pub const WHEELHOUSE_RICH_TASK_NONE: u32 = 0;
 pub const WHEELHOUSE_RICH_TASK_OPEN: u32 = 1;
@@ -191,6 +228,15 @@ pub struct WheelhouseRichNode {
     pub column_count: usize,
     pub cells: *const WheelhouseRichCell,
     pub row_count: usize,
+    /// A Turn's WHEELHOUSE_RICH_ROLE_*.
+    pub role: u32,
+    /// A Section's WHEELHOUSE_RICH_SECTION_*, WHEELHOUSE_RICH_TOOL_* and
+    /// WHEELHOUSE_RICH_STATUS_*, and its tool's name and title.
+    pub section: u32,
+    pub tool: u32,
+    pub status: u32,
+    pub name: Text,
+    pub title: Text,
 }
 
 /// As ListOpView, with a Rich Text key: INSERT reads `at` and `key`, REMOVE
@@ -253,6 +299,63 @@ fn color_value(color: Color) -> u32 {
         Color::Foreground => WHEELHOUSE_RICH_DEFAULT_FOREGROUND,
         Color::Background => WHEELHOUSE_RICH_DEFAULT_BACKGROUND,
     }
+}
+
+/// A Container's role, kind and status, by Detail.
+struct Header<'a> {
+    role: u32,
+    section: u32,
+    tool: u32,
+    status: u32,
+    name: &'a str,
+    title: &'a str,
+}
+
+fn header(detail: &Detail) -> Header<'_> {
+    let mut out = Header {
+        role: WHEELHOUSE_RICH_ROLE_NONE,
+        section: WHEELHOUSE_RICH_SECTION_NONE,
+        tool: 0,
+        status: WHEELHOUSE_RICH_STATUS_NONE,
+        name: "",
+        title: "",
+    };
+    match detail {
+        Detail::Turn { role } => {
+            out.role = match role {
+                Role::User => WHEELHOUSE_RICH_ROLE_USER,
+                Role::Assistant => WHEELHOUSE_RICH_ROLE_ASSISTANT,
+                Role::System => WHEELHOUSE_RICH_ROLE_SYSTEM,
+            }
+        }
+        Detail::Section { section, name, title, tool, status } => {
+            out.section = match section {
+                SectionKind::Tool => WHEELHOUSE_RICH_SECTION_TOOL,
+                SectionKind::Reasoning => WHEELHOUSE_RICH_SECTION_REASONING,
+                SectionKind::Subagent => WHEELHOUSE_RICH_SECTION_SUBAGENT,
+            };
+            out.tool = match tool {
+                ToolKind::Other => WHEELHOUSE_RICH_TOOL_OTHER,
+                ToolKind::Shell => WHEELHOUSE_RICH_TOOL_SHELL,
+                ToolKind::Edit => WHEELHOUSE_RICH_TOOL_EDIT,
+                ToolKind::Read => WHEELHOUSE_RICH_TOOL_READ,
+                ToolKind::Search => WHEELHOUSE_RICH_TOOL_SEARCH,
+                ToolKind::Agent => WHEELHOUSE_RICH_TOOL_AGENT,
+                ToolKind::Web => WHEELHOUSE_RICH_TOOL_WEB,
+                ToolKind::Mcp => WHEELHOUSE_RICH_TOOL_MCP,
+            };
+            out.status = match status {
+                ToolStatus::Pending => WHEELHOUSE_RICH_STATUS_PENDING,
+                ToolStatus::Ok => WHEELHOUSE_RICH_STATUS_OK,
+                ToolStatus::Failed => WHEELHOUSE_RICH_STATUS_FAILED,
+                ToolStatus::Interrupted => WHEELHOUSE_RICH_STATUS_INTERRUPTED,
+                ToolStatus::AwaitingApproval => WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL,
+            };
+            (out.name, out.title) = (name, title);
+        }
+        _ => {}
+    }
+    out
 }
 
 fn range<T>(items: &[T], (first, count): (usize, usize)) -> *const T {
@@ -356,6 +459,7 @@ impl Buffers {
             _ => WHEELHOUSE_RICH_ALERT_NONE,
         };
         let text_of = |detail: &Detail, pick: fn(&Detail) -> Option<&str>| Text::borrowed(pick(detail).unwrap_or(""));
+        let head = header(&content.detail);
         WheelhouseRichNode {
             key: content.key.0,
             kind: content.kind as u32,
@@ -390,6 +494,12 @@ impl Buffers {
             column_count: arrays.alignments.1,
             cells: range(&self.cells, arrays.cells),
             row_count: arrays.cells.1.checked_div(arrays.alignments.1).unwrap_or(0),
+            role: head.role,
+            section: head.section,
+            tool: head.tool,
+            status: head.status,
+            name: Text::borrowed(head.name),
+            title: Text::borrowed(head.title),
         }
     }
 }
@@ -523,6 +633,114 @@ pub unsafe extern "C" fn wheelhouse_rich_text_reload(
         if let Some(out) = changed_out.as_mut() {
             *out = u32::from(changed);
         }
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// Open a conversation from contract JSON Lines (wheelhouse#548): its
+/// newest items are ingested now, and wheelhouse_rich_text_backfill fills in
+/// the rest. A last line without its newline counts if it is a whole JSON
+/// object. Lines that aren't events are skipped. Free it with
+/// wheelhouse_rich_text_free. NULL with an error on invalid input.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_open_conversation(jsonl: Text, error_out: *mut *mut c_char) -> *mut WheelhouseRichText {
+    pure(error_out, || {
+        let rich = RichText::open_conversation(slice(jsonl.data, jsonl.len)?);
+        Ok(Box::into_raw(Box::new(WheelhouseRichText { rich, poisoned: false, window: vec![] })))
+    })
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Bytes appended to a conversation's file, in any pieces: a line waits for
+/// its newline. `changed_out` (if not NULL) gets 1 if anything changed. An
+/// error for a markdown document.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_append(
+    h: *mut WheelhouseRichText,
+    bytes: Text,
+    changed_out: *mut u32,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    if let Some(out) = changed_out.as_mut() {
+        *out = 0;
+    }
+    run(h, error_out, |h| {
+        if !h.rich.is_conversation() {
+            return Err("not a conversation".into());
+        }
+        let changed = h.rich.append(slice(bytes.data, bytes.len)?);
+        if let Some(out) = changed_out.as_mut() {
+            *out = u32::from(changed);
+        }
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// Ingest a conversation's earlier lines for about `budget_us`
+/// microseconds (0 for the default, about 2 ms), inserting them at the
+/// front: call it once per poll until `remaining_out` (if not NULL) gets 0,
+/// the bytes left to read. Each View's anchor keeps it still. A markdown
+/// document has none left.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_backfill(
+    h: *mut WheelhouseRichText,
+    budget_us: u64,
+    remaining_out: *mut u64,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    if let Some(out) = remaining_out.as_mut() {
+        *out = 0;
+    }
+    run(h, error_out, |h| {
+        let budget = if budget_us == 0 { BACKFILL_BUDGET } else { Duration::from_micros(budget_us) };
+        let left = h.rich.backfill(budget);
+        if let Some(out) = remaining_out.as_mut() {
+            *out = left as u64;
+        }
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// A node's Container role, kind and status, as a delta's node has them.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct WheelhouseRichContainer {
+    /// WHEELHOUSE_RICH_KIND_*.
+    pub kind: u32,
+    pub role: u32,
+    pub section: u32,
+    pub tool: u32,
+    pub status: u32,
+    pub name: Text,
+    pub title: Text,
+}
+
+/// The node `key`'s Container fields, borrowed from the handle until the
+/// next call that changes it. An error for a key not in the tree.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_container(
+    h: *mut WheelhouseRichText,
+    key: u64,
+    out: *mut WheelhouseRichContainer,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        let out = out.as_mut().ok_or("null output")?;
+        let doc = h.rich.doc();
+        let id = doc.get(Key(key)).ok_or("no such node")?;
+        let head = header(doc.detail(id));
+        *out = WheelhouseRichContainer {
+            kind: doc.kind(id) as u32,
+            role: head.role,
+            section: head.section,
+            tool: head.tool,
+            status: head.status,
+            name: Text::borrowed(head.name),
+            title: Text::borrowed(head.title),
+        };
         Ok(())
     })
     .is_some() as u32
@@ -1097,6 +1315,22 @@ pub unsafe extern "C" fn wheelhouse_rich_text_generate(seed: u64, lines: usize, 
         write_bytes(out, markdown.into_bytes())
     })
     .is_some() as u32
+}
+
+const GENERATE_MAX_BYTES: usize = 256 << 20;
+
+/// A synthetic conversation's contract JSON Lines of at least `bytes` bytes
+/// (at most 256 MiB), the same for the same seed. Free the bytes with
+/// wheelhouse_bytes_free.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_generate_conversation(
+    seed: u64,
+    bytes: usize,
+    out: *mut Bytes,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    pure(error_out, || write_bytes(out, wheelhouse_rich_text::generate::conversation::large(seed, bytes.min(GENERATE_MAX_BYTES)))).is_some()
+        as u32
 }
 
 /// Show "N of count+" until the scan is done, and after, if `capped`.

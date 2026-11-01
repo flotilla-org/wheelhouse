@@ -327,6 +327,10 @@ _Avoid_: Node, element, line
 A keyed, non-leaf node of **Rich Text**, such as a Turn, a Section (a tool call or reasoning), a list or a quote. It is drawn as decoration over its **Blocks**, and collapsing it hides them.
 _Avoid_: Group, wrapper, message (a Turn is one kind of Container)
 
+**Container Style**:
+A frontend's rule for presenting a kind of **Container** (with its role) inside **Rich Text**: its insets, maximum width, alignment and chrome, such as a chat bubble for a user Turn. A View picks a set of them (document, chat); Rich Text with none presents Containers plainly.
+_Avoid_: Presenter, theme, skin
+
 **Embedded View**:
 A **View** laid out inline inside another View's content, such as a table **Block** in **Rich Text** or a text View in a table cell. It resolves through the same **Handlers** by media type, and its state is part of its parent's, never a separate **Slot**.
 _Avoid_: Child view, widget, inline pane

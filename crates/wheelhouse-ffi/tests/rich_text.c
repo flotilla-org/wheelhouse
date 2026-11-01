@@ -5,9 +5,11 @@
  * one that polls rarely. After each step both must equal a fresh
  * subscription's snapshot. Then it
  * drives a View: the window, heights, scrolling, collapse, selection, copy,
- * find and reveal. Behaviour is tested in Rust; this checks what C sees.
+ * find and reveal. Last it opens a conversation in pieces, appends to it
+ * and backfills it, and reads its Containers. Behaviour is tested in Rust;
+ * this checks what C sees.
  *
- * Arguments: markdown fixture files. */
+ * Arguments: markdown fixture files, and a conversation's .jsonl. */
 #include "wheelhouse.h"
 #include <assert.h>
 #include <math.h>
@@ -44,7 +46,7 @@ static char *read_file(const char *path) {
 /* A node as a model keeps it: its content and its child list. */
 typedef struct {
     uint64_t key;
-    uint32_t kind, level, hidden, task, alert, ordered, tight;
+    uint32_t kind, level, hidden, task, alert, ordered, tight, role, section, tool, status;
     uint64_t version, start;
     char *text;
     size_t text_len;
@@ -92,6 +94,11 @@ static void set_content(Node *n, const WheelhouseRichNode *c) {
     n->tight = c->tight;
     n->version = c->version;
     n->start = c->start;
+    n->role = c->role;
+    n->section = c->section;
+    n->tool = c->tool;
+    n->status = c->status;
+    assert(c->name.data && c->title.data);
     assert(c->text.data);
     n->text = malloc(c->text.len + 1);
     memcpy(n->text, c->text.data, c->text.len);
@@ -172,6 +179,7 @@ static void same_node(const Node *a, const Node *b) {
     assert(a->key == b->key && a->kind == b->kind && a->version == b->version);
     assert(a->level == b->level && a->hidden == b->hidden && a->task == b->task && a->alert == b->alert);
     assert(a->ordered == b->ordered && a->tight == b->tight && a->start == b->start);
+    assert(a->role == b->role && a->section == b->section && a->tool == b->tool && a->status == b->status);
     assert(a->text_len == b->text_len && memcmp(a->text, b->text, a->text_len) == 0);
     assert(a->span_count == b->span_count);
     for (size_t i = 0; i < a->span_count; ++i) {
@@ -389,11 +397,85 @@ static void drive_view(const char *markdown) {
     wheelhouse_rich_text_free(h);
 }
 
+static WheelhouseText bytes(const char *data, size_t len) { return (WheelhouseText){(const uint8_t *)data, len}; }
+
+static void drive_conversation(const char *jsonl) {
+    /* Open its first third, then append the rest in pieces, backfilling once
+     * a poll as a frontend does. */
+    size_t len = strlen(jsonl), head = len / 3;
+    WheelhouseRichText *h = wheelhouse_rich_text_open_conversation(bytes(jsonl, head), &error);
+    assert(h && !error);
+    uint64_t sub, left;
+    ok(wheelhouse_rich_text_subscribe(h, &sub, &error));
+    Model m = {0};
+    follow(h, sub, &m);
+    check(h, &m);
+    for (size_t at = head; at < len; at += 97) {
+        uint32_t changed = 2;
+        ok(wheelhouse_rich_text_append(h, bytes(jsonl + at, len - at < 97 ? len - at : 97), &changed, &error));
+        assert(changed <= 1);
+        ok(wheelhouse_rich_text_backfill(h, 0, &left, &error));
+        follow(h, sub, &m);
+        check(h, &m);
+    }
+    assert(left == 0);
+    /* A Container's fields read by key as its delta gave them. */
+    size_t sections = 0, turns = 0, logs = 0;
+    WheelhouseRichContainer c;
+    for (size_t i = 0; i < m.count; ++i) {
+        Node *n = &m.nodes[i];
+        ok(wheelhouse_rich_text_container(h, n->key, &c, &error));
+        assert(c.kind == n->kind && c.role == n->role && c.section == n->section && c.tool == n->tool && c.status == n->status);
+        sections += n->kind == WHEELHOUSE_RICH_KIND_SECTION && n->section != WHEELHOUSE_RICH_SECTION_NONE && n->status != WHEELHOUSE_RICH_STATUS_NONE;
+        turns += n->kind == WHEELHOUSE_RICH_KIND_TURN && n->role != WHEELHOUSE_RICH_ROLE_NONE;
+        logs += n->kind == WHEELHOUSE_RICH_KIND_LOG;
+    }
+    assert(sections > 0 && turns > 0 && logs > 0);
+    fails(wheelhouse_rich_text_container(h, 12345, &c, &error));
+    clear(&m);
+    m.generation = 0;
+    wheelhouse_rich_text_free(h);
+
+    /* A large transcript: its tail at once, then backfill to its start. */
+    WheelhouseBytes big = {0};
+    ok(wheelhouse_rich_text_generate_conversation(7, 4u << 20, &big, &error));
+    h = wheelhouse_rich_text_open_conversation(bytes((const char *)big.data, big.len), &error);
+    assert(h && !error);
+    ok(wheelhouse_rich_text_subscribe(h, &sub, &error));
+    follow(h, sub, &m);
+    size_t tail = m.count;
+    unsigned steps = 0;
+    do {
+        ok(wheelhouse_rich_text_backfill(h, 0, &left, &error));
+        follow(h, sub, &m);
+        ++steps;
+    } while (left);
+    check(h, &m);
+    assert(steps > 1 && m.count > tail);
+    printf("Conversation: a %zu-byte transcript's tail of %zu nodes, then %zu nodes after %u backfill steps.\n", big.len, tail, m.count, steps);
+    clear(&m);
+    wheelhouse_bytes_free(big);
+    wheelhouse_rich_text_free(h);
+
+    /* Markdown has nothing to append to or backfill. */
+    h = wheelhouse_rich_text_open(text("# ka"), &error);
+    fails(wheelhouse_rich_text_append(h, text("{}\n"), NULL, &error));
+    ok(wheelhouse_rich_text_backfill(h, 0, &left, &error));
+    assert(left == 0);
+    wheelhouse_rich_text_free(h);
+}
+
 int main(int argc, char **argv) {
     assert(argc > 1);
     char **fixtures = calloc((size_t)argc, sizeof *fixtures);
-    for (int i = 1; i < argc; ++i) fixtures[i - 1] = read_file(argv[i]);
-    int count = argc - 1;
+    char *conversation = NULL;
+    int count = 0;
+    for (int i = 1; i < argc; ++i) {
+        size_t n = strlen(argv[i]);
+        if (n > 6 && strcmp(argv[i] + n - 6, ".jsonl") == 0) conversation = read_file(argv[i]);
+        else fixtures[count++] = read_file(argv[i]);
+    }
+    assert(count > 0 && conversation);
 
     assert(!wheelhouse_rich_text_open((WheelhouseText){NULL, 1}, &error) && error);
     wheelhouse_string_free(error);
@@ -451,8 +533,10 @@ int main(int argc, char **argv) {
     wheelhouse_rich_text_free(h);
 
     drive_view(fixtures[0]);
+    drive_conversation(conversation);
     for (int i = 0; i < count; ++i) free(fixtures[i]);
     free(fixtures);
+    free(conversation);
     printf("Rich Text: followed %zu ops over 40 reloads through the C ABI; models match snapshots.\n", ops);
     return 0;
 }
