@@ -249,6 +249,22 @@ fn a_collapsed_container_hides_the_rows_a_reload_adds_to_it() {
 }
 
 #[test]
+fn a_height_measured_before_the_width_tags_wrap_is_not_taken_for_a_new_widths() {
+    let mut rich = RichText::open("alpha\n");
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let key = find(doc, "alpha");
+    let entry = doc.entry_of(key, Part::Block).unwrap();
+    view.set_metrics(doc, Metrics { width: 100.0, ..Metrics::default() });
+    view.set_height(doc, key, Part::Block, 50.0, 100.0).unwrap();
+    assert!(view.heights().get(entry).is_measured());
+    for i in 1..=u16::MAX {
+        view.set_metrics(doc, Metrics { width: 100.0 + f32::from(i), ..Metrics::default() });
+    }
+    assert!(!view.heights().get(entry).is_measured(), "the last width reused the measured row's tag");
+}
+
+#[test]
 fn the_window_holds_the_viewport_and_half_a_viewport_each_side() {
     let source: String = (0..100).map(|i| format!("Paragraph {i}.\n\n")).collect();
     let mut rich = RichText::open(&source);

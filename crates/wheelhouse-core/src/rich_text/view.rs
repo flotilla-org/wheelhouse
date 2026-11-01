@@ -169,7 +169,9 @@ impl View {
             return tag;
         }
         if self.tags.len() == usize::from(u16::MAX) {
+            // The tags will be reused, so no row may keep one.
             self.tags.clear();
+            self.heights.update_all(|_, row| Row::estimated(row.height, 0).with_hidden(row.hidden()));
         }
         let tag = self.tags.len() as u16 + 1;
         self.tags.insert(width.to_bits(), tag);
