@@ -563,6 +563,12 @@ uishell_scroll_thumb_diagnostics(RD_WindowState *ws)
     F32 start = region.viewport.p0.v[axis];
     ThumbCheck(!ui_box_is_nil(spanned) && spanned->rect.p0.v[axis] >= start+40-0.5f && spanned->rect.p1.v[axis] <= start+200+0.5f &&
                spanned->rect.p1.v[axis] - spanned->rect.p0.v[axis] > 100, "a bar keeps to its span");
+    // A span reaching past the viewport leaves the bar within it.
+    axes[axis].span = r1f32(-50, 100000);
+    for(U32 frame = 0; frame < 2; frame++) { uishell_scroll_test_thumb_frame(ws, &region, axes, v2f32(200, 200), none); }
+    spanned = ui_box_from_key(bar_key);
+    ThumbCheck(!ui_box_is_nil(spanned) && spanned->rect.p0.v[axis] >= start-0.5f && spanned->rect.p1.v[axis] <= region.viewport.p1.v[axis]+0.5f &&
+               spanned->rect.p1.v[axis] - spanned->rect.p0.v[axis] > 200, "a span past the viewport leaves the bar within it");
     axes[axis].span = r1f32(0, 0);
 
     // Everything shown: classic disables its thumb, overlay builds no bar.
