@@ -251,8 +251,17 @@ impl Held {
 
     /// Held, unless the count is already `max`.
     fn under(automation: &Arc<Automation>, count: fn(&Automation) -> &AtomicUsize, max: usize) -> Option<Held> {
-        let counted = count(automation).try_update(SeqCst, SeqCst, |n| (n < max).then_some(n + 1)).is_ok();
-        counted.then(|| Held(automation.clone(), count))
+        // A compare-and-swap loop: `fetch_update` is deprecated in current
+        // stable, and its replacement too new for older toolchains.
+        let counter = count(automation);
+        let mut n = counter.load(SeqCst);
+        while n < max {
+            match counter.compare_exchange_weak(n, n + 1, SeqCst, SeqCst) {
+                Ok(_) => return Some(Held(automation.clone(), count)),
+                Err(now) => n = now,
+            }
+        }
+        None
     }
 }
 
