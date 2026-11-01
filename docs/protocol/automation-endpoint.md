@@ -107,7 +107,8 @@ Each takes:
 
 - `root=<automation-id>`: only that node and what is under it; 404 when no
   node has the ID. Percent-encode the slashes or not: both work, but a `+`
-  must be `%2B`.
+  must be `%2B`. For `self`, the views under it, each still with its own
+  workspace and that workspace's subject.
 - `include=terminal_text`: terminals' screens, where the setting allows.
   `self` ignores it. On the event stream, screens come with the snapshots
   that other changes send: a screen changing alone sends nothing, by design,

@@ -5,7 +5,7 @@
 //! read and follow that.
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -234,14 +234,9 @@ async fn caller(State(automation): State<Arc<Automation>>, Query(params): Query<
         Err(status) => return status.into_response(),
     };
     let all = published.tree.as_deref().map_or(&[][..], Vec::as_slice);
-    let nodes = match &params.root {
-        Some(root) => match find(all, root) {
-            Some(node) => std::slice::from_ref(node),
-            None => return StatusCode::NOT_FOUND.into_response(),
-        },
-        None => all,
+    let Some(views) = caller_views(all, &session, params.root.as_deref()) else {
+        return StatusCode::NOT_FOUND.into_response();
     };
-    let views = caller_views(nodes, &session);
     reply(cbor, encode(&Caller { schema: SCHEMA, generation: published.generation, session, views }, cbor))
 }
 
@@ -333,7 +328,8 @@ fn event(automation: &Automation, tree: &Tree, cbor: bool) -> Option<Vec<u8>> {
         if cbor {
             FRAMING.encode(&Record { frame: Some("event".into()), ..record }).ok()
         } else {
-            encode(&record, false).map(|mut line| {
+            // The newline counts toward the cap too.
+            encode(&record, false).filter(|line| line.len() < MAX_RESPONSE).map(|mut line| {
                 line.push(b'\n');
                 line
             })
@@ -393,18 +389,26 @@ pub fn encode<T: Serialize>(value: &T, cbor: bool) -> Option<Vec<u8>> {
     (body.len() <= MAX_RESPONSE).then_some(body)
 }
 
-/// The views under `nodes` that show `session`, with their workspace and
-/// its Workspace Subject.
-fn caller_views(nodes: &[Node], session: &str) -> Vec<CallerView> {
+/// The views that show `session`, with their workspace and its Workspace
+/// Subject; with `root`, only those under it, still with their own
+/// workspace. `None` when no node has `root`.
+fn caller_views(workspaces: &[Node], session: &str, root: Option<&str>) -> Option<Vec<CallerView>> {
+    let under: Option<HashSet<&str>> = match root {
+        Some(root) => Some(find(workspaces, root)?.preorder().into_iter().map(|node| node.id.as_str()).collect()),
+        None => None,
+    };
     let mut views = Vec::new();
-    for workspace in nodes {
+    for workspace in workspaces {
         for node in workspace.preorder() {
+            if under.as_ref().is_some_and(|under| !under.contains(node.id.as_str())) {
+                continue;
+            }
             if node.props.terminal.as_ref().is_some_and(|terminal| terminal.session.as_deref() == Some(session)) {
                 views.push(CallerView { id: node.id.clone(), workspace: workspace.id.clone(), subject: workspace.props.subject.clone() });
             }
         }
     }
-    views
+    Some(views)
 }
 
 /// The largest integer JSON readers keep exactly.
@@ -531,8 +535,10 @@ pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32
         // Turning off ends the streams.
         None => current.tree.is_some(),
     };
-    // Streams that asked get screens with each change, not every frame. If
-    // that build fails, nothing is published, and the next frame tries again.
+    // Streams that asked get screens with each change, not every frame: a
+    // second build, reading every core again, but only on frames that
+    // changed. If it fails, nothing is published, and the next frame tries
+    // again.
     if changed && tree.is_some() && !screens && automation.screen_streams.load(SeqCst) > 0 {
         match build(true) {
             Some(screened) => tree = Some(screened),

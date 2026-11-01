@@ -169,15 +169,16 @@ fn terminal_text_only_when_asked() {
 #[test]
 fn caller_context_lists_the_views_showing_a_session() {
     let nodes = nodes();
-    assert_eq!(
-        serde_json::to_value(caller_views(&nodes, "s1")).unwrap(),
-        json!([
-            {"id": format!("{A}/view/u:1"), "workspace": A, "subject": {"provider": "p", "kind": "vessel", "id": "v"}},
-            {"id": format!("{B}/view/u:1"), "workspace": B},
-        ])
-    );
+    let first = json!({"id": format!("{A}/view/u:1"), "workspace": A, "subject": {"provider": "p", "kind": "vessel", "id": "v"}});
+    let views = |root: Option<&str>| serde_json::to_value(caller_views(&nodes, "s1", root)).unwrap();
+    assert_eq!(views(None), json!([first, {"id": format!("{B}/view/u:1"), "workspace": B}]));
+    // A root below a workspace keeps the views under it, each with its own
+    // workspace and subject.
+    assert_eq!(views(Some(&format!("{A}/panel/2"))), json!([first]));
+    assert_eq!(views(Some(&format!("{A}/panel/3"))), json!([]));
+    assert_eq!(caller_views(&nodes, "s1", Some("workspace/none")).map(|views| views.len()), None);
     // No view shows it: an empty list, not an error.
-    assert!(caller_views(&nodes, "other").is_empty());
+    assert_eq!(caller_views(&nodes, "other", None).map(|views| views.len()), Some(0));
 }
 
 #[test]
