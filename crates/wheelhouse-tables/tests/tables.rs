@@ -1,7 +1,7 @@
 //! The canned tables as a host drives them: whatever the viewport and
 //! scroll, every Window the Grid asks for is filled; and the live table's
 //! clock only lists more tickers and always says when it changes next.
-use binnacle_core::{Action, Axis, Viewport};
+use binnacle_core::{Action, Axis, Grid, Viewport};
 use std::time::Duration;
 use wheelhouse_tables::{Metrics, Table, NAMES};
 
@@ -98,5 +98,65 @@ fn a_given_table_shows_its_cells_by_row_and_column(tc: hegel::TestCase) {
     }
     for (c, name) in header.iter().enumerate() {
         assert_eq!(&table.header(Axis::Cols, binnacle_core::Key(c as u64), c as u64), name);
+    }
+}
+
+/// A new text size resizes a table: rows and the column header band by the
+/// line's change, columns and the row header band by the digit's, a given
+/// table's columns sized to their text too. The first row and column shown
+/// stay first, unless the end clamp pulls the view back.
+#[hegel::test(test_cases = 100)]
+fn new_metrics_resize_a_table_and_keep_its_first_row_and_column(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    let name = *tc.draw(gs::sampled_from(NAMES.iter().chain(&["cells"]).collect::<Vec<_>>()));
+    let (mut table, mut grid) = match name {
+        "cells" => {
+            let rows = (0..200).map(|r| vec![r.to_string(), "x".repeat(r % 30)]).collect();
+            Table::from_cells(vec!["n".into(), "text".into()], rows, vec![true, false], METRICS)
+        }
+        _ => Table::open(name, METRICS).expect("a canned table"),
+    };
+    let viewport = Viewport::new(800.0, 600.0);
+    let frame = |table: &mut Table, grid: &mut Grid| {
+        for _ in 0..3 {
+            table.pump(grid, |_| {});
+            table.fill(grid, viewport);
+        }
+    };
+    frame(&mut table, &mut grid);
+    for axis in Axis::ALL {
+        let fraction = tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0));
+        grid.action(Action::ScrollTo { axis, fraction });
+    }
+    frame(&mut table, &mut grid);
+    let before = Axis::ALL.map(|axis| {
+        let snapshot = grid.snapshot();
+        let sizes: Vec<_> = snapshot.strip(axis).iter().map(|i| (i.key, i.size)).collect();
+        (snapshot.strip(axis).first().map(|i| i.position), sizes, snapshot.header(axis))
+    });
+    let metrics = Metrics {
+        line: tc.draw(gs::floats::<f32>().min_value(6.0).max_value(60.0)),
+        digit: tc.draw(gs::floats::<f32>().min_value(3.0).max_value(30.0)),
+    };
+    table.set_metrics(&mut grid, metrics);
+    frame(&mut table, &mut grid);
+    let snapshot = grid.snapshot();
+    let near = |a: f32, b: f32| (a - b).abs() <= 1e-3 * b.max(1.0);
+    for axis in Axis::ALL {
+        let scale = match axis {
+            Axis::Rows => metrics.line / METRICS.line,
+            Axis::Cols => metrics.digit / METRICS.digit,
+        };
+        let (first, sizes, header) = &before[axis.index()];
+        assert!(near(snapshot.header(axis), header * scale), "{name}: {axis:?} header {} from {header}", snapshot.header(axis));
+        for item in snapshot.strip(axis) {
+            if let Some((_, size)) = sizes.iter().find(|(key, _)| *key == item.key) {
+                assert!(near(item.size, size * scale), "{name}: {axis:?} {:?} is {} from {size}", item.key, item.size);
+            }
+        }
+        let now = snapshot.strip(axis).first().map(|i| i.position);
+        if now != *first {
+            assert_eq!(snapshot.thumb(axis).fraction, 1.0, "{name}: {axis:?} first {now:?}, was {first:?}, short of the end");
+        }
     }
 }

@@ -1170,6 +1170,10 @@ struct UIShell_RtTable
   U64 key;
   U64 version;
   WheelhouseTable *table;
+  // The text line and digit width the table was last sized for, which a
+  // zoom changes.
+  F32 line;
+  F32 digit;
   B32 expanded;
   Vec2F32 last_pointer;
   B32 pointer_inside;
@@ -1369,7 +1373,15 @@ uishell_rt_table(UIShell_RichTextState *s, UIShell_RtNode *n, F32 line, F32 digi
     for(U64 c = 0; c < n->column_count; c += 1) { right[c] = n->alignments[c] == WHEELHOUSE_RICH_ALIGN_RIGHT; }
     t->table = wheelhouse_table_open_cells(cells, n->column_count, n->row_count, right, line, digit);
     t->version = n->version;
+    t->line = line;
+    t->digit = digit;
     scratch_end(scratch);
+  }
+  else if(t->line != line || t->digit != digit)
+  {
+    wheelhouse_table_set_metrics(t->table, line, digit);
+    t->line = line;
+    t->digit = digit;
   }
   return t;
 }

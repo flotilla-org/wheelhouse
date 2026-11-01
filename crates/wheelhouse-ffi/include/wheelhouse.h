@@ -3276,6 +3276,12 @@ WheelhouseTable *wheelhouse_table_open_cells(const WheelhouseText *cells,
 // Don't free it with binnacle_grid_free.
 BinnacleGrid *wheelhouse_table_grid(WheelhouseTable *table);
 
+// Resizes the table for text line pixels high whose digits are digit
+// pixels wide, as when the host's font size changes: its rows, columns and
+// header bands, a user's resizes too, scale with the text. The first row
+// and column shown stay first.
+void wheelhouse_table_set_metrics(WheelhouseTable *table, float line, float digit);
+
 // Starts a frame of width by height pixels at now_us on the host's
 // monotonic clock: answers the Effects the table's source answers, passing
 // the others on to binnacle_grid_poll_effect, advances a live table, then

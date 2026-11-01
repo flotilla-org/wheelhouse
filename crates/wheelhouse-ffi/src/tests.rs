@@ -1,6 +1,7 @@
 //! Marshalling the core can't see: what C reads from snapshots and effects.
 use super::*;
 use crate::tables::*;
+use binnacle_core::Axis;
 use std::ffi::CStr;
 use std::mem::MaybeUninit;
 use wheelhouse_core::tab_workspace_id;
@@ -1405,6 +1406,26 @@ fn a_table_of_given_cells_opens_from_its_cells_alone() {
         assert_eq!(wheelhouse_table_cell(table, 0, 1, &mut align).read().unwrap(), "4");
         assert_eq!(align, WHEELHOUSE_TABLE_ALIGN_RIGHT);
         assert_eq!(wheelhouse_table_header(table, 1, 0, 0).read().unwrap(), "name");
+        wheelhouse_table_free(table);
+    }
+}
+
+/// New metrics through C resize an open table's rows, columns and header
+/// bands with the text; a NULL table is ignored.
+#[test]
+fn a_table_resizes_for_new_metrics() {
+    unsafe {
+        let table = wheelhouse_table_open(text("records"), 20.0, 8.0, 0, None);
+        let sizes = |table| {
+            wheelhouse_table_frame(table, 800.0, 600.0, 0);
+            let snapshot = (*wheelhouse_table_grid(table)).grid_mut().snapshot();
+            let first = |axis| snapshot.strip(axis).first().map(|i| i.size);
+            (first(Axis::Rows), first(Axis::Cols), snapshot.header(Axis::Rows), snapshot.header(Axis::Cols))
+        };
+        assert_eq!(sizes(table), (Some(20.0), Some(112.0), 20.0, 40.0));
+        wheelhouse_table_set_metrics(table, 30.0, 10.0);
+        assert_eq!(sizes(table), (Some(30.0), Some(140.0), 30.0, 50.0));
+        wheelhouse_table_set_metrics(ptr::null_mut(), 30.0, 10.0);
         wheelhouse_table_free(table);
     }
 }
