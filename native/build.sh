@@ -232,6 +232,11 @@ then
   # CI enforces the headless contract; developer builds opt in explicitly.
   if [ "${CI:-}" = "true" ] || [ "${WHEELHOUSE_DOCKING_TESTS:-0}" = "1" ]; then
     CC="$compiler" python3 ../tools/test-docking.py "$core_lib_dir"
+    # fontique's font picks beside fontconfig's or CoreText's (#560): the tables
+    # it prints are docs/research/fontique-parity.md's evidence. It uses no
+    # Hegel, so HEGEL_C_LIB_DIR skips building Hegel's engine.
+    HEGEL_C_LIB_DIR="$core_target_dir" cargo test --manifest-path "$repo_root/Cargo.toml" -p wheelhouse-text --test parity --locked \
+      --target "$core_target" --target-dir "$core_target_dir" $cargo_profile_flags -- --ignored --nocapture
     if [ "$host_os" = "Linux" ]; then
       CC="$compiler" python3 ../tools/test-docking-integration.py "$core_lib_dir" "$cleat_lib_dir" \
         --core-include "$repo_root/crates/wheelhouse-ffi/include" --cleat-include "$cleat_dir/crates/cleat/include"

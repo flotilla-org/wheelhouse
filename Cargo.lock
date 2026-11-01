@@ -1862,8 +1862,12 @@ dependencies = [
  "fontique",
  "hegeltest",
  "insta",
+ "objc2-core-foundation",
+ "objc2-core-text",
  "parley",
  "read-fonts",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]
