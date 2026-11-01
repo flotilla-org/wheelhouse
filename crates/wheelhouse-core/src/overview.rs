@@ -13,6 +13,7 @@ mod grid;
 mod logical;
 mod morph;
 mod scene;
+pub mod scroller;
 mod window;
 
 pub use camera::{ease_out, Camera, CameraRig, Flight, FlightTiming, ZoomPath};
@@ -21,7 +22,7 @@ pub use logical::{
 };
 pub use morph::{morph, MORPH_MS};
 pub use scene::{scene, GridPacking, Scene, SceneGroup, SceneOptions, SceneRect, SceneTile, ViewMode};
-pub use window::{OverviewMode, OverviewWindow};
+pub use window::{OverviewMode, OverviewWindow, Stretch};
 
 #[cfg(test)]
 mod tests;

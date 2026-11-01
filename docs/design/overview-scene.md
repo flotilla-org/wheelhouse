@@ -156,18 +156,50 @@ In order, each step usable on its own:
 
 Built so far (#523, #524, #525, #528): steps 1 to 4. Beyond the plan: only the
 workspaces the camera sees are built; rows and the overview can be dragged,
-glide when let go of, and stretch past their ends and spring back (#527 is
-about sharing that); the controls are a Rows/Grid switch, the user's
-`overview_view_mode` setting, and, while a group is fitted, a back button. A
-click outside a fitted group also backs out.
+glide when let go of, and stretch past their ends and spring back (in core
+since #527, [below](#dragging-and-zooming-by-hand)); the controls are a
+Rows/Grid switch, the user's `overview_view_mode` setting, and, while a
+group is fitted, a back button. A click outside a fitted group also backs
+out.
 
-Next:
+Since built: the grid's layout rule, below (#550), and animating a change of
+layout, as in [Changes of layout](#changes-of-layout) (#555): core keeps the
+scene as it was drawn when a change began and draws the way between it and
+the new one; the host draws whatever the frame gives it until it stops
+moving.
 
-- **The grid's layout rule**, below.
-- **Animating a change of layout**, as in
-  [Changes of layout](#changes-of-layout). Built: core keeps the scene as it
-  was drawn when a change began and draws the way between it and the new
-  one; the host draws whatever the frame gives it until it stops moving.
+## Dragging and zooming by hand
+
+Worked through with Robert on 2026-11-01 (#527).
+
+- **A scroller in core**, for one axis and knowing no units: a place and the
+  range it keeps to, grabbed, dragged and let go of. Let go while moving it
+  glides on, its speed falling as e^(-t/325ms); past an end it stretches,
+  less the further it goes and never the region's whole length, and springs
+  back critically damped. A glide into an end carries past it the same way.
+  All of it is solved exactly for any frame time, so how often the host
+  draws changes only how smooth it looks. Its units are the caller's, as
+  #581's scroll bars are.
+- **Core owns the overview's drags.** The host says what a press is on (a
+  row, or between rows), how far it has moved as shares of the region, and
+  when it ends; it decides when a press has moved far enough to be a drag.
+  Core picks what the drag moves, judging its direction as drawn: sideways a
+  row too long for the region, else a grid wider than it; up or down an
+  overview taller than it. The frame comes with the stretch drawn in.
+- **Catching:** a press during a glide or a spring-back holds it where it is
+  drawn, and isn't a click.
+- **Zooming by hand**, next: pinch (macOS magnify events, passed through the
+  window layer), Cmd+scroll (Ctrl+scroll on Linux and Windows), and a Fit
+  all toggle beside Rows/Grid. From everything fitting to one tile filling
+  the region; a pinch or Cmd+scroll zooms about the pointer, Fit all about
+  the middle. Zoom and pan go back to the default view when the overview
+  reopens, the view mode changes or the readable width changes, and are kept
+  across resizes and changes of layout, within the scene.
+
+Left for later: touch, and which device owns a gesture when there are
+several; trackpad scroll phases, and with them a stretch from the wheel (a
+stretch can't tell when to spring back without them); which other views pan
+when grabbed; and #581's scroll bars on a zoomed grid.
 
 ## The grid's layout rule
 
@@ -202,8 +234,8 @@ region's shape or the group's size.
   default camera fits it all when the current workspace's tile is at least a
   readable width (a setting, about 160px); otherwise it zooms in until that
   tile is, centred on it and kept within the scene. The overview then pans in
-  both directions. Zooming out to the whole grid by hand comes with #527's
-  input work.
+  both directions. Zooming out to the whole grid by hand comes with
+  [zooming by hand](#dragging-and-zooming-by-hand).
 - **Sidebar order** is kept in both packings, so adding or removing a
   workspace moves little.
 

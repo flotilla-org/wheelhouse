@@ -122,7 +122,7 @@ def load(path):
     for name, (result, args) in signatures.items():
         fn = getattr(lib, 'wheelhouse_' + name)
         fn.restype, fn.argtypes = result, args
-    assert lib.wheelhouse_abi_version() == 18
+    assert lib.wheelhouse_abi_version() == 19
     # The tests' own forms: patches from PROVIDER, workspaces by number.
     apply_patch_json, complete = lib.wheelhouse_apply_patch_json, lib.wheelhouse_complete
     lib.wheelhouse_apply_patch_json = lambda core, now, json, error: apply_patch_json(core, now, PROVIDER, json, error)

@@ -1408,3 +1408,72 @@ fn a_table_of_given_cells_opens_from_its_cells_alone() {
         wheelhouse_table_free(table);
     }
 }
+
+// Dragging the overview through C: a press, its moves as shares of the
+// region and its release slide a long row; past its end the frame has the
+// stretch drawn in and says how far, and is flying while it springs back.
+// A press says whether it caught something.
+#[test]
+fn the_overviews_drags_reach_c() {
+    unsafe {
+        let mut error = ptr::null_mut();
+        let h = create("");
+        let ids: Vec<WorkspaceId> = (1..=12u8).map(|i| WorkspaceId::from_bytes([i; 16])).collect();
+        let names: Vec<String> = (1..=12).map(|i| format!("w{i}")).collect();
+        let workspaces: Vec<WorkspaceInput> = ids
+            .iter()
+            .zip(&names)
+            .enumerate()
+            .map(|(i, (id, name))| WorkspaceInput { id: (*id).into(), position: i, name: text(name), selected: (i == 0) as u32 })
+            .collect();
+        assert_eq!(wheelhouse_observe(h, workspaces.as_ptr(), workspaces.len(), ptr::null(), 0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_set_grid(h, WHEELHOUSE_OVERVIEW_SHELVES, 0.0, 1000.0, 0.0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_update(h, ids[0].into(), 1.6, 0.0, 1, &mut error), 1);
+        assert_eq!(wheelhouse_overview_open(h, 0.0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_update(h, ids[0].into(), 1.6, 5000.0, 1, &mut error), 1);
+        // The row's slide and first tile, the stretch, and flying.
+        let frame = |now: f64| {
+            let frame = wheelhouse_overview_frame(h, now, &mut ptr::null_mut());
+            let f = &*frame;
+            let group = &slice(f.groups, f.group_count).unwrap()[0];
+            let tile = slice(f.tiles, f.tile_count).unwrap()[0].rect;
+            let summary = (group.slide, group.slide_min, tile.x0, f.stretch_group, f.stretch_x, f.stretch_y, f.flying);
+            wheelhouse_overview_frame_free(frame);
+            summary
+        };
+        let (slide, slide_min, x0, stretch_group, _, _, flying) = frame(5000.0);
+        assert!(slide == 0.0 && slide_min < 0.0, "a long row");
+        assert_eq!((stretch_group, flying), (NONE, 0));
+
+        let mut caught = 7;
+        assert_eq!(wheelhouse_overview_grab(h, 0, 5000.0, &mut caught, &mut error), 1);
+        assert_eq!(caught, 0);
+        assert_eq!(wheelhouse_overview_drag(h, 0.5, 0.0, 5016.0, &mut error), 1);
+        let (slide, _, dragged_x0, stretch_group, stretch_x, stretch_y, _) = frame(5016.0);
+        assert_eq!((slide, stretch_group, stretch_y), (0.0, 0, 0.0));
+        assert!(stretch_x > 0.0 && (dragged_x0 - x0 - stretch_x).abs() < 1e-9, "the stretch is drawn in");
+        assert_eq!(wheelhouse_overview_release(h, 5016.0, &mut error), 1);
+        assert_eq!(frame(5016.0).6, 1, "flying while it springs back");
+        assert_eq!(wheelhouse_overview_update(h, ids[0].into(), 1.6, 5050.0, 1, &mut error), 1);
+        assert_eq!(wheelhouse_overview_grab(h, 0, 5050.0, ptr::null_mut(), &mut error), 1);
+        assert_eq!(wheelhouse_overview_release(h, 5050.0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_update(h, ids[0].into(), 1.6, 9000.0, 1, &mut error), 1);
+        let (slide, _, _, stretch_group, stretch_x, _, flying) = frame(9000.0);
+        assert_eq!((slide, stretch_group, stretch_x, flying), (0.0, NONE, 0.0, 0));
+
+        // A flick glides on, and a press catches it.
+        assert_eq!(wheelhouse_overview_grab(h, 0, 9000.0, &mut caught, &mut error), 1);
+        assert_eq!(wheelhouse_overview_drag(h, -0.1, 0.0, 9016.0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_release(h, 9016.0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_update(h, ids[0].into(), 1.6, 9050.0, 1, &mut error), 1);
+        assert_eq!(frame(9050.0).6, 1, "flying while it glides");
+        assert_eq!(wheelhouse_overview_grab(h, NONE, 9050.0, &mut caught, &mut error), 1);
+        assert_eq!(caught, 1);
+        assert!(error.is_null());
+
+        assert_eq!(wheelhouse_overview_grab(ptr::null_mut(), 0, 0.0, &mut caught, &mut error), 0);
+        assert!(!error.is_null());
+        wheelhouse_string_free(error);
+        wheelhouse_destroy(h);
+    }
+}

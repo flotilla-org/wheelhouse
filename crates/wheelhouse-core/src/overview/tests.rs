@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use hegel::generators as gs;
 use hegel::TestCase;
 
+use super::scroller::{self, Extent, Range, Scroller};
 use super::*;
 use crate::presentation::{Presented, UNPLACED_WORKSPACES_SECTION};
 use crate::scaling_tests::{fleet, patch, text, Shape, CONFIG, PROVIDER};
@@ -809,7 +810,9 @@ fn switching_flies_between_tiles_unless_motion_is_off() {
 /// - panning the overview cuts, even mid-flight; changing the view mode or
 ///   the grid's packing flies, and cuts without motion;
 /// - going back from the overview opens the current workspace, and back
-///   from an open workspace does nothing.
+///   from an open workspace does nothing;
+/// - a drag stretches only one way, past one end, and never in an open
+///   workspace; let go, it comes to rest.
 #[hegel::test(test_cases = 300)]
 fn a_windows_camera_follows_its_mode(tc: TestCase) {
     let mut entries = draw_entries(&tc);
@@ -824,7 +827,7 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
     for _ in 0..tc.draw(gs::integers::<usize>().max_value(25)) {
         now += tc.draw(gs::sampled_from(&[0.0, 16.0, 100.0, 300.0, 1000.0][..]));
         let before = window.camera(now);
-        let flies = match tc.draw(gs::integers::<u8>().max_value(12)) {
+        let flies = match tc.draw(gs::integers::<u8>().max_value(15)) {
             0 => {
                 let current = pick(&tc, &window).or_else(|| entries.first().map(|e| e.workspace_id));
                 let switched = current != window.current();
@@ -918,6 +921,21 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
                 window.update(entries.clone(), window.current(), aspect, now);
                 false
             }
+            12 => {
+                let groups = window.scene().groups.len();
+                let group = tc.draw(gs::booleans()).then(|| tc.draw(gs::integers::<usize>().max_value(groups)));
+                window.grab(group, now);
+                false
+            }
+            13 => {
+                let by = || tc.draw(gs::floats::<f64>().min_value(-2.0).max_value(2.0).allow_nan(false).allow_infinity(false));
+                window.drag(by(), by(), now);
+                false
+            }
+            14 => {
+                window.release(now);
+                false
+            }
             _ => {
                 motion = !motion;
                 window.set_motion(motion);
@@ -940,7 +958,16 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
         assert_eq!(window.settled(now), open && !window.flying(now));
         assert!(!window.flying(now + FlightTiming::default().max_ms));
         assert!(!window.morphing(now + MORPH_MS));
+        if let Some(stretch) = window.stretch() {
+            assert!(stretch.x.is_finite() && stretch.y.is_finite() && (stretch.x != 0.0) != (stretch.y != 0.0), "{stretch:?}");
+            assert!(stretch.group.is_none_or(|g| g < window.scene().groups.len()));
+            assert_ne!(window.mode(), &OverviewMode::Workspace);
+        }
     }
+    // Whatever was dragged, let go of it comes to rest.
+    window.release(now);
+    window.update_unchanged(window.current(), aspect, now + 1e5);
+    assert!(!window.moving() && window.stretch().is_none());
 }
 
 /// The scene moving under the camera: a workspace arriving mid-flight moves
@@ -1138,4 +1165,319 @@ fn a_new_readable_width_forgets_the_scrolling_and_a_resize_keeps_it() {
     // A new readable width goes back to the current tile.
     window.set_grid(GridPacking::Shelves, 300.0, 1200.0, 0.0);
     assert!(near(window.target().unwrap(), window.scene().overview_camera(window.current(), None)));
+}
+
+// ---------- grabbing, dragging and gliding ----------
+
+fn float(tc: &TestCase, lo: f64, hi: f64) -> f64 {
+    tc.draw(gs::floats::<f64>().min_value(lo).max_value(hi).allow_nan(false).allow_infinity(false))
+}
+
+fn draw_axis(tc: &TestCase) -> (Range, Extent) {
+    let range = Range::new(float(tc, -1e3, 1e3), float(tc, -1e3, 1e3));
+    let length = float(tc, 1.0, 1e3);
+    (range, Extent { length, point: length / float(tc, 100.0, 4000.0) })
+}
+
+/// A stretch draws less than was dragged past the end, never the region's
+/// whole length, the same way; unstretching it gives back the drag.
+#[hegel::test(test_cases = 2000)]
+fn a_stretch_draws_less_than_the_drag_and_unstretches_back(tc: TestCase) {
+    let (past, length) = (float(&tc, -1e5, 1e5), float(&tc, 0.01, 1e4));
+    let drawn = scroller::stretch(past, length);
+    assert!(drawn.abs() <= past.abs() && drawn.abs() < length, "{past} past a {length} region draws {drawn}");
+    assert!(drawn == 0.0 || drawn.signum() == past.signum());
+    let back = scroller::unstretch(drawn, length);
+    assert!((back - past).abs() <= 1e-6 * (length + past.abs()), "{drawn} unstretches to {back}, not {past}");
+}
+
+/// However it is grabbed, dragged, let go of and drawn, an axis keeps its
+/// place within its range and stretches only past the end it is at, less
+/// than the region's length. A grab holds it where it is drawn. Let go, it
+/// comes to rest at an end or within its range.
+#[hegel::test(test_cases = 2000)]
+fn an_axis_keeps_to_its_range_and_comes_to_rest(tc: TestCase) {
+    let (range, extent) = draw_axis(&tc);
+    let mut axis = Scroller::at(range.clamp(float(&tc, -1e3, 1e3)));
+    let mut now = 0.0;
+    let mut by = 0.0;
+    let tolerance = 1e-6 * (1.0 + range.lo.abs().max(range.hi.abs()) + extent.length);
+    for _ in 0..tc.draw(gs::integers::<usize>().max_value(30)) {
+        now += tc.draw(gs::sampled_from(&[0.0, 1.0, 8.0, 16.0, 33.0, 100.0, 500.0][..]));
+        match tc.draw(gs::integers::<u8>().max_value(4)) {
+            0 => {
+                let (drawn, moving) = (axis.drawn(), axis.moving());
+                assert_eq!(axis.grab(extent, now), moving);
+                by = 0.0;
+                axis.drag(0.0, range, extent, now);
+                assert!((axis.drawn() - drawn).abs() <= tolerance, "grabbed at {drawn}, held at {}", axis.drawn());
+            }
+            1 => {
+                by += float(&tc, -2.0 * extent.length, 2.0 * extent.length);
+                axis.drag(by, range, extent, now);
+            }
+            2 => axis.release(tc.draw(gs::booleans()), now),
+            3 => axis.advance(range, extent, now),
+            _ => axis.stop_glide(),
+        }
+        let (place, over) = (axis.place(), axis.over());
+        assert!(place.is_finite() && over.is_finite());
+        assert!(range.lo <= place && place <= range.hi, "{place} outside {range:?}");
+        assert!(over.abs() < extent.length, "{over} stretches a {} region", extent.length);
+        assert!(over <= 0.0 || place == range.hi, "stretched {over} past {place}, not the end");
+        assert!(over >= 0.0 || place == range.lo, "stretched {over} past {place}, not the end");
+    }
+    axis.release(true, now);
+    axis.advance(range, extent, now + 1e5);
+    assert!(!axis.moving() && !axis.held() && axis.over() == 0.0, "{axis:?} hasn't come to rest");
+}
+
+/// A flick drawn every frame or once at the end gets to the same place: a
+/// glide, its stop, meeting an end and springing back are solved exactly,
+/// to within the quarter point a spring stops at.
+#[hegel::test(test_cases = 2000)]
+fn how_often_a_glide_is_drawn_changes_nothing(tc: TestCase) {
+    let (range, extent) = draw_axis(&tc);
+    let mut axis = Scroller::at(range.clamp(float(&tc, -1e3, 1e3)));
+    axis.grab(extent, 0.0);
+    let (first, second) = (float(&tc, -extent.length, extent.length), float(&tc, -extent.length, extent.length));
+    axis.drag(first, range, extent, 16.0);
+    axis.drag(first + second, range, extent, 32.0);
+    let released = 32.0 + float(&tc, 0.0, 50.0);
+    axis.release(true, released);
+    let end = released + float(&tc, 0.0, 3000.0);
+    let mut once = axis;
+    once.advance(range, extent, end);
+    let mut framed = axis;
+    let mut t = released;
+    while t < end {
+        t = (t + float(&tc, 1.0, 50.0)).min(end);
+        framed.advance(range, extent, t);
+    }
+    let tolerance = 1e-6 * (1.0 + range.lo.abs().max(range.hi.abs()) + extent.length);
+    assert!((once.place() - framed.place()).abs() <= tolerance, "{once:?} drawn once, {framed:?} every frame");
+    assert!((once.over() - framed.over()).abs() <= 0.5 * extent.point + tolerance, "{once:?} drawn once, {framed:?} every frame");
+}
+
+/// A long row in an open overview, its flight over, in a region 1000
+/// points wide.
+fn long_row() -> OverviewWindow {
+    let project = || segment("project", entity("project", 0));
+    let entries: Vec<_> = (1..=12).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
+    let mut window = OverviewWindow::default();
+    window.set_grid(GridPacking::Shelves, 0.0, 1000.0, 0.0);
+    window.update(entries, Some(tab_workspace_id(1)), 1.6, 0.0);
+    window.open(0.0);
+    window.update_unchanged(window.current(), 1.6, 5000.0);
+    assert!(window.scene().groups[0].slide_min < -window.target().unwrap().w, "the row is too long for the region");
+    assert_eq!(window.scene().groups[0].slide, 0.0);
+    window
+}
+
+fn view_width(window: &OverviewWindow) -> f64 {
+    window.target().unwrap().view(1.6).width()
+}
+
+/// Dragging a long row slides it with the hand, as shares of the region;
+/// let go while moving, it glides on and stops; held still first, it stays.
+#[test]
+fn a_dragged_row_follows_the_hand_and_glides_on() {
+    let mut window = long_row();
+    let width = view_width(&window);
+    assert!(!window.grab(Some(0), 5000.0), "nothing to catch");
+    window.drag(-0.1, 0.0, 5016.0);
+    assert!(close(window.scene().groups[0].slide, -0.1 * width));
+    window.drag(-0.2, 0.02, 5032.0);
+    assert!(close(window.scene().groups[0].slide, -0.2 * width));
+    window.release(5040.0);
+    assert!(window.moving());
+    window.update_unchanged(window.current(), 1.6, 5100.0);
+    let gliding = window.scene().groups[0].slide;
+    assert!(gliding < -0.2 * width && window.moving());
+    window.update_unchanged(window.current(), 1.6, 8000.0);
+    assert!(window.scene().groups[0].slide < gliding && !window.moving());
+
+    let held = window.scene().groups[0].slide;
+    window.grab(Some(0), 9000.0);
+    window.drag(0.1, 0.0, 9016.0);
+    window.drag(0.1, 0.0, 9200.0);
+    window.release(9200.0);
+    assert!(!window.moving());
+    assert!(close(window.scene().groups[0].slide, held + 0.1 * width));
+}
+
+/// Dragged past its end a row stretches, less than the hand moved, and the
+/// scene is drawn so; let go, it springs back. A press while it springs
+/// back holds it where it is drawn.
+#[test]
+fn a_row_dragged_past_its_end_stretches_and_springs_back() {
+    let mut window = long_row();
+    let width = view_width(&window);
+    window.grab(Some(0), 5000.0);
+    window.drag(0.5, 0.0, 5016.0);
+    assert_eq!(window.scene().groups[0].slide, 0.0);
+    let stretch = window.stretch().unwrap();
+    assert_eq!((stretch.group, stretch.y), (Some(0), 0.0));
+    assert!(stretch.x > 0.0 && stretch.x < 0.5 * width, "{stretch:?}");
+    let drawn = window.drawn_scene(5016.0);
+    for (tile, plain) in drawn.tiles.iter().zip(&window.scene().tiles) {
+        assert!(close(tile.rect.x0, plain.rect.x0 + stretch.x) && close(tile.label.x1, plain.label.x1 + stretch.x));
+    }
+    assert!(close(drawn.groups[0].bounds.x0, window.scene().groups[0].bounds.x0 + stretch.x));
+    assert_eq!(window.drawn_camera(5016.0), window.camera(5016.0));
+
+    window.release(5016.0);
+    assert!(window.moving());
+    window.update_unchanged(window.current(), 1.6, 5050.0);
+    let springing = window.stretch().unwrap().x;
+    assert!(springing > 0.0 && springing < stretch.x);
+    assert!(window.grab(Some(0), 5050.0), "a press catches the spring");
+    window.drag(0.0, 0.0, 5066.0);
+    assert!((window.stretch().unwrap().x - springing).abs() < 1e-9 * width, "caught where it was drawn");
+    window.release(5066.0);
+    window.update_unchanged(window.current(), 1.6, 7000.0);
+    assert!(window.stretch().is_none() && !window.moving());
+    assert_eq!(window.scene().groups[0].slide, 0.0);
+
+    // Flicked into its end, a row's speed carries it past, and it springs
+    // back.
+    window.grab(Some(0), 8000.0);
+    window.drag(-0.05, 0.0, 8016.0);
+    window.release(8200.0);
+    window.grab(Some(0), 9000.0);
+    window.drag(0.04, 0.0, 9016.0);
+    window.release(9016.0);
+    let carried = (1..30)
+        .map(|i| {
+            window.update_unchanged(window.current(), 1.6, 9016.0 + 16.0 * i as f64);
+            window.stretch().map_or(0.0, |s| s.x)
+        })
+        .fold(0.0, f64::max);
+    assert!(carried > 0.0, "a glide into the end carries past it");
+    window.update_unchanged(window.current(), 1.6, 12000.0);
+    assert!(window.stretch().is_none() && !window.moving());
+    assert_eq!(window.scene().groups[0].slide, 0.0);
+}
+
+/// A press on a gliding row catches it where it is; let go without a drag,
+/// it stays there.
+#[test]
+fn a_press_catches_a_glide() {
+    let mut window = long_row();
+    window.grab(Some(0), 5000.0);
+    window.drag(-0.1, 0.0, 5016.0);
+    window.drag(-0.2, 0.0, 5032.0);
+    window.release(5032.0);
+    window.update_unchanged(window.current(), 1.6, 5100.0);
+    let caught = window.scene().groups[0].slide;
+    assert!(window.grab(Some(0), 5100.0));
+    window.update_unchanged(window.current(), 1.6, 5500.0);
+    assert_eq!(window.scene().groups[0].slide, caught);
+    window.release(5500.0);
+    assert!(!window.moving());
+    window.update_unchanged(window.current(), 1.6, 9000.0);
+    assert_eq!(window.scene().groups[0].slide, caught);
+}
+
+/// Up or down, over a row or between them, a drag pans an overview taller
+/// than the region, the content following the hand, and a grid wider than
+/// it across. A drag the overview has no room for does nothing.
+#[test]
+fn a_drag_pans_an_overview_larger_than_the_region() {
+    let entries: Vec<_> = (1..=12).map(|i| entry("tree", vec![segment("project", entity("project", i))], i)).collect();
+    let mut window = OverviewWindow::default();
+    window.set_grid(GridPacking::Shelves, 0.0, 1000.0, 0.0);
+    window.update(entries.clone(), Some(tab_workspace_id(1)), 3.0, 0.0);
+    window.open(0.0);
+    window.update_unchanged(window.current(), 3.0, 5000.0);
+    let before = window.target().unwrap();
+    assert!(window.scene().bounds.height() > before.view(3.0).height(), "the overview is taller than the region");
+    window.grab(None, 5000.0);
+    window.drag(0.0, -0.2, 5016.0);
+    let moved = window.target().unwrap();
+    assert!(moved.cy > before.cy && close(moved.cx, before.cx), "{before:?} to {moved:?}");
+    // Up past the top: the whole overview stretches, drawn into the camera.
+    window.drag(0.0, 5.0, 5032.0);
+    let stretch = window.stretch().unwrap();
+    assert!(stretch.group.is_none() && stretch.x == 0.0 && stretch.y < 0.0, "{stretch:?}");
+    assert!(close(window.drawn_camera(5032.0).unwrap().cy, window.camera(5032.0).unwrap().cy + stretch.y));
+    window.release(5032.0);
+    window.update_unchanged(window.current(), 3.0, 8000.0);
+    assert!(window.stretch().is_none());
+    // Sideways, rows don't pan, and a short row doesn't slide.
+    let rest = window.target().unwrap();
+    window.grab(Some(0), 9000.0);
+    window.drag(0.3, 0.0, 9016.0);
+    window.release(9016.0);
+    assert_eq!(window.target().unwrap(), rest);
+    assert!(window.stretch().is_none() && !window.moving());
+    // Which way a drag goes is judged as drawn: a share of the width is
+    // three times the same share of the height here, so this is sideways.
+    window.grab(Some(0), 9100.0);
+    window.drag(0.1, -0.2, 9116.0);
+    window.release(9116.0);
+    assert_eq!(window.target().unwrap(), rest);
+
+    // A grid zoomed in pans across.
+    window.set_view_mode(ViewMode::Grid, 10000.0);
+    window.set_grid(GridPacking::Shelves, 400.0, 1000.0, 10000.0);
+    window.update_unchanged(window.current(), 1.6, 20000.0);
+    let grid = window.target().unwrap();
+    window.grab(Some(0), 20000.0);
+    window.drag(-0.2, 0.0, 20016.0);
+    assert!(window.target().unwrap().cx > grid.cx);
+}
+
+/// Without motion nothing glides or springs back: let go, it stops, and a
+/// stretch goes at once. Rows never pan across. Closing the overview stops
+/// a glide, and with it closed a press does nothing.
+#[test]
+fn without_motion_or_an_overview_nothing_glides() {
+    let mut window = long_row();
+    window.set_motion(false);
+    window.grab(Some(0), 5000.0);
+    window.drag(-0.1, 0.0, 5016.0);
+    window.drag(-0.2, 0.0, 5032.0);
+    window.release(5032.0);
+    assert!(!window.moving());
+    window.grab(Some(0), 6000.0);
+    window.drag(1.0, 0.0, 6016.0);
+    assert!(window.stretch().is_some(), "a drag still stretches");
+    window.release(6016.0);
+    assert!(window.stretch().is_none() && !window.moving());
+    // Between rows, sideways: rows don't pan across, however long.
+    let rest = window.target().unwrap();
+    window.grab(None, 6500.0);
+    window.drag(-0.3, 0.0, 6516.0);
+    assert!(window.stretch().is_none());
+    window.release(6516.0);
+    assert_eq!(window.target().unwrap(), rest);
+
+    // Closing the overview stops a glide where it is, and a spring.
+    window.set_motion(true);
+    window.grab(Some(0), 6600.0);
+    window.drag(-0.1, 0.0, 6616.0);
+    window.release(6616.0);
+    assert!(window.moving());
+    window.close(6650.0);
+    window.update_unchanged(window.current(), 1.6, 6650.0);
+    let slide = window.scene().groups[0].slide;
+    window.update_unchanged(window.current(), 1.6, 7000.0);
+    assert_eq!(window.scene().groups[0].slide, slide);
+    assert!(!window.moving());
+    window.open(7000.0);
+    window.grab(Some(0), 7000.0);
+    window.drag(5.0, 0.0, 7016.0);
+    window.release(7016.0);
+    assert!(window.moving());
+    window.close(7016.0);
+    window.update_unchanged(window.current(), 1.6, 7032.0);
+    assert!(!window.moving() && window.stretch().is_none());
+
+    let slide = window.scene().groups[0].slide;
+    assert!(!window.grab(Some(0), 8000.0));
+    window.drag(-0.3, 0.0, 8016.0);
+    window.release(8016.0);
+    assert_eq!(window.scene().groups[0].slide, slide);
+    assert!(window.stretch().is_none() && !window.moving());
 }

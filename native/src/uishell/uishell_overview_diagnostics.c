@@ -143,7 +143,7 @@ uishell_overview_diagnostic_bare(UIShell_Overview *o, B32 inside)
 {
   WheelhouseOverviewFrame *f = o->frame;
   Vec2F32 dim = dim_2f32(o->region);
-  Rng2F32 group = uishell_overview_drawn_rect(o, f->groups[f->group].bounds, f->group);
+  Rng2F32 group = uishell_overview_rect(o, f->groups[f->group].bounds);
   for(F32 y = 4; y < dim.y; y += 6)
   {
     for(F32 x = 4; x < dim.x*0.6f; x += 6)
@@ -152,13 +152,13 @@ uishell_overview_diagnostic_bare(UIShell_Overview *o, B32 inside)
       B32 bare = (contains_2f32(group, at) == !!inside);
       for(U64 i = 0; bare && i < f->tile_count; i++)
       {
-        Rng2F32 tile = uishell_overview_drawn_rect(o, f->tiles[i].rect, f->tiles[i].group);
-        Rng2F32 label = uishell_overview_drawn_rect(o, f->tiles[i].label, f->tiles[i].group);
+        Rng2F32 tile = uishell_overview_rect(o, f->tiles[i].rect);
+        Rng2F32 label = uishell_overview_rect(o, f->tiles[i].label);
         if(contains_2f32(pad_2f32(tile, 4), at) || contains_2f32(pad_2f32(label, 4), at)) { bare = 0; }
       }
       for(U64 i = 0; bare && i < f->group_count; i++)
       {
-        if(contains_2f32(pad_2f32(uishell_overview_drawn_rect(o, f->groups[i].heading_rect, max_U64), 4), at)) { bare = 0; }
+        if(contains_2f32(pad_2f32(uishell_overview_rect(o, f->groups[i].heading_rect), 4), at)) { bare = 0; }
       }
       if(bare) { return add_2f32(at, o->region.p0); }
     }
@@ -423,6 +423,26 @@ uishell_overview_diagnostics(CFG_Node *window)
     o = uishell_overview_diagnostic_step(ws, 0, b, region);
     OverviewCheck(o.frame->groups[long_row].slide == released, "a row held still before it's let go doesn't glide");
     uishell_overview_end(&o);
+    //- A press on a gliding row catches it where it is drawn, and isn't a
+    // click on the tile under it.
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(-40, 0), 0, 0, &labels_read, v2f32(0, 0)),
+                  "a tile of the long row to flick");
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(o.frame->groups[long_row].slide < 0 && o.frame->groups[long_row].slide > o.frame->groups[long_row].slide_min,
+                  "a flicked row glides with room either side");
+    uishell_overview_end(&o);
+    U64 catch_picks = uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), shown_tile);
+    OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(0, 0), 0, 0, &labels_read, v2f32(0, 0)),
+                  "a tile of the gliding row to press");
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    F64 caught = o.frame->groups[long_row].slide;
+    uishell_overview_end(&o);
+    uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, str8_lit("###overview_none"), v2f32(0, 0), 0, 8, &labels_read, v2f32(0, 0));
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(o.frame->groups[long_row].slide == caught && o.frame->flying == 0, "a press on a gliding row catches it");
+    OverviewCheck(uishell_workspace_lifecycle_queued(str8_lit("select_workspace"), shown_tile) == catch_picks &&
+                  o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW, "a press that catches a row doesn't pick the tile under it");
+    uishell_overview_end(&o);
     //- Dragged past its end, a row stretches, less than the mouse moved, and
     // springs back when let go of.
     OverviewCheck(uishell_overview_diagnostic_drag(ws, window, b, region, scratch.arena, shown_key, v2f32(2000, 0), 200, 0, &labels_read, v2f32(0, 0)),
@@ -434,9 +454,13 @@ uishell_overview_diagnostics(CFG_Node *window)
     for(U64 i = 0; i < o.frame->tile_count; i++)
     {
       if(o.frame->tiles[i].group != (U64)long_row) { continue; }
-      Rng2F32 plain = uishell_overview_rect(&o, o.frame->tiles[i].rect);
-      Rng2F32 drawn = uishell_overview_drawn_rect(&o, o.frame->tiles[i].rect, o.frame->tiles[i].group);
-      OverviewCheck(drawn.x0 - plain.x0 == o.over.x && drawn.y0 == plain.y0, "a stretched row's tiles are drawn stretched");
+      // The frame has the stretch drawn in: without it, the tile is where
+      // its slide puts it.
+      WheelhouseOverviewRect unstretched = o.frame->tiles[i].rect;
+      unstretched.x0 -= o.frame->stretch_x; unstretched.x1 -= o.frame->stretch_x;
+      Rng2F32 plain = uishell_overview_rect(&o, unstretched);
+      Rng2F32 drawn = uishell_overview_rect(&o, o.frame->tiles[i].rect);
+      OverviewCheck(abs_f32(drawn.x0 - plain.x0 - o.over.x) < 0.01f && drawn.y0 == plain.y0, "a stretched row's tiles are drawn stretched");
       break;
     }
     uishell_overview_end(&o);
@@ -548,9 +572,6 @@ uishell_overview_diagnostics(CFG_Node *window)
   OverviewCheck(o.frame->view_mode == WHEELHOUSE_OVERVIEW_GRID && o.frame->mode == WHEELHOUSE_OVERVIEW_OVERVIEW,
                 "clicking Grid lays the overview out as a grid, and only that");
   OverviewCheck(uishell_overview_view_mode_setting() == WHEELHOUSE_OVERVIEW_GRID, "clicking Grid sets the user's setting");
-  B32 grid_slides = 0;
-  for(U64 i = 0; i < o.frame->group_count; i++) { if(uishell_overview_slides(o.frame, i)) { grid_slides = 1; } }
-  OverviewCheck(!grid_slides, "a grid has no rows to slide");
   uishell_overview_end(&o);
   //- A new view mode is drawn moving: each tile goes from its place in rows
   // to its place in the grid, and the host draws until it gets there.

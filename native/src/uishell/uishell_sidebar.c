@@ -357,24 +357,10 @@ struct UIShell_SidebarState
   // starts zeroed, which is rows, the core's own start (asserted in
   // uishell_overview.c).
   U32 overview_view_mode_seen;
+  // The press on the overview became a drag, or caught something gliding
+  // or springing back: either way it isn't a click.
   B32 overview_dragged;
-  U32 overview_drag_axis;
-  F64 overview_drag_from;
-  F64 overview_drag_v;
-  F64 overview_drag_ms;
-  F64 overview_drag_at;
-  U32 overview_glide_axis;
-  U64 overview_glide_group;
-  F64 overview_glide_v;
-  F64 overview_glide_ms;
-  // Past an end: the axis and row stretched, how far as drawn (pixels) and
-  // its speed (pixels a millisecond), springing back once let go of.
-  U32 overview_over_axis;
-  U64 overview_over_group;
-  F64 overview_over_px;
-  F64 overview_over_v;
-  F64 overview_over_ms;
-  B32 overview_springing;
+  B32 overview_caught;
   B32 card_escape_down;
   WheelhouseEntity card_action_target;
   String8 card_action_intent;
@@ -2030,10 +2016,10 @@ uishell_sidebar_init(RD_WindowState *ws)
     state->initialized = 1;
     char *error = 0;
     // A host requires exactly the ABI it was built against.
-    if(wheelhouse_abi_version() != 18)
+    if(wheelhouse_abi_version() != 19)
     {
       Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 18 is required; this library has ABI %u",
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 19 is required; this library has ABI %u",
         (U32)wheelhouse_abi_version()));
       scratch_end(scratch);
       return state;

@@ -99,7 +99,8 @@ pub struct WheelhouseOverviewFrame {
     pub group: usize,
     /// WHEELHOUSE_OVERVIEW_ROWS or _GRID.
     pub view_mode: u32,
-    /// The camera is moving, or the layout changing: draw again next frame.
+    /// The camera is moving, the layout changing, or something gliding or
+    /// springing back: draw again next frame.
     pub flying: u32,
     /// The current workspace is open and still: draw it as itself, not
     /// through the scene.
@@ -108,7 +109,8 @@ pub struct WheelhouseOverviewFrame {
     /// workspace or something to show); without one, draw the workspace as
     /// itself.
     pub has_view: u32,
-    /// The part of the scene the region shows.
+    /// The part of the scene the region shows, with any stretch of the
+    /// whole overview past its end.
     pub view: WheelhouseOverviewRect,
     pub bounds: WheelhouseOverviewRect,
     pub tiles: *const WheelhouseOverviewTile,
@@ -117,6 +119,14 @@ pub struct WheelhouseOverviewFrame {
     pub group_count: usize,
     pub regions: *const WheelhouseOverviewRegion,
     pub region_count: usize,
+    /// A drag or glide past an end, already drawn into `view` (the whole
+    /// overview) or into one row's tiles, labels, regions and bounds
+    /// (`stretch_group`; WHEELHOUSE_NONE for the whole overview). In scene
+    /// units, as the row's slide or the camera's centre moves; 0 when
+    /// nothing is stretched.
+    pub stretch_group: usize,
+    pub stretch_x: f64,
+    pub stretch_y: f64,
 }
 type FrameKeep = (Vec<WheelhouseOverviewTile>, Vec<WheelhouseOverviewGroup>, Vec<WheelhouseOverviewRegion>);
 
@@ -309,6 +319,62 @@ pub unsafe extern "C" fn wheelhouse_overview_set_grid(
     .is_some() as u32
 }
 
+/// A press on the overview: on row `group` (an index into the frame's
+/// groups), or WHEELHOUSE_NONE between rows. It catches whatever is gliding
+/// or springing back where it is drawn; `caught_out` (if not null) says
+/// whether it did, so the press shouldn't also count as a click. A press
+/// that moves is a drag (wheelhouse_overview_drag); every press ends with
+/// wheelhouse_overview_release.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_overview_grab(
+    h: *mut WheelhouseCore,
+    group: usize,
+    now_ms: f64,
+    caught_out: *mut u32,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        let caught = h.overview.grab((group != NONE).then_some(group), now_ms);
+        if !caught_out.is_null() {
+            *caught_out = caught as u32;
+        }
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// The press has moved `dx` across and `dy` down since it began, as shares
+/// of the region's width and height. Its first call picks what it drags:
+/// mostly sideways over a row too long for the region slides the row, else
+/// pans a grid wider than the region; mostly up or down pans an overview
+/// taller than it. The host decides when a press has moved far enough to
+/// be a drag.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_overview_drag(
+    h: *mut WheelhouseCore,
+    dx: f64,
+    dy: f64,
+    now_ms: f64,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        h.overview.drag(dx, dy, now_ms);
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// The press ends: what was dragged glides on, slowing, or springs back
+/// from past its end; the frame is `flying` until it stops.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_overview_release(h: *mut WheelhouseCore, now_ms: f64, error_out: *mut *mut c_char) -> u32 {
+    run(h, error_out, |h| {
+        h.overview.release(now_ms);
+        Ok(())
+    })
+    .is_some() as u32
+}
+
 /// The region at `now_ms`. Its text is borrowed from the overview: free
 /// it with wheelhouse_overview_frame_free before the next call that changes
 /// the overview.
@@ -322,7 +388,7 @@ pub unsafe extern "C" fn wheelhouse_overview_frame(
         let window = &h.overview;
         // Drawn part way through a change of layout; the same tiles and
         // groups, in the same order, as the scene the layout placed.
-        let drawn = window.scene_at(now_ms);
+        let drawn = window.drawn_scene(now_ms);
         let scene = drawn.as_ref();
         let layout = window.layout();
         let text = |value: &Option<String>| Text::borrowed(value.as_deref().unwrap_or(""));
@@ -381,7 +447,8 @@ pub unsafe extern "C" fn wheelhouse_overview_frame(
             OverviewMode::Overview => (WHEELHOUSE_OVERVIEW_OVERVIEW, NONE),
             OverviewMode::Group(key) => (WHEELHOUSE_OVERVIEW_GROUP, scene.groups.iter().position(|g| &g.key == key).unwrap_or(NONE)),
         };
-        let camera = window.camera(now_ms);
+        let camera = window.drawn_camera(now_ms);
+        let stretch = window.stretch();
         let view = camera.unwrap_or(Camera { cx: 0.0, cy: 0.0, w: 1.0 }).view(scene.options.aspect);
         let value = WheelhouseOverviewFrame {
             mode,
@@ -390,7 +457,7 @@ pub unsafe extern "C" fn wheelhouse_overview_frame(
                 ViewMode::Rows => WHEELHOUSE_OVERVIEW_ROWS,
                 ViewMode::Grid => WHEELHOUSE_OVERVIEW_GRID,
             },
-            flying: (window.flying(now_ms) || window.morphing(now_ms)) as u32,
+            flying: (window.flying(now_ms) || window.morphing(now_ms) || window.moving()) as u32,
             settled: window.settled(now_ms) as u32,
             has_view: camera.is_some() as u32,
             view: view.into(),
@@ -401,6 +468,9 @@ pub unsafe extern "C" fn wheelhouse_overview_frame(
             group_count: groups.len(),
             regions: regions.as_ptr(),
             region_count: regions.len(),
+            stretch_group: stretch.and_then(|s| s.group).unwrap_or(NONE),
+            stretch_x: stretch.map_or(0.0, |s| s.x),
+            stretch_y: stretch.map_or(0.0, |s| s.y),
         };
         Ok(give(value, (tiles, groups, regions)))
     })
