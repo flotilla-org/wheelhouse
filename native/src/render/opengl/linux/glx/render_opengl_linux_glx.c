@@ -11,10 +11,18 @@ r_ogl_os_load_procedure(char *name)
 internal void
 r_ogl_os_init(CmdLine *cmdln)
 {
+  WM_NativeSurface native = wm_native_surface(wm_window_zero());
+  if(native.kind != WM_NativeSurfaceKind_X11)
+  {
+    wm_graphical_message(1, str8_lit("Fatal Error"), str8_lit("OpenGL through GLX needs an X11 window manager."));
+    abort_self(1);
+  }
+  r_ogl_lnx_display = (Display *)native.x11.display;
+  
   //- rjf: require GLX 1.3+
   int glx_version_major = 0;
   int glx_version_minor = 0;
-  if(!glXQueryVersion(lnx_wm_state->display, &glx_version_major, &glx_version_minor) ||
+  if(!glXQueryVersion(r_ogl_lnx_display, &glx_version_major, &glx_version_minor) ||
      (glx_version_major == 1 && glx_version_minor < 3) ||
      glx_version_major < 1)
   {
@@ -42,7 +50,7 @@ r_ogl_os_init(CmdLine *cmdln)
     None
   };
   int framebuffer_configs_count = 0;
-  GLXFBConfig *framebuffer_configs = glXChooseFBConfig(lnx_wm_state->display, DefaultScreen(lnx_wm_state->display), framebuffer_config_options, &framebuffer_configs_count);
+  GLXFBConfig *framebuffer_configs = glXChooseFBConfig(r_ogl_lnx_display, DefaultScreen(r_ogl_lnx_display), framebuffer_config_options, &framebuffer_configs_count);
   if(framebuffer_configs == 0)
   {
     wm_graphical_message(1, str8_lit("Fatal Error"), str8_lit("Could not find a suitable framebuffer configuration."));
@@ -72,7 +80,7 @@ r_ogl_os_init(CmdLine *cmdln)
       GLX_CONTEXT_FLAGS_ARB,         !!debug_mode*GLX_CONTEXT_DEBUG_BIT_ARB,
       None
     };
-    r_ogl_lnx_ctx = glXCreateContextAttribsARB(lnx_wm_state->display, framebuffer_config, 0, 1, context_options);
+    r_ogl_lnx_ctx = glXCreateContextAttribsARB(r_ogl_lnx_display, framebuffer_config, 0, 1, context_options);
   }
   
   // Bind a 1x1 pbuffer until the first window: NVIDIA's GLX never gives a window a working
@@ -80,13 +88,13 @@ r_ogl_os_init(CmdLine *cmdln)
   // A config without GLX_PBUFFER_BIT would raise BadMatch, which Xlib's default handler exits on.
   GLXPbuffer pbuffer = 0;
   int drawable_type = 0;
-  if(glXGetFBConfigAttrib(lnx_wm_state->display, framebuffer_config, GLX_DRAWABLE_TYPE, &drawable_type) == Success &&
+  if(glXGetFBConfigAttrib(r_ogl_lnx_display, framebuffer_config, GLX_DRAWABLE_TYPE, &drawable_type) == Success &&
      (drawable_type & GLX_PBUFFER_BIT))
   {
     int pbuffer_options[] = {GLX_PBUFFER_WIDTH, 1, GLX_PBUFFER_HEIGHT, 1, None};
-    pbuffer = glXCreatePbuffer(lnx_wm_state->display, framebuffer_config, pbuffer_options);
+    pbuffer = glXCreatePbuffer(r_ogl_lnx_display, framebuffer_config, pbuffer_options);
   }
-  glXMakeCurrent(lnx_wm_state->display, pbuffer, r_ogl_lnx_ctx);
+  glXMakeCurrent(r_ogl_lnx_display, pbuffer, r_ogl_lnx_ctx);
 }
 
 internal R_Handle
@@ -105,14 +113,11 @@ r_ogl_os_window_unequip(WM_Window os, R_Handle r)
 internal void
 r_ogl_os_select_window(WM_Window os, R_Handle r)
 {
-  LNX_WM_Window *w = (LNX_WM_Window *)os.u64[0];
-  glXMakeCurrent(lnx_wm_state->display, w->window, r_ogl_lnx_ctx);
+  glXMakeCurrent(r_ogl_lnx_display, (Window)wm_native_surface(os).x11.window, r_ogl_lnx_ctx);
 }
 
 internal void
 r_ogl_os_window_swap(WM_Window os, R_Handle r)
 {
-  LNX_WM_Window *w = (LNX_WM_Window *)os.u64[0];
-  glXSwapBuffers(lnx_wm_state->display, w->window);
-  lnx_wm_window_presented(w);
+  glXSwapBuffers(r_ogl_lnx_display, (Window)wm_native_surface(os).x11.window);
 }

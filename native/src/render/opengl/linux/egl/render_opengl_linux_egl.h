@@ -9,6 +9,7 @@
 #define glActiveTexture glActiveTexture__static
 #include <GL/gl.h>
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 #undef glTexImage3D
 #undef glTexSubImage3D
 #undef glActiveTexture
@@ -17,16 +18,18 @@ typedef struct R_OGL_LNX_Window R_OGL_LNX_Window;
 struct R_OGL_LNX_Window
 {
   R_OGL_LNX_Window *next;
-  EGLSurface *surface;
+  EGLSurface surface;
 };
 
 typedef struct R_OGL_LNX_State R_OGL_LNX_State;
 struct R_OGL_LNX_State
 {
   Arena *arena;
-  EGLDisplay *display;
+  EGLDisplay display;
   EGLConfig config;
-  EGLContext *context;
+  EGLContext context;
+  // Current until the first window, and whenever none is (#605).
+  EGLSurface pbuffer;
   R_OGL_LNX_Window *free_window;
 };
 

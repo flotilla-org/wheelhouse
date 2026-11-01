@@ -190,6 +190,18 @@ wm_backing_scale_from_window(WM_Window window)
   return 1.f;
 }
 
+internal WM_NativeSurface
+wm_native_surface(WM_Window window)
+{
+  WM_NativeSurface result = {0};
+  return result;
+}
+
+internal void
+wm_window_presented(WM_Window window)
+{
+}
+
 ////////////////////////////////
 //~ rjf: @os_hooks External Windows (Implemented Per-OS)
 

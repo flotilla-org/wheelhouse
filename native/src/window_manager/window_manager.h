@@ -45,6 +45,39 @@ struct WM_ExtWindow
 };
 
 ////////////////////////////////
+//~ Native Surface Types
+
+// What a render backend needs from a window to present into it: the
+// connection and the OS-level window or layer. Render backends read windows
+// only through this, never through a window manager's own state.
+typedef enum WM_NativeSurfaceKind
+{
+  WM_NativeSurfaceKind_Null,
+  WM_NativeSurfaceKind_X11,
+  WM_NativeSurfaceKind_Wayland,
+  WM_NativeSurfaceKind_Win32,
+  WM_NativeSurfaceKind_Cocoa,
+}
+WM_NativeSurfaceKind;
+
+typedef struct WM_NativeSurface WM_NativeSurface;
+struct WM_NativeSurface
+{
+  WM_NativeSurfaceKind kind;
+  union
+  {
+    // display is a Display *; window is the window's XID and visual_id its
+    // visual's, which every window shares with the root.
+    struct { void *display; U64 window; U64 visual_id; } x11;
+    // display is a wl_display *, surface a wl_surface *.
+    struct { void *display; void *surface; } wayland;
+    struct { void *hwnd; } win32;
+    // view is an NSView *, layer its CAMetalLayer *.
+    struct { void *view; void *layer; } cocoa;
+  };
+};
+
+////////////////////////////////
 //~ rjf: Monitor Types
 
 typedef struct WM_Monitor WM_Monitor;
@@ -290,6 +323,13 @@ internal Rng2F32        wm_client_rect_from_window(WM_Window window);
 internal F32            wm_dpi_from_window(WM_Window window);
 internal F32            wm_layout_scale_from_window(WM_Window window);
 internal F32            wm_backing_scale_from_window(WM_Window window);
+// For a zero window, the connection alone: kind and display, as a render
+// backend needs before the first window opens.
+internal WM_NativeSurface wm_native_surface(WM_Window window);
+// The frame loop calls this after r_window_end_frame has handed a frame to
+// the window: the window manager may now tell the compositor the frame for
+// its last configure exists (X11: the _NET_WM_SYNC_REQUEST counter).
+internal void           wm_window_presented(WM_Window window);
 
 ////////////////////////////////
 //~ rjf: @os_hooks External Windows (Implemented Per-OS)

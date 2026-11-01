@@ -13,8 +13,9 @@
 ////////////////////////////////
 //~ rjf: Decide On Backend
 
+// EGL by default; -DR_OPENGL_LINUX_BACKEND=0 builds GLX instead.
 #if !defined(R_OPENGL_LINUX_BACKEND)
-# define R_OPENGL_LINUX_BACKEND R_OPENGL_LINUX_BACKEND_GLX
+# define R_OPENGL_LINUX_BACKEND R_OPENGL_LINUX_BACKEND_EGL
 #endif
 
 ////////////////////////////////
