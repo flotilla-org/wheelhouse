@@ -280,7 +280,8 @@ pub unsafe extern "C" fn wh_text_epoch(ctx: *const WhText) -> u64 {
     unsafe { ctx.as_ref() }.map_or(0, |t| t.ctx.epoch())
 }
 
-/// Its path and bytes live as long as ctx. Returns 0 for an unknown id.
+/// Its path and bytes live as long as ctx, across wh_text_set_scale and
+/// wh_text_fonts_changed too. Returns 0 for an unknown id.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_font(ctx: *const WhText, font: u32, out: *mut WhTextFont) -> u32 {
     // SAFETY: the caller's contract.
@@ -296,7 +297,8 @@ pub unsafe extern "C" fn wh_text_font(ctx: *const WhText, font: u32, out: *mut W
     1
 }
 
-/// Normalized coordinates, live as long as ctx. Returns how many.
+/// Normalized coordinates, live as long as ctx (as wh_text_font's are).
+/// Returns how many.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_coords(ctx: *const WhText, coords: u32, out: *mut *const i16) -> usize {
     // SAFETY: the caller's contract.

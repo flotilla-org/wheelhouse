@@ -2555,10 +2555,12 @@ void wh_text_fonts_changed(const WhText *ctx);
 // Changes with font settings, installed fonts or scale.
 uint64_t wh_text_epoch(const WhText *ctx);
 
-// Its path and bytes live as long as ctx. Returns 0 for an unknown id.
+// Its path and bytes live as long as ctx, across wh_text_set_scale and
+// wh_text_fonts_changed too. Returns 0 for an unknown id.
 uint32_t wh_text_font(const WhText *ctx, uint32_t font, WhTextFont *out);
 
-// Normalized coordinates, live as long as ctx. Returns how many.
+// Normalized coordinates, live as long as ctx (as wh_text_font's are).
+// Returns how many.
 size_t wh_text_coords(const WhText *ctx, uint32_t coords, const int16_t **out);
 
 // Pass width INFINITY for no wrapping: a large finite width aligns RTL or
