@@ -152,10 +152,10 @@ That is judged small enough to continue, and is recorded on #560.
 
 ## Follow-ups
 
-- Seed fontique's CJK and Hangul fallbacks from the platform, and report the
+- #590: seed fontique's CJK and Hangul fallbacks from the platform, and report the
   order-dependent `zh-CN` default upstream to fontique.
-- Put Noto Sans Math (and the text-presentation symbol faces) after the
+- #591: put Noto Sans Math (and the text-presentation symbol faces) after the
   script fallback in Wheelhouse's stack, so Arabic and emoji presentation get
   their own faces.
-- A `core.yml` job running the parity test on all three runners with a full
+- #589: a `core.yml` job running the parity test on all three runners with a full
   Linux font set (needs a push with workflow scope).

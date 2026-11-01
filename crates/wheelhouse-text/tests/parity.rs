@@ -59,6 +59,8 @@ enum Verdict {
     Differs,
     PlatformTofu,
     FontiqueTofu,
+    /// The platform named no font (DirectWrite maps nothing to ⏻, say).
+    NoPlatformFont,
     BothTofu,
 }
 
@@ -159,15 +161,14 @@ impl Pass {
                 "NotoColorEmoji.ttf",
                 "NotoEmoji-Regular.ttf",
             ] {
-                let data = fs::read(format!("{}/../../data/{file}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+                let data = fs::read(format!("{}/../../data/{file}", env!("CARGO_MANIFEST_DIR"))).expect(file);
                 fonts.collection.register_fonts(Blob::new(Arc::new(data)), None);
             }
         }
         Self { fonts, layout: LayoutContext::new(), base, bundled }
     }
 
-    /// Whether the family exists to seed with.
-    /// The family, or the one fontique stands in for it: it leaves PingFang
+    /// Whether it could seed the family, or the one fontique stands in for it: it leaves PingFang
     /// out (its outlines are hvgl) and uses Heiti in its place.
     fn seed(&mut self, lang: &str, script: &str, family: &str) -> bool {
         let stand_in = family.strip_prefix("PingFang ").map(|region| format!("Heiti {region}"));
@@ -190,21 +191,14 @@ impl Pass {
                     continue;
                 }
                 let platform = platform::pick(&self.base, lang, cluster);
-                let verdict = match (fontique.covers, platform.as_ref().is_some_and(|p| p.covers)) {
-                    (false, true) => Verdict::FontiqueTofu,
-                    (false, false) => Verdict::BothTofu,
-                    (true, false) if platform.is_some() => Verdict::PlatformTofu,
-                    (true, false) => Verdict::Differs,
-                    (true, true) => {
-                        let p = &platform.as_ref().unwrap().face;
-                        if p.postscript == fontique.face.postscript {
-                            Verdict::Same
-                        } else if p.family == fontique.face.family {
-                            Verdict::SameFamily
-                        } else {
-                            Verdict::Differs
-                        }
-                    }
+                let verdict = match (fontique.covers, platform.as_ref()) {
+                    (_, None) => Verdict::NoPlatformFont,
+                    (false, Some(p)) if p.covers => Verdict::FontiqueTofu,
+                    (false, Some(_)) => Verdict::BothTofu,
+                    (true, Some(p)) if !p.covers => Verdict::PlatformTofu,
+                    (true, Some(p)) if p.face.postscript == fontique.face.postscript => Verdict::Same,
+                    (true, Some(p)) if p.face.family == fontique.face.family => Verdict::SameFamily,
+                    (true, Some(_)) => Verdict::Differs,
                 };
                 rows.push(Row { line, cluster: cluster.to_owned(), fontique, platform, verdict });
             }
@@ -239,6 +233,8 @@ impl Pass {
                 }
             }
         }
+        // Logical order: the clusters are slices of `text`, and lines and
+        // bidi runs visit them out of it.
         out.sort_by_key(|(c, _)| c.as_ptr());
         out
     }
@@ -295,7 +291,11 @@ mod platform {
     pub fn pick(base: &str, lang: &str, cluster: &str) -> Option<Pick> {
         let charset = cluster.chars().map(|c| format!("{:x}", c as u32)).collect::<Vec<_>>().join(" ");
         let pattern = format!("{}:lang={}:charset={charset}", escape(base), fc_lang(lang));
-        let out = Command::new("fc-match").args(["-f", "%{file}\n%{postscriptname}\n%{family[0]}", &pattern]).output().ok()?;
+        // A host without fontconfig has nothing to compare with: say so, rather than tabulating.
+        let out = Command::new("fc-match")
+            .args(["-f", "%{file}\n%{postscriptname}\n%{family[0]}", &pattern])
+            .output()
+            .expect("fc-match, from fontconfig, to run");
         let out = String::from_utf8(out.stdout).ok()?;
         let mut lines = out.lines();
         let (file, postscript, family) = (lines.next()?, lines.next()?, lines.next()?);
