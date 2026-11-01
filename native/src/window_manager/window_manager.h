@@ -255,6 +255,8 @@ internal String8 wm_get_selection_text(Arena *arena);
 internal WM_Window      wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title);
 internal void           wm_window_close(WM_Window window);
 internal void           wm_window_set_title(WM_Window window, String8 title);
+// Window managers that take the icon from the window, rather than from a bundle or resource, get these RGBA8 pixels.
+internal void           wm_set_application_icon(Vec2S32 dim, U8 *rgba);
 internal void           wm_window_first_paint(WM_Window window);
 internal void           wm_window_focus(WM_Window window);
 internal B32            wm_window_is_focused(WM_Window window);

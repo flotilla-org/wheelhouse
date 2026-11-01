@@ -12225,7 +12225,8 @@ rd_init(CmdLine *cmdln)
       image_dim.y = height;
     }
     
-    // rjf: upload to gpu texture
+    // rjf: hand to the window manager & upload to gpu texture
+    wm_set_application_icon(image_dim, image_data);
     rd_state->icon_texture = r_tex2d_alloc(R_ResourceKind_Static, image_dim, R_Tex2DFormat_RGBA8, image_data);
     
     // rjf: release

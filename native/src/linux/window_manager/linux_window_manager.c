@@ -125,6 +125,119 @@ lnx_wm_window_presented(LNX_WM_Window *w)
   }
 }
 
+internal WM_Modifiers
+lnx_wm_modifiers_from_state(unsigned int state)
+{
+  WM_Modifiers modifiers = 0;
+  if(state & ShiftMask)   { modifiers |= WM_Modifier_Shift; }
+  if(state & ControlMask) { modifiers |= WM_Modifier_Ctrl; }
+  if(state & Mod1Mask)    { modifiers |= WM_Modifier_Alt; }
+  if(state & Mod4Mask)    { modifiers |= WM_Modifier_Super; }
+  return modifiers;
+}
+
+internal void
+lnx_wm_set_key_down(WM_Key key, B32 down)
+{
+  if(key == WM_Key_Null) { return; }
+  if(down) { lnx_wm_state->key_down[key/64] |= (1ull << (key%64)); }
+  else     { lnx_wm_state->key_down[key/64] &= ~(1ull << (key%64)); }
+}
+
+// XStoreName is Latin-1; window managers read _NET_WM_NAME as UTF-8.
+internal void
+lnx_wm_window_set_title(LNX_WM_Window *w, String8 title)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 title_copy = push_str8_copy(scratch.arena, title);
+  XStoreName(lnx_wm_state->display, w->window, (char *)title_copy.str);
+  XChangeProperty(lnx_wm_state->display, w->window, lnx_wm_state->net_wm_name_atom, lnx_wm_state->clipboard_utf8_atom,
+                  8, PropModeReplace, title_copy.str, (int)title_copy.size);
+  XChangeProperty(lnx_wm_state->display, w->window, lnx_wm_state->net_wm_icon_name_atom, lnx_wm_state->clipboard_utf8_atom,
+                  8, PropModeReplace, title_copy.str, (int)title_copy.size);
+  scratch_end(scratch);
+}
+
+internal void
+lnx_wm_window_apply_icon(LNX_WM_Window *w)
+{
+  if(lnx_wm_state->icon_data_count != 0)
+  {
+    XChangeProperty(lnx_wm_state->display, w->window, lnx_wm_state->net_wm_icon_atom, XA_CARDINAL, 32, PropModeReplace,
+                    (U8 *)lnx_wm_state->icon_data, (int)lnx_wm_state->icon_data_count);
+  }
+}
+
+// The refresh rate of the primary output, or of the first lit one.
+internal F32
+lnx_wm_refresh_rate(void)
+{
+  F32 result = 0;
+  Display *dpy = lnx_wm_state->display;
+  Window root = DefaultRootWindow(dpy);
+  // Without RandR the request is an error that Xlib's default handler exits on.
+  int event_base = 0, error_base = 0;
+  if(!XRRQueryExtension(dpy, &event_base, &error_base)) { return 0; }
+  XRRScreenResources *res = XRRGetScreenResourcesCurrent(dpy, root);
+  if(res != 0)
+  {
+    RROutput primary = XRRGetOutputPrimary(dpy, root);
+    for(int idx = 0; idx < res->noutput; idx += 1)
+    {
+      XRROutputInfo *output = XRRGetOutputInfo(dpy, res, res->outputs[idx]);
+      if(output == 0) { continue; }
+      if(output->connection == RR_Connected && output->crtc != None && (result == 0 || res->outputs[idx] == primary))
+      {
+        XRRCrtcInfo *crtc = XRRGetCrtcInfo(dpy, res, output->crtc);
+        for(int mode_idx = 0; crtc != 0 && mode_idx < res->nmode; mode_idx += 1)
+        {
+          XRRModeInfo *mode = &res->modes[mode_idx];
+          if(mode->id == crtc->mode && mode->hTotal != 0 && mode->vTotal != 0)
+          {
+            result = (F32)((F64)mode->dotClock / ((F64)mode->hTotal * (F64)mode->vTotal));
+          }
+        }
+        if(crtc != 0) { XRRFreeCrtcInfo(crtc); }
+      }
+      XRRFreeOutputInfo(output);
+    }
+    XRRFreeScreenResources(res);
+  }
+  return result;
+}
+
+typedef struct LNX_WM_PropertyMatch LNX_WM_PropertyMatch;
+struct LNX_WM_PropertyMatch
+{
+  int type;
+  Window window;
+  Atom atom;
+};
+
+internal Bool
+lnx_wm_event_matches(Display *display, XEvent *evt, XPointer user)
+{
+  LNX_WM_PropertyMatch *m = (LNX_WM_PropertyMatch *)user;
+  if(evt->type != m->type || evt->xany.window != m->window) { return False; }
+  if(m->type == PropertyNotify) { return evt->xproperty.atom == m->atom && evt->xproperty.state == PropertyNewValue; }
+  return True;
+}
+
+// Waits for one event the clipboard read needs. Other events stay queued for wm_get_events.
+internal B32
+lnx_wm_wait_for_event(LNX_WM_PropertyMatch match, XEvent *out, U64 timeout_us)
+{
+  U64 deadline_us = now_time_us() + timeout_us;
+  for(;;)
+  {
+    if(XCheckIfEvent(lnx_wm_state->display, out, lnx_wm_event_matches, (XPointer)&match)) { return 1; }
+    U64 now = now_time_us();
+    if(now >= deadline_us) { return 0; }
+    struct pollfd fd = {ConnectionNumber(lnx_wm_state->display), POLLIN, 0};
+    poll(&fd, 1, (int)((deadline_us - now + 999)/1000));
+  }
+}
+
 ////////////////////////////////
 //~ rjf: @os_hooks Main Initialization API (Implemented Per-OS)
 
@@ -159,9 +272,16 @@ wm_init(void)
   lnx_wm_state->clipboard_atom = XInternAtom(lnx_wm_state->display, "CLIPBOARD", 0);
   lnx_wm_state->clipboard_utf8_atom = XInternAtom(lnx_wm_state->display, "UTF8_STRING", 0);
   lnx_wm_state->clipboard_targets_atom = XInternAtom(lnx_wm_state->display, "TARGETS", 0);
+  lnx_wm_state->clipboard_incr_atom = XInternAtom(lnx_wm_state->display, "INCR", 0);
+  lnx_wm_state->clipboard_property_atom = XInternAtom(lnx_wm_state->display, "WHEELHOUSE_CLIPBOARD", 0);
+  lnx_wm_state->net_wm_name_atom = XInternAtom(lnx_wm_state->display, "_NET_WM_NAME", 0);
+  lnx_wm_state->net_wm_icon_name_atom = XInternAtom(lnx_wm_state->display, "_NET_WM_ICON_NAME", 0);
+  lnx_wm_state->net_wm_icon_atom = XInternAtom(lnx_wm_state->display, "_NET_WM_ICON", 0);
   // A private owner survives closing any one of the application's windows.
   lnx_wm_state->clipboard_owner = XCreateSimpleWindow(lnx_wm_state->display,
     DefaultRootWindow(lnx_wm_state->display), 0, 0, 1, 1, 0, 0, 0);
+  // Reading a large clipboard (INCR) is driven by property changes on this window.
+  XSelectInput(lnx_wm_state->display, lnx_wm_state->clipboard_owner, PropertyChangeMask);
 
   //- rjf: open im
   lnx_wm_state->xim = XOpenIM(lnx_wm_state->display, 0, 0, 0);
@@ -169,7 +289,8 @@ wm_init(void)
   //- rjf: fill out gfx info
   lnx_wm_state->gfx_info.double_click_time = 0.5f;
   lnx_wm_state->gfx_info.caret_blink_time = 0.5f;
-  lnx_wm_state->gfx_info.default_refresh_rate = 60.f;
+  lnx_wm_state->gfx_info.default_refresh_rate = lnx_wm_refresh_rate();
+  if(lnx_wm_state->gfx_info.default_refresh_rate < 1.f) { lnx_wm_state->gfx_info.default_refresh_rate = 60.f; }
   
   //- rjf: fill out cursors
   {
@@ -223,10 +344,68 @@ wm_set_clipboard_text_impl(String8 string)
   XFlush(lnx_wm_state->display);
 }
 
+// Asks the CLIPBOARD owner for UTF8_STRING, then STRING, and waits up to a
+// second for each step of the reply, including INCR transfers of large text.
 internal String8
 wm_get_clipboard_text_impl(Arena *arena)
 {
+  Display *dpy = lnx_wm_state->display;
+  Window owner = XGetSelectionOwner(dpy, lnx_wm_state->clipboard_atom);
+  if(owner == None) { return str8_zero(); }
+  if(owner == lnx_wm_state->clipboard_owner) { return push_str8_copy(arena, lnx_wm_state->clipboard_text); }
+  Window requestor = lnx_wm_state->clipboard_owner;
+  Atom property = lnx_wm_state->clipboard_property_atom;
+  Atom targets[] = {lnx_wm_state->clipboard_utf8_atom, XA_STRING};
   String8 result = {0};
+  for EachElement(target_idx, targets)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    XDeleteProperty(dpy, requestor, property);
+    XConvertSelection(dpy, lnx_wm_state->clipboard_atom, targets[target_idx], property, requestor, CurrentTime);
+    XFlush(dpy);
+    XEvent evt = {0};
+    LNX_WM_PropertyMatch notify = {SelectionNotify, requestor, 0};
+    if(!lnx_wm_wait_for_event(notify, &evt, 1000000)) { scratch_end(scratch); break; }
+    if(evt.xselection.property == None) { scratch_end(scratch); continue; }
+    String8List chunks = {0};
+    B32 incr = 0, complete = 0;
+    LNX_WM_PropertyMatch new_value = {PropertyNotify, requestor, property};
+    for(B32 first = 1;; first = 0)
+    {
+      if(!first && !lnx_wm_wait_for_event(new_value, &evt, 1000000)) { break; }
+      Atom type = None;
+      int format = 0;
+      unsigned long count = 0, bytes_after = 0;
+      U8 *data = 0;
+      // Deleting the property asks an INCR owner for its next chunk.
+      if(XGetWindowProperty(dpy, requestor, property, 0, max_S32/4, True, AnyPropertyType,
+                            &type, &format, &count, &bytes_after, &data) != Success) { break; }
+      // A property-change event can arrive for a property already taken; INCR ends on an empty one.
+      if(!first && type == None) { continue; }
+      if(first && type == lnx_wm_state->clipboard_incr_atom) { incr = 1; }
+      else if(format == 8 && count != 0) { str8_list_push(scratch.arena, &chunks, push_str8_copy(scratch.arena, str8(data, count))); }
+      if(data != 0) { XFree(data); }
+      if(!incr || (!first && count == 0)) { complete = 1; break; }
+    }
+    if(complete)
+    {
+      String8 text = str8_list_join(scratch.arena, &chunks, 0);
+      if(targets[target_idx] == XA_STRING)
+      {
+        // STRING is Latin-1: each byte is its own code point.
+        U8 *utf8 = push_array_no_zero(arena, U8, text.size*2);
+        U64 size = 0;
+        for(U64 i = 0; i < text.size; i += 1) { size += utf8_encode(utf8+size, text.str[i]); }
+        result = str8(utf8, size);
+      }
+      else
+      {
+        result = push_str8_copy(arena, text);
+      }
+    }
+    scratch_end(scratch);
+    if(complete) { break; }
+  }
   return result;
 }
 
@@ -346,11 +525,12 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
                      XNFocusWindow, w->window,
                      NULL);
   
-  //- rjf: attach name
-  Temp scratch = scratch_begin(0, 0);
-  String8 title_copy = push_str8_copy(scratch.arena, title);
-  XStoreName(lnx_wm_state->display, w->window, (char *)title_copy.str);
-  scratch_end(scratch);
+  //- rjf: attach name, class & icon
+  // The class lets the desktop match the window to wheelhouse.desktop.
+  XClassHint class_hint = {"wheelhouse", "Wheelhouse"};
+  XSetClassHint(lnx_wm_state->display, w->window, &class_hint);
+  lnx_wm_window_set_title(w, title);
+  lnx_wm_window_apply_icon(w);
   
   //- rjf: convert to handle & return
   WM_Window handle = {(U64)w};
@@ -369,11 +549,53 @@ internal void
 wm_window_set_title(WM_Window handle, String8 title)
 {
   if(wm_window_match(handle, wm_window_zero())) {return;}
-  Temp scratch = scratch_begin(0, 0);
   LNX_WM_Window *w = (LNX_WM_Window *)handle.u64[0];
-  String8 title_copy = push_str8_copy(scratch.arena, title);
-  XStoreName(lnx_wm_state->display, w->window, (char *)title_copy.str);
+  lnx_wm_window_set_title(w, title);
+}
+
+internal void
+wm_set_application_icon(Vec2S32 dim, U8 *rgba)
+{
+  if(lnx_wm_state == 0 || dim.x <= 0 || dim.y <= 0 || rgba == 0) { return; }
+  // _NET_WM_ICON is width, height, then ARGB pixels, each in a long, for
+  // each size. A 256 px icon overflows a core X request, which Xlib then
+  // sends empty, so the image is halved to every size from 128 down to 32.
+  Temp scratch = scratch_begin(0, 0);
+  S32 w = dim.x, h = dim.y;
+  U8 *level = push_array_no_zero(scratch.arena, U8, (U64)w*h*4);
+  MemoryCopy(level, rgba, (U64)w*h*4);
+  U64 count = 0;
+  long *data = push_array_no_zero(scratch.arena, long, 2*8 + (U64)w*h);
+  for(;;)
+  {
+    if(w <= 128 || h <= 128)
+    {
+      data[count++] = w;
+      data[count++] = h;
+      for(U64 idx = 0; idx < (U64)w*h; idx += 1)
+      {
+        U8 *p = level + idx*4;
+        data[count++] = ((unsigned long)p[3] << 24) | ((unsigned long)p[0] << 16) | ((unsigned long)p[1] << 8) | p[2];
+      }
+    }
+    if(w/2 < 32 || h/2 < 32) { break; }
+    // 2x2 box filter to the next size down.
+    S32 hw = w/2, hh = h/2;
+    U8 *half = push_array_no_zero(scratch.arena, U8, (U64)hw*hh*4);
+    for(S32 y = 0; y < hh; y += 1) for(S32 x = 0; x < hw; x += 1) for(S32 c = 0; c < 4; c += 1)
+    {
+      U32 sum = level[((2*y)*w + 2*x)*4 + c] + level[((2*y)*w + 2*x+1)*4 + c] +
+                level[((2*y+1)*w + 2*x)*4 + c] + level[((2*y+1)*w + 2*x+1)*4 + c];
+      half[(y*hw + x)*4 + c] = (U8)((sum + 2)/4);
+    }
+    level = half; w = hw; h = hh;
+  }
+  lnx_wm_state->icon_data_count = count;
+  lnx_wm_state->icon_data = push_array_no_zero(lnx_wm_state->arena, long, count);
+  MemoryCopy(lnx_wm_state->icon_data, data, count*sizeof(long));
   scratch_end(scratch);
+  for(LNX_WM_Window *window = lnx_wm_state->first_window; window != 0; window = window->next) { lnx_wm_window_apply_icon(window); }
+  XFlush(lnx_wm_state->display);
 }
 
 internal void
@@ -739,17 +961,17 @@ wm_get_events(Arena *arena, B32 wait)
       case KeyRelease:
       {
         // rjf: determine flags
-        WM_Modifiers modifiers = 0;
-        if(evt.xkey.state & ShiftMask)   { modifiers |= WM_Modifier_Shift; }
-        if(evt.xkey.state & ControlMask) { modifiers |= WM_Modifier_Ctrl; }
-        if(evt.xkey.state & Mod1Mask)    { modifiers |= WM_Modifier_Alt; }
-        if(evt.xkey.state & Mod4Mask)    { modifiers |= WM_Modifier_Super; }
+        WM_Modifiers modifiers = lnx_wm_modifiers_from_state(evt.xkey.state);
         
         // rjf: map keycode -> keysym & codepoint
         LNX_WM_Window *window = lnx_window_from_x11window(evt.xkey.window);
         KeySym keysym = 0;
         U8 text[256] = {0};
-        U64 text_size = Xutf8LookupString(window->xic, &evt.xkey, (char *)text, sizeof(text), &keysym, 0);
+        // Xutf8LookupString is undefined for KeyRelease and yields no keysym,
+        // which left every key looking held; releases carry no text anyway.
+        U64 text_size = 0;
+        if(evt.type == KeyPress) { text_size = Xutf8LookupString(window->xic, &evt.xkey, (char *)text, sizeof(text), &keysym, 0); }
+        else                     { XLookupString(&evt.xkey, 0, 0, &keysym, 0); }
         
         // rjf: map keysym -> WM_Key
         B32 is_right_sided = 0;
@@ -763,6 +985,30 @@ wm_get_events(Arena *arena, B32 wait)
             else if('0' <= keysym && keysym <= '9')      { key = WM_Key_0 + (keysym-'0'); }
           }break;
           case XK_Escape:{key = WM_Key_Esc;};break;
+          case XK_ISO_Left_Tab:{key = WM_Key_Tab;}break;
+          case XK_Caps_Lock:{key = WM_Key_CapsLock;}break;
+          case XK_Menu:{key = WM_Key_Menu;}break;
+          case XK_Scroll_Lock:{key = WM_Key_ScrollLock;}break;
+          case XK_Insert:{key = WM_Key_Insert;}break;
+          case XK_Num_Lock:{key = WM_Key_NumLock;}break;
+          case XK_KP_Divide:{key = WM_Key_NumSlash;}break;
+          case XK_KP_Multiply:{key = WM_Key_NumStar;}break;
+          case XK_KP_Subtract:{key = WM_Key_NumMinus;}break;
+          case XK_KP_Add:{key = WM_Key_NumPlus;}break;
+          case XK_KP_Decimal:{key = WM_Key_NumPeriod;}break;
+          case XK_KP_Enter:{key = WM_Key_Return;}break;
+          case XK_KP_0:case XK_KP_Insert:{key = WM_Key_Num0;}break;
+          case XK_KP_1:case XK_KP_End:{key = WM_Key_Num1;}break;
+          case XK_KP_2:case XK_KP_Down:{key = WM_Key_Num2;}break;
+          case XK_KP_3:case XK_KP_Page_Down:{key = WM_Key_Num3;}break;
+          case XK_KP_4:case XK_KP_Left:{key = WM_Key_Num4;}break;
+          case XK_KP_5:case XK_KP_Begin:{key = WM_Key_Num5;}break;
+          case XK_KP_6:case XK_KP_Right:{key = WM_Key_Num6;}break;
+          case XK_KP_7:case XK_KP_Home:{key = WM_Key_Num7;}break;
+          case XK_KP_8:case XK_KP_Up:{key = WM_Key_Num8;}break;
+          case XK_KP_9:case XK_KP_Page_Up:{key = WM_Key_Num9;}break;
+          case XK_KP_Delete:{key = WM_Key_NumPeriod;}break;
+          case '`':case '~':{key = WM_Key_Tick;}break;
           case XK_BackSpace:{key = WM_Key_Backspace;}break;
           case XK_Delete:{key = WM_Key_Delete;}break;
           case XK_Return:{key = WM_Key_Return;}break;
@@ -822,6 +1068,20 @@ wm_get_events(Arena *arena, B32 wait)
           case ' ':{key = WM_Key_Space;}break;
         }
         
+        // rjf: track key & modifier state. The event's state is from before
+        // this key, so a modifier key adds or removes its own bit.
+        lnx_wm_set_key_down(key, evt.type == KeyPress);
+        WM_Modifiers key_modifier = 0;
+        switch(keysym)
+        {
+          default:{}break;
+          case XK_Shift_L:case XK_Shift_R:{key_modifier = WM_Modifier_Shift;}break;
+          case XK_Control_L:case XK_Control_R:{key_modifier = WM_Modifier_Ctrl;}break;
+          case XK_Alt_L:case XK_Alt_R:{key_modifier = WM_Modifier_Alt;}break;
+          case XK_Super_L:case XK_Super_R:{key_modifier = WM_Modifier_Super;}break;
+        }
+        lnx_wm_state->modifiers = evt.type == KeyPress ? (modifiers|key_modifier) : (modifiers & ~key_modifier);
+        
         // rjf: push key event
         {
           WM_Event *e = wm_event_list_push_new(arena, &evts, evt.type == KeyPress ? WM_EventKind_Press : WM_EventKind_Release);
@@ -859,11 +1119,8 @@ wm_get_events(Arena *arena, B32 wait)
       case ButtonRelease:
       {
         // rjf: determine flags
-        WM_Modifiers modifiers = 0;
-        if(evt.xbutton.state & ShiftMask)   { modifiers |= WM_Modifier_Shift; }
-        if(evt.xbutton.state & ControlMask) { modifiers |= WM_Modifier_Ctrl; }
-        if(evt.xbutton.state & Mod1Mask)    { modifiers |= WM_Modifier_Alt; }
-        if(evt.xbutton.state & Mod4Mask)    { modifiers |= WM_Modifier_Super; }
+        WM_Modifiers modifiers = lnx_wm_modifiers_from_state(evt.xbutton.state);
+        lnx_wm_state->modifiers = modifiers;
         
         // rjf: map button -> WM_Key
         WM_Key key = WM_Key_Null;
@@ -913,19 +1170,22 @@ wm_get_events(Arena *arena, B32 wait)
         // rjf: push event
         if(key != WM_Key_Null)
         {
+          lnx_wm_set_key_down(key, evt.type == ButtonPress);
           WM_Event *e = wm_event_list_push_new(arena, &evts, evt.type == ButtonPress ? WM_EventKind_Press : WM_EventKind_Release);
           e->window.u64[0] = (U64)window;
           e->modifiers = modifiers;
           e->key = key;
           e->pos = v2f32((F32)evt.xbutton.x, (F32)evt.xbutton.y);
         }
-        else if(evt.xbutton.button == Button4 ||
-                evt.xbutton.button == Button5)
+        // Buttons 4-7 are wheel notches, sent as a press and a release; one
+        // notch scrolls 120 units, as WM_MOUSEWHEEL does on Windows.
+        else if(evt.type == ButtonPress && evt.xbutton.button >= Button4 && evt.xbutton.button <= 7)
         {
           WM_Event *e = wm_event_list_push_new(arena, &evts, WM_EventKind_Scroll);
           e->window.u64[0] = (U64)window;
           e->modifiers = modifiers;
-          e->delta = v2f32(0, evt.xbutton.button == Button4 ? -1.f : +1.f);
+          F32 notch = (evt.xbutton.button == Button4 || evt.xbutton.button == 6) ? -120.f : +120.f;
+          e->delta = evt.xbutton.button <= Button5 ? v2f32(0, notch) : v2f32(notch, 0);
           e->pos = v2f32((F32)evt.xbutton.x, (F32)evt.xbutton.y);
         }
       }break;
@@ -938,6 +1198,7 @@ wm_get_events(Arena *arena, B32 wait)
         e->window.u64[0] = (U64)window;
         e->pos.x = (F32)evt.xmotion.x;
         e->pos.y = (F32)evt.xmotion.y;
+        lnx_wm_state->modifiers = lnx_wm_modifiers_from_state(evt.xmotion.state);
         set_mouse_cursor = 1;
         switch(window != 0 ? lnx_wm_moveresize_code_from_pos(window, e->pos) : -1)
         {
@@ -988,6 +1249,9 @@ wm_get_events(Arena *arena, B32 wait)
       }break;
       case FocusOut:
       {
+        // Keys released while another window has focus never reach us.
+        MemoryZeroArray(lnx_wm_state->key_down);
+        lnx_wm_state->modifiers = 0;
         LNX_WM_Window *window = lnx_window_from_x11window(evt.xfocus.window);
         WM_Event *e = wm_event_list_push_new(arena, &evts, WM_EventKind_WindowLoseFocus);
         e->window.u64[0] = (U64)window;
@@ -1038,15 +1302,13 @@ wm_get_events(Arena *arena, B32 wait)
 internal WM_Modifiers
 wm_get_modifiers(void)
 {
-  // TODO(rjf)
-  return 0;
+  return lnx_wm_state->modifiers;
 }
 
 internal B32
 wm_key_is_down(WM_Key key)
 {
-  // TODO(rjf)
-  return 0;
+  return key < WM_Key_COUNT && !!(lnx_wm_state->key_down[key/64] & (1ull << (key%64)));
 }
 
 internal Vec2F32

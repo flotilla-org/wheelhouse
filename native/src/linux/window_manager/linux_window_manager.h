@@ -15,6 +15,8 @@
 #include <X11/Xatom.h>
 #include <X11/cursorfont.h>
 #include <X11/extensions/sync.h>
+#include <X11/extensions/Xrandr.h>
+#include <X11/Xutil.h>
 #include <X11/keysym.h>
 #include <X11/keysymdef.h>
 
@@ -98,6 +100,15 @@ struct LNX_WM_State
   Atom clipboard_atom;
   Atom clipboard_utf8_atom;
   Atom clipboard_targets_atom;
+  Atom clipboard_incr_atom;
+  Atom clipboard_property_atom;
+  Atom net_wm_name_atom;
+  Atom net_wm_icon_name_atom;
+  Atom net_wm_icon_atom;
+  long *icon_data;
+  U64 icon_data_count;
+  WM_Modifiers modifiers;
+  U64 key_down[(WM_Key_COUNT+63)/64];
   Arena *selection_arena;
   String8 selection_text;
 };

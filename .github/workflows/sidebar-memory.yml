@@ -54,7 +54,7 @@ jobs:
       - name: Install build, display and measurement dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang pkg-config libx11-dev libxext-dev libgl1-mesa-dev libegl1-mesa-dev libfreetype6-dev xvfb xauth time
+          sudo apt-get install -y clang pkg-config libx11-dev libxext-dev libxrandr-dev libgl1-mesa-dev libegl1-mesa-dev libfreetype6-dev xvfb xauth time
       - name: Build release binary
         run: bash native/build.sh wheelhouse release
       - name: Sidebar memory regression

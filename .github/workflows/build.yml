@@ -83,7 +83,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang pkg-config libx11-dev libxext-dev libgl1-mesa-dev libegl1-mesa-dev libfreetype6-dev xvfb xauth
+          sudo apt-get install -y clang pkg-config libx11-dev libxext-dev libxrandr-dev libgl1-mesa-dev libegl1-mesa-dev libfreetype6-dev xvfb xauth
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - name: Pin the MSVC linker for Cargo launched from Bash

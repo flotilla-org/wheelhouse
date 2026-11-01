@@ -9,5 +9,6 @@ RUN set -eu; \
         libfreetype-dev \
         libgl-dev \
         libx11-dev \
-        libxext-dev; \
+        libxext-dev \
+        libxrandr-dev; \
     rm -rf /var/lib/apt/lists/*

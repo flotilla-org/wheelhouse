@@ -1889,6 +1889,11 @@ wm_application_menu_bar_is_native(void)
 }
 
 internal void
+wm_set_application_icon(Vec2S32 dim, U8 *rgba)
+{
+}
+
+internal void
 wm_set_preferred_window_decorations(B32 enabled)
 {
   if(mac_wm_state != 0)
