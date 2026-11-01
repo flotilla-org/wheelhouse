@@ -617,6 +617,37 @@ uishell_scroll_thumb_diagnostics(RD_WindowState *ws)
     ui_select_state(saved);
     ui_state_release(test);
   }
+  // Classic bars over content under the gutters fill their gutters, and
+  // the corner between them, on whole pixels: at a fractional rect and
+  // gutter no edge is fractional and the corner meets both bars.
+  {
+    U32 style = UI_ScrollBarStyle_Classic;
+    Axis2 axis = Axis2_X;
+    UI_State *test = ui_state_alloc();
+    ui_select_state(test);
+    UI_ScrollRegionParams params = {.rect = r2f32p(100.4f, 100.6f, 500.3f, 400.7f), .style = style,
+      .axis = {UI_ScrollAxisPolicy_Always, UI_ScrollAxisPolicy_Always}, .gutter_px = 17.6f, .content_under_gutters = 1};
+    UI_ScrollRegion region = ui_scroll_region_layout(params);
+    UI_ScrollRegionThumbAxis axes[Axis2_COUNT] = {{.thumb = {0.25, 0.2}}, {.thumb = {0.25, 0.2}}};
+    for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_thumb_frame(ws, &region, axes, v2f32(200, 200), (UI_Event){0}); }
+    UI_Box *xbar = ui_box_from_key(ui_key_from_stringf(ui_key_make(1001), "scroll_region_bar_%i", Axis2_X));
+    UI_Box *ybar = ui_box_from_key(ui_key_from_stringf(ui_key_make(1001), "scroll_region_bar_%i", Axis2_Y));
+    UI_Box *corner = ui_box_from_key(ui_key_from_string(ui_key_make(1001), str8_lit("scroll_region_corner")));
+    B32 built = !ui_box_is_nil(xbar) && !ui_box_is_nil(ybar) && !ui_box_is_nil(corner);
+    ThumbCheck(built && (xbar->flags & ybar->flags & corner->flags & UI_BoxFlag_DrawBackground), "classic bars and their corner fill the gutters");
+    B32 whole = built;
+    UI_Box *boxes[] = {xbar, ybar, corner};
+    for EachElement(i, boxes)
+    {
+      for(U32 c = 0; built && c < 4; c++) { F32 v = boxes[i]->rect.v[c/2].v[c%2]; whole = whole && v == round_f32(v); }
+    }
+    ThumbCheck(whole, "the bars and their corner sit on whole pixels");
+    ThumbCheck(built && corner->rect.x0 == ybar->rect.x0 && corner->rect.y0 == xbar->rect.y0 &&
+               xbar->rect.x1 == corner->rect.x0 && ybar->rect.y1 == corner->rect.y0,
+               "the corner meets both bars, with no gap or overlap");
+    ui_select_state(saved);
+    ui_state_release(test);
+  }
   // A range that scrolls keeps a thumb that scrolls when a huge view swamps
   // it and the F64 share rounds to 1, drawn as the full track as before.
   {
