@@ -1564,7 +1564,8 @@ typedef struct {
   // WH_TEXT_ALIGN_*.
   uint32_t align;
   // Tab stops every this many spaces of the tab's own style; 0 for 4. Text
-  // with tabs is shaped twice: once to measure where each tab starts.
+  // with tabs is shaped twice: once to measure where each tab starts. Past
+  // 65536 styles, counting one per distinct tab width, tabs are one space wide.
   uint32_t tab_size;
 } WhTextInput;
 
