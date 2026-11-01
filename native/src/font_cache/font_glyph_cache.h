@@ -130,6 +130,8 @@ struct FNT_GlyphEntry
   FNT_Glyph glyph;
   // -1 when on no page.
   S32 page_index;
+  // The frame it didn't fit in: tried again in the next. 0 otherwise.
+  U64 failed_frame;
 };
 
 typedef struct FNT_GlyphShelf FNT_GlyphShelf;

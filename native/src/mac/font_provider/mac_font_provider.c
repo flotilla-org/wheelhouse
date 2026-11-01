@@ -446,6 +446,13 @@ fp_system_color_emoji_fonts(void)
 ////////////////////////////////
 //~ Glyph-Id Rasterization
 
+#if !defined(STBI_INCLUDE_STB_IMAGE_H)
+# define STB_IMAGE_IMPLEMENTATION
+# define STBI_ONLY_PNG
+# define STBI_ONLY_BMP
+# include "third_party/stb/stb_image.h"
+#endif
+
 internal FP_Handle
 mac_fp_open_face_from_descriptors(CFArrayRef descriptors, U32 face_index)
 {
@@ -541,9 +548,47 @@ fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
     CTFontRef ct_font = CTFontCreateWithGraphicsFont(font->cg_font, params->size_px, 0, descriptor);
     if(descriptor != 0) { CFRelease(descriptor); }
     
-    //- bounds, with room for synthesis and the subpixel shift
+    //- CBDT, which CoreText doesn't draw: its PNG, decoded and scaled
     CGGlyph glyph = (CGGlyph)params->glyph_id;
+    B32 done = 0;
+    if(font->has_color_tables)
+    {
+      String8 cblc = mac_fp_table(scratch.arena, font->cg_font, "CBLC");
+      String8 cbdt = mac_fp_table(scratch.arena, font->cg_font, "CBDT");
+      String8 png = {0};
+      S16 left = 0, top = 0;
+      U32 ppem = 0;
+      if(cblc.size != 0 && fp_cbdt_png(cblc, cbdt, params->glyph_id, params->size_px, &png, &left, &top, &ppem))
+      {
+        int w = 0, h = 0, n = 0;
+        U8 *rgba = stbi_load_from_memory(png.str, (int)png.size, &w, &h, &n, 4);
+        if(rgba != 0 && w > 0 && h > 0)
+        {
+          FP_GlyphRaster strike = {FP_RasterKind_RGBA, v2s16((S16)w, (S16)h), left, top, 0};
+          strike.pixels = push_array(scratch.arena, U8, (U64)w*(U64)h*4);
+          for EachIndex(idx, (U64)w*(U64)h)
+          {
+            U32 a = rgba[idx*4+3];
+            for EachIndex(c, 3) { strike.pixels[idx*4+c] = (U8)((rgba[idx*4+c]*a + 127)/255); }
+            strike.pixels[idx*4+3] = (U8)a;
+          }
+          result = fp_glyph_raster_scaled(arena, strike, params->size_px/(F32)ppem);
+          done = 1;
+        }
+        if(rgba != 0) { stbi_image_free(rgba); }
+      }
+    }
+    
+    //- bounds, with room for synthesis and the subpixel shift; a bitmap
+    // glyph's outline is empty, so it gets the advance by the line's height
     CGRect rect = CTFontGetBoundingRectsForGlyphs(ct_font, kCTFontOrientationHorizontal, &glyph, 0, 1);
+    if((rect.size.width <= 0 || rect.size.height <= 0) && font->has_color_tables)
+    {
+      CGSize advance = {0};
+      CTFontGetAdvancesForGlyphs(ct_font, kCTFontOrientationHorizontal, &glyph, &advance, 1);
+      F64 descent = CTFontGetDescent(ct_font);
+      rect = CGRectMake(0, -descent, Max(advance.width, params->size_px), CTFontGetAscent(ct_font) + descent);
+    }
     F32 slant = tanf(params->skew*3.14159265f/180.f);
     F32 stroke = params->embolden ? params->size_px/24.f : 0;
     F32 pad = 2.f + stroke;
@@ -564,10 +609,10 @@ fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
       color = fp_colr_glyph_has_layers(colr, params->glyph_id) || sbix.size != 0 || cbdt.size != 0;
     }
     
-    if(rect.size.width > 0 && rect.size.height > 0 && w > 0 && h > 0 && w < 4096 && h < 4096)
+    if(!done && rect.size.width > 0 && rect.size.height > 0 && w > 0 && h > 0 && w < 4096 && h < 4096)
     {
       U64 bpp = color ? 4 : 1;
-      U8 *pixels = push_array(arena, U8, (U64)w*(U64)h*bpp);
+      U8 *pixels = push_array(scratch.arena, U8, (U64)w*(U64)h*bpp);
       CGColorSpaceRef space = color ? CGColorSpaceCreateDeviceRGB() : 0;
       CGContextRef ctx = CGBitmapContextCreate(pixels, w, h, 8, (size_t)w*bpp, space,
                                                color ? (kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big) : kCGImageAlphaOnly);
@@ -593,11 +638,32 @@ fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
         CGPoint position = CGPointMake(params->subpixel_x - (F32)x0, -(F32)y0);
         CTFontDrawGlyphs(ct_font, &glyph, &position, 1, ctx);
         CGContextRelease(ctx);
-        result.kind = color ? FP_RasterKind_RGBA : FP_RasterKind_Mask;
-        result.dim = v2s16((S16)w, (S16)h);
-        result.left = (S16)x0;
-        result.top = (S16)y1;
-        result.pixels = pixels;
+        // Crop to the ink: the box above is generous, a bitmap glyph's most of all.
+        S32 ix0 = w, iy0 = h, ix1 = 0, iy1 = 0;
+        for(S32 y = 0; y < h; y += 1)
+        {
+          for(S32 x = 0; x < w; x += 1)
+          {
+            if(pixels[((U64)y*w + x)*bpp + bpp - 1] != 0)
+            {
+              ix0 = Min(ix0, x); iy0 = Min(iy0, y); ix1 = Max(ix1, x + 1); iy1 = Max(iy1, y + 1);
+            }
+          }
+        }
+        if(ix0 < ix1)
+        {
+          S32 cw = ix1 - ix0, ch = iy1 - iy0;
+          U8 *cropped = push_array(arena, U8, (U64)cw*ch*bpp);
+          for(S32 y = 0; y < ch; y += 1)
+          {
+            MemoryCopy(cropped + (U64)y*cw*bpp, pixels + ((U64)(iy0 + y)*w + ix0)*bpp, (U64)cw*bpp);
+          }
+          result.kind = color ? FP_RasterKind_RGBA : FP_RasterKind_Mask;
+          result.dim = v2s16((S16)cw, (S16)ch);
+          result.left = (S16)(x0 + ix0);
+          result.top = (S16)(y1 - iy0);
+          result.pixels = cropped;
+        }
       }
       if(space != 0) { CGColorSpaceRelease(space); }
     }

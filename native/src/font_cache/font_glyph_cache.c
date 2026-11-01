@@ -61,6 +61,8 @@ fnt_glyph_hash_from_key(FNT_GlyphKey *key)
 internal void
 fnt_glyph_pen_split(F32 x, S32 *whole_out, F32 *subpixel_x_out)
 {
+  // A camera at an extreme zoom can hand over anything: keep the cast defined.
+  x = (x == x) ? Clamp(-16777216.f, x, 16777216.f) : 0.f;
   F32 quarters = round_f32(x*FNT_GLYPH_SUBPIXEL_BINS);
   F32 whole = floor_f32(quarters/FNT_GLYPH_SUBPIXEL_BINS);
   *whole_out = (S32)whole;
@@ -149,7 +151,12 @@ fnt_glyph_page_clear(FNT_GlyphCache *cache, FNT_GlyphPage *page)
 internal void
 fnt_glyph_cache_set_gamma(FNT_GlyphCache *cache, F32 gamma)
 {
-  cache->gamma = ClampBot(0.01f, gamma);
+  gamma = ClampBot(0.01f, gamma);
+  if(gamma == cache->gamma)
+  {
+    return;
+  }
+  cache->gamma = gamma;
   for EachIndex(c, 256)
   {
     cache->gamma_lut[c] = (U8)Clamp(0, (S32)round_f32(255.f*pow_f32((F32)c/255.f, 1.f/cache->gamma)), 255);
@@ -181,6 +188,7 @@ fnt_glyph_page_alloc_region(FNT_GlyphCache *cache, FNT_GlyphPage *page, Vec2S16 
   {
     if(page->shelf_count == page->shelf_cap)
     {
+      // The old array stays in the arena: a page has a few dozen shelves at most.
       U32 cap = Max(64, page->shelf_cap*2);
       FNT_GlyphShelf *shelves = push_array_no_zero(cache->arena, FNT_GlyphShelf, cap);
       MemoryCopy(shelves, page->shelves, sizeof(FNT_GlyphShelf)*page->shelf_count);
@@ -275,6 +283,14 @@ fnt_glyph_from_params(FNT_GlyphCache *cache, FNT_GlyphParams *params)
       break;
     }
   }
+  if(entry != 0 && entry->failed_frame != 0 && entry->failed_frame != cache->frame_index)
+  {
+    if(entry->hash_prev != 0) { entry->hash_prev->hash_next = entry->hash_next; } else { *slot = entry->hash_next; }
+    if(entry->hash_next != 0) { entry->hash_next->hash_prev = entry->hash_prev; }
+    MemoryZeroStruct(entry);
+    SLLStackPush_N(cache->free_entry, entry, hash_next);
+    entry = 0;
+  }
   FNT_Glyph result = {0};
   if(entry != 0)
   {
@@ -338,9 +354,8 @@ fnt_glyph_from_params(FNT_GlyphCache *cache, FNT_GlyphParams *params)
     {
       cache->stats.failures += 1;
     }
-    // A glyph that didn't fit this frame is tried again next frame; one
-    // bigger than a page is remembered as never fitting.
-    if(result.ok || too_big)
+    // A glyph that didn't fit is remembered for the rest of the frame, so it
+    // is rasterized again once a frame at most; one bigger than a page, for good.
     {
       entry = cache->free_entry;
       if(entry != 0) { SLLStackPop_N(cache->free_entry, hash_next); }
@@ -350,6 +365,7 @@ fnt_glyph_from_params(FNT_GlyphCache *cache, FNT_GlyphParams *params)
       entry->key = key;
       entry->glyph = result;
       entry->page_index = page_index;
+      entry->failed_frame = (!result.ok && !too_big) ? cache->frame_index : 0;
       entry->hash_next = *slot;
       if(*slot != 0) { (*slot)->hash_prev = entry; }
       *slot = entry;

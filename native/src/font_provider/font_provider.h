@@ -120,6 +120,7 @@ internal U32 fp_tag_from_string(char *tag);
 internal U64 fp_user_axis_values_from_normalized(String8 fvar, String8 avar, S16 *coords, U64 coord_count, FP_AxisValue *out, U64 out_cap);
 internal B32 fp_colr_glyph_has_layers(String8 colr, U32 glyph_id);
 internal FP_GlyphRaster fp_glyph_raster_scaled(Arena *arena, FP_GlyphRaster src, F32 scale);
+internal B32 fp_cbdt_png(String8 cblc, String8 cbdt, U32 glyph_id, F32 size_px, String8 *png_out, S16 *left_out, S16 *top_out, U32 *ppem_out);
 
 ////////////////////////////////
 //~ rjf: Backend Hooks

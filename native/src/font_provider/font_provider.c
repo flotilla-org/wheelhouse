@@ -125,3 +125,90 @@ fp_glyph_raster_scaled(Arena *arena, FP_GlyphRaster src, F32 scale)
   result.top = (S16)round_f32(src.top*scale);
   return result;
 }
+
+// The PNG CBDT holds for a glyph, from the strike nearest above size_px (or
+// the largest): CoreText doesn't draw CBDT. left and top are in the strike's
+// pixels, as FP_GlyphRaster's are.
+internal B32
+fp_cbdt_png(String8 cblc, String8 cbdt, U32 glyph_id, F32 size_px, String8 *png_out, S16 *left_out, S16 *top_out, U32 *ppem_out)
+{
+  B32 result = 0;
+  U64 sizes = fp_be32(cblc, 4);
+  U64 best = max_U64;
+  U32 best_ppem = 0;
+  for EachIndex(idx, sizes)
+  {
+    U64 rec = 8 + idx*48;
+    U32 ppem = cblc.size > rec + 45 ? cblc.str[rec + 45] : 0;
+    if(glyph_id < fp_be16(cblc, rec + 40) || glyph_id > fp_be16(cblc, rec + 42) || ppem == 0) { continue; }
+    B32 better = (best == max_U64 ||
+                  (ppem >= size_px && (best_ppem < size_px || ppem < best_ppem)) ||
+                  (ppem < size_px && best_ppem < size_px && ppem > best_ppem));
+    if(better) { best = rec; best_ppem = ppem; }
+  }
+  if(best != max_U64)
+  {
+    U64 array = fp_be32(cblc, best);
+    U64 count = fp_be32(cblc, best + 8);
+    for EachIndex(idx, count)
+    {
+      U64 entry = array + idx*8;
+      U32 first = fp_be16(cblc, entry), last = fp_be16(cblc, entry + 2);
+      if(glyph_id < first || glyph_id > last) { continue; }
+      U64 sub = array + fp_be32(cblc, entry + 4);
+      U32 index_format = fp_be16(cblc, sub);
+      U32 image_format = fp_be16(cblc, sub + 2);
+      U64 image_base = fp_be32(cblc, sub + 4);
+      U64 offset = 0, end = 0;
+      S16 left = 0, top = 0;
+      U64 n = glyph_id - first;
+      switch(index_format)
+      {
+        case 1: { offset = fp_be32(cblc, sub + 8 + n*4); end = fp_be32(cblc, sub + 12 + n*4); }break;
+        case 3: { offset = fp_be16(cblc, sub + 8 + n*2); end = fp_be16(cblc, sub + 10 + n*2); }break;
+        case 4:
+        {
+          U64 glyphs = fp_be32(cblc, sub + 8);
+          for EachIndex(g, glyphs)
+          {
+            if(fp_be16(cblc, sub + 12 + g*4) == glyph_id)
+            {
+              offset = fp_be16(cblc, sub + 14 + g*4);
+              end = fp_be16(cblc, sub + 18 + g*4);
+              break;
+            }
+          }
+        }break;
+        case 2:
+        {
+          U64 image_size = fp_be32(cblc, sub + 8);
+          offset = n*image_size;
+          end = offset + image_size;
+          left = (S8)cblc.str[Min(cblc.size - 1, sub + 14)];
+          top = (S8)cblc.str[Min(cblc.size - 1, sub + 15)];
+        }break;
+      }
+      U64 at = image_base + offset;
+      U64 data_len = 0, data_at = 0;
+      if(end > offset && image_base + end <= cbdt.size)
+      {
+        switch(image_format)
+        {
+          case 17: { left = (S8)cbdt.str[at + 2]; top = (S8)cbdt.str[at + 3]; data_len = fp_be32(cbdt, at + 5); data_at = at + 9; }break;
+          case 18: { left = (S8)cbdt.str[at + 2]; top = (S8)cbdt.str[at + 3]; data_len = fp_be32(cbdt, at + 8); data_at = at + 12; }break;
+          case 19: { data_len = fp_be32(cbdt, at); data_at = at + 4; }break;
+        }
+      }
+      if(data_len != 0 && data_at + data_len <= cbdt.size)
+      {
+        *png_out = str8(cbdt.str + data_at, data_len);
+        *left_out = left;
+        *top_out = top;
+        *ppem_out = best_ppem;
+        result = 1;
+      }
+      break;
+    }
+  }
+  return result;
+}

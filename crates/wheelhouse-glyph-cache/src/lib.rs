@@ -80,6 +80,18 @@ extern "C" {
     fn gc_stats(h: *mut c_void, out: *mut u64);
     fn gc_zoom_bucket(size: f32) -> f32;
     fn gc_pen_split(x: f32, whole: *mut i32, subpixel_x: *mut f32);
+    fn gc_cbdt_png(
+        cblc: *const u8,
+        cblc_size: u64,
+        cbdt: *const u8,
+        cbdt_size: u64,
+        glyph_id: u32,
+        size_px: f32,
+        offset: *mut u64,
+        left: *mut i32,
+        top: *mut i32,
+        ppem: *mut u32,
+    ) -> u64;
     fn gc_user_axis_values(
         fvar: *const u8,
         fvar_size: u64,
@@ -195,4 +207,31 @@ pub fn user_axis_values(fvar: &[u8], avar: &[u8], coords: &[i16]) -> Vec<f32> {
     };
     out.truncate(n as usize);
     out
+}
+
+pub struct CbdtPng<'a> {
+    pub png: &'a [u8],
+    pub left: i32,
+    pub top: i32,
+    pub ppem: u32,
+}
+
+/// Native's CBDT lookup (font_provider.c), for CoreText: the glyph's PNG.
+pub fn cbdt_png<'a>(cblc: &[u8], cbdt: &'a [u8], glyph_id: u32, size_px: f32) -> Option<CbdtPng<'a>> {
+    let (mut offset, mut left, mut top, mut ppem) = (0, 0, 0, 0);
+    let len = unsafe {
+        gc_cbdt_png(
+            cblc.as_ptr(),
+            cblc.len() as u64,
+            cbdt.as_ptr(),
+            cbdt.len() as u64,
+            glyph_id,
+            size_px,
+            &mut offset,
+            &mut left,
+            &mut top,
+            &mut ppem,
+        )
+    };
+    (len > 0).then(|| CbdtPng { png: &cbdt[offset as usize..(offset + len) as usize], left, top, ppem })
 }

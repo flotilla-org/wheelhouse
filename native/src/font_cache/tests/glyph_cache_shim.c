@@ -275,3 +275,20 @@ gc_user_axis_values(U8 *fvar, U64 fvar_size, U8 *avar, U64 avar_size, S16 *coord
   for EachIndex(idx, result) { values_out[idx] = out[idx].value; }
   return result;
 }
+
+// The PNG's offset in cbdt and its size, or 0 for none.
+GC_EXPORT U64
+gc_cbdt_png(U8 *cblc, U64 cblc_size, U8 *cbdt, U64 cbdt_size, U32 glyph_id, F32 size_px, U64 *offset_out, S32 *left_out, S32 *top_out, U32 *ppem_out)
+{
+  String8 png = {0};
+  S16 left = 0, top = 0;
+  U64 result = 0;
+  if(fp_cbdt_png(str8(cblc, cblc_size), str8(cbdt, cbdt_size), glyph_id, size_px, &png, &left, &top, ppem_out))
+  {
+    *offset_out = (U64)(png.str - cbdt);
+    *left_out = left;
+    *top_out = top;
+    result = png.size;
+  }
+  return result;
+}

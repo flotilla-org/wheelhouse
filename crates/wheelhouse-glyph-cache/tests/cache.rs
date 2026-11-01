@@ -208,3 +208,20 @@ fn packing_and_eviction_keep_this_frames_glyphs(tc: TestCase) {
         cache.frame();
     }
 }
+
+#[test]
+fn a_glyph_that_does_not_fit_is_rasterized_again_once_a_frame() {
+    let mut cache = Cache::new(&config(32, 1));
+    let (a, b) = (glyph(1, 30, 30), glyph(2, 30, 30));
+    assert_eq!(cache.get(&a).ok, 1);
+    // a's page is used this frame, so b can't go anywhere: once rasterized, then remembered.
+    let failed = cache.get(&b);
+    assert_eq!((failed.ok, failed.rasterized), (0, 1));
+    assert_eq!((cache.get(&b).ok, cache.get(&b).rasterized), (0, 0));
+    assert_eq!(cache.stats().failures, 1);
+    // Next frame it's tried again, and fits in place of a.
+    cache.frame();
+    let placed = cache.get(&b);
+    assert_eq!((placed.ok, placed.rasterized), (1, 1));
+    assert!(holds(&cache, &b, &placed, &same));
+}
