@@ -7,10 +7,19 @@
 
 #include "binnacle.h"
 
+// The cell text painter, Rich Text's (uishell_rich_text.c): cells laid out
+// with parley, right-aligned ones in tabular figures (#624).
+typedef struct UIShell_RtCellText UIShell_RtCellText;
+internal UIShell_RtCellText *uishell_rt_cell_text_frame(UIShell_RtCellText *ct);
+internal void uishell_rt_cell_text_release(UIShell_RtCellText *ct);
+internal void uishell_rt_table_cell_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, String8 text, B32 right, Vec4F32 color);
+
 typedef struct UIShell_TableState UIShell_TableState;
 struct UIShell_TableState
 {
   WheelhouseTable *table;
+  // Its cell text's layouts, kept while the View lives.
+  UIShell_RtCellText *cell_text;
   // The table's name or link, as the View's expression has it.
   U8 name[1024];
   U64 name_size;
@@ -58,10 +67,18 @@ global B32 (*uishell_table_screenshot_hook)(RD_WindowState *ws);
 global U64 uishell_table_screenshot_frames;
 
 internal void
+uishell_table_close(UIShell_TableState *state)
+{
+  if(state->table) { wheelhouse_table_free(state->table); state->table = 0; }
+}
+
+internal void
 uishell_table_release(void *user_data)
 {
   UIShell_TableState *state = (UIShell_TableState *)user_data;
-  if(state->table) { wheelhouse_table_free(state->table); state->table = 0; }
+  uishell_table_close(state);
+  uishell_rt_cell_text_release(state->cell_text);
+  state->cell_text = 0;
 }
 
 internal String8
@@ -108,7 +125,7 @@ struct UIShell_TableDraw
 {
   WheelhouseTable *table;
   BinnacleSnapshot snap;
-  // The text's painter, if not the box's font (uishell_table_draw_text).
+  // The text's painter: uishell_rt_table_cell_text, with its layouts.
   UIShell_TableTextFunction *draw_text;
   void *text_user;
   // Find is open: mark the cells that match, in match.
@@ -120,27 +137,6 @@ internal Rng2F32
 uishell_table_rect(Rng2F32 origin, BinnacleRect r)
 {
   return r2f32p(origin.x0+r.x, origin.y0+r.y, origin.x0+r.x+r.width, origin.y0+r.y+r.height);
-}
-
-internal void
-uishell_table_draw_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, String8 text, B32 right, Vec4F32 color)
-{
-  if(text.size == 0) { return; }
-  Rng2F32 visible = intersect_2f32(cell, clip);
-  if(visible.x1 <= visible.x0 || visible.y1 <= visible.y0) { return; }
-  F32 pad = box->font_size*0.4f;
-  FNT_Metrics metrics = fnt_metrics_from_tag_size(box->font, box->font_size);
-  F32 baseline = cell.y0 + (dim_2f32(cell).y - (metrics.ascent+metrics.descent))/2 + metrics.ascent;
-  F32 x = cell.x0+pad;
-  if(right)
-  {
-    F32 width = fnt_dim_from_tag_size_string(box->font, box->font_size, 0, 0, text).x;
-    x = Max(cell.x0+pad, cell.x1-pad-width);
-  }
-  DR_ClipScope(intersect_2f32(dr_top_clip(), r2f32p(visible.x0+pad*0.5f, visible.y0, visible.x1-pad*0.5f, visible.y1)))
-  {
-    dr_text(box->font, box->font_size, 0, 0, box->text_raster_flags, v2f32(x, baseline), color, text);
-  }
 }
 
 internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
@@ -159,7 +155,7 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
   Vec4F32 header_line = mix_4f32(band, text_color, 0.2f);
   Vec4F32 accent = rd_accent_color();
   F32 col_band = cols->header, row_band = rows->header;
-  UIShell_TableTextFunction *draw_text = d->draw_text ? d->draw_text : uishell_table_draw_text;
+  UIShell_TableTextFunction *draw_text = d->draw_text;
   Rng2F32 body = r2f32p(o.x0+col_band, o.y0+row_band, o.x1, o.y1);
 
   // Which shown cells match the Find Query, row by row over the Strips.
@@ -499,7 +495,7 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   // The table follows the View's expression: open, reopen or close.
   if(state->table && !str8_match(name, str8(state->name, state->name_size), 0))
   {
-    uishell_table_release(state);
+    uishell_table_close(state);
   }
   RD_ViewState *vs = rd_view_state_from_view(ctx->settings.view, 0);
   vs->release_user_data = uishell_table_release;
@@ -718,6 +714,9 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   if(!str8_match(status, uishell_table_text(wheelhouse_table_status(state->table)), 0)) { rd_request_frame(); }
   UIShell_TableDraw *draw = push_array(ui_build_arena(), UIShell_TableDraw, 1);
   draw->table = state->table;
+  state->cell_text = uishell_rt_cell_text_frame(state->cell_text);
+  draw->draw_text = uishell_rt_table_cell_text;
+  draw->text_user = state->cell_text;
   draw->finding = find_text.size != 0;
   // Matches in the theme's match colour, its "match background"; a
   // theme without one marks them in its selection colour.

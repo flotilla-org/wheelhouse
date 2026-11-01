@@ -746,7 +746,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       DR_BucketScope(dr_bucket_make()) { grid->custom_draw(grid, grid->custom_draw_user_data); }
       U64 drawn = s->layouts.layouts - layouts;
       BinnacleAxisSnapshot *cols = &td->snap.axes[BINNACLE_COLS];
-      UIShell_RtLayoutEntry *anchor = cols->strip_len ? uishell_rt_cell_layout(s, str8_lit("Tern \xE2\x9A\x93"), cols->strip[0].size) : 0;
+      UIShell_RtLayoutEntry *anchor = cols->strip_len ? uishell_rt_cell_layout(&s->layouts, &s->theme, str8_lit("Tern \xE2\x9A\x93"), cols->strip[0].size, 0) : 0;
       B32 found = anchor && anchor->layout->text.glyph_count != 0 && s->layouts.layouts == layouts + drawn;
       for(U64 i = 0; found && i < anchor->layout->text.glyph_count; i += 1) { found = anchor->layout->text.glyphs[i].id != 0; }
       RichCheck(drawn != 0 && found, "a table cell's text is laid out with fallback, as Rich Text is");

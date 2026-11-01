@@ -579,6 +579,56 @@ uishell_table_diagnostics(RD_WindowState *ws)
       TableCheck(uishell_table_find_count(scratch.arena, (WheelhouseTableFind){0}, 0).size == 0, "nothing while find is closed");
     }
 
+    // Cell text (#624): laid out with parley, right-aligned cells in
+    // tabular figures, so a column of numbers lines up; and what painting a
+    // scrolling table costs, its layouts cached.
+    {
+      String8 bench_names[] = {str8_lit("records"), str8_lit("huge")};
+      for EachElement(n, bench_names)
+      {
+        CFG_Node *view = rd_fixture_view(panel, str8_lit("table"), bench_names[n], 1);
+        UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = rd_view_address_from_cfg(view), .view = rd_view_address_from_cfg(view))
+        {
+          UI_Event none = {0};
+          Vec2F32 away = v2f32(450, 300);
+          UI_Box *part = &ui_nil_box, *grid_box = &ui_nil_box;
+          for(U32 frame = 0; frame < 3; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Overlay, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          if(ui_box_is_nil(grid_box)) { TableCheck(0, "the table View builds its grid"); continue; }
+          UIShell_TableDraw *td = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          UIShell_RtCellText *ct = (UIShell_RtCellText *)td->text_user;
+          TableCheck(td->draw_text == uishell_rt_table_cell_text && ct != 0, "the table View paints its text with the cell painter");
+          if(ct == 0) { continue; }
+          if(n == 0)
+          {
+            F32 width[2][2] = {0};
+            String8 figures[2] = {str8_lit("1111"), str8_lit("8888")};
+            for EachIndex(right, 2) for EachIndex(f, 2)
+            {
+              UIShell_RtLayoutEntry *e = uishell_rt_cell_layout(ct->layouts, ct->theme, figures[f], 400, (B32)right);
+              width[right][f] = e && e->layout->text.line_count ? e->layout->text.lines[0].width : 0;
+            }
+            TableCheck(width[1][0] > 0 && width[1][0] == width[1][1], "right-aligned cells set figures at one width");
+            printf("TABLE_FIGURES proportional=%.2f/%.2f tabular=%.2f/%.2f\n", width[0][0], width[0][1], width[1][0], width[1][1]);
+          }
+          BinnacleGrid *grid = wheelhouse_table_grid(td->table);
+          U64 frames = 300, paint_us = 0, layouts = ct->layouts->layouts;
+          for(U64 i = 0; i < frames; i += 1)
+          {
+            BinnacleAction a = {sizeof(a), BINNACLE_ACTION_SCROLL};
+            a.args.scroll = (BinnacleScroll){0, (i/100)%2 ? -13.f : 13.f};
+            binnacle_grid_action(grid, &a);
+            grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Overlay, none, away, UIShell_TableDiagBar_Thumb, &part);
+            if(ui_box_is_nil(grid_box)) { break; }
+            U64 begin = now_time_us();
+            DR_BucketScope(dr_bucket_make()) { grid_box->custom_draw(grid_box, grid_box->custom_draw_user_data); }
+            paint_us += now_time_us() - begin;
+          }
+          printf("TABLE_PAINT_BENCH table=%.*s paint_us=%.1f layouts=%llu\n", str8_varg(bench_names[n]), (F64)paint_us/frames,
+                 (unsigned long long)(ct->layouts->layouts - layouts));
+        }
+      }
+    }
+
     ui_set_active_scroll_bar_style(saved_style);
     ws->sidebar = saved_sidebar;
     ui_select_state(saved_ui);
