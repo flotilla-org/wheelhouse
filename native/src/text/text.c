@@ -2883,13 +2883,13 @@ txt_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U64 *gen_ou
         if(tokens.v[idx].kind == TXT_TokenKind_Symbol)
         {
           String8 token_string = str8_substr(data, tokens.v[idx].range);
-          B32 is_opener = (token_string.str[0] == '{' ||
-                           token_string.str[0] == '(' ||
-                           token_string.str[0] == '[');
-          B32 is_closer = (token_string.str[0] == '}' ||
-                           token_string.str[0] == ')' ||
-                           token_string.str[0] == ']');
-          if(token_string.size == 1 && (is_opener || is_closer))
+          B32 is_opener = token_string.size == 1 && (token_string.str[0] == '{' ||
+                                                     token_string.str[0] == '(' ||
+                                                     token_string.str[0] == '[');
+          B32 is_closer = token_string.size == 1 && (token_string.str[0] == '}' ||
+                                                     token_string.str[0] == ')' ||
+                                                     token_string.str[0] == ']');
+          if(is_opener || is_closer)
           {
             lane_scope_pt_count += 1;
             lane_scope_pt_opener_count += !!is_opener;
