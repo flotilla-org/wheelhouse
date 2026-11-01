@@ -1,4 +1,4 @@
-//! The generated document the benchmarks lay out.
+//! The generated document both benchmarks lay out: wheelhouse-text's and the FFI's.
 #![allow(dead_code)]
 use std::{env, fs, time::Duration};
 

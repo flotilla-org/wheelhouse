@@ -535,6 +535,55 @@ typedef struct BinnacleGrid BinnacleGrid;
 // wheelhouse_table_frame's answer when the table never changes by itself.
 #define WHEELHOUSE_TABLE_NEVER UINT64_MAX
 
+#define WH_TEXT_FAMILY_MAIN 0
+
+#define WH_TEXT_FAMILY_CODE 1
+
+#define WH_TEXT_FAMILY_ICONS 2
+
+#define WH_TEXT_ALIGN_START 0
+
+#define WH_TEXT_ALIGN_END 1
+
+#define WH_TEXT_ALIGN_CENTER 2
+
+// The last line, and lines that end at a hard break, align to the start.
+#define WH_TEXT_ALIGN_JUSTIFY 3
+
+// With the text after the offset.
+#define WH_TEXT_DOWNSTREAM 0
+
+// With the text before the offset.
+#define WH_TEXT_UPSTREAM 1
+
+#define WH_TEXT_FONT_BYTES 0
+
+#define WH_TEXT_FONT_PATH 1
+
+// Known only by its bytes.
+#define WH_TEXT_FONT_UNKNOWN 2
+
+#define WH_TEXT_CLUSTER_RTL 1
+
+// A space, a no-break space, a tab or a hard line break.
+#define WH_TEXT_CLUSTER_WHITESPACE 2
+
+#define WH_TEXT_CLUSTER_WORD_START 4
+
+// No glyphs of its own; its advance is its share of the ligature's.
+#define WH_TEXT_CLUSTER_LIGATURE_CONTINUATION 8
+
+#define WH_TEXT_CLUSTER_HARD_BREAK 16
+
+// Covers no bytes; its start is where the text was cut.
+#define WH_TEXT_CLUSTER_ELLIPSIS 32
+
+// Drawn as a space, advancing to the next tab stop.
+#define WH_TEXT_CLUSTER_TAB 64
+
+// Safe to use from several threads at once.
+typedef struct WhText WhText;
+
 typedef struct WheelhouseCard WheelhouseCard;
 
 // A sidebar: one presentation client's core. Calls on one are serialised
@@ -1450,6 +1499,237 @@ typedef struct {
   size_t count;
 } WheelhouseStrip;
 
+typedef struct {
+  // WH_TEXT_FONT_*.
+  uint32_t kind;
+  // For WH_TEXT_FONT_BYTES.
+  uint64_t bytes_id;
+  // For WH_TEXT_FONT_PATH.
+  WheelhouseText path;
+  uint32_t face_index;
+  const uint8_t *data;
+  size_t data_len;
+} WhTextFont;
+
+// In order and not overlapping; bytes no run covers take style 0.
+typedef struct {
+  uint32_t start;
+  uint32_t len;
+  uint32_t style;
+} WhTextStyleRun;
+
+typedef struct {
+  uint8_t tag[4];
+  // At most 65535.
+  uint32_t value;
+} WhTextFeature;
+
+// Sizes in points; the context's scale makes them pixels.
+typedef struct {
+  // WH_TEXT_FAMILY_*.
+  uint32_t family;
+  float size;
+  // CSS weight.
+  float weight;
+  uint32_t italic;
+  const WhTextFeature *features;
+  size_t feature_count;
+  float letter_spacing;
+} WhTextStyle;
+
+// In points, placed before byte offset. baseline is down from its top.
+typedef struct {
+  uint64_t id;
+  uint32_t offset;
+  float width;
+  float height;
+  float baseline;
+} WhTextInlineBox;
+
+// Borrowed for the call.
+typedef struct {
+  // UTF-8.
+  WheelhouseText text;
+  const WhTextStyleRun *runs;
+  size_t run_count;
+  const WhTextStyle *styles;
+  size_t style_count;
+  // In order of offset.
+  const WhTextInlineBox *boxes;
+  size_t box_count;
+  // 0 for no limit.
+  uint32_t max_lines;
+  // End a cut last line with "…".
+  uint32_t ellipsis;
+  // WH_TEXT_ALIGN_*.
+  uint32_t align;
+  // Tab stops every this many spaces of the tab's own style; 0 for 4. Text
+  // with tabs is shaped twice: once to measure where each tab starts.
+  uint32_t tab_size;
+} WhTextInput;
+
+// alloc returns size bytes aligned to align, or NULL. The library never
+// frees them, even when a call fails part way. alloc must not call back
+// into the library.
+typedef struct {
+  void *(*alloc)(void *user, size_t size, size_t align);
+  void *user;
+} WhTextAllocator;
+
+typedef struct {
+  // The left of its content; for an empty line, its start edge.
+  float x;
+  // The line box's top.
+  float y;
+  float height;
+  float baseline;
+  float ascent;
+  float descent;
+  // Without trailing whitespace.
+  float width;
+  // With any trailing whitespace and line break.
+  uint32_t text_start;
+  uint32_t text_end;
+  // Left to right.
+  uint32_t cluster_start;
+  uint32_t cluster_count;
+  // Left to right.
+  uint32_t run_start;
+  uint32_t run_count;
+} WhTextLine;
+
+typedef struct {
+  // Resolved by wh_text_font.
+  uint32_t font;
+  uint32_t face_index;
+  float size;
+  // Synthesise bold.
+  uint32_t embolden;
+  // Synthetic italic skew in degrees.
+  float skew;
+  // Resolved by wh_text_coords; 0 for none.
+  uint32_t coords;
+  uint32_t style;
+  uint32_t glyph_start;
+  uint32_t glyph_count;
+  // On the baseline.
+  float x;
+  float y;
+  float advance;
+  uint32_t line;
+  uint32_t rtl;
+  // Down from the baseline to the line's top edge.
+  float underline_offset;
+  float underline_size;
+  // Down from the baseline to the line's top edge (negative: above it).
+  float strikethrough_offset;
+  float strikethrough_size;
+} WhTextRun;
+
+// At its origin on the baseline.
+typedef struct {
+  uint32_t id;
+  float x;
+  float y;
+} WhTextGlyph;
+
+// An extended grapheme cluster.
+typedef struct {
+  uint32_t start;
+  uint32_t len;
+  // Left edge.
+  float x;
+  float advance;
+  uint32_t line;
+  uint32_t style;
+  // WH_TEXT_CLUSTER_* bits.
+  uint32_t flags;
+  // The glyphs it draws: none for a ligature continuation or a glyphless atom.
+  uint32_t glyph_start;
+  uint32_t glyph_count;
+} WhTextCluster;
+
+// x and y are the top left.
+typedef struct {
+  uint64_t id;
+  float x;
+  float y;
+  float width;
+  float height;
+  uint32_t line;
+} WhTextBox;
+
+// Arrays are NULL when empty. In pixels, y down from the paragraph's top.
+typedef struct {
+  WhTextLine *lines;
+  size_t line_count;
+  WhTextRun *runs;
+  size_t run_count;
+  WhTextGlyph *glyphs;
+  size_t glyph_count;
+  WhTextCluster *clusters;
+  size_t cluster_count;
+  WhTextBox *boxes;
+  size_t box_count;
+  float width;
+  float height;
+  // Stale when wh_text_epoch differs.
+  uint64_t epoch;
+  // The resolved base direction.
+  uint32_t rtl;
+} WhTextLayout;
+
+typedef struct {
+  uint32_t offset;
+  // WH_TEXT_DOWNSTREAM or WH_TEXT_UPSTREAM.
+  uint32_t affinity;
+} WhTextPosition;
+
+// y is the line's top.
+typedef struct {
+  float x;
+  float y;
+  float height;
+  uint32_t line;
+  uint32_t rtl;
+} WhTextCaret;
+
+typedef struct {
+  float x;
+  float y;
+  float width;
+  float height;
+  uint32_t line;
+} WhTextRect;
+
+typedef struct {
+  WhTextRect *rects;
+  size_t count;
+} WhTextRects;
+
+// Clusters of one direction and one style, visually consecutive on a line.
+typedef struct {
+  uint32_t line;
+  // Left to right among the line's.
+  uint32_t segment;
+  uint32_t cluster_start;
+  uint32_t cluster_count;
+  // Lowest start to highest end, as bidi may interleave them.
+  uint32_t text_start;
+  uint32_t text_end;
+  float x;
+  float width;
+  uint32_t style;
+  uint32_t rtl;
+} WhTextSegment;
+
+typedef struct {
+  WhTextSegment *segments;
+  size_t count;
+} WhTextSegments;
+
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -2248,6 +2528,69 @@ WheelhouseText wheelhouse_table_header(WheelhouseTable *table,
                                        uint64_t position);
 
 void wheelhouse_table_free(WheelhouseTable *table);
+
+// Without system_fonts, only registered fonts are used. Free it with
+// wh_text_free.
+WhText *wh_text_create(uint32_t system_fonts);
+
+void wh_text_free(WhText *ctx);
+
+// Copies the bytes. Returns how many faces it registered.
+size_t wh_text_register_font(const WhText *ctx, const uint8_t *data, size_t len, uint64_t bytes_id);
+
+// family is WH_TEXT_FAMILY_*. Returns 0 for an unknown slot or non-UTF-8 name.
+uint32_t wh_text_set_family(const WhText *ctx, uint32_t family, WheelhouseText name);
+
+// Tried in order before fontique's own fallback. Returns 0, changing
+// nothing, if a name is not UTF-8.
+uint32_t wh_text_set_fallbacks(const WhText *ctx, const WheelhouseText *names, size_t count);
+
+// Returns 0 for a scale that is not positive and finite.
+uint32_t wh_text_set_scale(const WhText *ctx, float scale);
+
+// Rescans the system's fonts.
+void wh_text_fonts_changed(const WhText *ctx);
+
+// Changes with font settings, installed fonts or scale.
+uint64_t wh_text_epoch(const WhText *ctx);
+
+// Its path and bytes live as long as ctx. Returns 0 for an unknown id.
+uint32_t wh_text_font(const WhText *ctx, uint32_t font, WhTextFont *out);
+
+// Normalized coordinates, live as long as ctx. Returns how many.
+size_t wh_text_coords(const WhText *ctx, uint32_t coords, const int16_t **out);
+
+// Pass width INFINITY for no wrapping: a large finite width aligns RTL or
+// centred lines against that width, far from 0, where f32 loses precision.
+// On failure, returns 0 with an error and leaves out untouched.
+uint32_t wh_text_layout(const WhText *ctx,
+                        const WhTextInput *input,
+                        float width,
+                        WhTextAllocator alloc,
+                        WhTextLayout *out,
+                        char **error_out);
+
+// Returns 0 for a malformed layout.
+uint32_t wh_text_offset_at(const WhTextLayout *layout, float x, float y, WhTextPosition *out);
+
+// An offset inside a cluster counts as its start. Returns 0 for a
+// malformed layout.
+uint32_t wh_text_caret_rect(const WhTextLayout *layout,
+                            uint32_t offset,
+                            uint32_t affinity,
+                            WhTextCaret *out);
+
+// Bidi text can give several rects on one line. Returns 0 for a malformed
+// layout or a failed allocation.
+uint32_t wh_text_selection_rects(const WhTextLayout *layout,
+                                 uint32_t start,
+                                 uint32_t end,
+                                 WhTextAllocator alloc,
+                                 WhTextRects *out);
+
+// A run id is (Block key, line, segment, generation). Returns 0 for a
+// malformed layout or a failed allocation.
+uint32_t wh_text_segments(const WhTextLayout *layout, WhTextAllocator alloc, WhTextSegments *out);
 
 #ifdef __cplusplus
 }  // extern "C"
