@@ -148,7 +148,7 @@ pub struct WhTextLayout {
     pub box_count: usize,
     pub width: f32,
     pub height: f32,
-    /// Stale when wh_text_epoch differs.
+    /// When wh_text_epoch differs, lay out again: redrawing isn't enough.
     pub epoch: u64,
     /// The resolved base direction.
     pub rtl: u32,
@@ -468,6 +468,7 @@ unsafe fn view<'a>(layout: *const WhTextLayout) -> Option<View<'a>> {
 }
 
 /// What the queries index: lines' cluster and run ranges, and clusters' bytes.
+/// They read no glyph ranges; a query that does must check them here.
 /// A layout corrupt there must return 0, not read past its arrays or overflow.
 fn well_formed(v: &View<'_>) -> bool {
     v.lines.iter().all(|l| {

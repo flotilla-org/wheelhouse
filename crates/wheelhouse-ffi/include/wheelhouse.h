@@ -1674,7 +1674,7 @@ typedef struct {
   size_t box_count;
   float width;
   float height;
-  // Stale when wh_text_epoch differs.
+  // When wh_text_epoch differs, lay out again: redrawing isn't enough.
   uint64_t epoch;
   // The resolved base direction.
   uint32_t rtl;
