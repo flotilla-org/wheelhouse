@@ -114,7 +114,7 @@ fn a_full_atlas_clears_its_least_recently_used_page_but_never_one_used_this_fram
 }
 
 #[test]
-fn colour_glyphs_get_their_own_pages_and_skip_gamma() {
+fn colour_glyphs_get_their_own_pages_and_skip_gamma_which_changes_between_frames() {
     let mut cache = Cache::new(&Config { gamma: 2.0, ..config(64, 2) });
     let mask = glyph(1, 6, 5);
     let color = Request { kind: COLOR, ..glyph(2, 6, 5) };
@@ -124,9 +124,15 @@ fn colour_glyphs_get_their_own_pages_and_skip_gamma() {
     let lut = |v: u8| (255.0 * (v as f32 / 255.0).powf(0.5)).round() as u8;
     assert!(holds(&cache, &mask, &gm, &lut), "masks go through the gamma curve");
     assert!(holds(&cache, &color, &gc, &same), "colour is written as given");
-    // A new curve drops the old masks; colour stays.
+    // A new curve waits for the next frame: this frame's masks stay as handed out.
     cache.set_gamma(1.0);
-    assert_eq!(cache.get(&mask).rasterized, 1);
+    assert_eq!(cache.get(&mask), Glyph { rasterized: 0, ..gm });
+    assert!(holds(&cache, &mask, &gm, &lut));
+    // Then it drops the old masks; colour stays.
+    cache.frame();
+    let again = cache.get(&mask);
+    assert_eq!(again.rasterized, 1);
+    assert!(holds(&cache, &mask, &again, &same));
     assert_eq!(cache.get(&color).rasterized, 0);
 }
 

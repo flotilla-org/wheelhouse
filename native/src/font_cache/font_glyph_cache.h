@@ -194,6 +194,8 @@ struct FNT_GlyphCache
   FNT_GlyphEntry *free_entry;
   FNT_GlyphAtlas atlases[FNT_GlyphKind_COUNT];
   F32 gamma;
+  // Set by fnt_glyph_cache_set_gamma, applied by the next frame; 0 for none.
+  F32 pending_gamma;
   U8 gamma_lut[256];
   FNT_GlyphStats stats;
   // Tests force collisions with it; 0 hashes the key.
@@ -208,6 +210,7 @@ internal FNT_GlyphCache *fnt_glyph_cache_alloc(FNT_GlyphBackend backend, FNT_Gly
 internal void fnt_glyph_cache_release(FNT_GlyphCache *cache);
 internal void fnt_glyph_cache_frame(FNT_GlyphCache *cache);
 internal void fnt_glyph_cache_set_gamma(FNT_GlyphCache *cache, F32 gamma);
+internal void fnt_glyph_cache_apply_gamma(FNT_GlyphCache *cache);
 internal FNT_GlyphKey fnt_glyph_key_from_params(FNT_GlyphParams *params);
 internal B32 fnt_glyph_key_match(FNT_GlyphKey *a, FNT_GlyphKey *b);
 internal U64 fnt_glyph_hash_from_key(FNT_GlyphKey *key);

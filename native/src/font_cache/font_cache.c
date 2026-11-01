@@ -229,7 +229,9 @@ fnt_tag_from_static_data_string(String8 *data_ptr)
 }
 
 // Bytes that outlive the cache, such as a face wh_text_font resolved: its
-// identity is where they are, so asking again opens nothing.
+// identity is where they are, so asking again opens nothing. Bytes freed
+// while the cache lives would leave a tag that a later buffer at the same
+// address matches, so callers pass only bytes that live as long as fnt.
 internal FNT_Tag
 fnt_tag_from_memory_face(String8 data, U32 face_index)
 {

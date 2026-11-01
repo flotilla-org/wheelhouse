@@ -456,7 +456,8 @@ fp_ft_glyph_raster(Arena *arena, FT_Face face, FP_GlyphRasterParams *params, FT_
     }
     FT_Bitmap *bmp = &slot->bitmap;
     B32 color = (bmp->pixel_mode == FT_PIXEL_MODE_BGRA);
-    Vec2S16 dim = v2s16((S16)bmp->width, (S16)bmp->rows);
+    // A bitmap S16 can't hold is too big for any page anyway.
+    Vec2S16 dim = (bmp->width < 32000 && bmp->rows < 32000) ? v2s16((S16)bmp->width, (S16)bmp->rows) : v2s16(0, 0);
     U64 bpp = color ? 4 : 1;
     if(dim.x > 0 && dim.y > 0)
     {
@@ -479,6 +480,7 @@ fp_ft_glyph_raster(Arena *arena, FT_Face face, FP_GlyphRasterParams *params, FT_
             }break;
             case FT_PIXEL_MODE_MONO: { dst[col] = (src[col/8] & (0x80 >> (col%8))) ? 255 : 0; }break;
             case FT_PIXEL_MODE_GRAY: { dst[col] = src[col]; }break;
+            // GRAY2, GRAY4 and LCD: never asked for (no LCD, no 2- or 4-bit strikes requested).
             default: { dst[col] = 0; }break;
           }
         }
@@ -515,7 +517,8 @@ fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
       load_flags |= (smooth ? FT_LOAD_TARGET_LIGHT : FT_LOAD_TARGET_MONO);
     }
     
-    //- colour strikes (CBDT, sbix) come at their own sizes: the nearest, scaled
+    //- colour strikes (CBDT, sbix) come at their own sizes: the nearest, scaled.
+    // A strike that fails to load, or isn't colour, falls through to the outline.
     if(face->num_fixed_sizes > 0 && FT_HAS_COLOR(face))
     {
       F32 scale = fp_ft_select_size(face, params->size_px*(72.f/96.f));

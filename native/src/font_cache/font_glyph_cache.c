@@ -7,7 +7,10 @@ fnt_glyph_key_from_params(FNT_GlyphParams *params)
   FNT_GlyphKey key = {0};
   key.tag = params->tag;
   key.glyph_id = params->glyph_id;
-  key.size_64 = (S32)round_f32(params->size_px*64.f);
+  // NaN and huge values (an animated camera can produce both) keep the casts defined.
+  F32 size = (params->size_px == params->size_px) ? Clamp(0.f, params->size_px, 16384.f) : 0.f;
+  F32 skew = (params->skew == params->skew) ? Clamp(-90.f, params->skew, 90.f) : 0.f;
+  key.size_64 = (S32)round_f32(size*64.f);
   S32 bin = (S32)floor_f32(params->subpixel_x*FNT_GLYPH_SUBPIXEL_BINS + 0.5f);
   key.subpixel_bin = (U32)Clamp(0, bin, FNT_GLYPH_SUBPIXEL_BINS-1);
   if(params->coord_count != 0)
@@ -15,7 +18,7 @@ fnt_glyph_key_from_params(FNT_GlyphParams *params)
     key.coords_hash = XXH3_64bits(params->coords, params->coord_count*sizeof(params->coords[0]));
   }
   key.synthesis = params->synthesis;
-  key.skew_64 = (S32)round_f32(params->skew*64.f);
+  key.skew_64 = (S32)round_f32(skew*64.f);
   key.hinting = params->hinting;
   return key;
 }
@@ -106,15 +109,20 @@ fnt_glyph_cache_alloc(FNT_GlyphBackend backend, FNT_GlyphCacheParams *params)
   cache->arena = arena;
   cache->backend = backend;
   cache->frame_index = 1;
-  cache->slots_count = 4096;
-  cache->slots = push_array(arena, FNT_GlyphEntry *, cache->slots_count);
+  // About one slot per 24x24 glyph the pages can hold, so chains stay short.
+  U64 capacity = 0;
   for EachIndex(kind, FNT_GlyphKind_COUNT)
   {
     FNT_GlyphAtlas *atlas = &cache->atlases[kind];
     atlas->page_dim = params->page_dim[kind];
     atlas->page_budget = Clamp(1, params->page_budget[kind], FNT_GLYPH_PAGE_MAX);
+    capacity += (U64)atlas->page_budget*(U64)atlas->page_dim.x*(U64)atlas->page_dim.y/(24*24);
   }
+  cache->slots_count = 1024;
+  while(cache->slots_count < capacity) { cache->slots_count *= 2; }
+  cache->slots = push_array(arena, FNT_GlyphEntry *, cache->slots_count);
   fnt_glyph_cache_set_gamma(cache, params->gamma);
+  fnt_glyph_cache_apply_gamma(cache);
   return cache;
 }
 
@@ -128,6 +136,7 @@ internal void
 fnt_glyph_cache_frame(FNT_GlyphCache *cache)
 {
   cache->frame_index += 1;
+  fnt_glyph_cache_apply_gamma(cache);
 }
 
 internal void
@@ -147,25 +156,31 @@ fnt_glyph_page_clear(FNT_GlyphCache *cache, FNT_GlyphPage *page)
   page->next_y = 0;
 }
 
-// Changing it drops the masks rasterized under the old curve.
+// Takes effect at the next frame, dropping the masks rasterized under the
+// old curve then: glyphs handed out this frame stay as they are until drawn.
 internal void
 fnt_glyph_cache_set_gamma(FNT_GlyphCache *cache, F32 gamma)
 {
-  gamma = ClampBot(0.01f, gamma);
-  if(gamma == cache->gamma)
+  cache->pending_gamma = ClampBot(0.01f, gamma);
+}
+
+internal void
+fnt_glyph_cache_apply_gamma(FNT_GlyphCache *cache)
+{
+  if(cache->pending_gamma != 0 && cache->pending_gamma != cache->gamma)
   {
-    return;
+    cache->gamma = cache->pending_gamma;
+    for EachIndex(c, 256)
+    {
+      cache->gamma_lut[c] = (U8)Clamp(0, (S32)round_f32(255.f*pow_f32((F32)c/255.f, 1.f/cache->gamma)), 255);
+    }
+    FNT_GlyphAtlas *atlas = &cache->atlases[FNT_GlyphKind_Mask];
+    for EachIndex(idx, atlas->page_count)
+    {
+      fnt_glyph_page_clear(cache, &atlas->pages[idx]);
+    }
   }
-  cache->gamma = gamma;
-  for EachIndex(c, 256)
-  {
-    cache->gamma_lut[c] = (U8)Clamp(0, (S32)round_f32(255.f*pow_f32((F32)c/255.f, 1.f/cache->gamma)), 255);
-  }
-  FNT_GlyphAtlas *atlas = &cache->atlases[FNT_GlyphKind_Mask];
-  for EachIndex(idx, atlas->page_count)
-  {
-    fnt_glyph_page_clear(cache, &atlas->pages[idx]);
-  }
+  cache->pending_gamma = 0;
 }
 
 // Shelves: glyphs of a size share a row. Pages are cleared whole, so no
@@ -310,8 +325,8 @@ fnt_glyph_from_params(FNT_GlyphCache *cache, FNT_GlyphParams *params)
     B32 empty = (raster.dim.x <= 0 || raster.dim.y <= 0 || raster.pixels == 0);
     FNT_GlyphAtlas *atlas = &cache->atlases[kind];
     // One pixel of clear border, so sampling between texels never reads a neighbour.
-    Vec2S16 padded = v2s16(raster.dim.x + 2, raster.dim.y + 2);
-    B32 too_big = (!empty && (padded.x > atlas->page_dim.x || padded.y > atlas->page_dim.y));
+    B32 too_big = (!empty && ((S32)raster.dim.x + 2 > atlas->page_dim.x || (S32)raster.dim.y + 2 > atlas->page_dim.y));
+    Vec2S16 padded = too_big ? v2s16(0, 0) : v2s16(raster.dim.x + 2, raster.dim.y + 2);
     S32 page_index = -1;
     Vec2S16 p = {0};
     if(!empty && !too_big)
