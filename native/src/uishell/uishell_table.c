@@ -130,6 +130,9 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
   Vec4F32 line = ui_color_from_name(str8_lit("border"));
   Vec4F32 selection = ui_color_from_name(str8_lit("selection"));
   Vec4F32 band = mix_4f32(ui_color_from_name(str8_lit("background")), text_color, 0.05f);
+  // The border color can be near the band's own, so header rules are drawn
+  // a step from the band towards the text.
+  Vec4F32 header_line = mix_4f32(band, text_color, 0.2f);
   Vec4F32 accent = rd_accent_color();
   F32 col_band = cols->header, row_band = rows->header;
   Rng2F32 body = r2f32p(o.x0+col_band, o.y0+row_band, o.x1, o.y1);
@@ -171,7 +174,10 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
     }
   }
 
-  // Column rules, between the column header band and the body.
+  // Header bands, then the rules after each item across them and the body,
+  // so header cells are divided as the body's are.
+  dr_rect(r2f32p(o.x0, o.y0, o.x1, o.y0+row_band), band, 0, 0, 0.f);
+  dr_rect(r2f32p(o.x0, o.y0+row_band, o.x0+col_band, o.y1), band, 0, 0, 0.f);
   for(size_t c = 0; c < cols->strip_len; c += 1)
   {
     BinnacleStripItem *ci = &cols->strip[c];
@@ -179,13 +185,21 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
     F32 x = o.x0+ci->offset+ci->size;
     if(x > o.x0+cx.min && x <= o.x0+cx.max)
     {
-      dr_rect(r2f32p(x, o.y0, x+1.f, o.y1), line, 0, 0, 0.f);
+      dr_rect(r2f32p(x, o.y0, x+1.f, o.y0+row_band), header_line, 0, 0, 0.f);
+      dr_rect(r2f32p(x, o.y0+row_band, x+1.f, o.y1), line, 0, 0, 0.f);
     }
   }
-
-  // Header bands.
-  dr_rect(r2f32p(o.x0, o.y0, o.x1, o.y0+row_band), band, 0, 0, 0.f);
-  dr_rect(r2f32p(o.x0, o.y0+row_band, o.x0+col_band, o.y1), band, 0, 0, 0.f);
+  for(size_t r = 0; r < rows->strip_len; r += 1)
+  {
+    BinnacleStripItem *ri = &rows->strip[r];
+    Rng1F32 ry = uishell_table_strip_clip(rows, r);
+    F32 y = o.y0+ri->offset+ri->size;
+    if(y > o.y0+ry.min && y <= o.y0+ry.max)
+    {
+      dr_rect(r2f32p(o.x0, y-1.f, o.x0+col_band, y), header_line, 0, 0, 0.f);
+      dr_rect(r2f32p(o.x0+col_band, y-1.f, o.x1, y), line, 0, 0, 0.f);
+    }
+  }
   for EachIndex(axis_idx, 2)
   {
     BinnacleAxisSnapshot *axis = &snap->axes[axis_idx];
@@ -219,8 +233,8 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
       scratch_end(scratch);
     }
   }
-  dr_rect(r2f32p(o.x0, o.y0+row_band-1.f, o.x1, o.y0+row_band), line, 0, 0, 0.f);
-  dr_rect(r2f32p(o.x0+col_band-1.f, o.y0, o.x0+col_band, o.y1), line, 0, 0, 0.f);
+  dr_rect(r2f32p(o.x0, o.y0+row_band-1.f, o.x1, o.y0+row_band), header_line, 0, 0, 0.f);
+  dr_rect(r2f32p(o.x0+col_band-1.f, o.y0, o.x0+col_band, o.y1), header_line, 0, 0, 0.f);
 
   // Focus, then a drag's drop line.
   if(snap->has_focus_rect)
