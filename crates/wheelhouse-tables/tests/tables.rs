@@ -104,7 +104,8 @@ fn a_given_table_shows_its_cells_by_row_and_column(tc: hegel::TestCase) {
 /// A new text size resizes a table: rows and the column header band by the
 /// line's change, columns and the row header band by the digit's, a given
 /// table's columns sized to their text too. The first row and column shown
-/// stay first, unless the end clamp pulls the view back.
+/// stay first, unless the end clamp pulls the view back (to the start, when
+/// everything fits).
 #[hegel::test(test_cases = 100)]
 fn new_metrics_resize_a_table_and_keep_its_first_row_and_column(tc: hegel::TestCase) {
     use hegel::generators as gs;
@@ -155,8 +156,13 @@ fn new_metrics_resize_a_table_and_keep_its_first_row_and_column(tc: hegel::TestC
             }
         }
         let now = snapshot.strip(axis).first().map(|i| i.position);
+        // The end clamp: scrolled to the end, or everything fits from the start.
+        let thumb = snapshot.thumb(axis);
         if now != *first {
-            assert_eq!(snapshot.thumb(axis).fraction, 1.0, "{name}: {axis:?} first {now:?}, was {first:?}, short of the end");
+            assert!(
+                thumb.fraction == 1.0 || (thumb.size >= 1.0 && now == Some(0)),
+                "{name}: {axis:?} first {now:?}, was {first:?}, short of the end"
+            );
         }
     }
 }
