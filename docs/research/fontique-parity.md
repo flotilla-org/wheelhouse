@@ -38,7 +38,8 @@ code points (the platform) is tofu. Three passes:
 
 The test fails only on tofu in `configured` where the platform has a glyph.
 It runs where the native builds run: `native/build.sh` (Linux, macOS) and
-`native/build.bat` (Windows) under CI, printing its tables to the job log.
+`native/build.bat` (Windows) under CI, with `--ignored` (a plain `cargo test`
+skips it: it depends on the host's fonts), printing its tables to the job log.
 A job of its own in `core.yml`, with a fuller Linux font set, needs the
 workflow scope the crew's token doesn't have; it's a follow-up.
 

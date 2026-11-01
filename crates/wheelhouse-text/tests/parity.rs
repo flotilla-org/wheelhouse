@@ -72,7 +72,10 @@ struct Row {
     verdict: Verdict,
 }
 
+// It depends on the host's fonts and its fontconfig, so it isn't part of a
+// plain `cargo test`: native/build.sh and build.bat run it with --ignored.
 #[test]
+#[ignore = "host-dependent: run with --ignored, as the native builds do"]
 fn fontique_agrees_with_the_platform() {
     let mut report = String::new();
     let mut system = Pass::new(false);
@@ -92,6 +95,8 @@ fn fontique_agrees_with_the_platform() {
             continue;
         }
         if let Some(platform) = &row.platform {
+            // A line's first differing cluster names the family; the rest of
+            // the line's script almost always agrees with it.
             seeds.entry((row.line, script.to_owned())).or_insert_with(|| platform.face.family.clone());
         }
     }
@@ -229,14 +234,13 @@ impl Pass {
                         continue;
                     }
                     let covers = cluster.glyphs().all(|g| g.id != 0);
-                    out.push((&text[cluster.text_range()], Pick { face: face.clone(), covers }));
+                    out.push((cluster.text_range(), Pick { face: face.clone(), covers }));
                 }
             }
         }
-        // Logical order: the clusters are slices of `text`, and lines and
-        // bidi runs visit them out of it.
-        out.sort_by_key(|(c, _)| c.as_ptr());
-        out
+        // Logical order: lines and bidi runs visit clusters out of it.
+        out.sort_by_key(|(range, _)| range.start);
+        out.into_iter().map(|(range, pick)| (&text[range], pick)).collect()
     }
 }
 
@@ -300,6 +304,7 @@ mod platform {
             .args(["-f", "%{file}\n%{postscriptname}\n%{family[0]}", &pattern])
             .output()
             .expect("fc-match, from fontconfig, to run");
+        assert!(out.status.success(), "fc-match {pattern}: {}", String::from_utf8_lossy(&out.stderr));
         let out = String::from_utf8(out.stdout).ok()?;
         let mut lines = out.lines();
         let (file, postscript, family) = (lines.next()?, lines.next()?, lines.next()?);
@@ -422,7 +427,9 @@ mod platform {
         }
     }
 
-    // As fontique's own (fontique/src/backend/dwrite.rs).
+    // As fontique's own (fontique/src/backend/dwrite.rs). The pointers it
+    // hands out are into slices that outlive the call; DirectWrite only reads
+    // through them, so casting away const is sound.
     #[implement(IDWriteTextAnalysisSource)]
     struct Source<'a> {
         text: &'a [u16],
