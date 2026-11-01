@@ -11,7 +11,7 @@
 use std::ffi::c_void;
 use std::sync::{Mutex, MutexGuard};
 
-use wheelhouse_core::arrangement::{Arrangement, Dir, Edit, Outcome, Panel, PanelId};
+use wheelhouse_core::arrangement::{boundary_partner, Arrangement, Dir, Edit, Outcome, Panel, PanelId};
 use wheelhouse_core::dock::{Host, HostKind, Proposal, Registration, Rule, SIDEBAR_SECTION};
 use wheelhouse_core::suggested_layout::Axis;
 
@@ -231,9 +231,15 @@ impl Oracle {
         set_hidden(hidden);
         let h = self.0;
         let mut out = Outcome::default();
+        // A boundary pairs a panel that has space with the next sibling that
+        // has (#486); without one the C returns before changing anything.
         let has_next = |panel: PanelId| {
             fn walk(p: &Panel<Tab>, id: PanelId) -> Option<bool> {
-                p.children.iter().enumerate().find_map(|(i, c)| if c.id == id { Some(i + 1 < p.children.len()) } else { walk(c, id) })
+                let weights: Vec<f32> = p.children.iter().map(|c| c.weight).collect();
+                p.children
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, c)| if c.id == id { Some(boundary_partner(&weights, i).is_some()) } else { walk(c, id) })
             }
             before.root.as_ref().and_then(|root| walk(root, panel)).unwrap_or(false)
         };
