@@ -124,6 +124,13 @@ flag = "table"
 prefix = "table"
 os = ["linux", "macos"]
 
+# The Rich Text View over synthetic markdown it writes beside its user file
+# (#561), and the 10k-line timing test.
+[[diagnostic]]
+flag = "rich_text"
+prefix = "rich-text"
+os = ["linux", "macos", "windows"]
+
 # See the remote-terminal and shared-terminal checks above for why this is
 # macOS-only.
 [[diagnostic]]

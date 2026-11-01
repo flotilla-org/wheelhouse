@@ -252,6 +252,19 @@ uishell_glyph_raster_diagnostics(void)
     }
   }
 
+  //- a mask page's sample is its coverage in every channel, so a glyph's
+  // uncovered pixels draw nothing (#561: black cells behind code)
+  {
+    // As every backend applies it: out[j] = sum over i of sample[i]*map[i][j].
+    Mat4x4F32 map = r_sample_channel_map_from_tex2dformat(R_Tex2DFormat_R8);
+    F32 coverage = 0.25f, sample[4] = {coverage, 0, 0, 1}, out[4] = {0};
+    for EachIndex(j, 4) { for EachIndex(i, 4) { out[j] += sample[i]*map.v[i][j]; } }
+    B32 right = 1;
+    for EachIndex(j, 4) { right = right && out[j] == coverage; }
+    ok = uishell_glyph_check(right, "an R8 mask samples as its coverage, alpha too",
+                             push_str8f(arena, "(%.2f, %.2f, %.2f, %.2f)", out[0], out[1], out[2], out[3])) && ok;
+  }
+
   wh_text_free(ctx);
   fprintf(stderr, "glyph raster diagnostics %s\n", ok ? "passed" : "failed");
   return ok;

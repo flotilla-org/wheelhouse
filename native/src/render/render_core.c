@@ -64,9 +64,11 @@ r_sample_channel_map_from_tex2dformat(R_Tex2DFormat fmt)
   switch(fmt)
   {
     default:{}break;
+    // Coverage in every channel. Backends sample R8 as (r, 0, 0, 1): any
+    // other row left set would add that 1 to the alpha, making masks opaque.
     case R_Tex2DFormat_R8:
     {
-      MemoryZeroArray(result.v[0]);
+      MemoryZeroStruct(&result);
       result.v[0][0] = result.v[0][1] = result.v[0][2] = result.v[0][3] = 1.f;
     }break;
   }

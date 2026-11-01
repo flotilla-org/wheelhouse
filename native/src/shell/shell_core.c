@@ -68,8 +68,8 @@ wh_renderer_from_content(WH_ContentKinds content)
   return &wh_nil_renderer;
 }
 
-#define WH_HANDLER_DECLARE(name, content, schemes, renderer, program, args) \
-  {str8_lit_comp(#name), content, str8_lit_comp(schemes), str8_lit_comp(#renderer), \
+#define WH_HANDLER_DECLARE(name, content, schemes, media, renderer, program, args) \
+  {str8_lit_comp(#name), content, str8_lit_comp(schemes), str8_lit_comp(media), str8_lit_comp(#renderer), \
    str8_lit_comp(program), str8_lit_comp(args)},
 read_only global WH_Handler wh_handlers[] =
 {
@@ -93,6 +93,41 @@ wh_handler_from_url(String8 url)
     {
       U64 end = str8_find_needle(schemes, start, str8_lit(" "), 0);
       if(str8_match(str8_substr(schemes, r1u64(start, end)), scheme, StringMatchFlag_CaseInsensitive)) { return &wh_handlers[idx]; }
+      start = end + 1;
+    }
+  }
+  return &wh_nil_handler;
+}
+
+// A file's media type by its extension, for the Handlers; empty for one
+// no Handler is told about.
+internal String8
+wh_media_type_from_path(String8 path)
+{
+  String8 ext = str8_skip_last_dot(str8_skip_last_slash(path));
+  if(ext.size == str8_skip_last_slash(path).size) { return str8_zero(); }
+  String8 markdown[] = {str8_lit("md"), str8_lit("markdown"), str8_lit("mdown"), str8_lit("mkd"), str8_lit("mkdn")};
+  for EachElement(i, markdown)
+  {
+    if(str8_match(ext, markdown[i], StringMatchFlag_CaseInsensitive)) { return str8_lit("text/markdown"); }
+  }
+  return str8_zero();
+}
+
+// The Handler for content of `content` with `media_type`: the first that
+// lists it, or nil.
+internal WH_Handler *
+wh_handler_from_media_type(WH_ContentKinds content, String8 media_type)
+{
+  if(media_type.size == 0) { return &wh_nil_handler; }
+  for EachElement(idx, wh_handlers)
+  {
+    if(!(wh_handlers[idx].content & content)) { continue; }
+    String8 media = wh_handlers[idx].media;
+    for(U64 start = 0; start < media.size;)
+    {
+      U64 end = str8_find_needle(media, start, str8_lit(" "), 0);
+      if(str8_match(str8_substr(media, r1u64(start, end)), media_type, StringMatchFlag_CaseInsensitive)) { return &wh_handlers[idx]; }
       start = end + 1;
     }
   }
@@ -2008,6 +2043,10 @@ WH_VIEW_UI_FUNCTION_DEF(pending)
       }
       data_is_ready = 1;
       new_view_name = uishell_file_view_name_from_probe(num_utf8_bytes, num_unknown_bytes);
+      // Text whose media type a Handler takes is that Handler's Renderer's
+      // (markdown is Rich Text's).
+      WH_Handler *handler = wh_handler_from_media_type(WH_Content_File, wh_media_type_from_path(rd_file_path_from_eval(scratch.arena, eval)));
+      if(str8_match(new_view_name, str8_lit("text"), 0) && handler->renderer.size) { new_view_name = handler->renderer; }
     }
     access_close(access);
   }

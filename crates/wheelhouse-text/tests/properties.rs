@@ -444,3 +444,71 @@ fn breaks_parley_leaves_on_one_line_hit_test_past_each_other() {
     let hit = offset_at(&view, caret.x, caret.y + caret.height / 2.0);
     assert_eq!(caret_rect(&view, hit.offset, hit.affinity).x, caret.x, "{hit:?} {:?}", p.clusters);
 }
+
+/// Words of one right-to-left run (Hebrew, Arabic joined and a lam-alef
+/// ligature, and the spaces between them), alone or inside left-to-right
+/// text; and the run's clusters.
+fn right_to_left_case(tc: &TestCase) -> (Paragraph, Vec<Cluster>) {
+    const WORDS: &[&str] = &["\u{5E9}\u{5DC}\u{5D5}\u{5DD}", "\u{5D0}", "\u{645}\u{631}\u{62D}\u{628}\u{627}", "\u{644}\u{627}"];
+    let run = tc.draw(gs::vecs(gs::sampled_from(WORDS)).min_size(1).max_size(8)).join(" ");
+    let (before, after) = tc.draw(gs::sampled_from(&[("", ""), ("ab ", ""), ("", " cd"), ("ab ", " cd")][..]));
+    let text = format!("{before}{run}{after}");
+    let width = tc.draw(gs::sampled_from(&[40.0, 160.0, 2000.0][..]));
+    let styles = [Style::default()];
+    let p = CTX.layout(&Input::plain(&text, &styles), width).unwrap();
+    let range = before.len() as u32..(before.len() + run.len()) as u32;
+    let clusters = p.clusters.iter().filter(|c| range.contains(&c.start)).cloned().collect::<Vec<_>>();
+    assert!(clusters.iter().all(|c| c.flags & CLUSTER_RTL != 0), "one right-to-left run: {clusters:?}");
+    (p, clusters)
+}
+
+/// Whether `rects` cover all of `c`, and whether they touch it at all.
+fn covers(rects: &[wheelhouse_text::Rect], c: &Cluster) -> (bool, bool) {
+    let on = |r: &&wheelhouse_text::Rect| r.line == c.line;
+    let whole = rects.iter().filter(on).any(|r| r.x <= c.x + 0.01 && r.x + r.width >= c.x + c.advance - 0.01);
+    let touched = rects.iter().filter(on).any(|r| r.x < c.x + c.advance - 0.01 && r.x + r.width > c.x + 0.01);
+    (whole, touched)
+}
+
+#[hegel::test(test_cases = 300)]
+fn in_one_right_to_left_run_a_selection_covers_exactly_the_clusters_between_its_offsets(tc: TestCase) {
+    let (p, run) = right_to_left_case(&tc);
+    let mut bounds = run.iter().flat_map(|c| [c.start, c.start + c.len]).collect::<Vec<_>>();
+    bounds.sort();
+    bounds.dedup();
+    let (a, b) = (tc.draw(gs::sampled_from(&bounds[..])), tc.draw(gs::sampled_from(&bounds[..])));
+    let (start, end) = (a.min(b), a.max(b));
+    let rects = selection_rects(&p.view(), start as usize, end as usize);
+    for c in p.clusters.iter().filter(|c| c.len > 0 && c.advance > 0.0) {
+        let selected = start <= c.start && c.start + c.len <= end;
+        let (whole, touched) = covers(&rects, c);
+        assert!(whole == selected && touched == selected, "{c:?} in {start}..{end}: {rects:?}");
+    }
+}
+
+// As a drag selects: the offsets under two points in the run's first line,
+// and between them on screen exactly the clusters whose nearer edges the
+// points are at.
+#[hegel::test(test_cases = 300)]
+fn in_one_right_to_left_run_a_drag_selects_the_clusters_between_its_points(tc: TestCase) {
+    let (p, run) = right_to_left_case(&tc);
+    let view = p.view();
+    let first = run.iter().filter(|c| c.line == run[0].line).cloned().collect::<Vec<_>>();
+    let line = &p.lines[first[0].line as usize];
+    let point = |tc: &TestCase| {
+        let c = tc.draw(gs::sampled_from(&first[..]));
+        let f = tc.draw(gs::sampled_from(&[0.1, 0.3, 0.7, 0.9][..]));
+        // Each half of a cluster hits its nearer edge.
+        (c.x + f * c.advance, if f < 0.5 { c.x } else { c.x + c.advance })
+    };
+    let ((x0, edge0), (x1, edge1)) = (point(&tc), point(&tc));
+    let y = line.y + line.height / 2.0;
+    let (a, b) = (offset_at(&view, x0, y).offset, offset_at(&view, x1, y).offset);
+    let rects = selection_rects(&view, a.min(b), a.max(b));
+    let (left, right) = (edge0.min(edge1), edge0.max(edge1));
+    for c in p.clusters.iter().filter(|c| c.line == first[0].line && c.len > 0 && c.advance > 0.0) {
+        let between = c.x >= left - 0.01 && c.x + c.advance <= right + 0.01;
+        let (whole, touched) = covers(&rects, c);
+        assert!(whole == between && touched == between, "{c:?} between {left} and {right} (offsets {a}, {b}): {rects:?}");
+    }
+}

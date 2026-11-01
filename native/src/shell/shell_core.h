@@ -161,6 +161,7 @@ struct WH_Handler
   String8 name;
   WH_ContentKinds content;
   String8 schemes;
+  String8 media;
   String8 renderer;
   String8 program;
   String8 args;
@@ -1276,6 +1277,8 @@ internal WH_Renderer *wh_renderer_from_name(String8 name);
 // The first Renderer showing any of `content`, or &wh_nil_renderer.
 internal WH_Renderer *wh_renderer_from_content(WH_ContentKinds content);
 internal WH_Handler *wh_handler_from_url(String8 url);
+internal String8 wh_media_type_from_path(String8 path);
+internal WH_Handler *wh_handler_from_media_type(WH_ContentKinds content, String8 media_type);
 internal String8 wh_url_from_address(Arena *arena, String8 address);
 internal String8 wh_path_from_file_url(Arena *arena, String8 url);
 internal String8List wh_handler_arguments(Arena *arena, WH_Handler *handler, String8 (*values)[2], U64 count);
