@@ -48,13 +48,14 @@ pub fn read(bytes: &[u8]) -> impl Iterator<Item = Result<Event, LineError>> + '_
     })
 }
 
-/// One line, without its newline.
+/// One line, without its newline. An unknown event has nothing left to
+/// write but its type, `Unknown`; [`write`] skips it.
 pub fn to_line(event: &Event) -> String {
     serde_json::to_string(event).expect("events serialize")
 }
 
 pub fn write<'a>(out: &mut impl Write, events: impl IntoIterator<Item = &'a Event>) -> io::Result<()> {
-    for event in events {
+    for event in events.into_iter().filter(|e| !matches!(e, Event::Unknown)) {
         out.write_all(to_line(event).as_bytes())?;
         out.write_all(b"\n")?;
     }

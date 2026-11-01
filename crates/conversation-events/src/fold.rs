@@ -28,6 +28,8 @@ impl Thread {
         &mut self.messages[at]
     }
 
+    /// Content for a message that never started is dropped, as a bad line
+    /// would be.
     fn append(&mut self, id: &str, delta: &str) {
         if let Some(&at) = self.index.get(id) {
             match &mut self.messages[at].content {
@@ -188,8 +190,10 @@ fn patch(doc: &mut Value, op: &Value) {
         }
         return;
     }
-    let tokens: Vec<String> = path.split('/').skip(1).map(|t| t.replace("~1", "/").replace("~0", "~")).collect();
-    let (last, parents) = tokens.split_last().expect("a non-empty path has a token");
+    // A pointer other than the whole document starts with a slash.
+    let Some(pointer) = path.strip_prefix('/') else { return };
+    let tokens: Vec<String> = pointer.split('/').map(|t| t.replace("~1", "/").replace("~0", "~")).collect();
+    let Some((last, parents)) = tokens.split_last() else { return };
     let mut at = doc;
     for token in parents {
         let next = match at {

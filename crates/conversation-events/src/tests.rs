@@ -163,3 +163,58 @@ fn activity_deltas_patch_the_snapshot() {
     let content: &Value = fold.messages("").first().unwrap().content.as_ref().unwrap();
     assert_eq!(content, &json!({"todos": [{"text": "a", "done": true}, {"text": "b"}]}));
 }
+
+#[test]
+fn a_patch_path_without_its_slash_is_skipped() {
+    let mut fold = Fold::default();
+    fold.push(&Event::ActivitySnapshot(ActivitySnapshot {
+        message_id: "m".into(),
+        content: json!({"x": 1}),
+        ..ActivitySnapshot::default()
+    }));
+    let patch = vec![json!({"op": "add", "path": "x", "value": 2}), json!({"op": "replace", "path": "/x", "value": 3})];
+    fold.push(&Event::ActivityDelta(ActivityDelta { message_id: "m".into(), patch, ..ActivityDelta::default() }));
+    assert_eq!(fold.messages("")[0].content, Some(json!({"x": 3})));
+}
+
+#[test]
+fn a_snapshot_mid_stream_replaces_the_thread_and_later_deltas_extend_it() {
+    let mut fold = Fold::default();
+    for event in events(WIRE) {
+        fold.push(&event);
+    }
+    let message = Message { id: "m9".into(), role: Role::Assistant, content: Some(json!("Half")), ..Message::default() };
+    fold.push(&Event::MessagesSnapshot(MessagesSnapshot { thread_id: "t1".into(), seq: 20, messages: vec![message] }));
+    fold.push(&Event::TextMessageContent(TextMessageContent {
+        thread_id: "t1".into(),
+        seq: 21,
+        message_id: "m9".into(),
+        delta: " done".into(),
+    }));
+    let messages = fold.messages("t1");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].text(), "Half done");
+    // A delta for a message the snapshot dropped goes nowhere.
+    fold.push(&Event::TextMessageContent(TextMessageContent {
+        thread_id: "t1".into(),
+        seq: 22,
+        message_id: "m1".into(),
+        delta: "x".into(),
+    }));
+    assert_eq!(fold.messages("t1").len(), 1);
+}
+
+#[test]
+fn a_result_without_a_message_id_gets_one_from_its_call() {
+    let mut fold = Fold::default();
+    let result = ToolCallResult { thread_id: "t".into(), tool_call_id: "c7".into(), content: "ok".into(), ..ToolCallResult::default() };
+    fold.push(&Event::ToolCallResult(result));
+    assert_eq!(fold.messages("t")[0].id, "result:c7");
+}
+
+#[test]
+fn unknown_events_are_not_written() {
+    let mut out = vec![];
+    write(&mut out, &[Event::Unknown, Event::Hello(Hello { contract: CONTRACT })]).unwrap();
+    assert_eq!(out, b"{\"type\":\"Hello\",\"contract\":1}\n");
+}
