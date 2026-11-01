@@ -719,6 +719,8 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   UIShell_TableDraw *draw = push_array(ui_build_arena(), UIShell_TableDraw, 1);
   draw->table = state->table;
   draw->finding = find_text.size != 0;
+  // Matches in the theme's match colour, its "match background"; a
+  // theme without one marks them in its selection colour.
   UI_TagF("match") { draw->match = ui_color_from_name(str8_lit("background")); }
   if(draw->match.w == 0) { draw->match = ui_color_from_name(str8_lit("selection")); }
   // Effects for the host: nothing acts on them yet (#506 has no actions),

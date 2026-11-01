@@ -232,10 +232,12 @@ ui_scroll_region_build_thumbs(UI_Box *parent, UI_Key key, UI_ScrollRegion *regio
       }
       if(!showing) { ui_pop_flags(); }
     }
-    // The corner between two classic bars, filled with them.
+    // The corner between two classic bars, filled with them, on the whole
+    // pixels the bars round to.
     if(!overlay && region->params.content_under_gutters && visible[Axis2_X] && visible[Axis2_Y])
     {
-      Rng2F32 corner = r2f32(region->viewport.p1, region->params.rect.p1);
+      Rng2F32 corner = r2f32p(round_f32(region->viewport.x1), round_f32(region->viewport.y1),
+                              round_f32(region->params.rect.x1), round_f32(region->params.rect.y1));
       if(corner.x1 > corner.x0 && corner.y1 > corner.y0) UI_Rect(corner)
       {
         ui_build_box_from_key(UI_BoxFlag_Floating|UI_BoxFlag_DrawBackground, ui_key_from_string(key, str8_lit("scroll_region_corner")));

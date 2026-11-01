@@ -228,7 +228,7 @@ pub struct Stepped {
 /// [`pump`] answers the Grid with but does not hand on.
 struct Recording<'a, S: ?Sized> {
     source: &'a mut S,
-    step: &'a mut Option<FindStep>,
+    step: &'a std::cell::Cell<Option<FindStep>>,
 }
 
 impl<S: PumpSource + ?Sized> PumpSource for Recording<'_, S> {
@@ -258,7 +258,7 @@ impl<S: PumpSource + ?Sized> PumpSource for Recording<'_, S> {
     }
     fn find_next(&mut self, query: &FindQuery, from: Option<FindMatch>, direction: FindDirection) -> Option<FindStep> {
         let step = self.source.find_next(query, from, direction);
-        *self.step = step;
+        self.step.set(step);
         step
     }
     fn ancestors(&mut self, axis: Axis, key: Key) -> Vec<Key> {
@@ -446,19 +446,21 @@ impl Table {
     /// [`Table::find_marks`], and passed on too.
     pub fn pump(&mut self, grid: &mut Grid, mut pass_on: impl FnMut(Stamped)) {
         let find = &mut self.find;
-        let mut step = None;
+        // The last step answered, unless a new query came after it.
+        let step = std::cell::Cell::new(None);
         let mut seen = |_: &mut Grid, stamped: Stamped| match &stamped.effect {
             // A View Spec can change which cells are shown: count again.
             Effect::ViewRequested { .. } => find.count = None,
             Effect::Locate { .. } | Effect::MoveRequested { .. } | Effect::FindStepRequested { .. } => {}
             Effect::FindRequested { query } => {
                 *find = Find { query: query.clone(), step: None, count: None };
+                step.set(None);
                 pass_on(stamped);
             }
             _ => pass_on(stamped),
         };
-        let mut recording = |source: &mut dyn PumpSource, grid: &mut Grid, seen: &mut dyn FnMut(&mut Grid, Stamped)| {
-            pump(grid, &mut Recording { source, step: &mut step }, seen)
+        let recording = |source: &mut dyn PumpSource, grid: &mut Grid, seen: &mut dyn FnMut(&mut Grid, Stamped)| {
+            pump(grid, &mut Recording { source, step: &step }, seen)
         };
         match &mut self.kind {
             Kind::Records { rows, source } => recording(&mut source.over(rows), grid, &mut seen),
@@ -467,8 +469,8 @@ impl Table {
             Kind::Live(Live { rows, source, .. }) => recording(&mut source.over(rows), grid, &mut seen),
             Kind::Described(d) => recording(&mut d.source, grid, &mut seen),
         }
-        if step.is_some() {
-            self.find.step = step;
+        if let Some(step) = step.get() {
+            self.find.step = Some(step);
         }
     }
 
