@@ -224,6 +224,10 @@ pub unsafe extern "C" fn wh_text_register_font(ctx: *const WhText, data: *const 
     catch_unwind(AssertUnwindSafe(|| t.ctx.register_fonts(bytes.to_vec(), bytes_id))).unwrap_or(0)
 }
 
+// The setters and getters from here to wh_text_coords need no catch_unwind:
+// they only lock (which recovers from poisoning), copy and clone, so they
+// can't panic short of an allocation failure, which aborts anyway.
+
 /// family is WH_TEXT_FAMILY_*. Returns 0 for an unknown slot or non-UTF-8 name.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_set_family(ctx: *const WhText, family: u32, name: Text) -> u32 {
@@ -303,7 +307,8 @@ pub unsafe extern "C" fn wh_text_coords(ctx: *const WhText, coords: u32, out: *m
     coords.len()
 }
 
-/// About a 64 KB paragraph; larger scratch isn't kept between calls.
+/// Entries in any one scratch array, a few MB in all, past which a thread
+/// drops its scratch after the call rather than keep it.
 const SCRATCH_KEEP: usize = 1 << 16;
 
 thread_local! {
@@ -410,7 +415,10 @@ pub unsafe extern "C" fn wh_text_layout(
                         epoch: p.epoch,
                         rtl: p.rtl as u32,
                     };
-                    if p.glyphs.capacity() > SCRATCH_KEEP || p.clusters.capacity() > SCRATCH_KEEP {
+                    if [p.lines.capacity(), p.runs.capacity(), p.glyphs.capacity(), p.clusters.capacity(), p.boxes.capacity()]
+                        .iter()
+                        .any(|&c| c > SCRATCH_KEEP)
+                    {
                         *p = Paragraph::default();
                     }
                     Ok(())

@@ -28,6 +28,18 @@ static void *arena_alloc(void *user, size_t size, size_t align) {
 
 static WhTextAllocator allocator(Arena *a) { return (WhTextAllocator){arena_alloc, a}; }
 
+/* Fails its fail_at'th allocation. */
+typedef struct {
+    Arena *arena;
+    size_t calls, fail_at;
+} Failing;
+
+static void *failing_alloc(void *user, size_t size, size_t align) {
+    Failing *f = user;
+    if (++f->calls == f->fail_at) return NULL;
+    return arena_alloc(f->arena, size, align);
+}
+
 /* Breaks the rule that alloc must not call back into the library. */
 typedef struct {
     Arena *arena;
@@ -209,6 +221,13 @@ int main(int argc, char **argv) {
     assert(memcmp(&untouched, &layout, sizeof layout) == 0);
     wheelhouse_string_free(error);
     error = NULL;
+    for (size_t fail_at = 2; fail_at <= 5; ++fail_at) {
+        Failing failing = {&arena, 0, fail_at};
+        assert(wh_text_layout(ctx, &input, 200.0f, (WhTextAllocator){failing_alloc, &failing}, &layout, &error) == 0 && error);
+        assert(failing.calls == fail_at && memcmp(&untouched, &layout, sizeof layout) == 0);
+        wheelhouse_string_free(error);
+        error = NULL;
+    }
     Arena tiny = {malloc(16), 0, 16, 0};
     assert(wh_text_layout(ctx, &input, 200.0f, allocator(&tiny), &layout, &error) == 0 && error);
     wheelhouse_string_free(error);
