@@ -75,7 +75,7 @@ UI_ScrollBarActionKind;
 #define UI_SCROLL_BAR_DRAG_ORIGIN_MAX 64
 
 // What the user did to a scroll bar this frame, for its caller to apply in
-// its own units. Drag: the thumb is held, and drag_pct is the pointer's
+// its own units. None (the zero value): the thumb isn't held. Drag: the thumb is held, and drag_pct is the pointer's
 // movement since the press as a share of the thumb's travel (moved: it has
 // moved at all), from the drag_origin given at the press. step: an arrow
 // (-1 towards the start, +1 the end), or with page the track beside the

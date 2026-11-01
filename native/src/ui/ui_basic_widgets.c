@@ -1358,13 +1358,14 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
     struct UI_ScrollBarDragData
     {
       F32 scroll_space_px;
-      U8 origin[UI_SCROLL_BAR_DRAG_ORIGIN_MAX];
+      U64 origin[UI_SCROLL_BAR_DRAG_ORIGIN_MAX/sizeof(U64)]; // U64s: handed back aligned
     };
     if(ui_dragging(scroller_sig))
     {
       if(ui_pressed(scroller_sig))
       {
         UI_ScrollBarDragData drag_data = {(floor_f32(dim_2f32(scroll_area_box->rect).v[axis])-floor_f32(dim_2f32(scroller_box->rect).v[axis]))};
+        Assert(drag_origin_size <= sizeof(drag_data.origin));
         if(drag_origin != 0) { MemoryCopy(drag_data.origin, drag_origin, Min(drag_origin_size, sizeof(drag_data.origin))); }
         ui_store_drag_struct(&drag_data);
       }
@@ -1395,6 +1396,8 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
 
 //- uishell: the bar over a UI_ScrollPt, in its content's units
 
+StaticAssert(sizeof(UI_ScrollPt) <= UI_SCROLL_BAR_DRAG_ORIGIN_MAX, ui_scroll_pt_fits_drag_origin);
+
 // The thumb of `pt` in `range` (its legal positions) with `visible` shown.
 internal UI_ScrollThumb
 ui_scroll_thumb_from_pt(UI_ScrollPt pt, Rng1S64 range, S64 visible)
@@ -1402,6 +1405,10 @@ ui_scroll_thumb_from_pt(UI_ScrollPt pt, Rng1S64 range, S64 visible)
   S64 range_dim = Max(dim_1s64(range), 1);
   UI_ScrollThumb thumb = {0};
   thumb.size = range.max <= range.min ? 1 : (F64)Max(visible, 1)/((F64)range_dim + Max(visible, 1));
+  // A range wider than a point scrolls, even where a huge `visible` swamps
+  // range_dim and the F64 sum rounds the share up to 1; the largest F64
+  // below 1 still draws as the full-track thumb it always did.
+  if(range.max > range.min && thumb.size >= 1) { thumb.size = 1 - 0x1p-53; }
   thumb.fraction = ((F64)(pt.idx-range.min) + ui_scroll_pt_offset(pt))/(F64)range_dim;
   return thumb;
 }

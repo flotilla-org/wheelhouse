@@ -517,7 +517,9 @@ uishell_scroll_thumb_diagnostics(RD_WindowState *ws)
     sig = uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, none);
     ThumbCheck(sig.bar[axis].kind == UI_ScrollBarActionKind_Drag && sig.bar[axis].drag_moved &&
                abs_f32(sig.bar[axis].drag_pct - 10/travel) < 0.01f, "a drag reports its share of the travel");
-    ThumbCheck(sig.bar[axis].drag_origin != 0 && *(F64 *)sig.bar[axis].drag_origin == 0.25, "a drag hands back its origin from the press");
+    F64 origin = 0;
+    if(sig.bar[axis].drag_origin != 0) { MemoryCopy(&origin, sig.bar[axis].drag_origin, sizeof(origin)); }
+    ThumbCheck(sig.bar[axis].drag_origin != 0 && origin == 0.25, "a drag hands back its origin from the press");
     ThumbCheck(sig.bar[1-axis].kind == UI_ScrollBarActionKind_None, "the other axis did nothing");
     UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = mouse};
     uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, release);
@@ -598,6 +600,16 @@ uishell_scroll_thumb_diagnostics(RD_WindowState *ws)
     uishell_scroll_test_frame(ws, &region, axes, mouse, release, &content);
     ui_select_state(saved);
     ui_state_release(test);
+  }
+  // A range that scrolls keeps a thumb that scrolls when a huge view swamps
+  // it and the F64 share rounds to 1, drawn as the full track as before.
+  {
+    U32 style = UI_ScrollBarStyle_Classic;
+    Axis2 axis = Axis2_Y;
+    UI_ScrollThumb thumb = ui_scroll_thumb_from_pt(ui_scroll_pt(0, 0), r1s64(0, 1), (S64)1 << 60);
+    ThumbCheck(thumb.size < 1 && (F32)thumb.size == 1.f, "a swamped range still scrolls, at full track");
+    thumb = ui_scroll_thumb_from_pt(ui_scroll_pt(0, 0), r1s64(5, 5), 10);
+    ThumbCheck(thumb.size >= 1, "a point range has nothing to scroll");
   }
   fprintf(stderr, "Scroll thumb diagnostics: %u failures\n", failures);
 #undef ThumbCheck
