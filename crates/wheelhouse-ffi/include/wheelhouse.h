@@ -415,10 +415,11 @@ typedef struct BinnacleGrid BinnacleGrid;
 // A footnote's definition: a Container with a label.
 #define WHEELHOUSE_RICH_KIND_FOOTNOTE 4
 
-// A conversation's message.
+// A conversation's message: its role is the node's `role`.
 #define WHEELHOUSE_RICH_KIND_TURN 5
 
-// A tool call, reasoning, or a subagent's thread.
+// A tool call, reasoning, or a subagent's thread: the node's `section`,
+// `name`, `title`, `tool` and `status` give its header.
 #define WHEELHOUSE_RICH_KIND_SECTION 6
 
 #define WHEELHOUSE_RICH_KIND_PARAGRAPH 16
@@ -491,6 +492,57 @@ typedef struct BinnacleGrid BinnacleGrid;
 #define WHEELHOUSE_RICH_DEFAULT_FOREGROUND 0
 
 #define WHEELHOUSE_RICH_DEFAULT_BACKGROUND 1
+
+// A Turn's role; NONE for any other node.
+#define WHEELHOUSE_RICH_ROLE_NONE 0
+
+#define WHEELHOUSE_RICH_ROLE_USER 1
+
+#define WHEELHOUSE_RICH_ROLE_ASSISTANT 2
+
+#define WHEELHOUSE_RICH_ROLE_SYSTEM 3
+
+// What a Section is; NONE for any other node.
+#define WHEELHOUSE_RICH_SECTION_NONE 0
+
+#define WHEELHOUSE_RICH_SECTION_TOOL 1
+
+#define WHEELHOUSE_RICH_SECTION_REASONING 2
+
+// A subagent's thread, inside the tool call that started it; its title is
+// the thread's id.
+#define WHEELHOUSE_RICH_SECTION_SUBAGENT 3
+
+// A Section's tool kind.
+#define WHEELHOUSE_RICH_TOOL_OTHER 0
+
+#define WHEELHOUSE_RICH_TOOL_SHELL 1
+
+#define WHEELHOUSE_RICH_TOOL_EDIT 2
+
+#define WHEELHOUSE_RICH_TOOL_READ 3
+
+#define WHEELHOUSE_RICH_TOOL_SEARCH 4
+
+#define WHEELHOUSE_RICH_TOOL_AGENT 5
+
+#define WHEELHOUSE_RICH_TOOL_WEB 6
+
+#define WHEELHOUSE_RICH_TOOL_MCP 7
+
+// A Section's status; NONE for any other node.
+#define WHEELHOUSE_RICH_STATUS_NONE 0
+
+// Started, with no result yet (or reasoning still streaming).
+#define WHEELHOUSE_RICH_STATUS_PENDING 1
+
+#define WHEELHOUSE_RICH_STATUS_OK 2
+
+#define WHEELHOUSE_RICH_STATUS_FAILED 3
+
+#define WHEELHOUSE_RICH_STATUS_INTERRUPTED 4
+
+#define WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL 5
 
 #define WHEELHOUSE_RICH_TASK_NONE 0
 
@@ -1411,6 +1463,18 @@ typedef struct {
   uint32_t fits_all;
 } WheelhouseOverviewFrame;
 
+// A node's Container role, kind and status, as a delta's node has them.
+typedef struct {
+  // WHEELHOUSE_RICH_KIND_*.
+  uint32_t kind;
+  uint32_t role;
+  uint32_t section;
+  uint32_t tool;
+  uint32_t status;
+  WheelhouseText name;
+  WheelhouseText title;
+} WheelhouseRichContainer;
+
 // As ListOpView, with a Rich Text key: INSERT reads `at` and `key`, REMOVE
 // `at`, MOVE `from` and `to`; the others are WHEELHOUSE_NONE and 0.
 typedef struct {
@@ -1497,6 +1561,18 @@ typedef struct {
   size_t column_count;
   const WheelhouseRichCell *cells;
   size_t row_count;
+  // A Turn's WHEELHOUSE_RICH_ROLE_*.
+  uint32_t role;
+  // A Section's WHEELHOUSE_RICH_SECTION_*.
+  uint32_t section;
+  // A Section's WHEELHOUSE_RICH_TOOL_*.
+  uint32_t tool;
+  // A Section's WHEELHOUSE_RICH_STATUS_*.
+  uint32_t status;
+  // A tool Section's tool name, such as `Bash`.
+  WheelhouseText name;
+  // A tool Section's input summary; a subagent's thread id.
+  WheelhouseText title;
 } WheelhouseRichNode;
 
 // Scrolling is worked out from the Scroll Anchor, so heights changing above
@@ -2694,6 +2770,38 @@ uint32_t wheelhouse_rich_text_reload(WheelhouseRichText *h,
                                      uint32_t *changed_out,
                                      char **error_out);
 
+// Open a conversation from contract JSON Lines (wheelhouse#548): its
+// newest items are ingested now, and wheelhouse_rich_text_backfill fills in
+// the rest. A last line without its newline counts if it is a whole JSON
+// object. Lines that aren't events are skipped. Free it with
+// wheelhouse_rich_text_free. NULL with an error on invalid input.
+WheelhouseRichText *wheelhouse_rich_text_open_conversation(WheelhouseText jsonl, char **error_out);
+
+// Bytes appended to a conversation's file, in any pieces: a line waits for
+// its newline. `changed_out` (if not NULL) gets 1 if anything changed. An
+// error for a markdown document.
+uint32_t wheelhouse_rich_text_append(WheelhouseRichText *h,
+                                     WheelhouseText bytes,
+                                     uint32_t *changed_out,
+                                     char **error_out);
+
+// Ingest a conversation's earlier lines for about `budget_us`
+// microseconds (0 for the default, about 2 ms), inserting them at the
+// front: call it once per poll until `remaining_out` (if not NULL) gets 0,
+// the bytes left to read. Each View's anchor keeps it still. A markdown
+// document has none left.
+uint32_t wheelhouse_rich_text_backfill(WheelhouseRichText *h,
+                                       uint64_t budget_us,
+                                       uint64_t *remaining_out,
+                                       char **error_out);
+
+// The node `key`'s Container fields, borrowed from the handle until the
+// next call that changes it. An error for a key not in the tree.
+uint32_t wheelhouse_rich_text_container(WheelhouseRichText *h,
+                                        uint64_t key,
+                                        WheelhouseRichContainer *out,
+                                        char **error_out);
+
 // It rises with each reload that changes something. 0 for NULL.
 uint64_t wheelhouse_rich_text_generation(WheelhouseRichText *h);
 
@@ -2876,6 +2984,14 @@ uint32_t wheelhouse_rich_text_generate(uint64_t seed,
                                        size_t lines,
                                        WheelhouseBytes *out,
                                        char **error_out);
+
+// A synthetic conversation's contract JSON Lines of at least `bytes` bytes
+// (at most 256 MiB), the same for the same seed. Free the bytes with
+// wheelhouse_bytes_free.
+uint32_t wheelhouse_rich_text_generate_conversation(uint64_t seed,
+                                                    size_t bytes,
+                                                    WheelhouseBytes *out,
+                                                    char **error_out);
 
 // Over every Block, collapsed or not: literal and case-insensitive unless
 // `flags` has WHEELHOUSE_RICH_FIND_*. Scan with
