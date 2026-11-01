@@ -222,7 +222,7 @@ unsafe fn provider(provider: Text) -> Result<String, String> {
 /// was built against.
 #[no_mangle]
 pub extern "C" fn wheelhouse_abi_version() -> u32 {
-    17
+    18
 }
 /// A sidebar configured with a template catalog (KDL), or NULL with an
 /// error.

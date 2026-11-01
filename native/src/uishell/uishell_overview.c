@@ -145,12 +145,13 @@ uishell_overview_begin(RD_WindowState *ws, CFG_Node *current, Rng2F32 region, B3
   if(view_mode != state->overview_view_mode_seen)
   {
     state->overview_view_mode_seen = view_mode;
-    wheelhouse_overview_set_view_mode(state->core, view_mode, 0);
+    wheelhouse_overview_set_view_mode(state->core, view_mode, o.now_ms, 0);
   }
-  // The readable width is in points; the region is in pixels.
+  // Both widths in points: the setting is, and moving to a display of
+  // another scale changes neither.
   F32 scale = wm_layout_scale_from_window(ws->os);
-  F64 readable_px = uishell_overview_readable_width_setting()*(scale > 0 ? scale : 1.f);
-  wheelhouse_overview_set_grid(state->core, uishell_overview_grid_packing_setting(), dim.x > 0 ? readable_px/dim.x : 0, o.now_ms, 0);
+  F64 region_pt = dim.x/(scale > 0 ? scale : 1.f);
+  wheelhouse_overview_set_grid(state->core, uishell_overview_grid_packing_setting(), uishell_overview_readable_width_setting(), region_pt, o.now_ms, 0);
   if(!!ws->workspace_zoom_open != state->overview_toggle_seen)
   {
     if(ws->workspace_zoom_open) { wheelhouse_overview_open(state->core, o.now_ms, 0); }
@@ -818,7 +819,7 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
     // a mode that couldn't be kept lasts until the setting changes.
     if(uishell_overview_set_view_mode_setting(move.view_mode)) { o->state->overview_view_mode_seen = move.view_mode; }
     o->state->overview_glide_v = 0;
-    moved = wheelhouse_overview_set_view_mode(o->state->core, move.view_mode, 0) || moved;
+    moved = wheelhouse_overview_set_view_mode(o->state->core, move.view_mode, o->now_ms, 0) || moved;
   }
   if(move.zooms)
   {

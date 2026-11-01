@@ -99,7 +99,7 @@ pub struct WheelhouseOverviewFrame {
     pub group: usize,
     /// WHEELHOUSE_OVERVIEW_ROWS or _GRID.
     pub view_mode: u32,
-    /// The camera is moving: draw again next frame.
+    /// The camera is moving, or the layout changing: draw again next frame.
     pub flying: u32,
     /// The current workspace is open and still: draw it as itself, not
     /// through the scene.
@@ -259,32 +259,41 @@ pub unsafe extern "C" fn wheelhouse_overview_toggle_cluster(
     .is_some() as u32
 }
 
-/// WHEELHOUSE_OVERVIEW_ROWS or _GRID; the camera cuts to the same place.
+/// WHEELHOUSE_OVERVIEW_ROWS or _GRID: each tile moves to its new place and
+/// the camera flies to the same place in the new scene (a cut without
+/// motion).
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_overview_set_view_mode(h: *mut WheelhouseCore, view_mode: u32, error_out: *mut *mut c_char) -> u32 {
+pub unsafe extern "C" fn wheelhouse_overview_set_view_mode(
+    h: *mut WheelhouseCore,
+    view_mode: u32,
+    now_ms: f64,
+    error_out: *mut *mut c_char,
+) -> u32 {
     run(h, error_out, |h| {
         let mode = match view_mode {
             WHEELHOUSE_OVERVIEW_ROWS => ViewMode::Rows,
             WHEELHOUSE_OVERVIEW_GRID => ViewMode::Grid,
             other => return Err(format!("unknown overview view mode {other}")),
         };
-        h.overview.set_view_mode(mode);
+        h.overview.set_view_mode(mode, now_ms);
         Ok(())
     })
     .is_some() as u32
 }
 
-/// The grid's packing (WHEELHOUSE_OVERVIEW_SHELVES or _TREEMAP), and the
-/// share of the region's width a tile needs to be readable: the smallest
-/// readable tile width over the region's width, 0 to always fit the whole
-/// grid. With the whole grid in view, a current tile narrower than that
-/// zooms the overview in on it. Each frame, before reading it, as the
-/// region's width changes; a new packing cuts to the same place.
+/// The grid's packing (WHEELHOUSE_OVERVIEW_SHELVES or _TREEMAP), the
+/// smallest width a tile is readable at (0 always fits the whole grid) and
+/// the region's width, in the same units. With the whole grid in view, a
+/// current tile narrower than that zooms the overview in on it. Each frame,
+/// before reading it. A new packing moves to the new layout as a new view
+/// mode does; a new readable width goes back to the current tile from
+/// wherever the overview was scrolled, and a resize keeps the scrolling.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_overview_set_grid(
     h: *mut WheelhouseCore,
     packing: u32,
-    readable_share: f64,
+    readable_width: f64,
+    region_width: f64,
     now_ms: f64,
     error_out: *mut *mut c_char,
 ) -> u32 {
@@ -294,7 +303,7 @@ pub unsafe extern "C" fn wheelhouse_overview_set_grid(
             WHEELHOUSE_OVERVIEW_TREEMAP => GridPacking::Treemap,
             other => return Err(format!("unknown overview grid packing {other}")),
         };
-        h.overview.set_grid(packing, readable_share, now_ms);
+        h.overview.set_grid(packing, readable_width, region_width, now_ms);
         Ok(())
     })
     .is_some() as u32
@@ -311,7 +320,10 @@ pub unsafe extern "C" fn wheelhouse_overview_frame(
 ) -> *mut WheelhouseOverviewFrame {
     run(h, error_out, |h| {
         let window = &h.overview;
-        let scene = window.scene();
+        // Drawn part way through a change of layout; the same tiles and
+        // groups, in the same order, as the scene the layout placed.
+        let drawn = window.scene_at(now_ms);
+        let scene = drawn.as_ref();
         let layout = window.layout();
         let text = |value: &Option<String>| Text::borrowed(value.as_deref().unwrap_or(""));
         let tiles: Vec<WheelhouseOverviewTile> = scene
@@ -378,7 +390,7 @@ pub unsafe extern "C" fn wheelhouse_overview_frame(
                 ViewMode::Rows => WHEELHOUSE_OVERVIEW_ROWS,
                 ViewMode::Grid => WHEELHOUSE_OVERVIEW_GRID,
             },
-            flying: window.flying(now_ms) as u32,
+            flying: (window.flying(now_ms) || window.morphing(now_ms)) as u32,
             settled: window.settled(now_ms) as u32,
             has_view: camera.is_some() as u32,
             view: view.into(),

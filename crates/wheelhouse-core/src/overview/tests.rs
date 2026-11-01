@@ -722,8 +722,8 @@ fn a_zoomed_grid_pans_both_ways() {
     let project = || segment("project", entity("project", 0));
     let entries: Vec<_> = (1..=30).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
     let mut window = OverviewWindow::default();
-    window.set_view_mode(ViewMode::Grid);
-    window.set_grid(GridPacking::Shelves, 0.4, 0.0);
+    window.set_view_mode(ViewMode::Grid, 0.0);
+    window.set_grid(GridPacking::Shelves, 0.4, 1.0, 0.0);
     window.update(entries, Some(tab_workspace_id(1)), 1.6, 0.0);
     window.open(0.0);
     let bounds = window.scene().bounds;
@@ -735,7 +735,7 @@ fn a_zoomed_grid_pans_both_ways() {
     window.pan(1e6, 1e6);
     let far = window.target().unwrap().view(1.6);
     assert!(close(far.x1, bounds.x1) && close(far.y1, bounds.y1), "{far:?} isn't at the end of {bounds:?}");
-    window.set_view_mode(ViewMode::Rows);
+    window.set_view_mode(ViewMode::Rows, 0.0);
     let rows = window.target().unwrap();
     window.pan(5.0, 0.0);
     assert_eq!(window.target().unwrap().cx, rows.cx);
@@ -749,8 +749,8 @@ fn a_pan_while_the_grid_fits_is_forgotten() {
     let entries: Vec<_> = (1..=30).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
     let window = |pan: bool| {
         let mut window = OverviewWindow::default();
-        window.set_view_mode(ViewMode::Grid);
-        window.set_grid(GridPacking::Shelves, 0.0, 0.0);
+        window.set_view_mode(ViewMode::Grid, 0.0);
+        window.set_grid(GridPacking::Shelves, 0.0, 1.0, 0.0);
         window.update(entries.clone(), Some(tab_workspace_id(1)), 1.6, 0.0);
         window.open(0.0);
         if pan {
@@ -758,7 +758,7 @@ fn a_pan_while_the_grid_fits_is_forgotten() {
             window.pan(0.5, 0.5);
             assert_eq!(window.target().unwrap(), fit, "the whole grid fits");
         }
-        window.set_grid(GridPacking::Shelves, 0.4, 0.0);
+        window.set_grid(GridPacking::Shelves, 0.4, 1.0, 0.0);
         window.target().unwrap()
     };
     assert_eq!(window(true), window(false));
@@ -798,13 +798,16 @@ fn switching_flies_between_tiles_unless_motion_is_off() {
 
 /// Whatever the host and the user do, in any order and at any time:
 /// - the camera is always somewhere finite once there is anything to show;
-/// - flying moves (a switch, opening, going back, a group, a pick) never
-///   jump it, while motion is on;
-/// - at rest it is where the mode says, and the host draws the workspace as
-///   itself exactly when it is open and still;
-/// - every flight ends within the longest flight's time;
-/// - panning the overview and changing the view mode or the grid's packing
-///   cut, even mid-flight;
+/// - flying moves (a switch, opening, going back, a group, a pick) and
+///   changes of layout (workspaces coming and going, a collapse, a view
+///   mode, a packing) never jump it, while motion is on;
+/// - at rest, once the layout has settled, it is where the mode says, and
+///   the host draws the workspace as itself exactly when it is open and
+///   still;
+/// - every flight ends within the longest flight's time, and every change
+///   of layout within its own;
+/// - panning the overview cuts, even mid-flight; changing the view mode or
+///   the grid's packing flies, and cuts without motion;
 /// - going back from the overview opens the current workspace, and back
 ///   from an open workspace does nothing.
 #[hegel::test(test_cases = 300)]
@@ -832,7 +835,7 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
                 entries = draw_entries(&tc);
                 let current = window.current().filter(|c| entries.iter().any(|e| e.workspace_id == *c));
                 window.update(entries.clone(), current, aspect, now);
-                false
+                true
             }
             2 => {
                 window.open(now);
@@ -879,26 +882,31 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
             11 => {
                 let packing = if tc.draw(gs::booleans()) { GridPacking::Shelves } else { GridPacking::Treemap };
                 let changes = window.scene().options.packing != packing && window.target().is_some();
-                window.set_grid(packing, tc.draw(gs::sampled_from(vec![0.0, 0.1, 0.3, f64::NAN])), now);
+                window.set_grid(
+                    packing,
+                    tc.draw(gs::sampled_from(vec![0.0, 0.1, 0.3, f64::NAN])),
+                    tc.draw(gs::sampled_from(vec![1.0, 0.5, 0.0, f64::NAN])),
+                    now,
+                );
                 assert_eq!(window.scene().options.packing, packing);
-                // A new packing is a cut, even mid-flight.
-                assert!(!changes || !window.flying(now));
-                false
+                // Without motion a new packing is a cut, even mid-flight.
+                assert!(motion || !changes || !window.flying(now));
+                changes
             }
             10 => {
                 let mode = if tc.draw(gs::booleans()) { ViewMode::Rows } else { ViewMode::Grid };
                 let changes = window.scene().options.mode != mode && window.target().is_some();
-                window.set_view_mode(mode);
+                window.set_view_mode(mode, now);
                 assert_eq!(window.scene().options.mode, mode);
-                // A new view mode is a cut, even mid-flight.
-                assert!(!changes || !window.flying(now));
-                false
+                // Without motion a new view mode is a cut, even mid-flight.
+                assert!(motion || !changes || !window.flying(now));
+                changes
             }
             8 if !window.layout().groups.is_empty() => {
                 let group = tc.draw(gs::integers::<usize>().max_value(window.layout().groups.len() - 1));
                 let clusters = window.layout().groups[group].clusters.len();
                 window.toggle_cluster(group, tc.draw(gs::integers::<usize>().max_value(clusters - 1)), now);
-                false
+                true
             }
             9 if tc.draw(gs::booleans()) => {
                 window.close(now);
@@ -923,7 +931,7 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
         if let (true, true, Some(before), Some(after)) = (flies, motion, before, camera) {
             assert!(near(before, after), "a flying move jumped the camera from {before:?} to {after:?}");
         }
-        if !window.flying(now) {
+        if !window.flying(now) && !window.morphing(now) {
             if let (Some(camera), Some(target)) = (camera, window.target()) {
                 assert!(near(camera, target), "at rest at {camera:?}, not {target:?}");
             }
@@ -931,6 +939,7 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
         let open = *window.mode() == OverviewMode::Workspace && window.current().is_some_and(|id| window.scene().tile(id).is_some());
         assert_eq!(window.settled(now), open && !window.flying(now));
         assert!(!window.flying(now + FlightTiming::default().max_ms));
+        assert!(!window.morphing(now + MORPH_MS));
     }
 }
 
@@ -962,4 +971,171 @@ fn the_camera_keeps_up_with_a_moving_scene() {
     let slid = window.scene().rest_camera(tab_workspace_id(2)).unwrap();
     assert_ne!(slid, after, "the row slid");
     assert!(near(window.camera(5000.0).unwrap(), slid));
+}
+
+// ---------- a change of layout ----------
+
+fn near_rect(a: &SceneRect, b: &SceneRect) -> bool {
+    let tolerance = 1e-9 * (1.0 + a.x0.abs().max(a.x1.abs()).max(a.y0.abs()).max(a.y1.abs()));
+    (a.x0 - b.x0).abs() <= tolerance
+        && (a.y0 - b.y0).abs() <= tolerance
+        && (a.x1 - b.x1).abs() <= tolerance
+        && (a.y1 - b.y1).abs() <= tolerance
+}
+
+/// Where `r` sits against `within`, as shares of its size.
+fn relative(r: &SceneRect, within: &SceneRect) -> [f64; 4] {
+    let (w, h) = (within.width(), within.height());
+    [(r.x0 - within.x0) / w, (r.y0 - within.y0) / h, (r.x1 - within.x0) / w, (r.y1 - within.y0) / h]
+}
+
+/// A change of layout drawn part way, between any two scenes of the same
+/// shape (other workspaces, view modes, packings): it starts with each tile
+/// where it was and each new one a point in the middle of its place, and
+/// ends as the new scene. In between every tile keeps the viewport's shape,
+/// its label keeps its place under it, its cluster's region still holds it,
+/// each heading keeps its place in its group, and the scene's order is the
+/// new one's.
+#[hegel::test(test_cases = 300)]
+fn a_change_of_layout_moves_each_tile_from_where_it_was(tc: TestCase) {
+    let from_options = draw_options(&tc);
+    let to_options = SceneOptions { aspect: from_options.aspect, ..draw_options(&tc) };
+    let from = scene(&logical_layout(&draw_entries(&tc), None, &BTreeSet::new()), &from_options, &BTreeMap::new());
+    let to = scene(&logical_layout(&draw_entries(&tc), None, &BTreeSet::new()), &to_options, &BTreeMap::new());
+
+    let start = morph(&from, &to, 0.0);
+    for tile in &start.tiles {
+        let goes = to.tile(tile.workspace_id).unwrap();
+        match from.tile(tile.workspace_id) {
+            Some(was) => assert!(near_rect(&tile.rect, &was.rect), "{tile:?} didn't start where it was, {was:?}"),
+            None => {
+                let middle = |r: &SceneRect| ((r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0);
+                assert!(tile.rect.width() == 0.0 && tile.rect.height() == 0.0);
+                assert!(close(middle(&tile.rect).0, middle(&goes.rect).0) && close(middle(&tile.rect).1, middle(&goes.rect).1));
+            }
+        }
+    }
+    assert!(near_rect(&start.bounds, &from.bounds));
+
+    let end = morph(&from, &to, 1.0);
+    assert_eq!(end.tiles.len(), to.tiles.len());
+    for (drawn, goes) in end.tiles.iter().zip(&to.tiles) {
+        assert!(near_rect(&drawn.rect, &goes.rect) && near_rect(&drawn.label, &goes.label));
+    }
+    for (drawn, goes) in end.groups.iter().zip(&to.groups) {
+        assert!(near_rect(&drawn.bounds, &goes.bounds) && near_rect(&drawn.heading, &goes.heading));
+        for (a, b) in drawn.regions.iter().flatten().zip(goes.regions.iter().flatten()) {
+            assert!(near_rect(a, b));
+        }
+    }
+    assert!(near_rect(&end.bounds, &to.bounds));
+
+    let t = tc.draw(gs::floats::<f64>().min_value(0.01).max_value(0.99).allow_nan(false).allow_infinity(false));
+    let mid = morph(&from, &to, t);
+    let ids = |s: &Scene| s.tiles.iter().map(|t| (t.workspace_id, t.group, t.cluster)).collect::<Vec<_>>();
+    assert_eq!(ids(&mid), ids(&to));
+    assert_eq!(mid.groups.iter().map(|g| &g.key).collect::<Vec<_>>(), to.groups.iter().map(|g| &g.key).collect::<Vec<_>>());
+    for (drawn, goes) in mid.groups.iter().zip(&to.groups) {
+        let (a, b) = (relative(&drawn.heading, &drawn.bounds), relative(&goes.heading, &goes.bounds));
+        assert!(a.iter().zip(&b).all(|(a, b)| close(*a, *b)), "{:?}'s heading moved against it", drawn.key);
+    }
+    for (drawn, goes) in mid.tiles.iter().zip(&to.tiles) {
+        let (w, h) = (drawn.rect.width(), drawn.rect.height());
+        assert!(w > 0.0 && (w - from_options.aspect * h).abs() <= 1e-9 * (1.0 + w), "{drawn:?} isn't the viewport's shape");
+        let (a, b) = (relative(&drawn.label, &drawn.rect), relative(&goes.label, &goes.rect));
+        assert!(a.iter().zip(&b).all(|(a, b)| close(*a, *b)), "{drawn:?}'s label moved against it");
+        let region = &mid.groups[drawn.group].regions[drawn.cluster];
+        let widened = |r: &SceneRect| SceneRect { x0: r.x0 - 1e-9, y0: r.y0 - 1e-9, x1: r.x1 + 1e-9, y1: r.y1 + 1e-9 };
+        assert!(region.is_empty() || region.iter().any(|r| widened(r).contains(&drawn.rect)), "{drawn:?} outside its region {region:?}");
+    }
+}
+
+/// An open workspace stays open while workspaces come and go: the camera
+/// stays on its tile as it moves, starting where it was, and the host keeps
+/// drawing it as itself. A flight taking it elsewhere leaves from where it
+/// is. Without motion the layout changes at once.
+#[test]
+fn an_open_workspace_stays_open_while_the_layout_moves() {
+    let project = || segment("project", entity("project", 0));
+    let two = entry("tree", vec![project(), segment("convoy", entity("convoy", 2))], 2);
+    let three = entry("tree", vec![project(), segment("convoy", entity("convoy", 3))], 3);
+    let one = entry("tree", vec![project(), segment("convoy", entity("convoy", 1))], 1);
+    for motion in [true, false] {
+        let mut window = OverviewWindow::default();
+        window.set_motion(motion);
+        window.update(vec![two.clone(), three.clone()], Some(tab_workspace_id(3)), 1.6, 0.0);
+        let was = window.camera(0.0).unwrap();
+        assert!(window.settled(0.0));
+        window.update(vec![one.clone(), two.clone(), three.clone()], Some(tab_workspace_id(3)), 1.6, 1000.0);
+        let goes = window.scene().rest_camera(tab_workspace_id(3)).unwrap();
+        assert!(!near(was, goes), "the new workspace comes before the open one");
+        assert_eq!(window.morphing(1000.0), motion);
+        assert!(window.settled(1000.0) && window.settled(1100.0));
+        assert!(near(window.camera(1000.0).unwrap(), if motion { was } else { goes }));
+        let drawn = window.scene_at(1100.0).rest_camera(tab_workspace_id(3)).unwrap();
+        assert!(near(window.camera(1100.0).unwrap(), drawn));
+        assert_eq!(near(drawn, goes), !motion);
+        assert!(!window.morphing(1000.0 + MORPH_MS));
+        assert!(near(window.camera(1000.0 + MORPH_MS).unwrap(), goes));
+
+        // Mid-change, opening the overview flies from where the camera is.
+        window.update(vec![one.clone(), three.clone()], Some(tab_workspace_id(3)), 1.6, 2000.0);
+        let shown = window.camera(2100.0).unwrap();
+        window.open(2100.0);
+        assert_eq!(window.flying(2100.0), motion);
+        assert_eq!(near(window.camera(2100.0).unwrap(), shown), motion);
+    }
+}
+
+/// Changing the view mode moves each tile to its new place while the
+/// camera flies to the overview of the new layout; without motion both cut.
+#[test]
+fn a_new_view_mode_moves_the_tiles_and_flies() {
+    let project = |p: u64| segment("project", entity("project", p));
+    let entries: Vec<_> = (1..8u64).map(|i| entry("tree", vec![project(i % 3), segment("convoy", entity("convoy", i))], i)).collect();
+    for motion in [true, false] {
+        let mut window = OverviewWindow::default();
+        window.set_motion(motion);
+        window.update(entries.clone(), Some(tab_workspace_id(1)), 1.6, 0.0);
+        window.open(0.0);
+        let rows = window.camera(5000.0).unwrap();
+        let before = window.scene().clone();
+        window.set_view_mode(ViewMode::Grid, 5000.0);
+        assert_eq!(window.morphing(5000.0), motion);
+        assert_eq!(window.flying(5000.0), motion);
+        assert!(near(window.camera(5000.0).unwrap(), if motion { rows } else { window.target().unwrap() }));
+        let tile = |s: &Scene| s.tile(tab_workspace_id(4)).unwrap().rect;
+        let drawn = tile(&window.scene_at(5100.0));
+        if motion {
+            assert!(!near_rect(&drawn, &tile(&before)) && !near_rect(&drawn, &tile(window.scene())), "{drawn:?} isn't on its way");
+        } else {
+            assert!(near_rect(&drawn, &tile(window.scene())));
+        }
+        assert!(near(window.camera(20000.0).unwrap(), window.target().unwrap()));
+    }
+}
+
+/// A scrolled grid stays scrolled when the region changes width, within the
+/// scene, and goes back to the current tile when the readable width changes.
+#[test]
+fn a_new_readable_width_forgets_the_scrolling_and_a_resize_keeps_it() {
+    let project = || segment("project", entity("project", 0));
+    let entries: Vec<_> = (1..=30).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
+    let mut window = OverviewWindow::default();
+    window.set_view_mode(ViewMode::Grid, 0.0);
+    window.set_grid(GridPacking::Shelves, 400.0, 1000.0, 0.0);
+    window.update(entries, Some(tab_workspace_id(1)), 1.6, 0.0);
+    window.open(0.0);
+    let home = window.target().unwrap();
+    window.pan(1.0, 1.0);
+    let scrolled = window.target().unwrap();
+    assert!(scrolled.cx > home.cx && scrolled.cy > home.cy, "{home:?} to {scrolled:?}");
+    // Wider by a fifth: the share shrinks, and the scrolling stays.
+    window.set_grid(GridPacking::Shelves, 400.0, 1200.0, 0.0);
+    let resized = window.target().unwrap();
+    let rest = window.scene().overview_camera(window.current(), None);
+    assert!(!near(resized, rest), "a resize went back to the current tile");
+    // A new readable width goes back to the current tile.
+    window.set_grid(GridPacking::Shelves, 300.0, 1200.0, 0.0);
+    assert!(near(window.target().unwrap(), window.scene().overview_camera(window.current(), None)));
 }
