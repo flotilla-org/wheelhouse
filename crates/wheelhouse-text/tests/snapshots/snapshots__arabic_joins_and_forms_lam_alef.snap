@@ -1,0 +1,23 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "plain(\"\\u{644}\\u{627} \\u{644} \\u{627} \\u{633}\\u{644}\\u{627}\\u{645}\", 1000.0)"
+---
+line 0 x=932.4 y=0.0 h=34.0 base=22.0 w=67.6 bytes=0..19 "لا ل ا سلام"
+  run NotoSansArabic-Subset.ttf size=16.0 x=932.4 rtl glyphs=[57,6,54,26]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=962.3 rtl glyphs=[231]
+  run NotoSansArabic-Subset.ttf size=16.0 x=966.8 rtl glyphs=[3]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=970.6 rtl glyphs=[231]
+  run NotoSansArabic-Subset.ttf size=16.0 x=975.1 rtl glyphs=[51]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=986.2 rtl glyphs=[231]
+  run NotoSansArabic-Subset.ttf size=16.0 x=990.7 rtl glyphs=[5,56]
+   932.45 +7.74   "م" [57] rtl
+   940.19 +6.06   "ا" [6] rtl
+   946.26 +3.52   "ل" [54] rtl
+   949.78 +12.54  "س" [26] rtl word
+   962.32 +4.48   " " [231] rtl space word
+   966.80 +3.81   "ا" [3] rtl word
+   970.61 +4.48   " " [231] rtl space word
+   975.09 +11.12  "ل" [51] rtl word
+   986.21 +4.48   " " [231] rtl space word
+   990.69 +5.81   "ا" [5] rtl
+   996.50 +3.50   "ل" [56] rtl word

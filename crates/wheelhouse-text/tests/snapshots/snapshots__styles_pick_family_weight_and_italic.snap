@@ -1,0 +1,48 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "dump(&ctx, text, &p)"
+---
+line 0 x=0.0 y=0.0 h=21.0 base=16.0 w=236.9 bytes=0..33 "plain semi bold slant code() bold"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[184,164,112,149,170,231]
+  run AtkinsonHyperlegibleNext-SemiBold.ttf size=16.0 x=39.1 glyphs=[190,133,169,149]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=74.3 glyphs=[231]
+  run AtkinsonHyperlegibleNext-SemiBold.ttf size=16.0 x=78.8 glyphs=[123,175,164,129]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=111.3 glyphs=[231]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=115.8 skew=14 glyphs=[190,164,112,170,196]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=149.9 glyphs=[231]
+  run JetBrainsMonoNerdFont-Regular.ttf size=13.0 x=154.4 glyphs=[71,83,72,73,12,13]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=201.2 glyphs=[231]
+  run JetBrainsMonoNerdFont-Regular.ttf size=13.0 x=205.7 embolden glyphs=[70,83,80,72]
+     0.00 +9.06   "p" [184] word
+     9.06 +4.45   "l" [164] 
+    13.50 +8.29   "a" [112] 
+    21.79 +4.03   "i" [149] 
+    25.82 +8.80   "n" [170] 
+    34.62 +4.48   " " [231] space word
+    39.10 +7.97   "s" [190] word
+    47.07 +8.88   "e" [133] 
+    55.95 +13.82  "m" [169] 
+    69.78 +4.56   "i" [149] 
+    74.34 +4.48   " " [231] space word
+    78.82 +9.42   "b" [123] word
+    88.24 +9.07   "o" [175] 
+    97.31 +4.64   "l" [164] 
+   101.95 +9.38   "d" [129] 
+   111.33 +4.48   " " [231] space word
+   115.81 +7.54   "s" [190] word
+   123.34 +4.45   "l" [164] 
+   127.79 +8.40   "a" [112] 
+   136.19 +8.53   "n" [170] 
+   144.72 +5.22   "t" [196] 
+   149.94 +4.48   " " [231] space word
+   154.42 +7.80   "c" [71] word
+   162.22 +7.80   "o" [83] 
+   170.02 +7.80   "d" [72] 
+   177.82 +7.80   "e" [73] 
+   185.62 +7.80   "(" [12] word
+   193.42 +7.80   ")" [13] word
+   201.22 +4.48   " " [231] space word
+   205.70 +7.80   "b" [70] word
+   213.50 +7.80   "o" [83] 
+   221.30 +7.80   "l" [80] 
+   229.10 +7.80   "d" [72]

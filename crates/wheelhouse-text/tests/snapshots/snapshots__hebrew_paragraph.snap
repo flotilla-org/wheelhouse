@@ -1,0 +1,17 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "plain(\"\\u{5E9}\\u{5DC}\\u{5D5}\\u{5DD} \\u{5E2}\\u{5D5}\\u{5DC}\\u{5DD}\", 1000.0)"
+---
+line 0 x=926.3 y=0.0 h=22.0 base=17.0 w=73.7 bytes=0..17 "שלום עולם"
+  run NotoSansHebrew-Subset.ttf size=16.0 x=926.3 rtl glyphs=[17,38,83,7]
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=959.9 rtl glyphs=[231]
+  run NotoSansHebrew-Subset.ttf size=16.0 x=964.4 rtl glyphs=[17,83,38,64]
+   926.29 +10.94  "ם" [17] rtl
+   937.23 +8.35   "ל" [38] rtl
+   945.58 +4.82   "ו" [83] rtl
+   950.40 +9.49   "ע" [7] rtl word
+   959.89 +4.48   " " [231] rtl space word
+   964.37 +10.94  "ם" [17] rtl
+   975.31 +4.66   "ו" [83] rtl
+   979.97 +8.35   "ל" [38] rtl
+   988.32 +11.68  "ש" [64] rtl word

@@ -10,6 +10,7 @@ members = [
     "crates/wheelhouse-ingress",
     "crates/wheelhouse-tables",
     "crates/wheelhouse-wasm",
+    "crates/wheelhouse-text",
 ]
 # tools/scenario is a workspace of its own: it pins Flotilla's crates by git
 # revision, which normal builds shouldn't fetch.
@@ -41,4 +42,5 @@ unicode-width = "0.1.14"
 wheelhouse-core = { path = "crates/wheelhouse-core" }
 wheelhouse-tables = { path = "crates/wheelhouse-tables" }
 wheelhouse-terminal = { path = "crates/wheelhouse-terminal" }
+wheelhouse-text = { path = "crates/wheelhouse-text" }
 wheelhouse-tui = { path = "crates/wheelhouse-tui" }

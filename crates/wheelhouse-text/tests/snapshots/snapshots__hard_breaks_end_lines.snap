@@ -1,0 +1,26 @@
+---
+source: crates/wheelhouse-text/tests/snapshots.rs
+expression: "plain(\"one\\ntwo\\n\\nfour\\n\", 1000.0)"
+---
+line 0 x=0.0 y=0.0 h=21.0 base=16.0 w=26.2 bytes=0..4 "one\n"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[175,170,133]
+     0.00 +8.77   "o" [175] word
+     8.77 +8.80   "n" [170] 
+    17.57 +8.61   "e" [133] 
+    26.18 +0.00   "\n" [] space word break
+line 1 x=0.0 y=21.0 h=21.0 base=37.0 w=24.9 bytes=4..8 "two\n"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[196,210,175]
+     0.00 +5.34   "t" [196] word
+     5.34 +10.82  "w" [210] 
+    16.16 +8.77   "o" [175] 
+    24.93 +0.00   "\n" [] space word break
+line 2 x=0.0 y=42.0 h=21.0 base=58.0 w=0.0 bytes=8..9 "\n"
+     0.00 +0.00   "\n" [] space word break
+line 3 x=0.0 y=63.0 h=21.0 base=79.0 w=27.2 bytes=9..14 "four\n"
+  run AtkinsonHyperlegibleNext-Regular.ttf size=16.0 x=0.0 glyphs=[142,175,200,187]
+     0.00 +4.53   "f" [142] word
+     4.53 +8.77   "o" [175] 
+    13.30 +8.64   "u" [200] 
+    21.94 +5.26   "r" [187] 
+    27.20 +0.00   "\n" [] space word break
+line 4 x=0.0 y=84.0 h=21.0 base=100.0 w=0.0 bytes=14..14 ""
