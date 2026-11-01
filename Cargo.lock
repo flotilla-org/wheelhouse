@@ -279,6 +279,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "conversation-events"
+version = "0.1.0"
+dependencies = [
+ "hegeltest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "crossterm"
 version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
