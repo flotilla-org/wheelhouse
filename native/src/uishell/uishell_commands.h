@@ -87,6 +87,8 @@ read_only global UIShell_CmdInfo uishell_app_viewer_cmd_info_table[] =
   UISHELL_CMD("search", "Search", Find, "Begins searching.", "find,search", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
   UISHELL_CMD("search_backwards", "Search Backwards", Find, "Begins searching backwards.", "find,search", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
   UISHELL_CMD("goto_address", "Go To Address", Null, "Jumps to a file offset in the binary view.", "offset,address", UISHELL_CMD_FLAG_UI, UISHELL_Q_ADDR),
+  UISHELL_CMD("copy_markdown", "Copy as Markdown", Clipboard, "Copies the Rich Text selection as markdown.", "copy,markdown,rich text", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD("toggle_markdown_source", "Toggle Markdown Source", FileOutline, "Shows a markdown file's source, or its Rich Text again.", "markdown,source,rich text", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   
   UISHELL_CMD("output", "Output", List, "Opens an Output tab.", "tab", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("text", "Text", FileOutline, "Opens a Text tab.", "tab,file", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),

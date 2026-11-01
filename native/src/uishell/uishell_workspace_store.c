@@ -401,7 +401,8 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
     spec->url = uishell_store_page_url(arena, kind, 0, 0, 0);
     return 1;
   }
-  String8 path = str8_match(kind, str8_lit("text"), 0) ? uishell_store_file_from_expr(arena, expr) : str8_zero();
+  B32 file_view = str8_match(kind, str8_lit("text"), 0) || str8_match(kind, str8_lit("rich_text"), 0);
+  String8 path = file_view ? uishell_store_file_from_expr(arena, expr) : str8_zero();
   if(path.size)
   {
     spec->content = WHEELHOUSE_SLOT_FILE;
@@ -743,7 +744,12 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
     switch(spec->content)
     {
       case WHEELHOUSE_SLOT_COMMAND: { expr = spec->command; has_cwd = spec->has_cwd; cwd = spec->cwd; } break;
-      case WHEELHOUSE_SLOT_FILE: { expr = rd_eval_string_from_file_path(scratch.arena, spec->path); } break;
+      case WHEELHOUSE_SLOT_FILE:
+      {
+        expr = rd_eval_string_from_file_path(scratch.arena, spec->path);
+        WH_Handler *handler = wh_handler_from_media_type(WH_Content_File, wh_media_type_from_path(spec->path));
+        if(handler->renderer.size) { kind = handler->renderer; }
+      } break;
       case WHEELHOUSE_SLOT_URL:
       {
         kind = uishell_store_page_kind(spec->url);
@@ -1477,6 +1483,11 @@ uishell_store_recipe_kind(Arena *arena, String8 key, UIShell_ViewSpec *recipe, S
     uishell_store_unshown(arena, key, recipe);
   if(unshown->size) { return wh_renderer_from_content(WH_Content_Unshown)->name; }
   if(recipe->content == WHEELHOUSE_SLOT_URL) { return uishell_store_page_kind(recipe->url); }
+  if(recipe->content == WHEELHOUSE_SLOT_FILE)
+  {
+    WH_Handler *handler = wh_handler_from_media_type(WH_Content_File, wh_media_type_from_path(recipe->path));
+    if(handler->renderer.size) { return handler->renderer; }
+  }
   return wh_renderer_from_content(1<<recipe->content)->name;
 }
 
@@ -1486,7 +1497,9 @@ uishell_store_view_shows(Arena *arena, CFG_Node *view, String8 key, UIShell_View
 {
   String8 unshown = str8_zero();
   String8 kind = uishell_store_recipe_kind(arena, key, recipe, &unshown);
-  if(!str8_match(view->string, kind, 0)) { return 0; }
+  // A file's source, toggled to from its Handler's Renderer, still shows it.
+  B32 source = recipe->content == WHEELHOUSE_SLOT_FILE && str8_match(view->string, str8_lit("text"), 0);
+  if(!str8_match(view->string, kind, 0) && !source) { return 0; }
   if(unshown.size) { return str8_match(uishell_store_setting(view, str8_lit("content")), unshown, 0); }
   UIShell_ViewSpec current = {0};
   String8 taken[UISHELL_STORE_TAKEN_MAX];

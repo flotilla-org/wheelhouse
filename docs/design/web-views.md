@@ -52,9 +52,11 @@ content  →  Handler  →  runtime instance  →  View (pane-level)
 
 - **Handlers** are an X-macro beside the Renderer registry
   (`WH_HANDLERS`, `native/src/uishell/uishell_renderers.h`): name, content, URL
-  schemes, Renderer, program and argument template. Luchs takes `http`,
-  `https` and `file` URLs for the `web` Renderer. `WHEELHOUSE_LUCHS` names
-  another program, as a test renderer does.
+  schemes, media types, Renderer, program and argument template. Luchs takes
+  `http`, `https` and `file` URLs for the `web` Renderer. `WHEELHOUSE_LUCHS`
+  names another program, as a test renderer does. A Handler without a program
+  is a Renderer that shows the content itself: `text/markdown` files go to
+  Rich Text, and a Rich Text table Embed's media type to the table (#561).
 - **Opening.** A View Spec's URL that isn't a `wheelhouse:` page goes to the
   Handler that takes its scheme, else to a placeholder as before
   (`uishell_store_view_from_spec`). `wheelhouse:web` is the start page. **Web**

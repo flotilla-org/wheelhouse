@@ -24,6 +24,8 @@ enum
   WH_Content_Unshown   = 1<<7,
   // A control view: the Dashboard's arrangement, not a Slot's content.
   WH_Content_Dashboard = 1<<8,
+  // A Rich Text Embed's content, by its media type: an Embedded View.
+  WH_Content_Embed     = 1<<9,
 };
 
 // Presentation-settings schemas: the config schema of a Renderer's Views.
@@ -62,6 +64,12 @@ enum
 #define UISHELL_TERMINAL_FIXTURE_SETTINGS "@inherit(terminal) x:{}"
 #define UISHELL_SCROLL_REGION_FIXTURE_SETTINGS "@inherit(tab) x:{}"
 #define UISHELL_TABLE_SETTINGS "@inherit(tab) x:{}"
+#define UISHELL_RICH_TEXT_SETTINGS \
+  "@inherit(tab)" \
+  "x:{" \
+  "@description(\"The markdown file shown as Rich Text.\") 'expression': expr_string," \
+  "@no_callee_helper @no_revert @default(0) @display_name('Transient') @description(\"Controls whether or not this tab will be automatically replaced.\") 'auto': bool," \
+  "}"
 #define UISHELL_NO_SETTINGS ""
 
 // Column helpers, so an entry can say it has none.
@@ -107,9 +115,12 @@ enum
   X(scroll_region_fixture, scroll_region_fixture, WH_STATE(UIShell_ScrollRegionFixtureState), WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_Listed, \
     128, WorkspaceRegion, WH_NO_EXPAND, UISHELL_SCROLL_REGION_FIXTURE_SETTINGS, WH_NO_PLACEHOLDER) \
-  X(table, table, WH_STATE(UIShell_TableState), WH_Content_Page, \
+  X(table, table, WH_STATE(UIShell_TableState), WH_Content_Page|WH_Content_Embed, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_Listed, \
     128, WorkspaceRegion, WH_NO_EXPAND, UISHELL_TABLE_SETTINGS, WH_NO_PLACEHOLDER) \
+  X(rich_text, rich_text, WH_STATE(UIShell_RichTextState), WH_Content_File|WH_Content_Page, \
+    RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview|RD_ViewTrait_Visualizer|RD_ViewTrait_VersionedSurface|RD_ViewTrait_Listed, \
+    0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_RICH_TEXT_SETTINGS, WH_NO_PLACEHOLDER) \
   X(jackstay, jackstay, WH_NO_STATE, WH_Content_Jackstay|WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_VersionedSurface, \
     0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_NO_SETTINGS, WH_NO_PLACEHOLDER) \
@@ -154,12 +165,16 @@ enum
 // produces, and the Renderer that shows what it publishes. One entry each,
 // compiled in; its columns are a future manifest's.
 //
-// X(name, content, schemes, renderer, program, args)
+// X(name, content, schemes, media, renderer, program, args)
 //   name      the Handler; WHEELHOUSE_<NAME> (upper case) names another program
 //   content   the View Spec content it takes (WH_Content_*)
 //   schemes   the URL schemes it takes, space-separated
+//   media     the media types it takes, space-separated (a file's, by its
+//             extension: wh_media_type_from_path; an Embed's, as the core
+//             names it)
 //   renderer  the Renderer whose Views run it
-//   program   the program it runs, found on PATH
+//   program   the program it runs, found on PATH; empty for a Renderer that
+//             shows the content itself
 //   args      its arguments, space-separated, with {endpoint} (the Local
 //             Endpoint Wheelhouse names), {width} and {height} (the View's
 //             logical size) and {page} (the URL, or a file's path)
@@ -168,8 +183,10 @@ enum
 // (connector.rs, "ready line"). Luchs latches window.ready after its first
 // load, and exits if that load fails.
 #define WH_HANDLERS(X) \
-  X(luchs, WH_Content_Url, "http https file", web, "luchs", \
-    "--endpoint {endpoint} --size {width}x{height} {page}")
+  X(luchs, WH_Content_Url, "http https file", "", web, "luchs", \
+    "--endpoint {endpoint} --size {width}x{height} {page}") \
+  X(markdown, WH_Content_File, "", "text/markdown", rich_text, "", "") \
+  X(table_embed, WH_Content_Embed, "", "application/vnd.flotilla.table", table, "", "")
 
 // Each Renderer's place in the list.
 typedef enum WH_RendererIndex
