@@ -864,13 +864,17 @@ wm_get_system_info(void)
 //~ @os_hooks Clipboards (Implemented Per-OS)
 
 internal void
-wm_set_clipboard_text_impl(String8 string)
+wm_set_clipboard_text_impl(String8 string, String8 html)
 {
   Temp scratch = scratch_begin(0, 0);
   NSString *ns_string = mac_wm_ns_string_from_string8(scratch.arena, string);
   NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
   [pasteboard clearContents];
   [pasteboard setString:ns_string forType:NSPasteboardTypeString];
+  if(html.size != 0)
+  {
+    [pasteboard setString:mac_wm_ns_string_from_string8(scratch.arena, html) forType:NSPasteboardTypeHTML];
+  }
   scratch_end(scratch);
 }
 

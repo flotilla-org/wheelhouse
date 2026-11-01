@@ -13,7 +13,8 @@ json = ["dep:serde_json"]
 
 [dependencies]
 wheelhouse-core = { path = "../wheelhouse-core" }
-wheelhouse-rich-text.workspace = true
+# test-support: the synthetic markdown wheelhouse_rich_text_generate gives.
+wheelhouse-rich-text = { workspace = true, features = ["test-support"] }
 wheelhouse-tables.workspace = true
 binnacle-core.workspace = true
 binnacle-ffi.workspace = true

@@ -69,3 +69,34 @@ fn a_long_gap_starts_the_live_clock_again(tc: hegel::TestCase) {
     let after = grid.snapshot().count(Axis::Rows);
     assert!(after <= count + 1, "{after} rows after a {gap:?} gap, from {count}");
 }
+
+/// A given table shows each cell's own text at its row and column, and
+/// names its columns by its header row.
+#[hegel::test(test_cases = 100)]
+fn a_given_table_shows_its_cells_by_row_and_column(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    let columns = tc.draw(gs::integers::<usize>().min_value(1).max_value(5));
+    let header: Vec<String> = (0..columns).map(|c| format!("h{c}")).collect();
+    let row_count = tc.draw(gs::integers::<usize>().max_value(40));
+    let rows: Vec<Vec<String>> = (0..row_count).map(|_| (0..columns).map(|_| tc.draw(gs::text().max_size(12))).collect()).collect();
+    let right: Vec<bool> = (0..columns).map(|_| tc.draw(gs::booleans())).collect();
+    let (mut table, mut grid) = Table::from_cells(header.clone(), rows.clone(), right.clone(), METRICS);
+    for _ in 0..3 {
+        table.pump(&mut grid, |_| {});
+        table.fill(&mut grid, Viewport::new(2000.0, 2000.0));
+    }
+    let snapshot = grid.snapshot();
+    assert_eq!(snapshot.count(Axis::Rows), row_count as u64);
+    for row in snapshot.strip(Axis::Rows) {
+        let r = row.key.expect("a filled row");
+        for col in snapshot.strip(Axis::Cols) {
+            let c = col.key.expect("a filled column");
+            let cell = table.cell(r, c);
+            assert_eq!(cell.text, rows[r.0 as usize][c.0 as usize]);
+            assert_eq!(cell.align == wheelhouse_tables::Align::Right, right[c.0 as usize]);
+        }
+    }
+    for (c, name) in header.iter().enumerate() {
+        assert_eq!(&table.header(Axis::Cols, binnacle_core::Key(c as u64), c as u64), name);
+    }
+}
