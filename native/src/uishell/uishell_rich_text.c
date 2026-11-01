@@ -255,6 +255,8 @@ struct UIShell_RtNode
   U32 alert;
   U32 ordered;
   U32 tight;
+  // A table cell laid out with tabular figures (uishell_rt_cell_layout).
+  U32 tabular;
   U64 version;
   U64 start;
   String8 text;
@@ -825,6 +827,13 @@ read_only global WhTextFeature uishell_rt_no_ligatures[] =
   {{'l', 'i', 'g', 'a'}, 0}, {{'c', 'a', 'l', 't'}, 0}, {{'d', 'l', 'i', 'g'}, 0},
 };
 
+// A column of figures: every digit one width, so right-aligned numbers line
+// up (#624).
+read_only global WhTextFeature uishell_rt_tabular_figures[] =
+{
+  {{'t', 'n', 'u', 'm'}, 1},
+};
+
 typedef struct UIShell_RtStyled UIShell_RtStyled;
 struct UIShell_RtStyled
 {
@@ -857,6 +866,11 @@ uishell_rt_base_style(UIShell_RtTheme *t, UIShell_RtNode *n)
     s.size = t->size*t->code_scale;
     s.features = uishell_rt_no_ligatures;
     s.feature_count = ArrayCount(uishell_rt_no_ligatures);
+  }
+  else if(n->tabular)
+  {
+    s.features = uishell_rt_tabular_figures;
+    s.feature_count = ArrayCount(uishell_rt_tabular_figures);
   }
   return s;
 }
@@ -1158,6 +1172,15 @@ uishell_rt_layout(UIShell_RtLayoutCache *cache, UIShell_RtTheme *t, UIShell_RtNo
   return e;
 }
 
+// The cell painter's layouts and theme (UIShell_RtCellText is declared in
+// uishell_table.c). Rich Text's table Embeds share their View's; the table
+// View keeps its own (uishell_rt_cell_text_frame).
+struct UIShell_RtCellText
+{
+  UIShell_RtLayoutCache *layouts;
+  UIShell_RtTheme *theme;
+};
+
 ////////////////////////////////
 //~ View state
 
@@ -1241,6 +1264,8 @@ struct UIShell_RichTextState
   String8 load_error;
   UIShell_RtModel model;
   UIShell_RtLayoutCache layouts;
+  // Its table Embeds' cell painter: these layouts and theme.
+  UIShell_RtCellText cell_text;
   UIShell_RtBucket *buckets;
   UIShell_RtBucket *free_bucket;
   UIShell_RtTable *tables;
@@ -1592,28 +1617,30 @@ uishell_rt_cell_pad(UIShell_RtTheme *t)
 
 // A table cell's text (#545): laid out as Rich Text is, so with fontique's
 // fallback, on one line cut with an ellipsis. Keyed by its text: equal
-// cells share a layout.
+// cells share a layout. Right-aligned cells are figures, in tabular ones.
 internal UIShell_RtLayoutEntry *
-uishell_rt_cell_layout(UIShell_RichTextState *s, String8 text, F32 cell_width)
+uishell_rt_cell_layout(UIShell_RtLayoutCache *layouts, UIShell_RtTheme *t, String8 text, F32 cell_width, B32 right)
 {
   UIShell_RtNode n = {0};
   n.kind = WHEELHOUSE_RICH_KIND_PARAGRAPH;
-  n.key = XXH3_64bits(text.str, text.size);
+  n.tabular = !!right;
+  n.key = XXH3_64bits_withSeed(text.str, text.size, n.tabular);
   n.text = text;
   UIShell_RtFrame f = {0};
-  return uishell_rt_layout(&s->layouts, &s->theme, &n, &f, cell_width - 2*uishell_rt_cell_pad(&s->theme), 1);
+  return uishell_rt_layout(layouts, t, &n, &f, cell_width - 2*uishell_rt_cell_pad(t), 1);
 }
 
-// Paints a table Embed's cell and header text.
+// Paints a table's cell and header text: the table View's, and a table
+// Embed's.
 internal void
 uishell_rt_table_cell_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, String8 text, B32 right, Vec4F32 color)
 {
-  UIShell_RichTextState *s = (UIShell_RichTextState *)user;
+  UIShell_RtCellText *ct = (UIShell_RtCellText *)user;
   Rng2F32 visible = intersect_2f32(cell, clip);
   if(text.size == 0 || visible.x1 <= visible.x0 || visible.y1 <= visible.y0) { return; }
-  UIShell_RtTheme *t = &s->theme;
+  UIShell_RtTheme *t = ct->theme;
   F32 pad = uishell_rt_cell_pad(t);
-  UIShell_RtLayoutEntry *e = uishell_rt_cell_layout(s, text, dim_2f32(cell).x);
+  UIShell_RtLayoutEntry *e = uishell_rt_cell_layout(ct->layouts, t, text, dim_2f32(cell).x, right);
   if(e == 0 || e->layout->text.line_count == 0) { return; }
   WhTextLayout *l = &e->layout->text;
   WhTextLine *line = &l->lines[0];
@@ -1624,6 +1651,41 @@ uishell_rt_table_cell_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, 
   {
     if(!uishell_rt_draw_glyphs(&pages, t, l, 0, 0, origin, &color)) { rd_request_frame(); }
   }
+}
+
+// The table View's own painter: made on its first frame, its theme taken
+// again each frame.
+typedef struct UIShell_RtCellTextStore UIShell_RtCellTextStore;
+struct UIShell_RtCellTextStore
+{
+  UIShell_RtCellText text;
+  Arena *arena;
+  UIShell_RtLayoutCache layouts;
+  UIShell_RtTheme theme;
+};
+
+internal UIShell_RtCellText *
+uishell_rt_cell_text_frame(UIShell_RtCellText *ct)
+{
+  if(ct == 0)
+  {
+    Arena *arena = arena_alloc(.reserve_size = MB(1), .commit_size = KB(64), .name = "table cell text");
+    UIShell_RtCellTextStore *store = push_array(arena, UIShell_RtCellTextStore, 1);
+    store->arena = arena;
+    store->text = (UIShell_RtCellText){&store->layouts, &store->theme};
+    ct = &store->text;
+  }
+  *ct->theme = uishell_rt_theme();
+  return ct;
+}
+
+internal void
+uishell_rt_cell_text_release(UIShell_RtCellText *ct)
+{
+  if(ct == 0) { return; }
+  UIShell_RtCellTextStore *store = (UIShell_RtCellTextStore *)ct;
+  uishell_rt_layout_cache_release(&store->layouts);
+  arena_release(store->arena);
 }
 
 // Builds a Block's bucket in its own coordinates: (0, 0) is its box's top
@@ -3393,7 +3455,8 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
           UIShell_TableDraw *td = push_array(ui_build_arena(), UIShell_TableDraw, 1);
           td->table = tb->table;
           td->draw_text = uishell_rt_table_cell_text;
-          td->text_user = s;
+          s->cell_text = (UIShell_RtCellText){&s->layouts, &s->theme};
+          td->text_user = &s->cell_text;
           for(BinnacleEffect effect; binnacle_grid_poll_effect(grid, &effect);) {}
           binnacle_grid_snapshot(grid, &td->snap);
           ui_box_equip_custom_draw(grid_box, uishell_table_draw, td);
