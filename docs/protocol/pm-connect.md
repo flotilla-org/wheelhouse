@@ -13,8 +13,9 @@ an address of its own under the runtime directory, as the
 same endpoint. Producers discover it through `WHEELHOUSE_SOCKET`, which
 Wheelhouse sets for its terminals, or an explicit socket argument.
 On Unix, the socket must live in a private directory (mode 0700); the listener
-uses mode 0600. Startup fails if the path already exists, and clean shutdown
-removes its own socket.
+uses mode 0600. Startup fails if a live endpoint already serves the path, or
+if the path is anything but a socket; a socket nothing serves, as a killed
+process leaves one, is reclaimed. Clean shutdown removes its own socket.
 On Windows the name is used directly, without filesystem-path mapping. The
 listener follows [ADR 0011](../adr/0011-windows-local-ipc-uses-named-pipes-with-logical-endpoints.md):
 a protected DACL grants SYSTEM and the current user, remote clients are rejected,
@@ -141,7 +142,9 @@ Each JSONL entry carries `recording_id` (one listener run), `sequence` (complete
 request receive order), `timestamp_ms` (Unix receive time), `received_ms`
 (process monotonic receive time), `method`, `path`, `producer` (`source_id` when
 present), decoded `body`, original byte-preserving `body_utf8`, and response
-`status`. Producer identity is self-reported; peer identity is not inferred.
+`status`, and `pid`: the caller's process ID as the Unix kernel reports it
+(null over Windows named pipes). Producer identity is self-reported; the PID is
+recorded, never used to admit or attribute a request.
 Non-patch requests, including health and discovery GETs, have null bodies.
 Invalid UTF-8 and oversized bodies have no captured body. Responses can finish
 out of order, so replay sorts by recording/run and sequence, not file order.

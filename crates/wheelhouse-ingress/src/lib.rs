@@ -223,48 +223,42 @@ mod transport {
         }
     }
 
-    #[cfg(unix)]
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
     #[cfg(windows)]
     mod windows;
 
+    /// Who is calling, as the kernel says (ADR 0011). Stated, not verified
+    /// (ADR 0014): no route admits or attributes by it.
     #[cfg(unix)]
-    struct SocketGuard {
-        path: PathBuf,
-        dev: u64,
-        ino: u64,
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Peer {
+        pub uid: u32,
+        pub gid: u32,
+        pub pid: Option<i32>,
     }
     #[cfg(unix)]
-    impl Drop for SocketGuard {
-        fn drop(&mut self) {
-            if std::fs::symlink_metadata(&self.path).is_ok_and(|m| m.dev() == self.dev && m.ino() == self.ino) {
-                let _ = std::fs::remove_file(&self.path);
-            }
-        }
+    pub type Caller = rigging_http_serve::Caller<Peer>;
+    #[cfg(unix)]
+    fn identify(peer: rigging_http_serve::PeerCredentials) -> Caller {
+        Caller::Custom(Peer { uid: peer.uid, gid: peer.gid, pid: peer.pid })
+    }
+    /// The caller's PID; named pipes don't say it yet.
+    #[cfg(unix)]
+    pub fn caller_pid(extensions: &axum::http::Extensions) -> Option<i32> {
+        extensions.get::<Caller>().and_then(|caller| if let Caller::Custom(peer) = caller { peer.pid } else { None })
+    }
+    #[cfg(windows)]
+    pub fn caller_pid(_: &axum::http::Extensions) -> Option<i32> {
+        None
     }
     impl Ingress {
         pub fn start(path: PathBuf, wake: Wake, recording: Option<(PathBuf, u64, usize)>) -> Result<Self, String> {
-            #[cfg(unix)]
-            let (listener, guard) = {
-                let parent = path.parent().ok_or("socket needs a private parent directory")?;
-                let meta = std::fs::metadata(parent).map_err(|e| e.to_string())?;
-                if !meta.is_dir() || meta.mode() & 0o077 != 0 || meta.uid() != unsafe { libc::geteuid() } {
-                    return Err("socket parent must be owned by this user and private (mode 0700)".into());
-                }
-                let listener = std::os::unix::net::UnixListener::bind(&path).map_err(|e| e.to_string())?;
-                let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-                let guard = SocketGuard { path: path.clone(), dev: meta.dev(), ino: meta.ino() };
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
-                listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-                (listener, guard)
-            };
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+            // Unix: a private parent, mode 0600, live endpoints refused, stale ones reclaimed.
+            #[cfg(unix)]
+            let listener = runtime.block_on(rigging_http_serve::UnixServer::bind(&path, 0o600));
             #[cfg(windows)]
-            let listener = {
-                let _entered = runtime.enter();
-                windows::Listener::bind(&path).map_err(|e| e.to_string())?
-            };
+            let listener = runtime.block_on(async { windows::Listener::bind(&path) });
+            let listener = listener.map_err(|e| e.to_string())?;
             // Reads and writes deliberately share one bounded admission queue:
             // a burst of either may make the other receive 503 and retry. This
             // preserves request ordering and bounds total pending UI work.
@@ -275,11 +269,7 @@ mod transport {
             let thread = thread::Builder::new()
                 .name("wheelhouse-ingress".into())
                 .spawn(move || {
-                    #[cfg(unix)]
-                    let _guard = guard;
                     runtime.block_on(async move {
-                        #[cfg(unix)]
-                        let listener = tokio::net::UnixListener::from_std(listener).expect("registered Unix listener");
                         let published = Arc::new(Notify::new());
                         let mut app = Router::new()
                             .route("/v1/health", get(|| async { StatusCode::NO_CONTENT }))
@@ -293,6 +283,10 @@ mod transport {
                             app = app.layer(axum::middleware::from_fn_with_state(recorder, crate::recording::capture));
                         }
                         let app = app.layer(axum::middleware::from_fn(limit_body));
+                        // Stop drops, not drains: event streams don't end, and requests wait on the UI.
+                        #[cfg(unix)]
+                        let server = listener.serve(app, identify, std::future::pending());
+                        #[cfg(windows)]
                         let server = axum::serve(listener, app);
                         // Facts expire on the UI's ticks. Every instance listens,
                         // so an endpoint nobody has published to stays idle.
@@ -474,6 +468,84 @@ mod transport {
             std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o700)).unwrap();
             drop(Ingress::start(shared.join("socket"), wake, None).unwrap());
             std::fs::remove_dir_all(&root).unwrap();
+        }
+        /// A socket path in a fresh private (0700) directory.
+        #[cfg(unix)]
+        fn private_socket() -> (PathBuf, PathBuf) {
+            use std::os::unix::fs::DirBuilderExt;
+            let dir = crate::socket_test_dir();
+            std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+            let path = dir.join("socket");
+            (dir, path)
+        }
+        /// Whether the endpoint at `path` answers its health check.
+        #[cfg(unix)]
+        fn healthy(path: &std::path::Path) -> bool {
+            use std::io::{Read, Write};
+            let mut stream = std::os::unix::net::UnixStream::connect(path).unwrap();
+            stream.write_all(b"GET /v1/health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            response.starts_with("HTTP/1.1 204")
+        }
+        // pm-connect.md: startup fails if a live endpoint already serves the
+        // path, which keeps serving; clean shutdown removes its own socket.
+        #[cfg(unix)]
+        #[test]
+        fn a_second_start_on_a_live_socket_fails() {
+            let (dir, path) = private_socket();
+            let first = Ingress::start(path.clone(), noop, None).unwrap();
+            assert!(Ingress::start(path.clone(), noop, None).is_err());
+            assert!(healthy(&path));
+            drop(first);
+            assert!(!path.exists(), "clean shutdown left the socket");
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        // pm-connect.md: a socket nothing serves, as a killed process leaves
+        // one, is reclaimed at startup rather than refused.
+        #[cfg(unix)]
+        #[test]
+        fn a_stale_socket_is_reclaimed() {
+            let (dir, path) = private_socket();
+            // std leaves the socket file behind, as a killed process does. A
+            // child forked elsewhere in the suite may hold it until its exec.
+            drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while std::os::unix::net::UnixStream::connect(&path).is_ok() {
+                assert!(std::time::Instant::now() < deadline, "the socket stayed live");
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert!(path.exists());
+            let server = Ingress::start(path.clone(), noop, None).unwrap();
+            assert!(healthy(&path));
+            drop(server);
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        // pm-connect.md: in its private (0700) directory the socket is mode 0600.
+        #[cfg(unix)]
+        #[test]
+        fn the_socket_is_mode_0600() {
+            use std::os::unix::fs::PermissionsExt;
+            let (dir, path) = private_socket();
+            let server = Ingress::start(path.clone(), noop, None).unwrap();
+            assert_eq!(std::fs::symlink_metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+            drop(server);
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        // #601: routes see the caller's PID as the kernel gives it, and an
+        // `--ingress_record` capture records it.
+        #[cfg(unix)]
+        #[test]
+        fn a_route_sees_the_callers_pid_and_a_capture_records_it() {
+            let (dir, path) = private_socket();
+            let capture = dir.join("ingress.jsonl");
+            let server = Ingress::start(path.clone(), noop, Some((capture.clone(), 1 << 20, 1))).unwrap();
+            assert!(healthy(&path));
+            drop(server); // and the recorder, which writes what it holds
+            let line = std::fs::read_to_string(&capture).unwrap();
+            let entry: serde_json::Value = serde_json::from_str(line.lines().next().unwrap()).unwrap();
+            assert_eq!(entry["pid"], serde_json::json!(std::process::id()));
+            std::fs::remove_dir_all(&dir).unwrap();
         }
         extern "C" fn noop() {}
         /// An ingress with no listener, drained by hand.
