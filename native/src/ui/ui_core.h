@@ -699,7 +699,6 @@ struct UI_State
   UI_Key edit_consumer_key;
   B32 edit_menu_focus;
   // Interactive hover overlays own pointer hits; only a click gives them keys.
-  B32 hover_card_focus;
   // A name field outside the focus tree owns the keyboard: the build index
   // it was last built in (ui_text_field_focus).
   U64 text_field_focus_build_index;

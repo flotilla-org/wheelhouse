@@ -225,7 +225,7 @@ Where the model and today's behaviour differed, the operator agreed the followin
    Dragging a ghost to another group moves that ghost, as before.
 2. **"Dock under source" becomes the row's own expand-in-place.** It is an action, not a drop target: the row's ⤢, and the expanded card's ⤡ back to the row in its cap (#269). Expansion replaces the row with the card (see the card prototype). Until the row's ⤢ lands, dropping a card on its source row still expands it there. A ghost dropped on its source's home therefore stays an invalid target.
 3. **Floating stays exactly as it is today.** You drag the card itself and release it where you want it; releasing outside the sidebar floats it there. There are no new float targets or visuals. "Releasing over nothing valid snaps back" applies only inside the sidebar.
-4. **Cards drag from the title line,** past the threshold; a floating card also from its cap's background. A click on the card body keeps its focus or keep-open meaning, and the card's action buttons never start a drag.
+4. **Cards drag from the title line,** past the threshold; a floating card also from its cap's background. A click on the title that doesn't drag is a click on the card's content, which activates its entity (#269), and the card's action buttons never start a drag. A related item drags as its row would, lifting its own card.
 
 ### Card settings
 

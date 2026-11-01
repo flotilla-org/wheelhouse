@@ -45,8 +45,9 @@ A card has a fixed structure instead of a list of `Prefix: value` lines:
   Each fact's `observed_at` becomes a small relative age beside it; stale facts
   are dimmed rather than given their own line.
 - **Related:** linked entities as clickable mini-rows with their own chips,
-  leaving out anything already on the navigation path. A PR card reached from
-  its convoy does not list the convoy or project.
+  leaving out the card's own subject. Each behaves as its row would (#269):
+  a click runs its primary action, hovering it shows its card beside this
+  one, and dragging it lifts that card.
 - **Preview:** the live workspace preview, when the entity has a workspace, as
   today's hover card draws it. The restructure keeps it; #89 decides when a
   preview may attach.
@@ -101,12 +102,20 @@ settings (#270).
   it from switching rows on the way.
 - Leaving an engaged card closes it after about 400 ms unless it has been
   dragged or pinned.
-- Escape follows keyboard focus. A peek card never takes focus, so Escape
-  reaches the terminal or whatever else holds it. A card handles Escape only
-  after a click has focused it.
-- Clicking a related item navigates within the card, with a back arrow. A
-  modifier, or dragging the item out, opens it as its own card. Later, each
-  card segment may be dragged out separately with the same gesture.
+- A card never takes keyboard focus (#269): cards are pointer-only, so
+  Escape always reaches the terminal or whatever else holds it. Escape
+  cancels a card drag in progress.
+- A press outside every hover card closes them, and still reaches what it is
+  on.
+- Clicks follow the row (#269). A click on a related item runs that item's
+  primary action, as a click on its row would. A click on what doesn't act on
+  its own (the title, a fact, the preview) activates the card's entity. A
+  hover card closes after either, as after any action; a docked or floating
+  card stays. There is no in-card navigation and no back arrow.
+- Hovering a related item shows its card beside this one, one level deep:
+  related items in that second card don't open a third. Dragging a related
+  item lifts its card as dragging a row lifts the row's. Later, each card
+  segment may be dragged out separately with the same gesture.
 
 ### Detached cards
 
@@ -205,8 +214,9 @@ from 2026-10-04:
 - **Fold order reads fine.** At the default width the first convoy's name
   drops to its short form because attention chips hold their space; that is
   acceptable.
-- **A card focused by a click stays open** until a click elsewhere or Escape.
-  Without this, the card holding focus would vanish on mouse-out.
+- ~~**A card focused by a click stays open** until a click elsewhere or
+  Escape.~~ Superseded by #269: cards take no focus, and a click on a hover
+  card acts and closes it.
 - **A pinned card outlives its subject** and says it is no longer present.
   Ended presentations and cards will need a timeout policy; it is not decided.
 - **One pinned card per entity.** Pinning again reveals the existing card.

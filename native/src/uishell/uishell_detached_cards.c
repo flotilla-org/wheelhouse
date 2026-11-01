@@ -47,8 +47,8 @@ uishell_sidebar_drag_begin(RD_WindowState *ws)
 }
 
 // A card drags from its title line, past the shared threshold
-// (drag-model.md, decision 4). Card focus is decided from raw press events
-// over the card's rect, so a clickable title does not change it.
+// (drag-model.md, decision 4); a click on it that doesn't drag is a click
+// on the card's content.
 internal void
 uishell_sidebar_card_drag_from(UIShell_HoverCard *card, UI_Signal drag)
 {
@@ -71,6 +71,8 @@ uishell_sidebar_card_drag_from(UIShell_HoverCard *card, UI_Signal drag)
   }
   if(ui_released(drag) && card->moving)
   { card->drag_released = 1; rd_request_frame(); }
+  // A click that didn't drag is a click on plain content (uishell_sidebar_card_body).
+  if(ui_clicked(drag) && !card->moving) { card->title_clicked = 1; }
 }
 
 // The card's title line, drawn like the label it replaces.
@@ -106,11 +108,11 @@ uishell_sidebar_card_pin_control(UIShell_HoverCard *card)
 {
   RD_WindowState *ws = rd_window_state_from_os_handle(ui_state->window);
   B32 pinned = 0;
-  if(ws != &rd_nil_window_state && card->depth)
+  if(ws != &rd_nil_window_state)
   {
     UIShell_LocalGroup *target = uishell_sidebar_pin_target(cfg_node_from_id(ws->cfg_id));
     for(U64 p = 0; target && p < target->pin_count && !pinned; p++)
-    { pinned = uishell_sidebar_card_entity_match(uishell_sidebar_pin_entity(&target->pins[p]), card->path[card->depth-1]); }
+    { pinned = uishell_sidebar_card_entity_match(uishell_sidebar_pin_entity(&target->pins[p]), card->subject); }
   }
   UI_Signal sig = uishell_sidebar_header_button(str8_lit("🖈"), str8_lit("card_pin"), 0, 1,
     pinned ? str8_lit("Show pin") : str8_lit("Pin"), pinned ? str8_lit("Already pinned in the sidebar") : str8_zero());
@@ -160,14 +162,11 @@ uishell_sidebar_detached_copy(RD_WindowState *ws, UIShell_HoverCard *source)
 {
   UIShell_HoverCard *c = uishell_sidebar_detached_alloc(ws);
   c->arena = arena_alloc();
-  c->capacity = Max(UIShell_HoverCardInitialPathCapacity, source->depth);
-  c->path = push_array(c->arena, WheelhouseEntity, c->capacity);
-  c->depth = source->depth;
-  for(U64 i = 0; i < c->depth; i++) { c->path[i] = uishell_sidebar_card_entity_copy(c->arena, source->path[i]); }
+  c->subject = uishell_sidebar_card_entity_copy(c->arena, source->subject);
   c->source_key = push_str8_copy(c->arena, source->source_key);
   uishell_sidebar_card_retain_label(c, source->retained_label);
   c->source = source->source; c->source_rect = source->source_rect; c->rect = source->rect;
-  c->open = c->engaged = 1; c->focused = source->focused; c->enriched = source->enriched;
+  c->open = c->engaged = 1; c->enriched = source->enriched;
   return c;
 }
 
@@ -378,7 +377,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
 {
   UIShell_SidebarState *state = ws->sidebar;
   CFG_Node *window = cfg_node_from_id(ws->cfg_id);
-  WheelhouseEntity entity = card->path[card->depth-1];
+  WheelhouseEntity entity = card->subject;
   // A pinned card moves its own ghost. Pin on any other card reveals the
   // entity's ghost in the group Pin uses (the topmost showing one), or adds
   // one there; a drop is explicit placement, so it always adds one.
@@ -400,7 +399,7 @@ uishell_sidebar_card_pin(RD_WindowState *ws, UIShell_HoverCard *card, B32 new_ar
       uishell_sidebar_section_set_collapsed(view, 0);
     }
     for(UIShell_HoverCard *c = state->detached; c; c = c->next)
-    { if(str8_match(uishell_sidebar_card_pin_id(c), saved->ghost, 0)) { c->scroll = 0; c->focused = 1; } }
+    { if(str8_match(uishell_sidebar_card_pin_id(c), saved->ghost, 0)) { c->scroll = 0; } }
     return saved;
   }
   UIShell_LocalGroup *area = uishell_sidebar_pin_area(ws, new_area);
@@ -569,7 +568,7 @@ uishell_sidebar_detached_content(UIShell_SidebarState *state, RD_WindowState *ws
   UI_PrefWidth(ui_px(width, 1))
   { uishell_sidebar_card_title_handle(card, card->retained_label); }
   UI_TagF("weak") { ui_label(str8_lit("No longer present")); }
-  ui_label_multiline(width, uishell_sidebar_string(card->path[card->depth-1].id));
+  ui_label_multiline(width, uishell_sidebar_string(card->subject.id));
   return WHEELHOUSE_NONE;
 }
 
@@ -810,7 +809,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
   if(!released) { return; }
   rd_drag_kill();
   rd_request_frame();
-  WheelhouseEntity entity = card ? card->path[card->depth-1] : state->row_drag_entity;
+  WheelhouseEntity entity = card ? card->subject : state->row_drag_entity;
   String8 label = card ? card->retained_label : state->row_drag_label;
   String8 source = card ? card->source_key : state->row_drag_key;
   Temp scratch = scratch_begin(0, 0);
@@ -970,7 +969,7 @@ uishell_sidebar_detached_finish(RD_WindowState *ws)
     uishell_sidebar_detached_apply(ws, c);
     if(!c->open && c->pin_size)
     { uishell_sidebar_card_saved_release(ws, c); }
-    UIShell_LocalPin *pin = c->open && c->pin_size && c->depth == 1 ? uishell_sidebar_pin_by_ghost(window, uishell_sidebar_card_pin_id(c)) : 0;
+    UIShell_LocalPin *pin = c->open && c->pin_size ? uishell_sidebar_pin_by_ghost(window, uishell_sidebar_card_pin_id(c)) : 0;
     if(pin && !str8_match(pin->label, c->retained_label, 0))
     {
       UIShell_LocalPin values = *pin;
@@ -985,7 +984,7 @@ uishell_sidebar_detached_finish(RD_WindowState *ws)
         UIShell_SidebarNode node = {0}; uishell_sidebar_node(ws->sidebar, i, &node);
         if(str8_match(c->source_key, uishell_sidebar_string(node.key), 0)) { present = 1; break; }
       }
-      if(!present || uishell_sidebar_card_find(ws->sidebar, c->path[c->depth-1], 0) == WHEELHOUSE_NONE)
+      if(!present || uishell_sidebar_card_find(ws->sidebar, c->subject, 0) == WHEELHOUSE_NONE)
       { uishell_sidebar_card_close(c); }
     }
   }
@@ -1000,10 +999,9 @@ uishell_sidebar_saved_card(RD_WindowState *ws, UIShell_LocalPin *saved)
   for(UIShell_HoverCard *c = ws->sidebar->detached; c; c = c->next)
   { if(c->pin_size && str8_match(uishell_sidebar_card_pin_id(c), saved->ghost, 0)) { return c; } }
   UIShell_HoverCard *c = uishell_sidebar_detached_alloc(ws);
-  c->arena = arena_alloc(); c->capacity = UIShell_HoverCardInitialPathCapacity; c->depth = 1;
-  c->path = push_array(c->arena, WheelhouseEntity, c->capacity);
+  c->arena = arena_alloc();
   WheelhouseEntity entity = uishell_sidebar_pin_entity(saved);
-  c->path[0] = uishell_sidebar_card_entity_copy(c->arena, entity);
+  c->subject = uishell_sidebar_card_entity_copy(c->arena, entity);
   c->source_key = push_str8_copy(c->arena, saved->source);
   uishell_sidebar_card_retain_label(c, saved->label);
   uishell_sidebar_card_set_pin(c, saved->ghost);
@@ -1040,7 +1038,6 @@ uishell_sidebar_inline_ui(RD_WindowState *ws, String8 key, F32 width)
     UI_PrefWidth(ui_px(card_width, 1)) UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
     UI_CornerRadius00(top) UI_CornerRadius10(top) UI_CornerRadius01(bottom) UI_CornerRadius11(bottom)
     UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), .025f))
-    UI_Focus(c->focused ? UI_FocusKind_On : UI_FocusKind_Off)
     {
       ui_set_next_fixed_x(6.f);
       UI_Box *root = ui_build_box_from_stringf((c->cap_drawn ? 0 : UI_BoxFlag_DrawBorder)|UI_BoxFlag_DrawBackground|UI_BoxFlag_DefaultFocusNavY|
@@ -1053,7 +1050,7 @@ uishell_sidebar_inline_ui(RD_WindowState *ws, String8 key, F32 width)
         ui_set_next_fixed_x(6.f);
         UI_PrefWidth(ui_px(content_width, 1)) UI_PrefHeight(ui_children_sum(1)) UI_Column UI_PrefHeight(ui_em(1.6f, 1))
         {
-          UIShell_SidebarNode node = {0}; U64 index = uishell_sidebar_card_find(ws->sidebar, c->path[c->depth-1], &node);
+          UIShell_SidebarNode node = {0}; U64 index = uishell_sidebar_card_find(ws->sidebar, c->subject, &node);
           size_t action = uishell_sidebar_detached_content(ws->sidebar, ws, c, (U64)c, node, index, content_width, 1);
           if(action != WHEELHOUSE_NONE) { uishell_sidebar_card_queue_action(ws->sidebar, node, action); }
         }
@@ -1063,7 +1060,8 @@ uishell_sidebar_inline_ui(RD_WindowState *ws, String8 key, F32 width)
         if(abs_f32(c->content_height-height) > .5f) { rd_request_frame(); }
         c->content_height = height;
         if(!c->moving) { c->rect = root->rect; c->rect.y1 = c->rect.y0+height; }
-        root->flags |= UI_BoxFlag_MouseClickable; ui_signal_from_box(root);
+        UIShell_SidebarNode node = {0}; U64 index = uishell_sidebar_card_find(ws->sidebar, c->subject, &node);
+        uishell_sidebar_card_body(ws->sidebar, c, node, index, root);
       }
     }
     ui_spacer(ui_px(4, 1));
@@ -1117,7 +1115,6 @@ uishell_sidebar_ghost_card(UIShell_SidebarState *state, RD_WindowState *ws, UISh
   UI_PrefWidth(ui_px(card_width, 1))
   {
     UI_PrefHeight(ui_children_sum(1)) UI_ChildLayoutAxis(Axis2_Y)
-    UI_Focus(c->focused ? UI_FocusKind_On : UI_FocusKind_Off)
     UI_CornerRadius00(top) UI_CornerRadius10(top) UI_CornerRadius01(bottom) UI_CornerRadius11(bottom)
     UI_BackgroundColor(mix_4f32(ui_color_from_name(str8_lit("background")), ui_color_from_name(str8_lit("text")), .025f))
     {
@@ -1131,7 +1128,7 @@ uishell_sidebar_ghost_card(UIShell_SidebarState *state, RD_WindowState *ws, UISh
         ui_set_next_fixed_x(6.f);
         UI_PrefWidth(ui_px(content_width, 1)) UI_PrefHeight(ui_children_sum(1)) UI_Column UI_PrefHeight(ui_em(1.6f, 1))
         {
-          UIShell_SidebarNode node = {0}; U64 index = uishell_sidebar_card_find(state, c->path[c->depth-1], &node);
+          UIShell_SidebarNode node = {0}; U64 index = uishell_sidebar_card_find(state, c->subject, &node);
           size_t action = uishell_sidebar_detached_content(state, ws, c, u64_hash_from_str8(saved->ghost), node, index, content_width, 1);
           if(action != WHEELHOUSE_NONE) { uishell_sidebar_card_queue_action(state, node, action); }
         }
@@ -1140,7 +1137,8 @@ uishell_sidebar_ghost_card(UIShell_SidebarState *state, RD_WindowState *ws, UISh
         if(abs_f32(c->content_height-body->fixed_size.y) > .5f) { rd_request_frame(); }
         c->content_height = body->fixed_size.y;
         if(!c->moving) { c->rect = body->rect; c->rect.y1 = c->rect.y0+body->fixed_size.y; }
-        body->flags |= UI_BoxFlag_MouseClickable; ui_signal_from_box(body);
+        UIShell_SidebarNode node = {0}; U64 index = uishell_sidebar_card_find(state, c->subject, &node);
+        uishell_sidebar_card_body(state, c, node, index, body);
       }
     }
   }

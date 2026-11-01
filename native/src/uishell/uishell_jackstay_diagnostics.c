@@ -444,7 +444,7 @@ uishell_jackstay_input_diagnostics(RD_WindowState *ws)
     String8 binding=cfg_command_from_menu_or_binding(scratch.arena,rd_state->key_map,&palette);
     JSInputCheck(str8_match(binding,str8_lit("open_palette"),0));
     JSInputCheck(uishell_app_cmd_info_from_string(binding).flags & UIShell_CmdFlag_GlobalShortcut);
-    JSInputCheck(!rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused && !test->hover_card_focus);
+    JSInputCheck(!rd_state->popup_active && !ws->query_is_active && !ws->menu_bar_focused);
     U64 before=rd_state->cmds[0].count;
     JSInputCheck(uishell_route_content_activation(ws,&palette,0));
     JSInputCheck(rd_state->cmds[0].count==before+1);
