@@ -127,6 +127,11 @@ pub struct WheelhouseOverviewFrame {
     pub stretch_group: usize,
     pub stretch_x: f64,
     pub stretch_y: f64,
+    /// A grid is open in the overview, so it zooms by hand
+    /// (wheelhouse_overview_zoom, _fit_all), and whether all of it is in
+    /// view (the Fit all toggle is on).
+    pub zoomable: u32,
+    pub fits_all: u32,
 }
 type FrameKeep = (Vec<WheelhouseOverviewTile>, Vec<WheelhouseOverviewGroup>, Vec<WheelhouseOverviewRegion>);
 
@@ -247,6 +252,36 @@ pub unsafe extern "C" fn wheelhouse_overview_pan(h: *mut WheelhouseCore, dx: f64
     run(h, error_out, |h| {
         let finite = |v: f64| if v.is_finite() { v } else { 0.0 };
         h.overview.pan(finite(dx), finite(dy));
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// Zoom a grid in by `factor` (below 1 zooms out) about the point at `at_x`,
+/// `at_y`, shares of the region's width and height: a pinch or a Cmd+scroll
+/// at the pointer. From the whole grid in view to its narrowest tile
+/// filling the region. A cut, like a pan; nothing outside a grid.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_overview_zoom(
+    h: *mut WheelhouseCore,
+    factor: f64,
+    at_x: f64,
+    at_y: f64,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        h.overview.zoom_by(factor, at_x, at_y);
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// The Fit all toggle: fly out to the whole grid, or, when it is all in
+/// view, back to where the grid starts.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_overview_fit_all(h: *mut WheelhouseCore, now_ms: f64, error_out: *mut *mut c_char) -> u32 {
+    run(h, error_out, |h| {
+        h.overview.fit_all(now_ms);
         Ok(())
     })
     .is_some() as u32
@@ -471,6 +506,8 @@ pub unsafe extern "C" fn wheelhouse_overview_frame(
             stretch_group: stretch.and_then(|s| s.group).unwrap_or(NONE),
             stretch_x: stretch.map_or(0.0, |s| s.x),
             stretch_y: stretch.map_or(0.0, |s| s.y),
+            zoomable: window.zoomable() as u32,
+            fits_all: window.fits_all() as u32,
         };
         Ok(give(value, (tiles, groups, regions)))
     })

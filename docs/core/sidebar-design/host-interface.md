@@ -1,4 +1,4 @@
-# The host interface (ABI 19)
+# The host interface (ABI 20)
 
 What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
@@ -8,7 +8,7 @@ behind it is in [Slots and arrangements](slots-and-arrangements.md),
 [The sidebar arrangement](sidebar-arrangement.md) and the
 [Workspace Overlay](workspace-overlay.md).
 
-`wheelhouse_abi_version()` returns 19. Each call has one form: there is no
+`wheelhouse_abi_version()` returns 20. Each call has one form: there is no
 compatibility with earlier versions, and a host requires exactly the version
 it was built against.
 
@@ -132,6 +132,7 @@ workspace region. Each core handle has one, as each window has one core.
 | `wheelhouse_overview_set_grid(h, packing, readable_width, region_width, now_ms)` | Each frame, before reading it: the grid's packing (`WHEELHOUSE_OVERVIEW_SHELVES`, `_TREEMAP`), the smallest width a tile is readable at (0 always fits the whole grid) and the region's width, in the same units. A current tile narrower than that with the whole grid in view zooms the overview in on it. A new packing changes the layout as a new view mode does; a new readable width goes back to the current tile from wherever the overview was scrolled, and a resize keeps the scrolling. |
 | `wheelhouse_overview_slide` / `_pan(h, dx, dy)` | Cuts: slide a row, scroll the overview (rows only down; a grid both ways, when zoomed in). Either stops a glide. |
 | `wheelhouse_overview_grab(h, group, now_ms, caught_out)` / `_drag(h, dx, dy, now_ms)` / `_release(h, now_ms)` | A press on row `group` (`WHEELHOUSE_NONE` between rows), its move since the press as shares of the region's width and height, and its end. A press catches whatever glides or springs back, where it is drawn, and says so (it isn't then a click). The first drag picks what it moves: sideways a row too long for the region, else a grid wider than it; up or down an overview taller than it. Past an end it stretches; let go, it glides on or springs back, `flying` until it stops. The host decides when a press has moved far enough to drag. |
+| `wheelhouse_overview_zoom(h, factor, at_x, at_y)` / `_fit_all(h, now_ms)` | Zoom a grid by hand: in by `factor` (below 1 out) about a point given as shares of the region (a pinch, a Cmd+scroll at the pointer), from the whole grid in view to its narrowest tile filling the region, as a cut; or the Fit all toggle, a flight out to the whole grid or back to where it starts. The frame says whether a grid is open to zoom (`zoomable`) and all in view (`fits_all`). Zoom and pan go back to where the grid starts when the overview opens, the view mode or packing changes, or the readable width changes; they are kept across resizes and workspaces coming and going. |
 | `wheelhouse_overview_set_view_mode(h, view_mode, now_ms)` / `_toggle_cluster` | Change the layout: the view mode (`WHEELHOUSE_OVERVIEW_ROWS`, `_GRID`), or collapse a cluster. Each tile moves to its new place over a moment, and the camera flies to the same place in the new scene; without motion both cut. Workspaces coming and going move the same way. |
 | `wheelhouse_overview_frame(h, now_ms)` / `_free` | `WheelhouseOverviewFrame`: the mode, whether the camera is `flying` (draw again) or the workspace is `settled` (draw it as itself), the `view` (the part of the scene shown), and the tiles, groups and cluster regions in scene units, with any stretch past an end drawn in (and said: `stretch_group`, `stretch_x`, `stretch_y`). Its text is borrowed: free it before changing the overview. |
 
@@ -209,6 +210,12 @@ Address).
   `wheelhouse_dock_restore` repairs a window's documents and returns them
   with dirty marks and the sidebar sections it moved
   (`wheelhouse_dock_restore_free`).
+
+## From ABI 19
+
+ABI 20 zooms a grid by hand (wheelhouse#527): `wheelhouse_overview_zoom` and
+`_fit_all`, and the frame's `zoomable` and `fits_all`. Nothing else
+changes.
 
 ## From ABI 18
 

@@ -199,6 +199,7 @@ uishell_dispatch_app_command(String8 name)
           case WM_EventKind_Text:      {kind = UI_EventKind_Text;}break;
           case WM_EventKind_Scroll:    {kind = UI_EventKind_Scroll;}break;
           case WM_EventKind_FileDrop:  {kind = UI_EventKind_FileDrop;}break;
+          case WM_EventKind_Magnify:   {kind = UI_EventKind_Magnify;}break;
         }
         ui_event.kind         = kind;
         ui_event.key          = wm_event->key;

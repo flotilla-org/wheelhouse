@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::camera::{ease_out, Camera, CameraRig, FlightTiming};
 use super::logical::{logical_layout, GroupKey, LogicalLayout, OverviewEntry};
 use super::morph::{morph, MORPH_MS};
-use super::scene::{scene, GridPacking, Scene, SceneOptions, SceneRect, ViewMode};
+use super::scene::{scene, GridPacking, Scene, SceneOptions, SceneRect, ViewMode, Zoom};
 use super::scroller::{Extent, Range, Scroller};
 use crate::{PlacementKey, WorkspaceId};
 
@@ -33,8 +33,10 @@ pub struct OverviewWindow {
     entries: Vec<OverviewEntry>,
     slides: BTreeMap<GroupKey, f64>,
     collapsed: BTreeSet<PlacementKey>,
-    /// The centre the overview has been scrolled to, if it has.
+    /// The centre the overview has been scrolled to, if it has, and how far
+    /// a grid has been zoomed by hand.
     pan: Option<(f64, f64)>,
+    zoom: Option<Zoom>,
     layout: LogicalLayout,
     scene: Scene,
     rig: Option<CameraRig>,
@@ -129,13 +131,14 @@ struct Aim {
     mode: OverviewMode,
     current: Option<WorkspaceId>,
     pan: Option<(f64, f64)>,
+    zoom: Option<Zoom>,
 }
 
 impl Aim {
     fn camera(&self, scene: &Scene) -> Option<Camera> {
         match &self.mode {
             OverviewMode::Workspace => self.current.and_then(|id| scene.rest_camera(id)),
-            OverviewMode::Overview => (!scene.tiles.is_empty()).then(|| scene.overview_camera(self.current, self.pan)),
+            OverviewMode::Overview => (!scene.tiles.is_empty()).then(|| scene.overview_camera(self.current, self.pan, self.zoom)),
             OverviewMode::Group(key) => scene.groups.iter().position(|g| &g.key == key).and_then(|i| scene.group_camera(i)),
         }
     }
@@ -161,6 +164,7 @@ impl OverviewWindow {
             slides: BTreeMap::new(),
             collapsed: BTreeSet::new(),
             pan: None,
+            zoom: None,
             layout,
             scene,
             rig: None,
@@ -215,6 +219,7 @@ impl OverviewWindow {
         } else if new_readable || self.options.readable_share != share {
             if new_readable {
                 self.pan = None;
+                self.zoom = None;
             }
             self.options.readable_share = share;
             self.rebuild();
@@ -229,6 +234,7 @@ impl OverviewWindow {
     fn relayout(&mut self, now_ms: f64) {
         self.hold(now_ms);
         self.pan = None;
+        self.zoom = None;
         if matches!(self.mode, OverviewMode::Group(_)) {
             self.mode = OverviewMode::Overview;
         }
@@ -304,6 +310,7 @@ impl OverviewWindow {
         if switched {
             self.mode = OverviewMode::Workspace;
             self.pan = None;
+            self.zoom = None;
             self.go(now_ms);
         } else {
             self.follow_scene(now_ms, reshaped);
@@ -331,6 +338,7 @@ impl OverviewWindow {
         self.hold(now_ms);
         self.mode = OverviewMode::Overview;
         self.pan = None;
+        self.zoom = None;
         if let Some(current) = self.current {
             if let Some((key, slide)) = self.scene.slide_into(current) {
                 self.slides.insert(key, slide);
@@ -408,11 +416,11 @@ impl OverviewWindow {
         if self.mode != OverviewMode::Overview {
             return;
         }
-        let from = self.scene.overview_camera(self.current, self.pan);
+        let from = self.scene.overview_camera(self.current, self.pan, self.zoom);
         // Kept within the scene, as the camera keeps itself. A pan that
         // moves nothing (a grid that fits) isn't kept, or it would become
         // where the grid later zooms in.
-        let to = self.scene.overview_camera(self.current, Some((from.cx + dx, from.cy + dy)));
+        let to = self.scene.overview_camera(self.current, Some((from.cx + dx, from.cy + dy)), self.zoom);
         if to != from {
             self.pan = Some((to.cx, to.cy));
             if let Some(m) = &mut self.morph {
@@ -420,6 +428,59 @@ impl OverviewWindow {
             }
         }
         self.cut();
+    }
+
+    /// A grid can be zoomed by hand: the overview is open on one.
+    pub fn zoomable(&self) -> bool {
+        self.mode == OverviewMode::Overview && self.options.mode == ViewMode::Grid && !self.scene.tiles.is_empty()
+    }
+
+    /// Zoom a grid in by `factor` (below 1 zooms out) about the point at
+    /// `at_x`, `at_y`, as shares of the region's width and height: what is
+    /// there stays there. From everything fitting to the narrowest tile
+    /// filling the region. A cut, like a pan. Zoomed all the way out it
+    /// holds as Fit, so the next zoom in starts from everything fitting.
+    pub fn zoom_by(&mut self, factor: f64, at_x: f64, at_y: f64) {
+        self.stop_glide();
+        if !self.zoomable() || !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        let aspect = self.options.aspect;
+        let from = self.scene.overview_camera(self.current, self.pan, self.zoom);
+        let (closest, fit) = self.scene.zoom_range();
+        let w = (from.w / factor).clamp(closest, fit);
+        let (at_x, at_y) =
+            (if at_x.is_finite() { at_x.clamp(0.0, 1.0) } else { 0.5 }, if at_y.is_finite() { at_y.clamp(0.0, 1.0) } else { 0.5 });
+        let view = from.view(aspect);
+        let (x, y) = (view.x0 + at_x * view.width(), view.y0 + at_y * view.height());
+        let centre = (x + (0.5 - at_x) * w, y + (0.5 - at_y) * w / aspect);
+        let zoom = if w >= fit { Zoom::Fit } else { Zoom::Width(w) };
+        let to = self.scene.overview_camera(self.current, Some(centre), Some(zoom));
+        self.zoom = Some(zoom);
+        self.pan = (zoom != Zoom::Fit).then_some((to.cx, to.cy));
+        if let Some(m) = &mut self.morph {
+            m.track = None;
+        }
+        self.cut();
+    }
+
+    /// The whole grid is in view.
+    pub fn fits_all(&self) -> bool {
+        self.zoomable() && self.target().is_some_and(|t| t.w >= self.scene.zoom_range().1 * (1.0 - 1e-9))
+    }
+
+    /// The Fit all toggle: fly out to the whole grid, or, when it is all in
+    /// view, back to where the grid starts (zoomed in on the current tile
+    /// if it would be too small to read). When the grid starts all in view
+    /// the two are the same camera, and the toggle stays marked.
+    pub fn fit_all(&mut self, now_ms: f64) {
+        if !self.zoomable() {
+            return;
+        }
+        self.hold(now_ms);
+        self.zoom = if self.fits_all() { None } else { Some(Zoom::Fit) };
+        self.pan = None;
+        self.go(now_ms);
     }
 
     /// Collapse or expand cluster `cluster` of group `group`.
@@ -519,7 +580,7 @@ impl OverviewWindow {
     }
 
     fn aim(&self) -> Aim {
-        Aim { mode: self.mode.clone(), current: self.current, pan: self.pan }
+        Aim { mode: self.mode.clone(), current: self.current, pan: self.pan, zoom: self.zoom }
     }
 
     /// Before a move aims the camera elsewhere: a camera staying on a moving
@@ -713,7 +774,7 @@ impl OverviewWindow {
         match target {
             Target::Slide(key) => self.scene.groups.iter().find(|g| &g.key == key).map(|g| g.slide),
             Target::Pan(axis) => {
-                let camera = self.scene.overview_camera(self.current, self.pan);
+                let camera = self.scene.overview_camera(self.current, self.pan, self.zoom);
                 Some(if *axis == Axis::Across { camera.cx } else { camera.cy })
             }
         }
@@ -728,7 +789,7 @@ impl OverviewWindow {
                 if self.mode != OverviewMode::Overview || self.scene.tiles.is_empty() {
                     return None;
                 }
-                let view = self.scene.overview_camera(self.current, self.pan).view(self.options.aspect);
+                let view = self.scene.overview_camera(self.current, self.pan, self.zoom).view(self.options.aspect);
                 let bounds = self.scene.bounds;
                 let (lo, hi, half) = match axis {
                     Axis::Across => (bounds.x0, bounds.x1, view.width() / 2.0),
@@ -774,12 +835,12 @@ impl OverviewWindow {
                 }
             }
             Target::Pan(axis) => {
-                let camera = self.scene.overview_camera(self.current, self.pan);
+                let camera = self.scene.overview_camera(self.current, self.pan, self.zoom);
                 let centre = match axis {
                     Axis::Across => (place, camera.cy),
                     Axis::Down => (camera.cx, place),
                 };
-                let to = self.scene.overview_camera(self.current, Some(centre));
+                let to = self.scene.overview_camera(self.current, Some(centre), self.zoom);
                 if to != camera {
                     self.pan = Some((to.cx, to.cy));
                     self.cut();

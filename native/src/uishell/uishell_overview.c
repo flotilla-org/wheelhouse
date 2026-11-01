@@ -265,7 +265,32 @@ struct UIShell_OverviewMove
   F64 drag_dx;
   F64 drag_dy;
   B32 releases;
+  // A grid zoomed by hand, by `scale` about `scale_at` (shares of the
+  // region), and the Fit all toggle.
+  B32 scales;
+  F64 scale;
+  Vec2F32 scale_at;
+  B32 fits_all;
 };
+
+// How far a pinch or a Cmd+scroll zooms: a pinch by its own growth, a
+// scroll by about an eighth a wheel notch, in as it scrolls up.
+internal F64
+uishell_overview_scale_from_event(UI_Event *evt)
+{
+  // Within e^±4 an event, past any grid's zoom range, so a wild delta can't
+  // overflow.
+  if(evt->kind == UI_EventKind_Magnify) { return exp(Clamp(-4.0, evt->delta_2f32.x, 4.0)); }
+  F32 d = evt->delta_2f32.y;
+  if(!evt->scroll_is_precise)
+  {
+    // As boxes take a wheel: notches of 30, at least one.
+    F32 notches = (F32)(S32)(d/30.f);
+    if(notches == 0 && d != 0) { notches = d > 0 ? 1.f : -1.f; }
+    d = notches*30.f;
+  }
+  return exp(Clamp(-4.0, -d*0.004, 4.0));
+}
 
 // Whether the overview is taller than the region, so it pans down, or (on
 // Axis2_X) a grid wider than it, so it pans across; rows slide instead.
@@ -336,6 +361,8 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   if(f == 0 || !o->through_scene) { return; }
   Temp scratch = scratch_begin(0, 0);
   B32 interactive = (f->mode != WHEELHOUSE_OVERVIEW_WORKSPACE);
+  // Fitting a group leaves the overview's own mode, so no grid zooms then.
+  B32 zoomable = (interactive && f->zoomable);
   B32 moved = 0;
   UIShell_OverviewMove move = {0};
   Vec2F32 dim = dim_2f32(o->region);
@@ -361,10 +388,10 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
                                                 "###workspace_overview");
   UI_Parent(scene_box)
   {
-    //- the overview's controls, in the top right: back out of a fitted
-    // group (shown only then), and the view mode switch, Rows and Grid. They
-    // read input before anything under them and are drawn last, over the
-    // scene.
+    //- the overview's controls, in the top right: the view mode switch,
+    // Rows and Grid, and beside it back out of a fitted group, or, on a grid,
+    // the Fit all toggle. They read input before anything under them and are
+    // drawn last, over the scene.
     F32 switch_size = floor_f32(ui_top_font_size()*2.2f);
     F32 switch_margin = floor_f32(ui_top_font_size()*0.6f);
     F32 switch_gap = floor_f32(ui_top_font_size()*0.4f);
@@ -372,8 +399,8 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
     U32 switch_modes[2] = {WHEELHOUSE_OVERVIEW_ROWS, WHEELHOUSE_OVERVIEW_GRID};
     UI_Signal switch_sigs[2] = {0};
     Rng2F32 switch_rects[2] = {0};
-    UI_Signal back_sig = {0};
-    Rng2F32 back_rect = {0};
+    UI_Signal side_sig = {0};
+    Rng2F32 side_rect = {0};
     for(U64 i = 0; interactive && i < 2; i++)
     {
       F32 x1 = dim.x - switch_margin - (1 - i)*switch_size;
@@ -388,16 +415,18 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
         move.view_mode = switch_modes[i];
       }
     }
-    if(interactive && fitted)
+    if((interactive && fitted) || zoomable)
     {
       F32 x1 = switch_rects[0].x0 - switch_gap;
-      back_rect = r2f32p(x1 - switch_size, switch_margin, x1, switch_margin + switch_size);
-      ui_set_next_rect(back_rect);
-      UI_Box *hit = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "###overview_back");
-      back_sig = ui_signal_from_box(hit);
-      uishell_tool_strip_tooltip(back_sig, str8_lit("All groups (Esc)"));
-      if(ui_clicked(back_sig)) { move.backs = 1; }
+      side_rect = r2f32p(x1 - switch_size, switch_margin, x1, switch_margin + switch_size);
+      ui_set_next_rect(side_rect);
+      UI_Box *hit = ui_build_box_from_stringf(UI_BoxFlag_Clickable, fitted ? "###overview_back" : "###overview_fit_all");
+      side_sig = ui_signal_from_box(hit);
+      uishell_tool_strip_tooltip(side_sig, fitted ? str8_lit("All groups (Esc)") : str8_lit("Fit all"));
+      if(ui_clicked(side_sig) && fitted) { move.backs = 1; }
+      if(ui_clicked(side_sig) && !fitted) { move.fits_all = 1; }
     }
+    B32 side = (side_rect.x1 > side_rect.x0);
 
     //- rows too long for the region: dragging one, between its tiles or
     // on them, slides it. A row lies under its tiles and takes input after
@@ -512,31 +541,32 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
     if(interactive)
     {
       F32 pad = floor_f32(ui_top_font_size()*0.2f);
-      for(U64 plate = 0; plate < (fitted ? 2 : 1); plate++)
+      for(U64 plate = 0; plate < (side ? 2 : 1); plate++)
       {
-        Rng2F32 rect = plate == 0 ? r2f32p(switch_rects[0].x0, switch_rects[0].y0, switch_rects[1].x1, switch_rects[1].y1) : back_rect;
+        Rng2F32 rect = plate == 0 ? r2f32p(switch_rects[0].x0, switch_rects[0].y0, switch_rects[1].x1, switch_rects[1].y1) : side_rect;
         ui_set_next_rect(pad_2f32(rect, pad));
         UI_CornerRadius(floor_f32(ui_top_font_size()*0.4f)) UI_TagF("floating")
         {
           ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawDropShadow, "###overview_controls_plate_%I64u", plate);
         }
       }
-      for(U64 i = 0; i < (fitted ? 3 : 2); i++)
+      for(U64 i = 0; i < (side ? 3 : 2); i++)
       {
-        B32 back = (i == 2);
-        B32 marked = !back && (f->view_mode == switch_modes[i]);
-        UI_Signal sig = back ? back_sig : switch_sigs[i];
+        B32 back = (i == 2 && fitted);
+        B32 fit_all = (i == 2 && !fitted);
+        B32 marked = fit_all ? !!f->fits_all : !back && (f->view_mode == switch_modes[i]);
+        UI_Signal sig = i == 2 ? side_sig : switch_sigs[i];
         Vec4F32 wash = ui_color_from_name(str8_lit("hover"));
         F32 steps = (marked ? 1.f : 0.f) + (ui_hovering(sig) ? 1.f : 0.f);
         wash.w *= rd_hover_alpha(wash, ui_color_from_name(str8_lit("background")), RD_HoverBrightnessStep)*steps;
-        ui_set_next_rect(back ? back_rect : switch_rects[i]);
+        ui_set_next_rect(i == 2 ? side_rect : switch_rects[i]);
         ui_set_next_background_color(wash);
         UI_TextAlignment(UI_TextAlign_Center) UI_CornerRadius(ui_top_font_size()*0.25f) RD_Font(RD_FontSlot_Icons)
           UI_TagF(marked || back ? "" : "weak")
         {
           UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc,
                                                   "###overview_control_icon_%I64u", i);
-          RD_IconKind icon = back ? RD_IconKind_LeftArrow : i == 0 ? RD_IconKind_List : RD_IconKind_Grid;
+          RD_IconKind icon = back ? RD_IconKind_LeftArrow : fit_all ? RD_IconKind_Thumbnails : i == 0 ? RD_IconKind_List : RD_IconKind_Grid;
           ui_box_equip_display_string(box, rd_icon_kind_text_table[icon]);
         }
       }
@@ -584,6 +614,24 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
       }
     }
   }
+
+  //- zooming a grid by hand: a pinch, or Cmd+scroll (Ctrl+scroll off
+  // macOS), about the pointer
+  if(zoomable)
+  {
+    Vec2F32 dim_safe = v2f32(Max(1.f, dim.x), Max(1.f, dim.y));
+    for(UI_Event *evt = 0; ui_next_event(&evt);)
+    {
+      B32 pinch = (evt->kind == UI_EventKind_Magnify);
+      B32 accel_scroll = (evt->kind == UI_EventKind_Scroll && evt->modifiers == WM_Modifier_Accel);
+      if(!(pinch || accel_scroll) || !contains_2f32(o->region, evt->pos)) { continue; }
+      Vec2F32 at = sub_2f32(evt->pos, o->region.p0);
+      move.scale = (move.scales ? move.scale : 1.0)*uishell_overview_scale_from_event(evt);
+      move.scale_at = v2f32(at.x/dim_safe.x, at.y/dim_safe.y);
+      move.scales = 1;
+      ui_eat_event(evt);
+    }
+  }
   scratch_end(scratch);
 
   //- the moves, now the region is drawn: a press first, so it catches
@@ -616,6 +664,14 @@ uishell_overview_ui(RD_WindowState *ws, UIShell_Overview *o, UIShell_ControlledS
   if(move.backs)
   {
     moved = wheelhouse_overview_back(o->state->core, o->now_ms, 0) || moved;
+  }
+  if(move.scales && move.scale != 1.0)
+  {
+    moved = wheelhouse_overview_zoom(o->state->core, move.scale, move.scale_at.x, move.scale_at.y, 0) || moved;
+  }
+  if(move.fits_all)
+  {
+    moved = wheelhouse_overview_fit_all(o->state->core, o->now_ms, 0) || moved;
   }
   if(move.sets_view_mode)
   {

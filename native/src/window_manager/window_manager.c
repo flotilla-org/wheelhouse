@@ -77,6 +77,7 @@ wm_string_from_event_kind(WM_EventKind kind)
     case WM_EventKind_Wakeup:               {result = str8_lit("Wakeup");}break;
     case WM_EventKind_MenuOpen:             {result = str8_lit("MenuOpen");}break;
     case WM_EventKind_MenuCommand:          {result = str8_lit("MenuCommand");}break;
+    case WM_EventKind_Magnify:              {result = str8_lit("Magnify");}break;
   }
   return result;
 }

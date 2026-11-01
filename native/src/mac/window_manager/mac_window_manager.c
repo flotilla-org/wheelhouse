@@ -1651,6 +1651,13 @@ wm_get_events(Arena *arena, B32 wait)
         mac_wm_scroll_fields(wm_event, event);
         wm_event->pos = mac_wm_client_pos_from_ns_point(window, [event locationInWindow]);
       }break;
+      case NSEventTypeMagnify:
+      {
+        WM_Event *wm_event = mac_wm_push_event(arena, &result, WM_EventKind_Magnify, window);
+        wm_event->modifiers = mac_wm_modifiers_from_ns_flags([event modifierFlags]);
+        wm_event->delta = v2f32((F32)[event magnification], 0);
+        wm_event->pos = mac_wm_client_pos_from_ns_point(window, [event locationInWindow]);
+      }break;
     }
     if(send_to_nsapp)
     {

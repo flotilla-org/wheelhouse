@@ -30,6 +30,15 @@ pub enum GridPacking {
     Treemap,
 }
 
+/// How far the grid has been zoomed by hand: out to everything fitting, or
+/// to a camera this wide (scene units), from everything fitting in to one
+/// tile filling the region.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Zoom {
+    Fit,
+    Width(f64),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SceneOptions {
     pub mode: ViewMode,
@@ -291,8 +300,9 @@ impl Scene {
     /// rows as fit, starting from `current`'s. Grid: the whole scene, or,
     /// when `current`'s tile would be too narrow to read, zoomed in on it
     /// until it isn't. `pan`, the centre the overview has been scrolled to,
-    /// overrides where it starts; rows only scroll down.
-    pub fn overview_camera(&self, current: Option<WorkspaceId>, pan: Option<(f64, f64)>) -> Camera {
+    /// overrides where it starts; rows only scroll down. A grid's `zoom` by
+    /// hand overrides how wide it is, within `zoom_range`; rows don't zoom.
+    pub fn overview_camera(&self, current: Option<WorkspaceId>, pan: Option<(f64, f64)>, zoom: Option<Zoom>) -> Camera {
         let aspect = self.options.aspect;
         let b = self.bounds;
         let current = current.and_then(|id| self.tile(id));
@@ -313,12 +323,36 @@ impl Scene {
             ViewMode::Grid => {
                 let fit = Camera::fit(&b, aspect, 1.0);
                 let share = self.options.readable_share;
-                let Some(tile) = current.filter(|t| t.rect.width() < share * fit.w) else { return fit };
-                let w = tile.rect.width() / share;
-                let (cx, cy) = pan.unwrap_or_else(|| centre(&tile.rect));
+                let w = match zoom {
+                    Some(Zoom::Fit) => return fit,
+                    Some(Zoom::Width(w)) => {
+                        let (closest, _) = self.zoom_range();
+                        if w.is_finite() {
+                            w.clamp(closest, fit.w)
+                        } else {
+                            fit.w
+                        }
+                    }
+                    None => match current.filter(|t| t.rect.width() < share * fit.w) {
+                        Some(tile) => tile.rect.width() / share,
+                        None => return fit,
+                    },
+                };
+                if w >= fit.w {
+                    return fit;
+                }
+                let (cx, cy) = pan.or(current.map(|t| centre(&t.rect))).unwrap_or((fit.cx, fit.cy));
                 Camera { cx: keep(cx, w, b.x0, b.x1), cy: keep(cy, w / aspect, b.y0, b.y1), w }
             }
         }
+    }
+
+    /// How wide a grid's camera can be zoomed by hand: from its narrowest
+    /// tile filling the region out to everything fitting.
+    pub fn zoom_range(&self) -> (f64, f64) {
+        let fit = Camera::fit(&self.bounds, self.options.aspect, 1.0).w;
+        let closest = self.tiles.iter().map(|t| t.rect.width()).fold(f64::INFINITY, f64::min);
+        (closest.min(fit), fit)
     }
 
     /// The camera that fits group `group`, its heading included.

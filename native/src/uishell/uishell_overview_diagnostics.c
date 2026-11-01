@@ -8,7 +8,8 @@
 // sees. A local group is a row of its own under its name, and scrolling
 // over or dragging a row too long for the region slides it. A switch lays
 // the overview out as rows or a grid; the grid packs as the user's setting
-// says, and zoomed in on a tile too narrow to read, it pans across. Runs
+// says, and zoomed in on a tile too narrow to read, it pans across; a
+// pinch or Cmd+scroll zooms a grid, and Fit all shows all of it. Runs
 // after the workspace lifecycle diagnostics, on the overview's own clock.
 
 #define OverviewCheck(cond, msg) do { if(!(cond)) { ok = 0; fprintf(stderr, "FAIL overview: %s\n", msg); } } while(0)
@@ -27,6 +28,35 @@ internal UIShell_Overview
 uishell_overview_diagnostic_step(RD_WindowState *ws, F64 ms, CFG_Node *current, Rng2F32 region)
 {
   return uishell_overview_diagnostic_step_motion(ws, ms, current, region, 1);
+}
+
+// Builds the overview in a test UI state for two frames, sending `event`
+// (its pos in the window, where the mouse is) on the second.
+internal void
+uishell_overview_diagnostic_event(RD_WindowState *ws, CFG_Node *window, CFG_Node *current, Rng2F32 region, Arena *arena, UI_Event sent)
+{
+  UI_State *saved_ui = ui_state, *test = ui_state_alloc();
+  ui_select_state(test);
+  for(U32 frame = 0; frame < 2; frame++)
+  {
+    UIShell_Overview o = uishell_overview_diagnostic_step(ws, 0, current, region);
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(arena, window);
+    UI_IconInfo icons = ws->ui->icon_info;
+    UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+    if(frame == 1)
+    {
+      event.v = sent;
+      events.first = events.last = &event; events.count = 1;
+    }
+    ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+    ui_state->mouse = sent.pos;
+    UIShell_RegsScope(.window = window->id)
+    UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+    { uishell_overview_ui(ws, &o, &split, current); }
+    ui_end_build();
+    uishell_overview_end(&o);
+  }
+  ui_select_state(saved_ui); ui_state_release(test);
 }
 
 // Builds the overview in a test UI state for three frames, clicking the box
@@ -594,6 +624,46 @@ uishell_overview_diagnostics(CFG_Node *window)
   uishell_overview_end(&o);
   uishell_overview_back(ws);
   o = uishell_overview_diagnostic_step(ws, 1000, b, region); uishell_overview_end(&o);
+  //- Zooming a grid by hand: Cmd+scroll (Ctrl+scroll off macOS) and a
+  // pinch zoom about the pointer, as cuts; Fit all flies out to the whole
+  // grid, and back to where the grid starts.
+  {
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(o.frame->zoomable, "a grid open in the overview zooms");
+    F64 start_w = o.frame->view.x1 - o.frame->view.x0;
+    uishell_overview_end(&o);
+    Vec2F32 middle = center_2f32(region);
+    uishell_overview_diagnostic_event(ws, window, b, region, scratch.arena,
+                                      (UI_Event){.kind = UI_EventKind_Scroll, .modifiers = WM_Modifier_Alt, .pos = middle, .delta_2f32 = v2f32(0, -120), .scroll_is_precise = 1});
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    OverviewCheck(abs_f64(o.frame->view.x1 - o.frame->view.x0 - start_w) < start_w*1e-9, "a scroll with another modifier doesn't zoom");
+    uishell_overview_end(&o);
+    uishell_overview_diagnostic_event(ws, window, b, region, scratch.arena,
+                                      (UI_Event){.kind = UI_EventKind_Scroll, .modifiers = WM_Modifier_Accel, .pos = middle,
+                                                 .delta_2f32 = v2f32(0, -120), .scroll_is_precise = 1});
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    F64 scrolled_w = o.frame->view.x1 - o.frame->view.x0;
+    OverviewCheck(scrolled_w < start_w*0.9 && !o.frame->flying && !o.frame->fits_all, "Cmd+scroll up zooms a grid in, as a cut");
+    uishell_overview_end(&o);
+    uishell_overview_diagnostic_event(ws, window, b, region, scratch.arena,
+                                      (UI_Event){.kind = UI_EventKind_Magnify, .pos = middle, .delta_2f32 = v2f32(0.3f, 0)});
+    o = uishell_overview_diagnostic_step(ws, 0, b, region);
+    F64 pinched_w = o.frame->view.x1 - o.frame->view.x0;
+    OverviewCheck(pinched_w < scrolled_w*0.9, "a pinch out zooms a grid in");
+    uishell_overview_end(&o);
+    OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_fit_all")), "the Fit all toggle");
+    o = uishell_overview_diagnostic_step(ws, 16, b, region);
+    B32 fit_flies = o.frame->flying;
+    uishell_overview_end(&o);
+    o = uishell_overview_diagnostic_step(ws, 2000, b, region);
+    OverviewCheck(fit_flies && o.frame->fits_all && o.frame->view.x1 - o.frame->view.x0 >= start_w*(1 - 1e-6),
+                  "Fit all flies out to the whole grid");
+    uishell_overview_end(&o);
+    OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_fit_all")), "the Fit all toggle, on");
+    o = uishell_overview_diagnostic_step(ws, 2000, b, region);
+    OverviewCheck(abs_f64(o.frame->view.x1 - o.frame->view.x0 - start_w) < start_w*1e-6, "Fit all again goes back to where the grid starts");
+    uishell_overview_end(&o);
+  }
   OverviewCheck(uishell_overview_diagnostic_click(ws, window, b, region, scratch.arena, str8_lit("###overview_view_mode_0")), "the overview's Rows switch");
   o = uishell_overview_diagnostic_step(ws, 0, b, region);
   OverviewCheck(o.frame->view_mode == WHEELHOUSE_OVERVIEW_ROWS && uishell_overview_view_mode_setting() == WHEELHOUSE_OVERVIEW_ROWS,

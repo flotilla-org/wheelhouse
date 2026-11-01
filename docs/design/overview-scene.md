@@ -188,13 +188,17 @@ Worked through with Robert on 2026-11-01 (#527).
   overview taller than it. The frame comes with the stretch drawn in.
 - **Catching:** a press during a glide or a spring-back holds it where it is
   drawn, and isn't a click.
-- **Zooming by hand**, next: pinch (macOS magnify events, passed through the
-  window layer), Cmd+scroll (Ctrl+scroll on Linux and Windows), and a Fit
-  all toggle beside Rows/Grid. From everything fitting to one tile filling
-  the region; a pinch or Cmd+scroll zooms about the pointer, Fit all about
-  the middle. Zoom and pan go back to the default view when the overview
-  reopens, the view mode changes or the readable width changes, and are kept
-  across resizes and changes of layout, within the scene.
+- **Zooming by hand**, a grid's: pinch (macOS magnify events, passed through
+  the window layer), Cmd+scroll (Ctrl+scroll on Linux and Windows, where a
+  touchpad's pinch arrives as one), and a Fit all toggle beside Rows/Grid.
+  From everything fitting to the narrowest tile filling the region; a pinch
+  or Cmd+scroll zooms about the pointer, as a cut, and Fit all flies out to
+  the whole grid, or back to where the grid starts. Zoom and pan go back to
+  the default view when the overview reopens, the view mode changes or the
+  readable width changes, and are kept across resizes and changes of
+  layout, within the scene. Rows don't zoom: a row's slide is how they move
+  sideways, and a camera narrower than the row window would need a second
+  way.
 
 Left for later: touch, and which device owns a gesture when there are
 several; trackpad scroll phases, and with them a stretch from the wheel (a

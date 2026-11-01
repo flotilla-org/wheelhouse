@@ -1477,3 +1477,54 @@ fn the_overviews_drags_reach_c() {
         wheelhouse_destroy(h);
     }
 }
+
+// Zooming a grid through C: the frame says when a grid can zoom and when it
+// is all in view; a zoom about a point is a cut, and Fit all flies out to
+// the whole grid. Rows don't zoom.
+#[test]
+fn the_overviews_zoom_reaches_c() {
+    unsafe {
+        let mut error = ptr::null_mut();
+        let h = create("");
+        let ids: Vec<WorkspaceId> = (1..=12u8).map(|i| WorkspaceId::from_bytes([i; 16])).collect();
+        let names: Vec<String> = (1..=12).map(|i| format!("w{i}")).collect();
+        let workspaces: Vec<WorkspaceInput> = ids
+            .iter()
+            .zip(&names)
+            .enumerate()
+            .map(|(i, (id, name))| WorkspaceInput { id: (*id).into(), position: i, name: text(name), selected: (i == 0) as u32 })
+            .collect();
+        assert_eq!(wheelhouse_observe(h, workspaces.as_ptr(), workspaces.len(), ptr::null(), 0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_set_view_mode(h, WHEELHOUSE_OVERVIEW_GRID, 0.0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_set_grid(h, WHEELHOUSE_OVERVIEW_SHELVES, 0.0, 1000.0, 0.0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_update(h, ids[0].into(), 1.6, 0.0, 1, &mut error), 1);
+        assert_eq!(wheelhouse_overview_open(h, 0.0, &mut error), 1);
+        assert_eq!(wheelhouse_overview_update(h, ids[0].into(), 1.6, 5000.0, 1, &mut error), 1);
+        // The view's width, whether a grid zooms and fits, and flying.
+        let frame = |now: f64| {
+            let frame = wheelhouse_overview_frame(h, now, &mut ptr::null_mut());
+            let f = &*frame;
+            let summary = (f.view.x1 - f.view.x0, f.zoomable, f.fits_all, f.flying);
+            wheelhouse_overview_frame_free(frame);
+            summary
+        };
+        let (fit, zoomable, fits_all, _) = frame(5000.0);
+        assert_eq!((zoomable, fits_all), (1, 1));
+        assert_eq!(wheelhouse_overview_zoom(h, 2.0, 0.5, 0.5, &mut error), 1);
+        let (zoomed, _, fits_all, flying) = frame(5000.0);
+        assert!((zoomed - fit / 2.0).abs() < 1e-9 * fit && fits_all == 0 && flying == 0);
+        assert_eq!(wheelhouse_overview_fit_all(h, 5000.0, &mut error), 1);
+        assert_eq!(frame(5000.0).3, 1, "Fit all flies");
+        assert_eq!(wheelhouse_overview_update(h, ids[0].into(), 1.6, 9000.0, 1, &mut error), 1);
+        let (width, _, fits_all, _) = frame(9000.0);
+        assert!((width - fit).abs() < 1e-9 * fit && fits_all == 1);
+        assert_eq!(wheelhouse_overview_set_view_mode(h, WHEELHOUSE_OVERVIEW_ROWS, 9000.0, &mut error), 1);
+        assert_eq!(frame(9000.0).1, 0, "rows don't zoom");
+        assert!(error.is_null());
+
+        assert_eq!(wheelhouse_overview_zoom(ptr::null_mut(), 2.0, 0.5, 0.5, &mut error), 0);
+        assert!(!error.is_null());
+        wheelhouse_string_free(error);
+        wheelhouse_destroy(h);
+    }
+}

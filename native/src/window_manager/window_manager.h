@@ -100,6 +100,9 @@ typedef enum WM_EventKind
   WM_EventKind_Wakeup,
   WM_EventKind_MenuCommand,
   WM_EventKind_MenuOpen,
+  // A pinch on a trackpad: `delta.x` is how much it grew (0.1 is a tenth
+  // bigger), at `pos`. macOS only for now.
+  WM_EventKind_Magnify,
   WM_EventKind_COUNT
 }
 WM_EventKind;
