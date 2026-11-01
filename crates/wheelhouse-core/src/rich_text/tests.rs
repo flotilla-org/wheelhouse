@@ -303,6 +303,57 @@ fn an_embed_is_selected_whole() {
     view.select(doc, Point { key: table, byte: 3 }, Point { key: table, byte: 40 }).unwrap();
     let selection = view.selection().unwrap();
     assert_eq!((selection.anchor.byte, selection.focus.byte), (0, doc.text(doc.get(table).unwrap()).len() as u32));
+    view.select(doc, Point { key: table, byte: u32::MAX }, Point { key: table, byte: u32::MAX - 1 }).unwrap();
+    let selection = view.selection().unwrap();
+    assert_eq!((selection.anchor.byte, selection.focus.byte), (doc.text(doc.get(table).unwrap()).len() as u32, selection.anchor.byte));
+}
+
+#[test]
+fn an_endpoint_inside_a_character_moves_to_its_start() {
+    let mut rich = RichText::open("h\u{e9}llo w\u{f6}rld\n");
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    let key = find(doc, "llo");
+    view.select(doc, Point { key, byte: 2 }, Point { key, byte: 9 }).unwrap();
+    let selection = view.selection().unwrap();
+    assert_eq!((selection.anchor.byte, selection.focus.byte), (1, 8));
+    assert_eq!(view.copy(doc, Format::Plain).unwrap(), "\u{e9}llo w");
+}
+
+#[test]
+fn html_copy_keeps_only_safe_link_targets() {
+    let source =
+        "[a](javascript:alert(1)) [b](<JaVa\tScript:x>) [c](&#106;avascript:x) ![d](vbscript:x) [![e](data:x)](https://ok.example)\n\
+                  [f](HTTPS://example.com) [g](mailto:a@example.com) [h](notes/log.md) [i](#top) [[Wiki Page]]\n";
+    let mut rich = RichText::open(source);
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.select_all(doc);
+    let html = view.copy(doc, Format::Html).unwrap();
+    assert!(html.starts_with("<p>a b c d <a href=\"https://ok.example\">e</a>"), "{html}");
+    for safe in ["HTTPS://example.com", "mailto:a@example.com", "notes/log.md", "#top", "Wiki%20Page"] {
+        assert!(html.contains(&format!("<a href=\"{safe}\">")), "{safe} not in:\n{html}");
+    }
+    assert_eq!(html.matches("<a ").count(), 6, "{html}");
+}
+
+#[test]
+fn a_reference_definition_is_copied_whatever_its_url_holds() {
+    let mut rich = RichText::open("[x][a] and [y][b]\n\n[a]: https://example.com/a>b\n[b]: <https://example.com/c\\>d>\n");
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.select_all(doc);
+    let markdown = view.copy(doc, Format::Markdown).unwrap();
+    let mut copied = RichText::open(&markdown);
+    let id = copied.subscribe();
+    let (doc, view) = copied.view_mut(id).unwrap();
+    view.select_all(doc);
+    assert_eq!(view.copy(doc, Format::Markdown).unwrap(), markdown, "the definitions parse back to the same URLs");
+    let html = view.copy(doc, Format::Html).unwrap();
+    assert!(
+        html.contains("href=\"https://example.com/a%3Eb\"") && html.contains("href=\"https://example.com/c%3Ed\""),
+        "{markdown}\n{html}"
+    );
 }
 
 #[test]

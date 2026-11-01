@@ -54,7 +54,7 @@ fn snap(doc: &Tree, id: NodeId, byte: u32) -> u32 {
     let len = extent(doc, id);
     match doc.kind(id) {
         Kind::Embed | Kind::Rule => {
-            if byte * 2 < len {
+            if byte < len.div_ceil(2) {
                 0
             } else {
                 len
@@ -111,6 +111,8 @@ fn clamp(doc: &Tree, point: Point, before: &[Was]) -> Option<Point> {
     before[..at].iter().rev().find_map(|w| shown(w.key).map(|id| Point { key: w.key, byte: extent(doc, id) }))
 }
 
+/// `start` and `end` are char boundaries of the Block's text, as
+/// `normalize` leaves a selection's endpoints.
 #[derive(Debug, Clone, Copy)]
 struct Piece {
     id: NodeId,
@@ -348,6 +350,20 @@ fn html(markdown: &str) -> String {
         }
         event => vec![event],
     });
+    // A link is copied as its text unless its target is safe to paste.
+    let mut kept = vec![];
+    let events = events.filter_map(move |event| match event {
+        Event::Start(Tag::Link { ref dest_url, .. } | Tag::Image { ref dest_url, .. }) if !safe_href(dest_url) => {
+            kept.push(false);
+            None
+        }
+        Event::Start(Tag::Link { .. } | Tag::Image { .. }) => {
+            kept.push(true);
+            Some(event)
+        }
+        Event::End(TagEnd::Link | TagEnd::Image) if !kept.pop().unwrap_or(true) => None,
+        event => Some(event),
+    });
     let events = events.map(|event| match event {
         Event::Start(Tag::BlockQuote(Some(_))) => Event::Start(Tag::BlockQuote(None)),
         Event::End(TagEnd::BlockQuote(Some(_))) => Event::End(TagEnd::BlockQuote(None)),
@@ -368,6 +384,16 @@ fn html(markdown: &str) -> String {
     let mut out = String::new();
     push_html(&mut out, events);
     out
+}
+
+/// Relative, or http, https or mailto. Browsers drop whitespace and
+/// control characters from a URL before reading its scheme, so this does too.
+fn safe_href(url: &str) -> bool {
+    let url: String = url.chars().filter(|c| !c.is_ascii_whitespace() && !c.is_ascii_control()).collect();
+    match url.find(|c: char| !c.is_ascii_alphanumeric() && !"+-.".contains(c)) {
+        Some(end) if url[end..].starts_with(':') => ["http", "https", "mailto"].iter().any(|s| url[..end].eq_ignore_ascii_case(s)),
+        _ => true,
+    }
 }
 
 /// A list item's marker as written, its number made the one shown, and as
@@ -392,6 +418,21 @@ fn item_marker(doc: &Tree, item: NodeId) -> String {
     marker
 }
 
+/// A list item's marker as written, at `column` and `width` chars wide, and
+/// the marker to put there: a number can be wider than the one written.
+struct MarkerEdit {
+    column: usize,
+    width: usize,
+    marker: Vec<char>,
+    fits: bool,
+}
+
+impl MarkerEdit {
+    fn growth(&self) -> usize {
+        self.marker.len().saturating_sub(self.width)
+    }
+}
+
 /// A Block's markdown prefixes: for its first line, and for the lines of
 /// a code Block made again. They are its first line's prefix as written, so
 /// every container keeps its column, with each list item's marker put back
@@ -402,9 +443,7 @@ fn markdown_prefix(doc: &Tree, id: NodeId) -> (String, String, Vec<(usize, usize
     let start = doc.source_info(id).block.0 as usize;
     let written: Vec<char> = source.slice(source.line_start(start), start).chars().collect();
     let mut lead = written.clone();
-    // Each item's marker as written: its column and width, and the marker
-    // to put there. A number can be wider than the one written.
-    let mut edits = vec![];
+    let mut edits: Vec<MarkerEdit> = vec![];
     for item in markers(doc, id).into_iter().filter(|&c| doc.kind(c) == Kind::ListItem) {
         let at = doc.source_info(item).block.0 as usize;
         let at = at + source.slice(at, at + 64).len() - source.slice(at, at + 64).trim_start_matches(' ').len();
@@ -413,17 +452,17 @@ fn markdown_prefix(doc: &Tree, id: NodeId) -> (String, String, Vec<(usize, usize
         let marker: Vec<char> = item_marker(doc, item).chars().collect();
         let fits =
             lead.get(column..column + width).is_some_and(|p| p.iter().all(|c| *c == ' ' || c.is_ascii_digit() || ".)-+*".contains(*c)));
-        edits.push((column, width, marker, fits));
+        edits.push(MarkerEdit { column, width, marker, fits });
     }
     // Rightmost first, so the columns to its left hold.
-    edits.sort_by_key(|e| Reverse(e.0));
+    edits.sort_by_key(|e| Reverse(e.column));
     let mut written_at = vec![];
-    for (column, width, marker, fits) in &edits {
-        if *fits {
-            lead.splice(column..&(column + width), marker.iter().copied());
+    for e in &edits {
+        if e.fits {
+            lead.splice(e.column..e.column + e.width, e.marker.iter().copied());
         }
-        let shift: usize = edits.iter().filter(|e| e.0 < *column && e.3).map(|e| e.2.len() - e.1.min(e.2.len())).sum();
-        written_at.push((column + shift, marker.len(), *fits));
+        let shift: usize = edits.iter().filter(|left| left.column < e.column && left.fits).map(MarkerEdit::growth).sum();
+        written_at.push((e.column + shift, e.marker.len(), e.fits));
     }
     written_at.reverse();
     // The innermost container's content column.
@@ -452,7 +491,7 @@ fn markdown_prefix(doc: &Tree, id: NodeId) -> (String, String, Vec<(usize, usize
     let rest = blank(&written[..content.min(written.len())]);
     // Where a marker grew, the item's content column moved right: the
     // lines after must move with it.
-    let widened = edits.iter().filter(|e| e.3 && e.2.len() > e.1).map(|e| (e.0 + e.1, e.2.len() - e.1)).collect();
+    let widened = edits.iter().filter(|e| e.fits && e.growth() > 0).map(|e| (e.column + e.width, e.growth())).collect();
     (out, rest, widened)
 }
 
@@ -570,8 +609,8 @@ fn inline_markdown(doc: &Tree, id: NodeId, a: u32, b: u32, trim_start: bool, tri
     out.push_str(&tail);
     let mut cut: Vec<&(&Span, &SpanSource)> = marks.iter().filter(|(s, _)| !atomic(s.attr) && s.start < b && b < s.end()).collect();
     cut.sort_by_key(|(s, _)| (Reverse(s.start), s.end()));
-    for (span, src) in cut {
-        out.push_str(&closer(doc, id, span, src));
+    for (_, src) in cut {
+        out.push_str(&closer(doc, src));
     }
     out
 }
@@ -591,7 +630,7 @@ fn opener(doc: &Tree, id: NodeId, span: &Span, src: &SpanSource) -> String {
     written
 }
 
-fn closer(doc: &Tree, _id: NodeId, _span: &Span, src: &SpanSource) -> String {
+fn closer(doc: &Tree, src: &SpanSource) -> String {
     let written = doc.source().slice(src.inner.1 as usize, src.outer.1 as usize).into_owned();
     if written.starts_with('>') {
         return String::new();
@@ -680,8 +719,7 @@ fn block_markdown(doc: &Tree, piece: &Piece, first: bool, last: bool) -> String 
 /// Copy as Markdown: the raw source between the selection's first and last
 /// Blocks, with those two cut as the selection cuts them.
 fn markdown(doc: &Tree, view: &View, pieces: &[Piece]) -> String {
-    let first = pieces[0];
-    let last = *pieces.last().unwrap();
+    let (first, last) = (pieces[0], pieces[pieces.len() - 1]);
     let mut out = block_markdown(doc, &first, true, pieces.len() == 1);
     if pieces.len() > 1 {
         let from = block_end(doc, first.id);
@@ -737,7 +775,15 @@ fn markdown(doc: &Tree, view: &View, pieces: &[Piece]) -> String {
         }
     }
     for (label, url) in definitions {
-        out.push_str(&format!("\n\n[{label}]: <{url}>"));
+        let mut escaped = String::new();
+        for c in url.chars() {
+            match c {
+                '\\' | '<' | '>' => escaped.extend(['\\', c]),
+                '\n' => escaped.push_str("%0A"),
+                c => escaped.push(c),
+            }
+        }
+        out.push_str(&format!("\n\n[{label}]: <{escaped}>"));
     }
     out
 }
