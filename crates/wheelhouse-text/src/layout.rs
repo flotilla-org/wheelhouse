@@ -88,7 +88,8 @@ pub struct Input<'a> {
     pub ellipsis: bool,
     pub align: Align,
     /// Tab stops every this many spaces of the tab's own style; 0 for 4. Text
-    /// with tabs is shaped twice: once to measure where each tab starts.
+    /// with tabs is shaped twice: once to measure where each tab starts. Past
+    /// 65536 styles, counting one per distinct tab width, tabs are one space wide.
     pub tab_size: u32,
 }
 
@@ -551,6 +552,9 @@ impl Shape<'_, '_> {
 
 /// Bytes of the layout's text map to `shift` more in `source`; bytes from
 /// `real` on are the ellipsis. `origin` maps style indices to the input's.
+/// Counts and offsets fit the arrays' u32s: the text is at most u32::MAX
+/// bytes (`TextTooLong`), every cluster covers at least one, and 2^32
+/// glyphs would take 48 GB.
 struct Emit<'s> {
     state: MutexGuard<'s, State>,
     fonts: &'s mut FontContext,
