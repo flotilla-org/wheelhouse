@@ -513,6 +513,31 @@ mod transport {
             assert!(queue.send(Pending::Workdirs { reply }).is_ok());
             response
         }
+        // An observer that gives part of the tree and then fails publishes
+        // none of it.
+        #[test]
+        fn a_failed_automation_observer_publishes_nothing() {
+            unsafe extern "C" fn observe(context: *mut c_void, out: *mut AutomationBuild, _: u32) -> u32 {
+                let json = br#"[{"id":"workspace/w","kind":"workspace","durable":true}]"#;
+                wheelhouse_ingress_automation_workspaces(out, Text { data: json.as_ptr(), len: json.len() });
+                *(context as *const u32)
+            }
+            let (_queue, receiver) = mpsc::sync_channel(1);
+            let mut server = Ingress {
+                queue: receiver,
+                automation: Arc::new(Automation::new(noop)),
+                generation: Generation::default(),
+                malformed: false,
+                shutdown: None,
+                thread: None,
+            };
+            server.automation.streams.store(1, std::sync::atomic::Ordering::SeqCst);
+            for (result, published) in [(0u32, false), (1, true)] {
+                let host = AutomationHost { mode: AUTOMATION_FULL, observe: Some(observe), context: &result as *const u32 as *mut c_void };
+                unsafe { wheelhouse_ingress_automation(&mut server, &host) };
+                assert_eq!(server.automation.published.borrow().tree.is_some(), published);
+            }
+        }
         #[test]
         fn failed_observation_is_shared_only_within_the_drain() {
             let (queue, receiver) = mpsc::sync_channel(64);

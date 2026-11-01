@@ -109,6 +109,7 @@ uishell_automation_observe(void *unused, WheelhouseIngressAutomationBuild *out, 
     {
       fprintf(stderr, "Automation Endpoint: %s\n", error ? error : "no Semantic Tree");
       wheelhouse_string_free(error);
+      // 0 discards what out was given: nothing is published this frame.
       result = 0;
       break;
     }

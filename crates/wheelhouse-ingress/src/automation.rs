@@ -251,7 +251,7 @@ impl Held {
 
     /// Held, unless the count is already `max`.
     fn under(automation: &Arc<Automation>, count: fn(&Automation) -> &AtomicUsize, max: usize) -> Option<Held> {
-        let counted = count(automation).fetch_update(SeqCst, SeqCst, |n| (n < max).then_some(n + 1)).is_ok();
+        let counted = count(automation).try_update(SeqCst, SeqCst, |n| (n < max).then_some(n + 1)).is_ok();
         counted.then(|| Held(automation.clone(), count))
     }
 }
