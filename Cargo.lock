@@ -84,12 +84,12 @@ dependencies = [
 [[package]]
 name = "binnacle-core"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=6bca91c2bc93f67b21f2185b8b881ddcffd82cc5#6bca91c2bc93f67b21f2185b8b881ddcffd82cc5"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 
 [[package]]
 name = "binnacle-described"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=6bca91c2bc93f67b21f2185b8b881ddcffd82cc5#6bca91c2bc93f67b21f2185b8b881ddcffd82cc5"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "binnacle-format",
@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "binnacle-described-http"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=6bca91c2bc93f67b21f2185b8b881ddcffd82cc5#6bca91c2bc93f67b21f2185b8b881ddcffd82cc5"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-described",
  "bytes",
@@ -117,7 +117,7 @@ dependencies = [
 [[package]]
 name = "binnacle-ffi"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=6bca91c2bc93f67b21f2185b8b881ddcffd82cc5#6bca91c2bc93f67b21f2185b8b881ddcffd82cc5"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "binnacle-described",
@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "binnacle-format"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=6bca91c2bc93f67b21f2185b8b881ddcffd82cc5#6bca91c2bc93f67b21f2185b8b881ddcffd82cc5"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "serde_json",
  "unicode-segmentation",
@@ -140,7 +140,7 @@ dependencies = [
 [[package]]
 name = "binnacle-group"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=6bca91c2bc93f67b21f2185b8b881ddcffd82cc5#6bca91c2bc93f67b21f2185b8b881ddcffd82cc5"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "binnacle-memory",
@@ -149,7 +149,7 @@ dependencies = [
 [[package]]
 name = "binnacle-layout"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=6bca91c2bc93f67b21f2185b8b881ddcffd82cc5#6bca91c2bc93f67b21f2185b8b881ddcffd82cc5"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "ciborium",
@@ -161,7 +161,7 @@ dependencies = [
 [[package]]
 name = "binnacle-memory"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=6bca91c2bc93f67b21f2185b8b881ddcffd82cc5#6bca91c2bc93f67b21f2185b8b881ddcffd82cc5"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "regex",
@@ -170,7 +170,7 @@ dependencies = [
 [[package]]
 name = "binnacle-testkit"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=6bca91c2bc93f67b21f2185b8b881ddcffd82cc5#6bca91c2bc93f67b21f2185b8b881ddcffd82cc5"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=ba9f371a50205cc6b95fee5118802c5365d524af#ba9f371a50205cc6b95fee5118802c5365d524af"
 dependencies = [
  "binnacle-core",
  "binnacle-described",
