@@ -280,8 +280,11 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
       scratch_end(scratch);
     }
   }
-  dr_rect(r2f32p(o.x0, o.y0+row_band-1.f, o.x1, o.y0+row_band), header_line, 0, 0, 0.f);
-  dr_rect(r2f32p(o.x0+col_band-1.f, o.y0, o.x0+col_band, o.y1), header_line, 0, 0, 0.f);
+  // The bands' edges on whole pixels, where the scroll bars beside them
+  // start (ui_scroll_region_build_thumbs), so neither bar covers a rule.
+  F32 band_y = round_f32(o.y0+row_band), band_x = round_f32(o.x0+col_band);
+  dr_rect(r2f32p(o.x0, band_y-1.f, o.x1, band_y), header_line, 0, 0, 0.f);
+  dr_rect(r2f32p(band_x-1.f, o.y0, band_x, o.y1), header_line, 0, 0, 0.f);
 
   // Focus, then a drag's drop line.
   if(snap->has_focus_rect)
