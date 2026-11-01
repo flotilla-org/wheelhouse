@@ -129,6 +129,8 @@ mod transport {
         pub queue: mpsc::Receiver<Pending>,
         pub automation: Arc<Automation>,
         pub generation: Generation,
+        /// The observer's last tree was malformed; said once, not each frame.
+        pub malformed: bool,
         shutdown: Option<oneshot::Sender<()>>,
         thread: Option<thread::JoinHandle<()>>,
     }
@@ -298,7 +300,14 @@ mod transport {
                     });
                 })
                 .map_err(|e| e.to_string())?;
-            Ok(Self { queue: receiver, automation, generation: Generation::default(), shutdown: Some(shutdown), thread: Some(thread) })
+            Ok(Self {
+                queue: receiver,
+                automation,
+                generation: Generation::default(),
+                malformed: false,
+                shutdown: Some(shutdown),
+                thread: Some(thread),
+            })
         }
     }
     impl Drop for Ingress {
@@ -397,6 +406,7 @@ mod transport {
                     queue: receiver,
                     automation: Arc::new(Automation::new(noop)),
                     generation: Generation::default(),
+                    malformed: false,
                     shutdown: None,
                     thread: None,
                 };
@@ -510,6 +520,7 @@ mod transport {
                 queue: receiver,
                 automation: Arc::new(Automation::new(noop)),
                 generation: Generation::default(),
+                malformed: false,
                 shutdown: None,
                 thread: None,
             };
@@ -537,6 +548,7 @@ mod transport {
                 queue: receiver,
                 automation: Arc::new(Automation::new(noop)),
                 generation: Generation::default(),
+                malformed: false,
                 shutdown: None,
                 thread: None,
             };
@@ -984,12 +996,16 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
 pub unsafe extern "C" fn wheelhouse_ingress_automation(server: *mut Ingress, host: *const AutomationHost) {
     #[cfg(any(unix, windows))]
     if let (Some(server), Some(host)) = (server.as_mut(), host.as_ref()) {
+        let malformed = &mut server.malformed;
         automation::frame_end(&server.automation, &mut server.generation, host.mode, |screens| {
             let observe = host.observe?;
             let mut build = AutomationBuild { valid: true, ..Default::default() };
             let ok = observe(host.context, &mut build, u32::from(screens)) == 1;
-            if ok && !build.valid {
+            if ok && !build.valid && !*malformed {
                 eprintln!("wheelhouse ingress: the Semantic Tree's observer gave malformed JSON or text; answering 503");
+            }
+            if ok {
+                *malformed = !build.valid;
             }
             (ok && build.valid).then(|| build.assemble())
         });

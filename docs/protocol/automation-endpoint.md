@@ -109,6 +109,9 @@ Each takes:
   node has the ID. Percent-encode the slashes or not: both work, but a `+`
   must be `%2B`.
 - `include=terminal_text`: terminals' screens, where the setting allows.
+  `self` ignores it. On the event stream, screens come with the snapshots
+  that other changes send: a screen changing alone sends nothing, by design,
+  so a client wanting live text polls `semantic`.
 
 Unknown parameters are ignored. 400 is a malformed query (or `self` without
 a session), 404 every route while automation is off, and 503 when the UI
@@ -137,8 +140,9 @@ share when it lands. While a read waits for the tree or an event stream is
 open, the UI builds the tree at each frame's end and compares it with the
 last one, and the generation goes up when it differs. Otherwise nothing is
 built. A terminal's screen text doesn't count as a change, but its size
-does. Screens are read only while some read or stream asks for
-`include=terminal_text`.
+does. Screens are read only for a waiting read that asks for
+`include=terminal_text`, or, for a stream that asks, on a frame where the
+tree changed.
 
 **Cost.** While any stream is open, every frame builds and serialises the
 whole tree to compare it, until Core deltas (#441) give a cheaper signal.
@@ -159,8 +163,8 @@ drydock's `/v1/events` does. Each line is one event:
   have Core deltas (#441); `delta` events come then.
 - **A cursor that can't be resumed** (another instance's, an older one, or
   nonsense) gets a snapshot. Cursors are opaque, and no history is kept.
-- **The generation is global.** A stream with a `root` gets a snapshot when
-  any node changes, even one outside its root.
+- **With a `root`,** a change elsewhere sends nothing. The generation is
+  global, so its cursors can skip numbers.
 - **The stream ends** when automation is turned off, or when its `root`
   goes. A later snapshot over 4 MiB, even without terminal text, breaks it
   off instead: the body stops unfinished (no final chunk), so a client can

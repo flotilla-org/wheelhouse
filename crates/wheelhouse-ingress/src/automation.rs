@@ -4,6 +4,8 @@
 //! wants it, and publishes `(generation, tree)` on a watch channel; handlers
 //! read and follow that.
 use std::{
+    borrow::Cow,
+    collections::HashMap,
     sync::{
         atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -78,24 +80,25 @@ pub struct Tree {
 }
 
 /// One line of the event stream; in CBOR, one frame, with `type` "event".
+/// It borrows the tree it sends.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Record {
+pub struct Record<'a> {
     #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<String>,
     pub cursor: String,
-    pub event: Event,
+    pub event: Event<'a>,
 }
 
-impl flotilla_cbor::Message for Record {
+impl flotilla_cbor::Message for Record<'_> {
     const TYPES: &'static [&'static str] = &["event"];
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Event {
+pub enum Event<'a> {
     /// The whole tree: first, after every change, and for a cursor that
     /// can't be resumed.
-    Snapshot { tree: Tree },
+    Snapshot { tree: Cow<'a, Tree> },
 }
 
 /// `self`: the views showing a Cleat session.
@@ -136,9 +139,12 @@ pub struct Automation {
     pub requested: AtomicU64,
     /// Open event streams; while any is, every frame compares the tree.
     pub streams: AtomicUsize,
-    /// Reads and streams that asked for terminal text; while none has, the
-    /// UI gives no screens.
+    /// Reads waiting that asked for terminal text; while none has, the UI
+    /// gives no screens.
     pub screens: AtomicUsize,
+    /// Streams that asked for terminal text: the UI gives screens only when
+    /// the tree has changed.
+    pub screen_streams: AtomicUsize,
     pub published: watch::Sender<Arc<Published>>,
 }
 
@@ -151,6 +157,7 @@ impl Automation {
             requested: AtomicU64::new(0),
             streams: AtomicUsize::new(0),
             screens: AtomicUsize::new(0),
+            screen_streams: AtomicUsize::new(0),
             published: watch::channel(Arc::default()).0,
         }
     }
@@ -159,14 +166,14 @@ impl Automation {
         format!("{}:{generation}", self.instance)
     }
 
-    /// The tree as of the UI's next frame, with screens if `params` asks:
-    /// 404 while automation is off, 503 when no frame comes in time.
-    async fn fresh(self: &Arc<Self>, params: &Params) -> Result<Arc<Published>, StatusCode> {
+    /// The tree as of the UI's next frame, with `screens` if asked: 404
+    /// while automation is off, 503 when no frame comes in time.
+    async fn fresh(self: &Arc<Self>, screens: bool) -> Result<Arc<Published>, StatusCode> {
         if self.mode.load(SeqCst) == AUTOMATION_OFF {
             return Err(StatusCode::NOT_FOUND);
         }
         // Counted before the ticket, so the frame that serves it sees it.
-        let _screens = params.terminal_text().then(|| Held::new(self, |a| &a.screens).0);
+        let _screens = screens.then(|| Held::new(self, |a| &a.screens).0);
         let mut published = self.published.subscribe();
         let ticket = self.requested.fetch_add(1, SeqCst) + 1;
         (self.wake)();
@@ -206,12 +213,12 @@ fn reply(cbor: bool, body: Option<Vec<u8>>) -> Response {
 
 async fn semantic(State(automation): State<Arc<Automation>>, Query(params): Query<Params>, headers: HeaderMap) -> Response {
     let cbor = cbor_wanted(&headers);
-    let published = match automation.fresh(&params).await {
+    let published = match automation.fresh(params.terminal_text()).await {
         Ok(published) => published,
         Err(status) => return status.into_response(),
     };
     match tree(&published, &params) {
-        Some(tree) => reply(cbor, fit(tree, |tree| encode(tree, cbor))),
+        Some(tree) => reply(cbor, fit(Cow::Owned(tree), |tree| encode(tree, cbor))),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -221,7 +228,8 @@ async fn caller(State(automation): State<Arc<Automation>>, Query(params): Query<
     let Some(session) = params.session.clone().filter(|session| !session.is_empty()) else {
         return (StatusCode::BAD_REQUEST, "session is required").into_response();
     };
-    let published = match automation.fresh(&params).await {
+    // `self` gives no screens.
+    let published = match automation.fresh(false).await {
         Ok(published) => published,
         Err(status) => return status.into_response(),
     };
@@ -253,10 +261,10 @@ impl Drop for Held {
     }
 }
 
-/// A snapshot first, unless `since` is current, then one after each change.
-/// The stream ends when automation turns off or `root` goes. A first
-/// snapshot over [`MAX_RESPONSE`] is a 500; a later one breaks the stream
-/// off unfinished.
+/// A snapshot first, unless `since` is current, then one after each change
+/// (with a `root`, each change under it). The stream ends when automation
+/// turns off or `root` goes. A first snapshot over [`MAX_RESPONSE`] is a
+/// 500; a later one breaks the stream off unfinished.
 async fn events(State(automation): State<Arc<Automation>>, Query(params): Query<Params>, headers: HeaderMap) -> Response {
     let cbor = cbor_wanted(&headers);
     // The cap first, so a refused client never makes the UI build.
@@ -264,28 +272,39 @@ async fn events(State(automation): State<Arc<Automation>>, Query(params): Query<
     if open >= MAX_STREAMS {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    let screens = params.terminal_text().then(|| Held::new(&automation, |a| &a.screens).0);
-    let published = match automation.fresh(&params).await {
+    let screens = params.terminal_text().then(|| Held::new(&automation, |a| &a.screen_streams).0);
+    let published = match automation.fresh(params.terminal_text()).await {
         Ok(published) => published,
         Err(status) => return status.into_response(),
     };
-    let first = match event(&automation, &published, &params, cbor) {
-        None => return StatusCode::NOT_FOUND.into_response(),
-        Some(_) if params.since.as_deref() == Some(&automation.cursor(published.generation)) => None,
-        Some(None) => return reply(cbor, None),
-        Some(line) => line,
+    let Some(first) = tree(&published, &params) else {
+        return StatusCode::NOT_FOUND.into_response();
     };
-    let state = (stream, screens, automation.published.subscribe(), published.generation, params);
-    let rest = futures_util::stream::unfold(state, move |(stream, screens, mut changes, mut sent, params)| async move {
+    let last = subtree(&params, &first);
+    let first = match params.since.as_deref() == Some(&automation.cursor(published.generation)) {
+        true => None,
+        false => match event(&automation, &first, cbor) {
+            None => return reply(cbor, None),
+            line => line,
+        },
+    };
+    let state = (stream, screens, automation.published.subscribe(), published.generation, last, params);
+    let rest = futures_util::stream::unfold(state, move |(stream, screens, mut changes, mut sent, mut last, params)| async move {
         loop {
             let published = changes.borrow_and_update().clone();
             // Automation turned off.
             published.tree.as_ref()?;
             if sent != published.generation {
                 sent = published.generation;
+                let tree = tree(&published, &params)?;
+                let seen = subtree(&params, &tree);
+                if seen.is_some() && seen == last {
+                    continue;
+                }
+                last = seen;
                 // Too large: break off, unlike the clean end of turning off.
-                let line = event(&stream.0, &published, &params, cbor)?.ok_or_else(|| std::io::Error::other("the snapshot exceeds 4 MiB"));
-                return Some((line, (stream, screens, changes, sent, params)));
+                let line = event(&stream.0, &tree, cbor).ok_or_else(|| std::io::Error::other("the snapshot exceeds 4 MiB"));
+                return Some((line, (stream, screens, changes, sent, last, params)));
             }
             changes.changed().await.ok()?;
         }
@@ -295,14 +314,17 @@ async fn events(State(automation): State<Arc<Automation>>, Query(params): Query<
     ([(header::CACHE_CONTROL, "no-store"), (header::CONTENT_TYPE, content_type)], Body::from_stream(lines)).into_response()
 }
 
-/// `published` as one event for `params`, a line of JSON or a CBOR frame:
-/// `None` while automation is off or when `root` has gone, `Some(None)` past
+/// With a `root`, the nodes a stream sends, to skip changes elsewhere.
+fn subtree(params: &Params, tree: &Tree) -> Option<Vec<u8>> {
+    params.root.as_ref().and_then(|_| serde_json::to_vec(&tree.nodes).ok())
+}
+
+/// `tree` as one event, a line of JSON or a CBOR frame; `None` past
 /// [`MAX_RESPONSE`].
-fn event(automation: &Automation, published: &Published, params: &Params, cbor: bool) -> Option<Option<Vec<u8>>> {
-    let tree = tree(published, params)?;
+fn event(automation: &Automation, tree: &Tree, cbor: bool) -> Option<Vec<u8>> {
     let cursor = automation.cursor(tree.generation);
-    Some(fit(tree, |tree| {
-        let record = Record { frame: None, cursor: cursor.clone(), event: Event::Snapshot { tree: tree.clone() } };
+    fit(Cow::Borrowed(tree), |tree| {
+        let record = Record { frame: None, cursor: cursor.clone(), event: Event::Snapshot { tree: Cow::Borrowed(tree) } };
         if cbor {
             FRAMING.encode(&Record { frame: Some("event".into()), ..record }).ok()
         } else {
@@ -311,7 +333,7 @@ fn event(automation: &Automation, published: &Published, params: &Params, cbor: 
                 line
             })
         }
-    }))
+    })
 }
 
 /// What `params` read of `published`: `None` while automation is off, or
@@ -348,11 +370,12 @@ pub fn drop_terminal_text(nodes: &mut [Node]) -> bool {
 
 /// `tree` encoded, without terminal text and marked truncated if it
 /// doesn't fit otherwise; `None` if it still doesn't.
-pub fn fit(mut tree: Tree, encode: impl Fn(&Tree) -> Option<Vec<u8>>) -> Option<Vec<u8>> {
+pub fn fit(mut tree: Cow<Tree>, encode: impl Fn(&Tree) -> Option<Vec<u8>>) -> Option<Vec<u8>> {
     encode(&tree).or_else(|| {
+        let tree = tree.to_mut();
         drop_terminal_text(&mut tree.nodes);
         tree.truncated = true;
-        encode(&tree)
+        encode(tree)
     })
 }
 
@@ -409,13 +432,14 @@ pub struct Build {
 impl Build {
     /// The Semantic Tree, with what the UI knows merged into its nodes.
     pub fn assemble(self) -> Vec<Node> {
+        let terminals: HashMap<_, _> = self.terminals.into_iter().collect();
         let mut nodes = self.workspaces;
         for workspace in &mut nodes {
             if self.selected.iter().any(|id| workspace.id == format!("workspace/{id}")) {
                 workspace.state.push(Flag::Selected);
             }
             workspace.visit_mut(&mut |node| {
-                for (_, known) in self.terminals.iter().filter(|(id, _)| *id == node.id) {
+                if let Some(known) = terminals.get(&node.id) {
                     let terminal = node.props.terminal.get_or_insert_with(Terminal::default);
                     terminal.session = known.session.clone().or(terminal.session.take());
                     terminal.cols = known.cols;
@@ -471,10 +495,11 @@ impl Generation {
 
 /// The UI's side, at each frame's end: note the setting, and while a read
 /// waits or a stream is open, build the tree with `build`, compare it, and
-/// publish it if a read waits or it changed. `build` is told whether anyone
-/// asked for screens, and gives `None` when the tree isn't available now;
-/// reads then time out. A setting it doesn't know is taken as off.
-pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32, build: impl FnOnce(bool) -> Option<Vec<Node>>) {
+/// publish it if a read waits or it changed. `build` is told whether to give
+/// screens: when a waiting read asked, or when the tree changed and a stream
+/// asked. It gives `None` when the tree isn't available now; reads then time
+/// out. A setting it doesn't know is taken as off.
+pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32, mut build: impl FnMut(bool) -> Option<Vec<Node>>) {
     let mode = if mode > AUTOMATION_FULL { AUTOMATION_OFF } else { mode };
     automation.mode.store(mode, SeqCst);
     let requested = automation.requested.load(SeqCst);
@@ -483,9 +508,10 @@ pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32
     if !waiting && automation.streams.load(SeqCst) == 0 {
         return;
     }
+    let screens = automation.screens.load(SeqCst) > 0;
     let mut tree = match mode {
         AUTOMATION_OFF => None,
-        _ => match build(automation.screens.load(SeqCst) > 0) {
+        _ => match build(screens) {
             Some(tree) => Some(tree),
             None => return,
         },
@@ -495,6 +521,10 @@ pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32
         // Turning off ends the streams.
         None => current.tree.is_some(),
     };
+    // Streams that asked get screens with each change, not every frame.
+    if changed && tree.is_some() && !screens && automation.screen_streams.load(SeqCst) > 0 {
+        tree = build(true).or(tree);
+    }
     if waiting || changed {
         let served = requested.max(current.served);
         automation.published.send_replace(Arc::new(Published { served, generation: generation.generation, tree: tree.map(Arc::new) }));

@@ -190,16 +190,16 @@ fn the_size_cap_drops_terminal_text_first() {
     });
     let tree = tree(&published(nodes), &params("include=terminal_text")).unwrap();
     let within = |limit: usize| move |tree: &Tree| encode(tree, false).filter(|body| body.len() <= limit);
-    let whole: Value = serde_json::from_slice(&fit(tree.clone(), within(MAX_RESPONSE)).unwrap()).unwrap();
+    let whole: Value = serde_json::from_slice(&fit(Cow::Borrowed(&tree), within(MAX_RESPONSE)).unwrap()).unwrap();
     assert!(whole.to_string().contains("xxxx") && whole.get("truncated").is_none());
     // Over the cap: the text goes, the nodes stay.
-    let capped: Value = serde_json::from_slice(&fit(tree.clone(), within(3000)).unwrap()).unwrap();
+    let capped: Value = serde_json::from_slice(&fit(Cow::Borrowed(&tree), within(3000)).unwrap()).unwrap();
     assert_eq!(capped["truncated"], true);
     assert!(!capped.to_string().contains("xxxx") && !capped.to_string().contains("cursor"));
     assert_eq!(capped["nodes"].as_array().unwrap().len(), 2);
     assert_eq!(capped["nodes"][0]["children"][0]["children"][0]["children"][0]["props"]["terminal"]["session"], "s1");
     // Still over: none.
-    assert_eq!(fit(tree, within(100)), None);
+    assert_eq!(fit(Cow::Owned(tree), within(100)), None);
 }
 
 #[hegel::test(test_cases = 200)]
@@ -338,7 +338,7 @@ fn closes(reader: &mut Body, wait: Duration) -> bool {
 
 /// The next event line, or `None` when none comes within `wait`.
 #[cfg(unix)]
-fn next(reader: &mut Body, wait: Duration) -> Option<Record> {
+fn next(reader: &mut Body, wait: Duration) -> Option<Record<'static>> {
     use std::io::BufRead;
     // macOS refuses a timeout (EINVAL) once the peer has closed; the read
     // then ends at once.
@@ -355,7 +355,7 @@ fn next(reader: &mut Body, wait: Duration) -> Option<Record> {
 #[cfg(unix)]
 fn snapshot(record: Record) -> Tree {
     let Event::Snapshot { tree } = record.event;
-    tree
+    tree.into_owned()
 }
 
 // A snapshot first; another after a change, and none without one; a
@@ -394,6 +394,16 @@ fn the_event_stream_sends_a_snapshot_first_and_after_each_change() {
     let tree = snapshot(next(&mut rooted, wait).unwrap());
     assert_eq!((tree.nodes.len(), tree.nodes[0].id.as_str()), (1, B));
     assert!(serde_json::to_string(&tree).unwrap().contains("$ top"));
+    // Its screens are read when the tree changes, not every frame.
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(!endpoint.screens.load(SeqCst), "screens read every frame for a stream");
+    // A change outside its root sends it nothing; one under it does.
+    endpoint.tree.lock().unwrap()[0].name = Some("elsewhere".into());
+    assert_eq!(next(&mut rooted, Duration::from_millis(300)), None);
+    endpoint.rename("under the root");
+    let tree = snapshot(next(&mut rooted, wait).unwrap());
+    assert_eq!(tree.nodes[0].name.as_deref(), Some("under the root"));
+    assert!(serde_json::to_string(&tree).unwrap().contains("$ top"), "no screens with a change");
     assert_eq!(endpoint.read("/v1/observed/events?root=workspace/none", "").0, 404);
     // Turning automation off ends the streams, and the routes answer 404.
     assert_eq!(snapshot(next(&mut events, wait).unwrap()).nodes[1].name.as_deref(), Some("again"));
@@ -424,7 +434,7 @@ fn the_event_stream_frames_cbor() {
     let mut frame = header.to_vec();
     frame.resize(flotilla_cbor::HEADER_LEN + FRAMING.body_len(&header).unwrap(), 0);
     events.read_exact(&mut frame[flotilla_cbor::HEADER_LEN..]).unwrap();
-    let record: Record = FRAMING.decode(&frame).unwrap();
+    let record: Record<'static> = FRAMING.decode(&frame).unwrap();
     assert_eq!(record.frame.as_deref(), Some("event"));
     assert_eq!(snapshot(record).nodes.len(), 2);
 }
@@ -455,6 +465,9 @@ fn reads_answer_from_the_next_frame() {
     assert_eq!(status, 200);
     assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["views"].as_array().unwrap().len(), 2);
     assert_eq!(endpoint.read("/v1/observed/self", "").0, 400);
+    // `self` gives no text, so asking builds no screens.
+    assert_eq!(endpoint.read("/v1/observed/self?session=s1&include=terminal_text", "").0, 200);
+    assert!(!endpoint.screens.load(SeqCst), "self built screens");
     assert_eq!(endpoint.read("/v1/observed/semantic?root=workspace/none", "").0, 404);
 }
 
@@ -508,4 +521,20 @@ fn an_oversize_snapshot_breaks_the_stream_off() {
     assert!(!rest(body).ends_with(b"0\r\n\r\n"), "an oversize snapshot ended it cleanly");
     // Over the cap from the start: a 500, as for one read.
     assert_eq!(endpoint.read("/v1/observed/events", "").0, 500);
+}
+
+// A client that goes while its stream is idle frees its place.
+#[cfg(unix)]
+#[test]
+fn a_stream_whose_client_goes_is_released_while_idle() {
+    let endpoint = Endpoint::start();
+    let (_, _, mut events) = endpoint.get("/v1/observed/events", "");
+    next(&mut events, Duration::from_secs(5)).unwrap();
+    assert_eq!(endpoint.automation.streams.load(SeqCst), 1);
+    drop(events);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while endpoint.automation.streams.load(SeqCst) != 0 {
+        assert!(std::time::Instant::now() < deadline, "a dead client's stream is still counted");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
