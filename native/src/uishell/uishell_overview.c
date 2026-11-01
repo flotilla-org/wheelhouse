@@ -278,7 +278,9 @@ struct UIShell_OverviewMove
 internal F64
 uishell_overview_scale_from_event(UI_Event *evt)
 {
-  if(evt->kind == UI_EventKind_Magnify) { return exp(evt->delta_2f32.x); }
+  // Within e^±4 an event, past any grid's zoom range, so a wild delta can't
+  // overflow.
+  if(evt->kind == UI_EventKind_Magnify) { return exp(Clamp(-4.0, evt->delta_2f32.x, 4.0)); }
   F32 d = evt->delta_2f32.y;
   if(!evt->scroll_is_precise)
   {
@@ -287,7 +289,7 @@ uishell_overview_scale_from_event(UI_Event *evt)
     if(notches == 0 && d != 0) { notches = d > 0 ? 1.f : -1.f; }
     d = notches*30.f;
   }
-  return exp(-d*0.004);
+  return exp(Clamp(-4.0, -d*0.004, 4.0));
 }
 
 // Whether the overview is taller than the region, so it pans down, or (on

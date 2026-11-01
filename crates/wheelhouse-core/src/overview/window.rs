@@ -438,7 +438,8 @@ impl OverviewWindow {
     /// Zoom a grid in by `factor` (below 1 zooms out) about the point at
     /// `at_x`, `at_y`, as shares of the region's width and height: what is
     /// there stays there. From everything fitting to the narrowest tile
-    /// filling the region. A cut, like a pan.
+    /// filling the region. A cut, like a pan. Zoomed all the way out it
+    /// holds as Fit, so the next zoom in starts from everything fitting.
     pub fn zoom_by(&mut self, factor: f64, at_x: f64, at_y: f64) {
         self.stop_glide();
         if !self.zoomable() || !factor.is_finite() || factor <= 0.0 {
@@ -470,7 +471,8 @@ impl OverviewWindow {
 
     /// The Fit all toggle: fly out to the whole grid, or, when it is all in
     /// view, back to where the grid starts (zoomed in on the current tile
-    /// if it would be too small to read).
+    /// if it would be too small to read). When the grid starts all in view
+    /// the two are the same camera, and the toggle stays marked.
     pub fn fit_all(&mut self, now_ms: f64) {
         if !self.zoomable() {
             return;
