@@ -18,6 +18,23 @@ unsafe fn create(config: &str) -> *mut WheelhouseCore {
     h
 }
 
+/// An intent of `kind` with every field empty.
+fn intent_of(kind: u32) -> IntentView {
+    IntentView {
+        kind,
+        key: text(""),
+        entity: EntityView::empty(),
+        name: text(""),
+        has_value: 0,
+        value: text(""),
+        workspace_id: workspace_view(None),
+        keep: 0,
+        has_group: 0,
+        group: text(""),
+        project: text(""),
+    }
+}
+
 unsafe fn node(s: *const WheelhouseSnapshot, index: usize) -> NodeView {
     let mut node = MaybeUninit::uninit();
     assert_eq!(wheelhouse_snapshot_node(s, index, node.as_mut_ptr()), 1);
@@ -696,14 +713,7 @@ fn a_host_following_the_stream_has_what_the_snapshot_presents() {
         // Collapse and expand nodes by the keys the stream gave.
         let keys: Vec<String> = followed.children.values().flatten().take(4).cloned().collect();
         for key in &keys {
-            let intent = IntentView {
-                kind: WHEELHOUSE_INTENT_TOGGLE_PLACEMENT,
-                key: text(key),
-                entity: EntityView::empty(),
-                name: text(""),
-                has_value: 0,
-                value: text(""),
-            };
+            let intent = IntentView { key: text(key), ..intent_of(WHEELHOUSE_INTENT_TOGGLE_PLACEMENT) };
             let mut request = 0;
             assert_eq!(wheelhouse_apply_intent(h, &intent, &mut request, &mut error), WHEELHOUSE_INTENT_ACCEPTED);
             assert!(error.is_null());
@@ -711,14 +721,7 @@ fn a_host_following_the_stream_has_what_the_snapshot_presents() {
         }
 
         // Activating one opens it, and its effect is queued.
-        let intent = IntentView {
-            kind: WHEELHOUSE_INTENT_ACTIVATE_PLACEMENT,
-            key: text(&keys[0]),
-            entity: EntityView::empty(),
-            name: text(""),
-            has_value: 0,
-            value: text(""),
-        };
+        let intent = IntentView { key: text(&keys[0]), ..intent_of(WHEELHOUSE_INTENT_ACTIVATE_PLACEMENT) };
         let mut request = 0;
         assert_eq!(wheelhouse_apply_intent(h, &intent, &mut request, &mut error), WHEELHOUSE_INTENT_ACCEPTED);
         assert_eq!(follow(&mut followed), [request]);
@@ -911,8 +914,7 @@ fn every_catalog_entity_has_its_card() {
                     let action =
                         [Action::Activate { entity: entity.clone() }, Action::CopySubjectUrl { entity: entity.clone() }][a].clone();
                     let dispatched = (*other).sidebar.dispatch(action).map(|effects| (*other).effects.extend(effects));
-                    let intent =
-                        IntentView { kind: ca.kind, key: text(""), entity: ca.entity, name: text(""), has_value: 0, value: text("") };
+                    let intent = IntentView { entity: ca.entity, ..intent_of(ca.kind) };
                     let mut error = ptr::null_mut();
                     let applied = wheelhouse_apply_intent(h, &intent, ptr::null_mut(), &mut error);
                     wheelhouse_string_free(error);
@@ -1525,6 +1527,240 @@ fn the_overviews_zoom_reaches_c() {
         assert_eq!(wheelhouse_overview_zoom(ptr::null_mut(), 2.0, 0.5, 0.5, &mut error), 0);
         assert!(!error.is_null());
         wheelhouse_string_free(error);
+        wheelhouse_destroy(h);
+    }
+}
+
+/// What one C effect says, in the core's terms.
+unsafe fn effects_of(h: *mut WheelhouseCore) -> Vec<HostEffect> {
+    let effects = wheelhouse_effects_take(h, ptr::null_mut());
+    let read = (0..wheelhouse_effects_count(effects))
+        .map(|i| {
+            let mut e = MaybeUninit::uninit();
+            assert_eq!(wheelhouse_effects_get(effects, i, e.as_mut_ptr()), 1);
+            let e = e.assume_init();
+            let workspace = WorkspaceId::from(e.workspace_id);
+            match e.kind {
+                WHEELHOUSE_EFFECT_OPEN_WORKSPACE => HostEffect::OpenWorkspace { workspace, name: e.name.read().unwrap() },
+                WHEELHOUSE_EFFECT_CLOSE_WORKSPACE => HostEffect::CloseWorkspace { workspace, kept: e.kept != 0 },
+                WHEELHOUSE_EFFECT_SHOW_WORKSPACE => HostEffect::ShowWorkspace { workspace },
+                WHEELHOUSE_EFFECT_MATERIALIZE => HostEffect::Materialize {
+                    request_id: e.request_id,
+                    entity: e.entity.read().unwrap(),
+                    name: e.name.read().unwrap(),
+                    recipe: Some(e.recipe.read().unwrap()).filter(|recipe| !recipe.is_empty()),
+                    cwd: (e.has_cwd != 0).then(|| e.cwd.read().unwrap()),
+                    primary_target: (e.has_primary_target != 0).then(|| e.primary_target.read().unwrap()),
+                    kept: (e.kept != 0).then_some(workspace),
+                },
+                other => panic!("effect {other}"),
+            }
+        })
+        .collect();
+    wheelhouse_effects_release(effects);
+    read
+}
+
+/// The lifecycle crosses the ABI as the core has it (#631): each lifecycle
+/// intent and effect, MATERIALIZE's Kept Workspace, a node's close role,
+/// a workspace's life and its seed equal the Rust core's, run as a twin.
+#[test]
+fn the_lifecycle_crosses_the_abi() {
+    use wheelhouse_core::lifecycle::{CloseKind, EffectiveHome, Home, HomeEdit};
+    use wheelhouse_core::sidebar::{Intent, IntentReceipt};
+    use wheelhouse_core::stream::StreamView;
+    unsafe {
+        let config = include_str!("../../wheelhouse-core/tests/fixtures/sidebar.kdl");
+        let h = create(config);
+        let mut twin = Sidebar::new(config).unwrap();
+        let vessel = EntityRef::new(PROVIDER, "vessel", "v");
+        let facts = [
+            r#"{"target":{"kind":"entity","value":{"kind":"project","id":"p"}},"source_id":"s","unset":[],"set":{"flotilla.project":{"value":{"type":"text","value":"p"}}}}"#,
+            r#"{"target":{"kind":"entity","value":{"kind":"vessel","id":"v"}},"source_id":"s","unset":[],"set":{"flotilla.project":{"value":{"type":"text","value":"p"}},"display.label":{"value":{"type":"text","value":"V"}},"action.primary.recipe":{"value":{"type":"text","value":"true"}},"flotilla.convoy.phase":{"value":{"type":"text","value":"active"}}}}"#,
+        ];
+        let mut error = ptr::null_mut();
+        for line in facts {
+            assert_eq!(wheelhouse_apply_patch_json(h, 1, text(PROVIDER), text(line), &mut error), 1);
+            twin.apply(1, PROVIDER, [serde_json::from_str(line).unwrap()]).unwrap();
+        }
+        let mut subscription = 0;
+        assert_eq!(wheelhouse_subscribe(h, &mut subscription, &mut error), 1);
+        let twin_subscription = twin.subscribe();
+        let mut twin_view = StreamView::default();
+        let mut open: Vec<(WorkspaceId, String)> = vec![];
+        // Both observe the window, and the twin follows its stream.
+        let observe = |open: &[(WorkspaceId, String)], twin: &mut Sidebar| {
+            let inputs: Vec<WorkspaceInput> = open
+                .iter()
+                .enumerate()
+                .map(|(position, (id, name))| WorkspaceInput {
+                    id: (*id).into(),
+                    position,
+                    name: text(name),
+                    selected: (position == 0) as u32,
+                })
+                .collect();
+            assert_eq!(wheelhouse_observe(h, inputs.as_ptr(), inputs.len(), ptr::null(), 0, ptr::null_mut()), 1);
+            twin.observe(
+                open.iter()
+                    .enumerate()
+                    .map(|(position, (id, name))| Workspace { id: *id, position, name: name.clone(), selected: position == 0 })
+                    .collect(),
+                vec![],
+            );
+        };
+        // Each intent, through C and through Rust, gives the same receipt and effects.
+        let apply = |intent: &IntentView, rust: Intent, twin: &mut Sidebar| -> Vec<HostEffect> {
+            let mut error = ptr::null_mut();
+            let applied = wheelhouse_apply_intent(h, intent, ptr::null_mut(), &mut error);
+            wheelhouse_string_free(error);
+            let effects = effects_of(h);
+            match twin.apply_intent(rust) {
+                IntentReceipt::Accepted { effects: theirs, .. } => {
+                    assert_eq!(applied, WHEELHOUSE_INTENT_ACCEPTED);
+                    assert_eq!(effects, theirs);
+                }
+                IntentReceipt::Refused { .. } => assert_eq!(applied, WHEELHOUSE_INTENT_REFUSED),
+            }
+            effects
+        };
+        // Close roles of the live rows, as the C delta gives them and as the twin's stream does.
+        let roles = |twin: &mut Sidebar, view: &mut StreamView| -> (Vec<u32>, Vec<u32>) {
+            let mut c = vec![];
+            if wheelhouse_changed_since(h, subscription, ptr::null_mut()) != 0 {
+                let d = wheelhouse_poll(h, subscription, ptr::null_mut());
+                for i in 0..wheelhouse_delta_op_count(d) {
+                    let mut op = MaybeUninit::uninit();
+                    wheelhouse_delta_op(d, i, op.as_mut_ptr());
+                    let op = op.assume_init();
+                    if op.kind != WHEELHOUSE_OP_UPSERT {
+                        continue;
+                    }
+                    let mut n = MaybeUninit::uninit();
+                    wheelhouse_delta_node(d, op.first, n.as_mut_ptr());
+                    let n = n.assume_init();
+                    if n.state == WHEELHOUSE_LIVE {
+                        c.push(n.close);
+                    }
+                }
+                wheelhouse_delta_release(d);
+            }
+            let mut rust = vec![];
+            if let Some(delta) = twin.poll(twin_subscription).unwrap() {
+                view.apply(&delta).unwrap();
+                for op in &delta.ops {
+                    if let wheelhouse_core::stream::SidebarOp::Upsert { node, .. } = op {
+                        if matches!(node.state, wheelhouse_core::presentation::PresentationState::Live { .. }) {
+                            rust.push(match node.close {
+                                None => WHEELHOUSE_CLOSE_NONE,
+                                Some(CloseKind::Detach) => WHEELHOUSE_CLOSE_DETACH,
+                                Some(CloseKind::Destroy) => WHEELHOUSE_CLOSE_DESTROY,
+                                Some(CloseKind::RemovePin) => WHEELHOUSE_CLOSE_REMOVE_PIN,
+                            });
+                        }
+                    }
+                }
+            }
+            (c, rust)
+        };
+        roles(&mut twin, &mut twin_view);
+
+        // A new workspace in group g, by its typed name.
+        let local = tab_workspace_id(1);
+        let intent =
+            IntentView { workspace_id: local.into(), name: text("Notes"), group: text("g"), ..intent_of(WHEELHOUSE_INTENT_NEW_WORKSPACE) };
+        let rust =
+            Intent::NewWorkspace { workspace: local, name: Some("Notes".into()), home: Home { group: Some("g".into()), project: None } };
+        assert_eq!(apply(&intent, rust, &mut twin), [HostEffect::OpenWorkspace { workspace: local, name: "Notes".into() }]);
+        open.push((local, "Notes".into()));
+        observe(&open, &mut twin);
+        let (c, rust) = roles(&mut twin, &mut twin_view);
+        assert_eq!(c, rust);
+        assert_eq!(c, [WHEELHOUSE_CLOSE_DESTROY], "a subjectless workspace's row destroys it");
+
+        // Its life, and a re-home to a project that keeps its group.
+        let life = |twin: &Sidebar| {
+            let view = wheelhouse_workspace_life(h, local.into(), ptr::null_mut());
+            assert!(!view.is_null());
+            let v = &*view;
+            let read = (v.kept_known, v.kept, v.group.read().unwrap(), v.project.read().unwrap(), v.home_kind, v.home.read().unwrap());
+            wheelhouse_workspace_life_free(view);
+            let (theirs, home) = twin.workspace_life(local).unwrap();
+            let (kind, id) = match home {
+                None => (WHEELHOUSE_HOME_NONE, String::new()),
+                Some(EffectiveHome::Group(g)) => (WHEELHOUSE_HOME_GROUP, g),
+                Some(EffectiveHome::Project(p)) => (WHEELHOUSE_HOME_PROJECT, p),
+            };
+            let expected = (
+                theirs.kept.is_some() as u32,
+                theirs.kept.unwrap_or(false) as u32,
+                theirs.home.group.unwrap_or_default(),
+                theirs.home.project.unwrap_or_default(),
+                kind,
+                id,
+            );
+            assert_eq!(read, expected);
+            read
+        };
+        assert_eq!(life(&twin), (1, 0, "g".into(), String::new(), WHEELHOUSE_HOME_GROUP, "workspaces".into()), "g doesn't exist");
+        let before = wheelhouse_life_generation(h, ptr::null_mut());
+        let intent = IntentView { workspace_id: local.into(), project: text("p"), ..intent_of(WHEELHOUSE_INTENT_SET_WORKSPACE_HOME) };
+        assert_eq!(apply(&intent, Intent::SetWorkspaceHome { workspace: local, edit: HomeEdit::Project(Some("p".into())) }, &mut twin), []);
+        assert!(wheelhouse_life_generation(h, ptr::null_mut()) > before);
+        assert_eq!(life(&twin), (1, 0, "g".into(), "p".into(), WHEELHOUSE_HOME_PROJECT, "p".into()));
+        let intent =
+            IntentView { workspace_id: local.into(), has_group: 1, group: text("h"), ..intent_of(WHEELHOUSE_INTENT_SET_WORKSPACE_HOME) };
+        assert_eq!(apply(&intent, Intent::SetWorkspaceHome { workspace: local, edit: HomeEdit::Group("h".into()) }, &mut twin), []);
+        assert_eq!(life(&twin).2, "h");
+
+        // The subject opens, and its row detaches it.
+        let mut request = 0;
+        let intent = IntentView { entity: EntityView::of(&vessel), ..intent_of(WHEELHOUSE_INTENT_ACTIVATE) };
+        assert_eq!(wheelhouse_apply_intent(h, &intent, &mut request, &mut error), WHEELHOUSE_INTENT_ACCEPTED);
+        let effects = effects_of(h);
+        let theirs = twin.dispatch(Intent::Activate { entity: vessel.clone() }).unwrap();
+        assert_eq!(effects, theirs);
+        let [HostEffect::Materialize { request_id, kept: None, .. }] = effects[..] else { panic!("{effects:?}") };
+        let worker = tab_workspace_id(2);
+        let complete = |twin: &mut Sidebar, request_id: u64, id: WorkspaceId| {
+            assert_eq!(wheelhouse_complete(h, request_id, WHEELHOUSE_COMPLETE_MATERIALIZE, id.into(), text(""), ptr::null_mut()), 1);
+            twin.complete(request_id, Ok(Some(id)));
+        };
+        complete(&mut twin, request_id, worker);
+        open.insert(0, (worker, "V".into()));
+        observe(&open, &mut twin);
+        let (c, rust) = roles(&mut twin, &mut twin_view);
+        assert_eq!(c, rust);
+        assert!(c.contains(&WHEELHOUSE_CLOSE_DETACH), "{c:?}");
+
+        // Detached, it is kept; activated again, it is reopened by ID.
+        let intent = IntentView { workspace_id: worker.into(), keep: 1, ..intent_of(WHEELHOUSE_INTENT_CLOSE_WORKSPACE) };
+        let effects = apply(&intent, Intent::CloseWorkspace { workspace: worker, keep: true }, &mut twin);
+        assert_eq!(effects, [HostEffect::CloseWorkspace { workspace: worker, kept: true }, HostEffect::ShowWorkspace { workspace: local }]);
+        open.remove(0);
+        observe(&open, &mut twin);
+        let intent = IntentView { entity: EntityView::of(&vessel), ..intent_of(WHEELHOUSE_INTENT_ACTIVATE) };
+        let effects = apply(&intent, Intent::Activate { entity: vessel.clone() }, &mut twin);
+        let [HostEffect::Materialize { request_id, kept: Some(kept), .. }] = effects[..] else { panic!("{effects:?}") };
+        assert_eq!(kept, worker);
+        complete(&mut twin, request_id, worker);
+
+        // An unknown workspace refuses a close.
+        let intent = IntentView { workspace_id: tab_workspace_id(9).into(), ..intent_of(WHEELHOUSE_INTENT_CLOSE_WORKSPACE) };
+        assert_eq!(apply(&intent, Intent::CloseWorkspace { workspace: tab_workspace_id(9), keep: false }, &mut twin), []);
+
+        // A record with no life is seeded once.
+        let host = tab_workspace_id(3);
+        assert_eq!(wheelhouse_workspace_register(h, host.into(), ptr::null_mut()), 1);
+        let view = wheelhouse_workspace_life(h, host.into(), ptr::null_mut());
+        assert_eq!((*view).kept_known, 0);
+        wheelhouse_workspace_life_free(view);
+        assert_eq!(wheelhouse_workspace_seed_life(h, host.into(), 1, text(""), text("q"), &mut error), 1);
+        assert_eq!(wheelhouse_workspace_seed_life(h, host.into(), 0, text("g"), text(""), &mut error), 0);
+        assert!(error.is_null());
+        let view = wheelhouse_workspace_life(h, host.into(), ptr::null_mut());
+        assert_eq!(((*view).kept_known, (*view).kept, (*view).project.read().unwrap()), (1, 1, "q".to_owned()));
+        wheelhouse_workspace_life_free(view);
         wheelhouse_destroy(h);
     }
 }

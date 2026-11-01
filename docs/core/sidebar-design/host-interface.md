@@ -1,4 +1,4 @@
-# The host interface (ABI 20)
+# The host interface (ABI 21)
 
 What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
@@ -8,7 +8,7 @@ behind it is in [Slots and arrangements](slots-and-arrangements.md),
 [The sidebar arrangement](sidebar-arrangement.md) and the
 [Workspace Overlay](workspace-overlay.md).
 
-`wheelhouse_abi_version()` returns 20. Each call has one form: there is no
+`wheelhouse_abi_version()` returns 21. Each call has one form: there is no
 compatibility with earlier versions, and a host requires exactly the version
 it was built against.
 
@@ -57,6 +57,9 @@ it was built against.
 | `wheelhouse_observe(h, workspaces, n, panes, m)` | The whole topology: `WheelhouseWorkspace {id, position, name, selected}`, `WheelhousePane`. |
 | `wheelhouse_observe_workdirs` | Directory associations, replaced whole. |
 | `wheelhouse_workspace_register` / `_forget` / `_registered` | Workspaces the host made itself; a forgotten one's record goes. |
+| `wheelhouse_workspace_life` / `_free` | `WheelhouseWorkspaceLife`: whether a workspace is kept (`kept_known` 0 until seeded), its Workspace Home's `group` and `project`, and its one home (`WHEELHOUSE_HOME_*`). |
+| `wheelhouse_life_generation` | Moves whenever any workspace's life does, or one is forgotten. Cheap to read each frame. |
+| `wheelhouse_workspace_seed_life(h, ws, kept, group, project)` | Seeds a life the record doesn't have yet, from the host's own state, once. |
 
 ## The snapshot and effects
 
@@ -71,8 +74,11 @@ entity's details come from its card, asked for by entity with
 
 `wheelhouse_dispatch(h, snapshot, action)` queues effects;
 `wheelhouse_effects_take` drains them. An `WheelhouseEffect` carries
-`workspace_id` (FOCUS), `entity` with provider (MATERIALIZE, INSPECT), the
-recipe or URL, and `has_primary_target`/`primary_target` (MATERIALIZE).
+`workspace_id` (FOCUS, OPEN_WORKSPACE, CLOSE_WORKSPACE, SHOW_WORKSPACE, and
+a MATERIALIZE's Kept Workspace when `kept`), `entity` with provider
+(MATERIALIZE, INSPECT), the recipe or URL, `name` (MATERIALIZE,
+OPEN_WORKSPACE), `kept` (CLOSE_WORKSPACE), and
+`has_primary_target`/`primary_target` (MATERIALIZE).
 `wheelhouse_complete(h, request_id, outcome, workspace_id, message)` completes
 every FOCUS and MATERIALIZE request. `wheelhouse_copy_subject_url` takes an
 entity.
@@ -210,6 +216,21 @@ Address).
   `wheelhouse_dock_restore` repairs a window's documents and returns them
   with dirty marks and the sidebar sections it moved
   (`wheelhouse_dock_restore_free`).
+
+## From ABI 20
+
+ABI 21 moves a workspace's lifecycle and home into the core
+(wheelhouse#631). `WheelhouseIntent` gains `workspace_id`, `keep`,
+`has_group`, `group` and `project`, read by three new intents
+(`WHEELHOUSE_INTENT_NEW_WORKSPACE`, `_CLOSE_WORKSPACE`,
+`_SET_WORKSPACE_HOME`) applied with `wheelhouse_apply_intent`. Their effects
+are `WHEELHOUSE_EFFECT_OPEN_WORKSPACE`, `_CLOSE_WORKSPACE` and
+`_SHOW_WORKSPACE`; `WheelhouseEffect` gains `kept`, which on MATERIALIZE
+names the subject's Kept Workspace in `workspace_id`. A stream node gains
+`close` (`WHEELHOUSE_CLOSE_*`), what its close control offers. A
+workspace's life is read with `wheelhouse_workspace_life`, followed with
+`wheelhouse_life_generation`, and seeded once with
+`wheelhouse_workspace_seed_life`.
 
 ## From ABI 19
 

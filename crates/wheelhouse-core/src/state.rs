@@ -23,6 +23,7 @@ pub(crate) struct PlacementAnnotation {
     pub default_collapsed: bool,
     pub related_detail: Vec<TemplateConfigRenderedField>,
 }
+use crate::lifecycle::{close_kind, LiveWorkspace};
 use crate::{FactMap, FastHashMap, FastHashSet};
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -1876,12 +1877,25 @@ impl ControllerState {
         };
         let surface_phase = profile::span("surface");
         let has_url = |entity: &EntityRef| self.subject_url(entity).is_some();
+        // A row bound to an open workspace closes it by the lifecycle rule.
+        let close = |entity: &EntityRef, state: &PresentationState| {
+            let live = match state {
+                PresentationState::Live { workspace_id, .. } => {
+                    subjects.get(workspace_id).map_or(Some(LiveWorkspace { subject: false, subject_ended: false }), |subject| {
+                        Some(LiveWorkspace { subject: true, subject_ended: self.subject_ended(subject) })
+                    })
+                }
+                _ => None,
+            };
+            close_kind(entity, live)
+        };
         let cx = SurfaceContext {
             generation: self.template_generation,
             variables: &node_variables.nodes,
             state: &state,
             stale: &stale,
             has_url: &has_url,
+            close: &close,
         };
         let presentation = SurfaceSnapshot::resolve(&model, &surface_regions, cx, &mut self.kept.surface.borrow_mut());
         model.presentation = Some(presentation);
@@ -1896,7 +1910,7 @@ impl ControllerState {
                 })
                 .map(|e| e.entity.clone())
                 .collect::<Vec<_>>();
-            surface.cover_workspaces(&self.tabs, &host_entities, &default_groups, &stale);
+            surface.cover_workspaces(&self.tabs, &host_entities, &default_groups, &stale, &close);
             surface.diagnostics.extend(model.template_config.warnings.iter().cloned());
         }
         model
@@ -3662,6 +3676,15 @@ impl ControllerState {
     }
 
     /// A subject's display label as its provider gives it now.
+    /// Whether a subject has ended, as its row shows it: the core saw it end
+    /// (ended subjects are retained, with `status.state` "ended"), or its
+    /// provider says so.
+    pub fn subject_ended(&self, subject: &EntityRef) -> bool {
+        self.ended_subjects.contains(subject)
+            || metadata_entry_text(&self.metadata.resolved(&EntityId::Entity(subject.clone()), self.now()), KEY_STATUS_STATE)
+                == Some("ended")
+    }
+
     pub fn subject_label(&self, subject: &EntityRef) -> Option<String> {
         let values = self.metadata.resolved(&EntityId::Entity(subject.clone()), self.now());
         metadata_entry_text(&values, KEY_DISPLAY_LABEL).map(str::to_owned)

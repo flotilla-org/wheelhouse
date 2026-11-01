@@ -889,9 +889,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
     if(workspace != &cfg_nil_node && !as_ghost)
     {
       // One home: this group.
-      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(workspace, str8_lit("lives_with")));
-      CFG_Node *lives_in = cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace, str8_lit("lives_in"));
-      cfg_node_new_replace(rd_state->cfg, lives_in, group_id);
+      uishell_workspace_set_home(window, workspace, 1, group_id, str8_zero());
       placed = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit(".workspace"),
                                       push_str8_copy(scratch.arena, uishell_sidebar_local_entity(workspace)));
     }
@@ -938,11 +936,7 @@ uishell_sidebar_drag_finish(RD_WindowState *ws)
     // project X", saved on the workspace, or back to Workspaces.
     CFG_Node *workspace = uishell_sidebar_drag_local(state);
     if(workspace != &cfg_nil_node && state->home_build && state->home_build+1 >= ui_state->build_index)
-    {
-      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(workspace, str8_lit("lives_with")));
-      if(state->home_project.size)
-      { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("lives_with")), state->home_project); }
-    }
+    { uishell_workspace_set_home(window, workspace, 0, str8_zero(), state->home_project); }
     else if(state->reorder_build && state->reorder_build+1 >= ui_state->build_index) { uishell_sidebar_reorder_commit(state); }
   }
   else

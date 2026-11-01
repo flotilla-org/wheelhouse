@@ -159,6 +159,28 @@ run_scenario(views_dir, '--state_phase:views_save')
 run_scenario(views_dir, '--state_phase:views_restart')
 fresh = (fresh_dir/'fresh_restart.txt').read_text().splitlines()
 
+# A profile main wrote before the core kept workspaces' Life (#631): its
+# `save` phase's files, given `lives_with` on two workspaces (one with
+# `lives_in` too), with a `detached_workspace` node and `lives_in` already,
+# and records without Life. It must open to the state main opens it with
+# (main_profile.txt, written by main's build of this harness, not by
+# --update-goldens), and is saved without `lives_in` or `lives_with`.
+migrate_dir = BUILD / 'state_behaviour_migrate'
+shutil.rmtree(migrate_dir, ignore_errors=True)
+shutil.copytree(GOLDENS/'main_profile', migrate_dir)
+run_scenario(migrate_dir, '--state_phase:migrate')
+migrated = (migrate_dir/'migrated.txt').read_text().splitlines()
+opened_by_main = [line for line in (GOLDENS/'main_profile.txt').read_text().splitlines() if not line.startswith('#')]
+if migrated != opened_by_main:
+    sys.stderr.writelines(difflib.unified_diff([l+'\n' for l in opened_by_main], [l+'\n' for l in migrated],
+                                               'as main opens it', 'as this build opens it'))
+    print('A profile from main opens differently.', file=sys.stderr)
+    sys.exit(1)
+saved = ''.join(path.read_text() for path in (migrate_dir/'presentation').iterdir())
+if 'lives_in' in saved or 'lives_with' in saved:
+    print('A profile from main is saved with lives_in or lives_with.', file=sys.stderr)
+    sys.exit(1)
+
 # Known losses across a restart today, and what ends each.
 # A subject no producer reports is drawn from its workspace record, which
 # keeps its label, whether it ended, and the facts placement reads; a status

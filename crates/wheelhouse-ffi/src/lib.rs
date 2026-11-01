@@ -26,6 +26,7 @@ pub mod card;
 pub mod dashboard;
 pub mod dock;
 pub mod documents;
+pub mod lifecycle;
 pub mod overview;
 pub mod rich_text;
 pub mod slots;
@@ -38,6 +39,7 @@ pub use card::*;
 pub use dashboard::*;
 pub use dock::*;
 pub use documents::*;
+pub use lifecycle::*;
 pub use overview::*;
 pub use rich_text::*;
 pub use slots::*;
@@ -239,7 +241,7 @@ unsafe fn provider(provider: Text) -> Result<String, String> {
 /// was built against.
 #[no_mangle]
 pub extern "C" fn wheelhouse_abi_version() -> u32 {
-    20
+    21
 }
 /// A sidebar configured with a template catalog (KDL), or NULL with an
 /// error.
@@ -664,6 +666,14 @@ pub const WHEELHOUSE_EFFECT_INSPECT: u32 = 2;
 pub const WHEELHOUSE_EFFECT_OPEN_URL: u32 = 3;
 /// Copy the URL in recipe; needs no completion.
 pub const WHEELHOUSE_EFFECT_COPY_URL: u32 = 4;
+/// Make a workspace with workspace_id, named name, with default panels, and
+/// show it; needs no completion.
+pub const WHEELHOUSE_EFFECT_OPEN_WORKSPACE: u32 = 5;
+/// Close workspace_id: keep its layout when kept (a Kept Workspace), else
+/// discard it; needs no completion.
+pub const WHEELHOUSE_EFFECT_CLOSE_WORKSPACE: u32 = 6;
+/// Show workspace_id, after a close; needs no completion.
+pub const WHEELHOUSE_EFFECT_SHOW_WORKSPACE: u32 = 7;
 
 /// A placement key as hosts see it ([`PlacementKey::encode`]).
 pub(crate) fn encode_key(key: &PlacementKey) -> String {
@@ -1179,8 +1189,14 @@ pub struct EffectView {
     /// WHEELHOUSE_EFFECT_*.
     pub kind: u32,
     pub request_id: u64,
-    /// A FOCUS effect's workspace; zeroes otherwise.
+    /// A FOCUS, OPEN_WORKSPACE, CLOSE_WORKSPACE or SHOW_WORKSPACE effect's
+    /// workspace, or a MATERIALIZE effect's Kept Workspace when `kept`;
+    /// zeroes otherwise.
     pub workspace_id: WorkspaceIdView,
+    /// CLOSE_WORKSPACE: the workspace is kept. MATERIALIZE: its subject has a
+    /// Kept Workspace, workspace_id, which the host reopens and completes
+    /// with rather than making a new one.
+    pub kept: u32,
     /// A MATERIALIZE or INSPECT effect's entity; empty otherwise.
     pub entity: EntityView,
     pub name: Text,
@@ -1213,6 +1229,7 @@ pub unsafe extern "C" fn wheelhouse_effects_get(e: *const WheelhouseEffects, ind
         kind: WHEELHOUSE_EFFECT_FOCUS,
         request_id: 0,
         workspace_id: workspace_view(None),
+        kept: 0,
         entity: EntityView::empty(),
         name: Text::borrowed(""),
         recipe: Text::borrowed(""),
@@ -1226,7 +1243,7 @@ pub unsafe extern "C" fn wheelhouse_effects_get(e: *const WheelhouseEffects, ind
             v.request_id = *request_id;
             v.workspace_id = (*workspace_id).into();
         }
-        HostEffect::Materialize { request_id, entity, name, recipe, cwd, primary_target } => {
+        HostEffect::Materialize { request_id, entity, name, recipe, cwd, primary_target, kept } => {
             v.kind = WHEELHOUSE_EFFECT_MATERIALIZE;
             v.request_id = *request_id;
             v.entity = EntityView::of(entity);
@@ -1238,6 +1255,22 @@ pub unsafe extern "C" fn wheelhouse_effects_get(e: *const WheelhouseEffects, ind
             v.cwd = Text::borrowed(cwd.as_deref().unwrap_or_default());
             v.has_primary_target = primary_target.is_some() as u32;
             v.primary_target = Text::borrowed(primary_target.as_deref().unwrap_or_default());
+            v.workspace_id = workspace_view(*kept);
+            v.kept = kept.is_some() as u32;
+        }
+        HostEffect::OpenWorkspace { workspace, name } => {
+            v.kind = WHEELHOUSE_EFFECT_OPEN_WORKSPACE;
+            v.workspace_id = (*workspace).into();
+            v.name = Text::borrowed(name);
+        }
+        HostEffect::CloseWorkspace { workspace, kept } => {
+            v.kind = WHEELHOUSE_EFFECT_CLOSE_WORKSPACE;
+            v.workspace_id = (*workspace).into();
+            v.kept = *kept as u32;
+        }
+        HostEffect::ShowWorkspace { workspace } => {
+            v.kind = WHEELHOUSE_EFFECT_SHOW_WORKSPACE;
+            v.workspace_id = (*workspace).into();
         }
         HostEffect::OpenUrl { url } | HostEffect::CopyUrl { url } => {
             v.kind = if matches!(e, HostEffect::OpenUrl { .. }) { WHEELHOUSE_EFFECT_OPEN_URL } else { WHEELHOUSE_EFFECT_COPY_URL };

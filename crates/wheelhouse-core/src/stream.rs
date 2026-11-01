@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use wheelhouse_stream::{apply_list, list_ops};
 pub use wheelhouse_stream::{ListOp, SubscriptionId, UnknownSubscription};
 
+use crate::lifecycle::CloseKind;
 use crate::presentation::{Content, PlacementNode, PresentationState, Section};
 use crate::sidebar::{ActivationError, Snapshot};
 use crate::template_config::TemplateVariableDefinition;
@@ -90,6 +91,10 @@ pub struct NodeContent {
     pub collapsed: bool,
     pub stale: bool,
     pub has_url: bool,
+    /// What its close control offers: none, or detach, destroy or remove
+    /// the pin (lifecycle::close_kind).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close: Option<CloseKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,6 +178,7 @@ impl NodeContent {
             collapsed: node.collapsed,
             stale: node.stale,
             has_url: node.has_url,
+            close: node.close,
         }
     }
 }
@@ -191,6 +197,7 @@ fn same_content(a: &PlacementNode, b: &PlacementNode) -> bool {
         && a.collapsed == b.collapsed
         && a.stale == b.stale
         && a.has_url == b.has_url
+        && a.close == b.close
 }
 
 impl StreamView {

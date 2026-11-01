@@ -26,6 +26,8 @@ struct UIShell_SidebarNode
   uint32_t selected;
   uint32_t openable;
   uint32_t has_url;
+  // What its close control offers (WHEELHOUSE_CLOSE_*), as the core says.
+  uint32_t close;
   uint32_t collapsed;
   uint32_t pinned;
   WheelhouseText default_host;
@@ -429,6 +431,9 @@ struct UIShell_SidebarState
   B32 store_synced;
   U64 store_cfg_gen, store_arrangement_version, store_content_revision, store_revision_count;
   U64 store_calls, store_commits;
+  // Workspace Lives read (wheelhouse_workspace_life), which the behaviour
+  // harness counts across frames.
+  U64 life_calls;
   // What the core last said of the Workspace Overlays (flags, tombstones;
   // uishell_store_read_overlay).
   Arena *store_overlay_arena;
@@ -870,7 +875,7 @@ uishell_sidebar_node(UIShell_SidebarState *state, U64 i, UIShell_SidebarNode *ou
     .model = m, .parent = m->parent ? m->parent->index : WHEELHOUSE_NONE, .is_section = v.is_section,
     .key = v.is_section ? uishell_sidebar_text(m->section->name) : v.key, .entity = v.entity, .stale = v.stale,
     .label = v.label, .layout = v.layout, .form = v.form, .loop_key = v.loop_key, .state = v.state,
-    .workspace_id = v.workspace_id, .selected = v.selected, .openable = v.openable, .has_url = v.has_url,
+    .workspace_id = v.workspace_id, .selected = v.selected, .openable = v.openable, .has_url = v.has_url, .close = v.close,
     .collapsed = v.collapsed, .pinned = v.pinned, .default_host = v.default_host, .has_order = v.has_order,
     .order = v.order, .field_count = v.field_count, .detail_count = v.detail_count, .control_count = v.control_count,
     .status = v.status, .attention = v.attention, .icon = v.icon, .short_label = v.short_label, .medium_label = v.medium_label,
@@ -1058,21 +1063,7 @@ uishell_sidebar_local_entity(CFG_Node *workspace)
   return uishell_workspace_id_text_from_cfg(workspace);
 }
 
-// The project a local workspace lives with ("lives with project X"), saved
-// on the workspace; empty when it lives in the Workspaces group.
-internal String8
-uishell_sidebar_local_home(CFG_Node *workspace)
-{
-  return cfg_node_child_from_string(workspace, str8_lit("lives_with"))->first->string;
-}
-
-// The local group a local workspace lives in, saved on the workspace; empty
-// when it lives in the default group or with a project.
-internal String8
-uishell_sidebar_local_lives_in(CFG_Node *workspace)
-{
-  return cfg_node_child_from_string(workspace, str8_lit("lives_in"))->first->string;
-}
+#include "uishell/uishell_workspace_lifecycle.c"
 
 // How the sidebar reads a node. A `layout="section"` node (a
 // section someone made) is a section of its own, as a region is, keyed
@@ -1191,9 +1182,9 @@ uishell_sidebar_node_at(UIShell_SidebarState *state, U64 i, UIShell_SidebarNode 
 // Edits set and remove them at once (wheelhouse_local_set/remove), and
 // everything else reads them from the core's Dashboard
 // (uishell_sidebar_locals). A pin is known by its ref's ID, its ghost id.
-// A local workspace lives in a group (`lives_in`) or with a project
-// (`lives_with`), saved on the workspace; with neither it lives in the
-// default group.
+// A local workspace lives in a group or with a project, its Workspace Home,
+// which the core keeps (uishell_workspace_lifecycle.c); with neither it
+// lives in the default group.
 
 read_only global String8 uishell_sidebar_default_local_id = str8_lit_comp("workspaces");
 
@@ -1785,20 +1776,20 @@ uishell_sidebar_published_find(UIShell_SidebarPublished *list, String8 entry)
 }
 
 // Everything publishing workspaces reads, hashed without allocating: the
-// Dashboard's local groups (by its generation), and each open workspace's
-// id, name and home. A config generation can't stand in, as moving a node
-// keeps it.
+// Dashboard's local groups (by its generation), every workspace's home (by
+// the core's generation of their Lives: one call, not one a workspace), and
+// each open workspace's id and name. A config generation can't stand in, as
+// moving a node keeps it.
 internal U64
 uishell_sidebar_workspaces_source_hash(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
   U64 hash = 5381*33 + uishell_sidebar_locals(state)->generation;
+  hash = hash*33 + wheelhouse_life_generation(state->core, 0);
   for(UIShell_MaterializedWorkspace *w = split->inventory.first; w; w = w->next)
   {
     hash = hash*33 + w->id;
     for(U64 i = 0; i < sizeof(w->workspace_id.v); i++) { hash = hash*33 + w->workspace_id.v[i]; }
     hash = uishell_sidebar_hash_text(hash, w->display_name);
-    hash = uishell_sidebar_hash_text(hash, uishell_sidebar_local_home(w->mount.owner_cfg));
-    hash = uishell_sidebar_hash_text(hash, uishell_sidebar_local_lives_in(w->mount.owner_cfg));
     hash = uishell_sidebar_hash_text(hash, uishell_workspace_cfg_has_subject(w->mount.owner_cfg) ? str8_lit("subject") : str8_lit("local"));
   }
   return hash;
@@ -1816,15 +1807,7 @@ uishell_sidebar_publish_workspaces(UIShell_SidebarState *state, UIShell_Controll
   if(state->workspaces_source_hash && state->workspaces_source_hash == source) { return; }
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
-  CFG_Node *window = split->owner_cfg;
-  UIShell_Locals *locals = uishell_sidebar_locals(state);
   String8 group_kind = str8_lit(".group"), workspace_kind = str8_lit(".workspace");
-  // A workspace whose group is gone lives in the default group, whatever its
-  // id (ensure_default makes one only when no group is marked default).
-  String8 default_group_id = uishell_sidebar_default_local_id;
-  for(U64 s = 0; s < locals->section_count; s++)
-  for(U64 g = 0; g < locals->sections[s].group_count; g++)
-  { if(locals->sections[s].groups[g].is_default) { default_group_id = locals->sections[s].groups[g].id; } }
   U64 now = wheelhouse_ingress_now_ms(), w_position = 0;
   B32 ok = 1, changed = 0;
   String8List ids = {0};
@@ -1834,10 +1817,11 @@ uishell_sidebar_publish_workspaces(UIShell_SidebarState *state, UIShell_Controll
     CFG_Node *workspace = w->mount.owner_cfg;
     if(uishell_workspace_cfg_has_subject(workspace)) { continue; }
     String8 id = uishell_string_from_workspace_id(arena, w->workspace_id);
-    // One home: a project, else its group, else the default group.
-    String8 project = uishell_sidebar_local_home(workspace);
-    String8 group = uishell_sidebar_local_lives_in(workspace);
-    if(!uishell_sidebar_local_group(window, group)) { group = default_group_id; }
+    // One home, the core's: a project, else its group while that exists,
+    // else the default group.
+    UIShell_WorkspaceLife life = uishell_workspace_life(arena, workspace);
+    String8 project = life.home_kind == WHEELHOUSE_HOME_PROJECT ? life.home : str8_zero();
+    String8 group = life.home_kind == WHEELHOUSE_HOME_GROUP ? life.home : uishell_sidebar_default_local_id;
     // Workspaces keep their tab order within their home.
     String8 label = uishell_sidebar_json_label(arena, w->display_name, w_position++);
     String8 set = project.size ? push_str8f(arena, "%S,%S", label, uishell_sidebar_json_fact_text(arena, str8_lit("flotilla.project"), project)) :
@@ -1897,9 +1881,11 @@ uishell_sidebar_publish(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
   if(state->locals_sent) { state->locals_sent = 0; uishell_sidebar_refresh(state); rd_request_frame(); }
 }
 
-// The core keeps the workspaces the host made itself: local ones are
-// registered here, while a subject's registers when its MATERIALIZE
-// completes. One that left the window without being kept is forgotten.
+// The core keeps the workspaces the host made itself: local ones it doesn't
+// know (made before it kept them, or by a fixture) are registered here,
+// while a subject's registers when its MATERIALIZE completes. Destroying one
+// is close-workspace's (uishell_workspace_lifecycle.c), never this. Each
+// workspace's node then follows the core's Life of it.
 internal void
 uishell_sidebar_register(UIShell_SidebarState *state, UIShell_ControlledSplit *split)
 {
@@ -1912,19 +1898,8 @@ uishell_sidebar_register(UIShell_SidebarState *state, UIShell_ControlledSplit *s
     char *error = 0;
     if(!known) { ok = uishell_sidebar_result(state, wheelhouse_workspace_register(state->core, uishell_sidebar_workspace(w->workspace_id), &error), error); }
   }
-  for(U64 i = 0; i < state->observed_count && ok; i++)
-  {
-    B32 open = 0, kept = 0;
-    for(UIShell_MaterializedWorkspace *w = split->inventory.first; w && !open; w = w->next) { open = uishell_workspace_id_match(w->workspace_id, state->observed[i]); }
-    for(CFG_Node *c = split->owner_cfg->first; c != &cfg_nil_node && !open && !kept; c = c->next)
-    {
-      kept = str8_match(c->string, str8_lit("detached_workspace"), 0) &&
-        uishell_workspace_id_match(uishell_workspace_id_from_cfg(c), state->observed[i]);
-    }
-    char *error = 0;
-    if(!open && !kept) { ok = uishell_sidebar_result(state, wheelhouse_workspace_forget(state->core, uishell_sidebar_workspace(state->observed[i]), &error), error); }
-  }
   if(!ok) { return; }
+  uishell_workspace_lives_follow(state, split->owner_cfg);
   if(!state->observed_arena) { state->observed_arena = arena_alloc(); }
   arena_clear(state->observed_arena);
   state->observed = push_array(state->observed_arena, UIShell_WorkspaceId, split->inventory.count);
@@ -2016,10 +1991,10 @@ uishell_sidebar_init(RD_WindowState *ws)
     state->initialized = 1;
     char *error = 0;
     // A host requires exactly the ABI it was built against.
-    if(wheelhouse_abi_version() != 20)
+    if(wheelhouse_abi_version() != 21)
     {
       Temp scratch = scratch_begin(0, 0);
-      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 20 is required; this library has ABI %u",
+      uishell_sidebar_set_error(state, push_str8f(scratch.arena, "Core ABI 21 is required; this library has ABI %u",
         (U32)wheelhouse_abi_version()));
       scratch_end(scratch);
       return state;
@@ -2159,20 +2134,32 @@ uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *sp
       else { wm_set_clipboard_text(url); }
       continue; // URL actions own no workspace request and need no completion.
     }
+    // A lifecycle intent's (uishell_workspace_lifecycle.c); they need no
+    // completion.
+    if(effect.kind == WHEELHOUSE_EFFECT_OPEN_WORKSPACE)
+    { uishell_workspace_open(split->owner_cfg, uishell_workspace_id_from_core(effect.workspace_id), uishell_sidebar_string(effect.name)); continue; }
+    if(effect.kind == WHEELHOUSE_EFFECT_CLOSE_WORKSPACE)
+    { uishell_workspace_close_node(split->owner_cfg, uishell_workspace_id_from_core(effect.workspace_id), effect.kept); continue; }
+    if(effect.kind == WHEELHOUSE_EFFECT_SHOW_WORKSPACE)
+    { uishell_workspace_show(split->owner_cfg, uishell_workspace_id_from_core(effect.workspace_id)); continue; }
     if(effect.kind == WHEELHOUSE_EFFECT_MATERIALIZE)
     {
       // The same kind and id from two subscriptions are two subjects.
       String8 provider = uishell_sidebar_string(effect.entity.provider);
-      // Reuse a previously created fixture workspace after switching modes or
-      // restarting the app; its persisted identity is independent of its label.
-      // A detached workspace reattaches with the layout it was detached with.
-      for(CFG_Node *c = split->owner_cfg->first; c != &cfg_nil_node; c = c->next)
+      // The subject's Kept Workspace reattaches, by its Workspace ID, with
+      // the layout it was kept with.
+      if(effect.kept) { workspace = uishell_workspace_node_from_id(split->owner_cfg, uishell_workspace_id_from_core(effect.workspace_id)); }
+      // Else reuse a workspace the core never registered: a fixture's after
+      // switching modes, or one a profile kept with no record. Its persisted
+      // identity is independent of its label.
+      for(CFG_Node *c = split->owner_cfg->first; c != &cfg_nil_node && workspace == &cfg_nil_node; c = c->next)
       {
         if((str8_match(c->string, str8_lit("workspace"), 0) || str8_match(c->string, str8_lit("detached_workspace"), 0)) &&
            str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_kind"))->first->string, uishell_sidebar_string(effect.entity.kind), 0) &&
            str8_match(cfg_node_child_from_string(c, str8_lit("sidebar_entity_id"))->first->string, uishell_sidebar_string(effect.entity.id), 0) &&
-           str8_match(uishell_workspace_cfg_subject_provider(c), provider, 0))
-        { workspace = c; break; }
+           str8_match(uishell_workspace_cfg_subject_provider(c), provider, 0) &&
+           !wheelhouse_workspace_registered(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(c)), 0))
+        { workspace = c; }
       }
       if(str8_match(workspace->string, str8_lit("detached_workspace"), 0))
       { cfg_node_equip_string(rd_state->cfg, workspace, str8_lit("workspace")); }
@@ -2880,35 +2867,19 @@ typedef enum UIShell_SidebarCloseKind
 }
 UIShell_SidebarCloseKind;
 
-// The affordance says what closing loses. A workspace with a live or unobserved
-// subject detaches: its row stays and reopens the same layout. An ended subject
-// or a subjectless workspace cannot come back, so closing destroys it.
+// The affordance says what closing loses, as the core's close role says
+// (lifecycle.rs, close_kind): a workspace closing would keep detaches, so its
+// row stays and reopens the same layout; one that can't come back (an ended
+// subject's, or a subjectless one) is destroyed. A row whose workspace isn't
+// in this window offers nothing.
 internal UIShell_SidebarCloseKind
-uishell_sidebar_close_kind(UIShell_SidebarNode node, String8 status)
+uishell_sidebar_close_kind(UIShell_SidebarNode node)
 {
-  if(str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".ref"), 0)) { return UIShell_SidebarCloseKind_RemovePin; }
-  if(node.is_section || node.state != WHEELHOUSE_LIVE || uishell_sidebar_node_cfg(&node) == 0) { return UIShell_SidebarCloseKind_None; }
-  CFG_Node *workspace = cfg_node_from_id(uishell_sidebar_node_cfg(&node));
-  if(workspace == &cfg_nil_node) { return UIShell_SidebarCloseKind_None; }
-  if(str8_match(status, str8_lit("ended"), 0) || !uishell_workspace_cfg_has_subject(workspace))
-  { return UIShell_SidebarCloseKind_Destroy; }
-  return UIShell_SidebarCloseKind_Detach;
-}
-
-// Whether the sidebar shows this open workspace's subject as authoritatively
-// ended. Commands use it so a palette detach never keeps an unreachable layout.
-internal B32
-uishell_sidebar_workspace_subject_ended(RD_WindowState *ws, CFG_ID workspace_id)
-{
-  UIShell_SidebarState *state = ws != &rd_nil_window_state ? ws->sidebar : 0;
-  for(U64 i = 0; state && uishell_sidebar_viewing(state) && i < uishell_sidebar_node_count(state); i++)
-  {
-    UIShell_SidebarNode node = {0}; uishell_sidebar_node(state, i, &node);
-    if(!node.is_section && node.state == WHEELHOUSE_LIVE && uishell_sidebar_node_cfg(&node) == workspace_id &&
-       str8_match(uishell_sidebar_node_status(state, node), str8_lit("ended"), 0))
-    { return 1; }
-  }
-  return 0;
+  if(node.close == WHEELHOUSE_CLOSE_REMOVE_PIN) { return UIShell_SidebarCloseKind_RemovePin; }
+  if(node.is_section || uishell_sidebar_node_cfg(&node) == 0 || cfg_node_from_id(uishell_sidebar_node_cfg(&node)) == &cfg_nil_node)
+  { return UIShell_SidebarCloseKind_None; }
+  return node.close == WHEELHOUSE_CLOSE_DETACH ? UIShell_SidebarCloseKind_Detach :
+    node.close == WHEELHOUSE_CLOSE_DESTROY ? UIShell_SidebarCloseKind_Destroy : UIShell_SidebarCloseKind_None;
 }
 
 internal String8
@@ -3126,7 +3097,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   B32 subject = str8_match(kind, str8_lit("change_request"), 0) || str8_match(kind, str8_lit("issue"), 0);
   UIShell_SidebarIntent copy_url = subject ? uishell_sidebar_copy_url_intent(node) : (UIShell_SidebarIntent){0};
   B32 ended = str8_match(uishell_sidebar_node_status(state, node), str8_lit("ended"), 0);
-  UIShell_SidebarCloseKind close_kind = uishell_sidebar_close_kind(node, uishell_sidebar_node_status(state, node));
+  UIShell_SidebarCloseKind close_kind = uishell_sidebar_close_kind(node);
   B32 can_activate = !node.is_section && (node.openable || node.state == WHEELHOUSE_LIVE || copy_url.some);
   Temp scratch = scratch_begin(0, 0);
   sig.box->flags |= UI_BoxFlag_DisableTruncatedHover;
@@ -5100,7 +5071,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             ui_spacer(ui_px(4.f+(owner == WHEELHOUSE_NONE ? side_margin : 0), 1));
             ui_pop_parent();
             if(drag_source) { ui_pop_transparency(); }
-            UIShell_SidebarCloseKind close = uishell_sidebar_close_kind(node, status);
+            UIShell_SidebarCloseKind close = uishell_sidebar_close_kind(node);
             Rng2F32 zone = r2f32p(slot->rect.x0, slot->rect.y0, body->rect.x1, slot->rect.y1);
             B32 held = ui_key_match(state->hold_key, ui_key_from_stringf(body->key, "###close_%S", node_key));
             if(close != UIShell_SidebarCloseKind_None && !ui_key_match(entry_key, ui_key_zero()) &&
