@@ -260,7 +260,7 @@ fn ignorable(c: char) -> bool {
     matches!(c, '\u{200c}' | '\u{200d}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0020}'..='\u{e007f}')
 }
 
-/// Whether the face in `data` named `postscript` (or its only face) maps
+/// Whether the face in `data` named `postscript` (or a file's only face) maps
 /// every code point that needs a glyph.
 #[cfg_attr(target_os = "windows", allow(dead_code))]
 fn file_covers(data: &[u8], postscript: &str, cluster: &str) -> bool {
@@ -269,7 +269,11 @@ fn file_covers(data: &[u8], postscript: &str, cluster: &str) -> bool {
         Ok(FileRef::Collection(c)) => c.iter().filter_map(Result::ok).collect(),
         Err(_) => vec![],
     };
-    let face = faces.iter().find(|f| name(f, NameId::POSTSCRIPT_NAME).as_deref() == Some(postscript)).or(faces.first());
+    // A lone face may misname itself; in a collection, only the named one counts.
+    let face = faces
+        .iter()
+        .find(|f| name(f, NameId::POSTSCRIPT_NAME).as_deref() == Some(postscript))
+        .or(faces.first().filter(|_| faces.len() == 1));
     let Some(cmap) = face.and_then(|f| f.cmap().ok()) else { return false };
     cluster.chars().filter(|&c| !ignorable(c)).all(|c| cmap.map_codepoint(c).is_some_and(|g| g.to_u32() != 0))
 }
