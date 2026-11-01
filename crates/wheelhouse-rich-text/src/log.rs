@@ -293,14 +293,18 @@ impl Log {
         };
     }
 
-    /// OSC 8 opens a link, or closes it with an empty URI.
+    /// OSC 8 opens a link, or closes it with an empty URI. Tool output is
+    /// untrusted, so only web and mail links become links; the text of any
+    /// other stays plain.
     fn osc(&mut self, body: &str) {
         let mut parts = body.splitn(3, ';');
         if parts.next() != Some("8") {
             return;
         }
         let (Some(_params), Some(uri)) = (parts.next(), parts.next()) else { return };
-        self.style.link = (!uri.is_empty()).then(|| uri.to_owned());
+        let scheme = uri.split_once(':').map(|(s, _)| s.to_ascii_lowercase());
+        let safe = matches!(scheme.as_deref(), Some("http" | "https" | "mailto"));
+        self.style.link = safe.then(|| uri.to_owned());
     }
 
     fn sgr(&mut self, params: &str) {
@@ -558,6 +562,22 @@ mod tests {
     fn links_and_dropped_escapes() {
         let log = fed(&["\x1b]8;id=1;https://example.com\x1b\\site\x1b]8;;\x1b\\ \x1b]0;title\x07\x1b[2J\x1bPdata\x1b\\done"]);
         assert_eq!(lines(&log), vec![("site done".to_owned(), vec![(0, 4, "Link(https://example.com)".to_owned())])]);
+    }
+
+    #[test]
+    fn only_web_and_mail_links_become_links() {
+        let link = |uri: &str| lines(&fed(&[&format!("\x1b]8;;{uri}\x07x\x1b]8;;\x07")]))[0].1.clone();
+        assert_eq!(link("https://example.com").len(), 1);
+        assert_eq!(link("MAILTO:a@example.com").len(), 1);
+        for uri in ["javascript:alert(1)", "file:///etc/passwd", "vscode://x", "no-scheme"] {
+            assert_eq!(link(uri), vec![], "{uri}");
+        }
+    }
+
+    #[test]
+    fn an_overlong_osc_is_dropped_whole_and_its_link_with_it() {
+        let long = format!("a\x1b]8;;https://example.com/{}\x07b\x1b]8;;\x07c", "x".repeat(OSC_CAP));
+        assert_eq!(lines(&fed(&[&long])), vec![("abc".to_owned(), vec![])]);
     }
 
     #[test]

@@ -376,6 +376,8 @@ pub(crate) struct Conversation {
     slots: HashMap<Key, Vec<(Order, Key)>>,
     /// Events for items whose first line backfill hasn't reached yet.
     orphans: HashMap<Key, Vec<(u64, Event)>>,
+    /// The subagent threads each tool call started, by the call's key.
+    subagents: HashMap<Key, Vec<String>>,
     touched: Vec<Key>,
     touched_set: HashSet<Key>,
     created: Vec<Key>,
@@ -547,7 +549,9 @@ impl Conversation {
                 if let Some(parent) = e.parent {
                     let entry = self.threads.entry(thread.clone()).or_default();
                     if entry.parent.as_ref().is_none_or(|(_, o)| order < *o) {
+                        let call = tool_key(&parent.thread_id, &parent.tool_call_id);
                         entry.parent = Some((parent, order));
+                        self.subagents.entry(call).or_default().push(thread.clone());
                     }
                     for key in entry.items.clone() {
                         self.touch(key);
@@ -641,13 +645,7 @@ impl Conversation {
             }
         }
         // Subagents it started now go inside it.
-        let waiting: Vec<String> = self
-            .threads
-            .iter()
-            .filter(|(_, t)| t.parent.as_ref().is_some_and(|(p, _)| p.thread_id == thread && p.tool_call_id == id))
-            .map(|(name, _)| name.clone())
-            .collect();
-        for name in waiting {
+        for name in self.subagents.get(&key).cloned().unwrap_or_default() {
             self.touch(subagent_key(&name));
         }
     }
