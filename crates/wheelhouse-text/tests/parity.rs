@@ -266,7 +266,7 @@ fn ignorable(c: char) -> bool {
 
 /// Whether the face in `data` named `postscript` (or a file's only face) maps
 /// every code point that needs a glyph.
-#[cfg_attr(target_os = "windows", allow(dead_code))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn file_covers(data: &[u8], postscript: &str, cluster: &str) -> bool {
     let faces: Vec<FontRef<'_>> = match FileRef::new(data) {
         Ok(FileRef::Font(f)) => vec![f],
@@ -327,10 +327,16 @@ mod platform {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use objc2_core_foundation::{CFRange, CFString, CFURLPathStyle, CFURL};
-    use objc2_core_text::{kCTFontURLAttribute, CTFont};
+    use objc2_core_foundation::{CFIndex, CFRange, CFString};
+    use objc2_core_text::CTFont;
 
-    use super::{file_covers, Face, Pick};
+    use super::{ignorable, Face, Pick};
+
+    // Declared here: objc2-core-text binds it only with objc2-core-graphics,
+    // which nothing else here needs.
+    extern "C" {
+        fn CTFontGetGlyphsForCharacters(font: &CTFont, characters: *const u16, glyphs: *mut u16, count: CFIndex) -> bool;
+    }
 
     pub const NAME: &str = "CoreText";
 
@@ -348,12 +354,14 @@ mod platform {
             let range = CFRange { location: 0, length: text.length() };
             let font = base.for_string_with_language(&text, range, Some(&CFString::from_str(lang)));
             let face = Face { family: font.family_name().to_string(), postscript: font.post_script_name().to_string() };
-            let path = font
-                .attribute(kCTFontURLAttribute)
-                .and_then(|url| url.downcast::<CFURL>().ok())
-                .and_then(|url| url.file_system_path(CFURLPathStyle::CFURLPOSIXPathStyle))
-                .map(|p| p.to_string());
-            let covers = path.and_then(|p| std::fs::read(p).ok()).is_some_and(|data| file_covers(&data, &face.postscript, cluster));
+            // Asked of the font CoreText chose, as its file may be a
+            // collection whose faces name themselves otherwise.
+            let covers = cluster.chars().filter(|&c| !ignorable(c)).all(|c| {
+                let mut units = [0u16; 2];
+                let units = c.encode_utf16(&mut units);
+                let mut glyphs = [0u16; 2];
+                CTFontGetGlyphsForCharacters(&font, units.as_ptr(), glyphs.as_mut_ptr(), units.len() as CFIndex) && glyphs[0] != 0
+            });
             Some(Pick { face, covers })
         }
     }
