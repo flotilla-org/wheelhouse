@@ -1229,6 +1229,7 @@ struct UIShell_RtCode
   B32 has_override;
   TXT_LangKind lang_override;
   B32 expanded;
+  U64 line_count;
   Vec2F32 scroll;
   UIShell_TextViewState tv;
   B32 contain_cursor;
@@ -1530,6 +1531,14 @@ uishell_rt_code_lang(UIShell_RtCode *c)
   return c->has_override ? c->lang_override : c->fence_lang;
 }
 
+internal U64
+uishell_rt_code_line_count(String8 text)
+{
+  U64 lines = 1;
+  for(U64 i = 0; i < text.size; i += 1) { lines += text.str[i] == '\n'; }
+  return lines;
+}
+
 // The Block's embed, its text in the content cache keyed by its hash: a
 // Block still streaming, its fence open, moves to a new key as text arrives.
 internal UIShell_RtCode *
@@ -1556,6 +1565,7 @@ uishell_rt_code(UIShell_RichTextState *s, UIShell_RtNode *n)
       c->hash = c_submit_data(c->content, &data_arena, push_str8_copy(data_arena, n->text));
     }
     c->fence_lang = uishell_rt_lang_from_fence(n->language);
+    c->line_count = uishell_rt_code_line_count(n->text);
     c->version = n->version;
   }
   return c;
@@ -1588,23 +1598,16 @@ uishell_rt_prune_codes(UIShell_RichTextState *s)
   }
 }
 
-internal U64
-uishell_rt_code_line_count(String8 text)
-{
-  U64 lines = 1;
-  for(U64 i = 0; i < text.size; i += 1) { lines += text.str[i] == '\n'; }
-  return lines;
-}
-
 // Shown at most this many lines inline, unless expanded.
 #define UISHELL_RT_CODE_INLINE_LINES 30
 
 // The code's own height, from its text so it holds before the lexer is
 // done, and whether the cap cut it (so it offers "expand").
 internal F32
-uishell_rt_code_height(UIShell_RtNode *n, B32 expanded, B32 *capped_out)
+uishell_rt_code_height(UIShell_RtCode *c, B32 *capped_out)
 {
-  U64 lines = uishell_rt_code_line_count(n->text);
+  U64 lines = c->line_count;
+  B32 expanded = c->expanded;
   *capped_out = lines > UISHELL_RT_CODE_INLINE_LINES;
   return uishell_text_row_height()*(expanded ? lines : Min(lines, UISHELL_RT_CODE_INLINE_LINES));
 }
@@ -1647,16 +1650,17 @@ uishell_rt_code_show_match(UIShell_RichTextState *s, U64 key, U32 start, U32 end
 internal String8 uishell_rt_copy_block(Arena *arena, UIShell_RichTextState *s, U64 key, U32 format);
 
 // The copy hook (#542, decision 7): what an Embed gives to copy. A code
-// Block gives its text, or what is selected inside it while it has focus;
-// as markdown, its fence with its language. The core gives the rest.
+// Block gives its text, or, unless `whole`, what is selected inside it
+// while it has focus; as markdown, its fence with its language. The core
+// gives the rest.
 internal String8
-uishell_rt_embed_copy(Arena *arena, UIShell_RichTextState *s, U64 key, U32 format)
+uishell_rt_embed_copy(Arena *arena, UIShell_RichTextState *s, U64 key, U32 format, B32 whole)
 {
   UIShell_RtNode *n = uishell_rt_node(&s->model, key);
   if(n && uishell_rt_code_embedded(n) && format == WHEELHOUSE_RICH_COPY_PLAIN)
   {
     UIShell_RtCode *c = uishell_rt_code(s, n);
-    if(s->focus_embed == key && !txt_pt_match(c->tv.cursor, c->tv.mark))
+    if(!whole && s->focus_embed == key && !txt_pt_match(c->tv.cursor, c->tv.mark))
     {
       TxtRng r = txt_rng(c->tv.cursor, c->tv.mark);
       U64 a = uishell_rt_byte_from_pt(n->text, r.min), b = uishell_rt_byte_from_pt(n->text, r.max);
@@ -1668,7 +1672,8 @@ uishell_rt_embed_copy(Arena *arena, UIShell_RichTextState *s, U64 key, U32 forma
 }
 
 // The code a creation drag carries to where it drops: drag_drop_commit
-// takes nothing of the drag's own.
+// takes nothing of the drag's own. One drag at a time (rd_drag_begin starts
+// none while one is active), so one copy serves.
 global Arena *uishell_rt_code_drag_arena = 0;
 global String8 uishell_rt_code_drag_text = {0};
 global TXT_LangKind uishell_rt_code_drag_lang = TXT_LangKind_Null;
@@ -1759,9 +1764,8 @@ uishell_rt_block_height(UIShell_RichTextState *s, UIShell_RtNode *n, F32 content
   }
   else if(f.code_embed)
   {
-    UIShell_RtCode *c = uishell_rt_code_of(s, n->key);
     B32 capped = 0;
-    inner = uishell_rt_code_height(n, c && c->expanded, &capped);
+    inner = uishell_rt_code_height(uishell_rt_code(s, n), &capped);
   }
   else
   {
@@ -2435,12 +2439,12 @@ uishell_rt_copy_to_clipboard(UIShell_RichTextState *s)
   if(code && !txt_pt_match(code->tv.cursor, code->tv.mark))
   {
     // Selected inside a focused code Embed: that, as the code view copies.
-    wm_set_clipboard_text(uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_PLAIN));
+    wm_set_clipboard_text(uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_PLAIN, 0));
   }
   else if(s->focus_embed != 0)
   {
-    String8 plain = uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_PLAIN);
-    String8 html = uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_HTML);
+    String8 plain = uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_PLAIN, 1);
+    String8 html = uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_HTML, 1);
     wm_set_clipboard_rich_text(plain, html);
   }
   else
@@ -2762,9 +2766,8 @@ uishell_rt_stops(Arena *arena, UIShell_RichTextState *s, UIShell_RtPlacement *pl
       more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Embed, p->key, 0, 0};
       more[more_count++] = (UIShell_RtStop){UIShell_RtStop_CopyButton, p->key, 0, 0};
       more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Open, p->key, 0, 0};
-      UIShell_RtCode *c = uishell_rt_code_of(s, p->key);
       B32 capped = 0;
-      uishell_rt_code_height(p->node, c && c->expanded, &capped);
+      uishell_rt_code_height(uishell_rt_code(s, p->node), &capped);
       if(capped) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Expand, p->key, 1, 0}; }
     }
     else if(p->frame.code) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_CopyButton, p->key, 0, 0}; }
@@ -2817,7 +2820,7 @@ uishell_rt_activate_stop(UIShell_RichTextState *s, UIShell_RtStop *stop)
     case UIShell_RtStop_CopyButton:
     {
       Temp scratch = scratch_begin(0, 0);
-      wm_set_clipboard_text(uishell_rt_embed_copy(scratch.arena, s, stop->key, WHEELHOUSE_RICH_COPY_PLAIN));
+      wm_set_clipboard_text(uishell_rt_embed_copy(scratch.arena, s, stop->key, WHEELHOUSE_RICH_COPY_PLAIN, 1));
       s->copied_key = stop->key;
       s->copied_until_us = now_time_us() + 1500000;
       scratch_end(scratch);
@@ -2940,7 +2943,7 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
     if(under && under->frame.code_embed)
     {
       code = uishell_rt_code(s, under->node);
-      code_height = uishell_rt_code_height(under->node, code->expanded, &code_capped);
+      code_height = uishell_rt_code_height(code, &code_capped);
     }
     B32 in_code = code && contains_2f32(uishell_rt_code_rect(under, code_height), in_block);
     if(evt->kind == UI_EventKind_Scroll && inside)
@@ -3058,8 +3061,11 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
     }
     if(evt->kind == UI_EventKind_Release && s->open_press)
     {
-      // Released before it became a drag: a click.
-      uishell_rt_code_open(s, s->open_press);
+      // Released on "Open" before it became a drag: a click. Any other
+      // release ends the press, so a lost one can't open a tab later.
+      B32 on_open = code && under->key == s->open_press && contains_2f32(uishell_rt_control_rect(under, t, UIShell_RtControl_Open), in_block);
+      B32 moved = length_2f32(sub_2f32(evt->pos, s->open_press_pos)) > UIShell_DragThresholdPT;
+      if(on_open && !moved) { uishell_rt_code_open(s, s->open_press); }
       s->open_press = 0;
       ui_eat_event(evt);
       continue;
@@ -3710,7 +3716,7 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     }
     else if(str8_match(cmd->name, str8_lit("copy_markdown"), 0))
     {
-      String8 markdown = s->focus_embed ? uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_MARKDOWN)
+      String8 markdown = s->focus_embed ? uishell_rt_embed_copy(scratch.arena, s, s->focus_embed, WHEELHOUSE_RICH_COPY_MARKDOWN, 1)
                                         : uishell_rt_copy(scratch.arena, s, WHEELHOUSE_RICH_COPY_MARKDOWN);
       if(markdown.size) { wm_set_clipboard_text(markdown); }
     }
@@ -3822,7 +3828,7 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       {
         UIShell_RtCode *c = uishell_rt_code(s, p->node);
         B32 capped = 0;
-        F32 code_height = uishell_rt_code_height(p->node, c->expanded, &capped);
+        F32 code_height = uishell_rt_code_height(c, &capped);
         Rng2F32 cr = uishell_rt_code_rect(p, code_height);
         B32 focused_here = s->focus_embed == p->key;
         d->focused = focused_here;

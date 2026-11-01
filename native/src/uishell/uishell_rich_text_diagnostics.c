@@ -309,7 +309,7 @@ uishell_rt_diag_code_rect(UIShell_RichTextState *s, UIShell_RtNode *n, Rng2F32 b
   p.frame = uishell_rt_frame(scratch.arena, &s->model, &s->theme, n);
   UIShell_RtCode *c = uishell_rt_code_of(s, n->key);
   B32 capped = 0;
-  Rng2F32 r = shift_2f32(uishell_rt_code_rect(&p, uishell_rt_code_height(n, c && c->expanded, &capped)), block.p0);
+  Rng2F32 r = c ? shift_2f32(uishell_rt_code_rect(&p, uishell_rt_code_height(c, &capped)), block.p0) : r2f32p(0, 0, 0, 0);
   scratch_end(scratch);
   return r;
 }
@@ -950,6 +950,11 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
                                                 .delta_unit = UI_EventDeltaUnit_Char, .delta_2s32 = v2s32(1, 0)});
       }
       RichCheck(str8_match(uishell_rt_diag_copy(d), str8_lit("fn"), 0), "focused, selection inside it is the code view's, and Copy copies it");
+      // Its Copy button copies all of it, whatever is selected inside.
+      UI_Box *copy_button = uishell_rt_diag_box_named(str8_lit("###rt_copy"));
+      if(!ui_box_is_nil(copy_button)) { d->now_us += 2000000; s = uishell_rt_diag_click(d, center_2f32(copy_button->rect), 0, 1); }
+      RichCheck(!ui_box_is_nil(copy_button) && str8_match(d->clip.text, rust->text, 0) && s->focus_embed == rust->key,
+                "the Copy button copies the whole Block, even with a selection inside it");
       WheelhouseRichSelection sel = {0};
       s = uishell_rt_diag_cmd(d, str8_lit("copy_markdown"), str8_zero());
       RichCheck(str8_match(d->clip.text, str8_lit("```rust\nfn main() {\n    println!(\"fenced\");\n}\n```"), 0), "Copy as Markdown gives the fence with its language");
@@ -1064,6 +1069,21 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = d->mouse});
       MemoryZeroStruct(&rd_state->cmds[0]);
       RichCheck(dragging && rd_fixture_count(d->panel.owner, str8_lit("text")) == tabs+2, "dragging \"Open\" out carries the code to a new View where it drops");
+      // A press on "Open" released off it opens nothing.
+      d->mouse = center_2f32(uishell_rt_diag_box(scratch.arena, rust->key).box->rect);
+      s = uishell_rt_diag_frames(d, 2);
+      open = uishell_rt_diag_box_named(str8_lit("###rt_open"));
+      if(!ui_box_is_nil(open))
+      {
+        d->now_us += 2000000;
+        d->mouse = center_2f32(open->rect);
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = d->mouse});
+        d->mouse = v2f32(d->mouse.x, open->rect.y1 + 3);
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = d->mouse});
+        MemoryZeroStruct(&rd_state->cmds[0]);
+      }
+      RichCheck(!ui_box_is_nil(open) && rd_fixture_count(d->panel.owner, str8_lit("text")) == tabs+2 && s->open_press == 0,
+                "a press on \"Open\" released off it opens nothing, and ends");
     }
 
     // Streaming: a fence still open takes a new content key as text arrives.
@@ -1091,6 +1111,24 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       if(!grew) { sleep_ms(5); }
     }
     RichCheck(oc && lines_before == 1 && !c_key_match(oc->content, key_before) && grew, "a Block whose fence is still open updates its content key as text arrives");
+    // Its fence's language changes on a reload; an empty fence still embeds.
+    generation = s->model.generation;
+    sleep_ms(1100);
+    write_data_to_file_path(stream_path, str8_lit("Streaming.\n\n```c\nlet tide = 1;\nlet berth = 2;\n```\n\nEmpty:\n\n```zig\n```\n"));
+    for(U32 i = 0; i < 1000 && s->model.generation == generation; i += 1) { s = uishell_rt_diag_frame(d, 0); sleep_ms(5); }
+    s = uishell_rt_diag_frames(d, 3);
+    open_fence = uishell_rt_diag_block_with(s, str8_lit("let tide"));
+    oc = open_fence ? uishell_rt_code_of(s, open_fence->key) : 0;
+    RichCheck(oc && uishell_rt_code_lang(oc) == TXT_LangKind_C, "a fence whose language changes takes the new lexer");
+    UIShell_RtCode *empty = 0;
+    for(U64 i = 0; i < s->model.block_count && !empty; i += 1)
+    {
+      UIShell_RtNode *n = uishell_rt_node(&s->model, s->model.block_keys[i]);
+      if(n && n->kind == WHEELHOUSE_RICH_KIND_CODE && n->text.size == 0) { empty = uishell_rt_code_of(s, n->key); }
+    }
+    for(U32 i = 0; empty && i < 400 && empty->lines_built.max != 1; i += 1) { s = uishell_rt_diag_frame(d, 0); sleep_ms(5); }
+    RichCheck(empty && uishell_rt_code_lang(empty) == TXT_LangKind_Zig && empty->line_count == 1 && empty->lines_built.max == 1,
+              "an empty fence is a one-line embed");
     scratch_end(scratch);
   }
 

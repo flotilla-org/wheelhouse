@@ -3579,11 +3579,13 @@ WH_VIEW_UI_FUNCTION_DEF(shell_text)
   Rng1U64 range = rd_space_range_from_eval(eval);
   C_Key text_key = rd_key_from_eval_space_range(eval.space, range, 1);
   String8 value = wh_view_setting(ctx, str8_lit("text"));
+  if(value.size == 0 && tv->value_root.u64[0] != 0) { uishell_text_view_release(tv); }
   if(file_path.size == 0 && value.size != 0)
   {
     if(tv->value_root.u64[0] == 0)
     {
       tv->value_root = c_root_alloc();
+      // The text view sets no other release hook; its user data is `tv`.
       rd_view_state_from_view(ctx->settings.view, 0)->release_user_data = uishell_text_view_release;
     }
     text_key = c_key_make(tv->value_root, c_id_make(0, 0));
