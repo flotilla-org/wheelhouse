@@ -34,6 +34,8 @@ struct UIShell_TableState
   Rng1F32 scrolling[Axis2_COUNT];
   // Bumped when either Thumb moves, which keeps an overlay bar up a while.
   U64 scrolled;
+  // The End Gap given each axis: the reserved gutter across its far end.
+  F32 end_gap[Axis2_COUNT];
   // The fraction a thumb drag last asked for, so a held thumb asks once.
   F64 dragged_to[Axis2_COUNT];
 };
@@ -420,6 +422,10 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, status_h, dim.x, Max(dim.y, status_h)),
                                                         UI_ScrollAxisPolicy_Auto, UI_ScrollAxisPolicy_Auto);
   params.content_dim_px = v2f32(state->content_px[Axis2_X], state->content_px[Axis2_Y]);
+  // The Grid runs to the edge under reserved gutters, so its headers and
+  // pinned items carry on beside a bar kept to what scrolls; an End Gap the
+  // gutter's size keeps the last item clear of the bar.
+  params.content_under_gutters = 1;
   UI_ScrollRegion region = ui_scroll_region_layout(params);
   UI_ScrollRegionThumbAxis axes[Axis2_COUNT] = {0};
   for EachEnumVal(Axis2, axis)
@@ -431,7 +437,16 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   UI_ScrollRegionThumbSignal bars = ui_scroll_region_build_thumbs(root, ui_key_from_string(root->key, str8_lit("table_grid")), &region, axes,
                                                                   UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise|UI_BoxFlag_Clip);
   UI_Box *box = bars.content_box;
-  Vec2F32 grid_dim = dim_2f32(region.viewport);
+  Vec2F32 grid_dim = dim_2f32(region.content);
+  for EachEnumVal(Axis2, axis)
+  {
+    F32 gap = region.content.p1.v[axis] - region.viewport.p1.v[axis];
+    if(gap != state->end_gap[axis])
+    {
+      state->end_gap[axis] = gap;
+      binnacle_grid_set_end_gap(grid, axis == Axis2_Y ? BINNACLE_ROWS : BINNACLE_COLS, gap);
+    }
+  }
 
   // Input from this frame, against last frame's layout.
   UI_Signal sig = ui_signal_from_box(box);

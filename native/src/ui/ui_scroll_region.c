@@ -51,6 +51,7 @@ ui_scroll_region_layout(UI_ScrollRegionParams params)
       }
     }
   }
+  region.content = params.content_under_gutters ? region.params.rect : region.viewport;
   return region;
 }
 
@@ -224,7 +225,7 @@ ui_scroll_region_build_thumbs(UI_Box *parent, UI_Key key, UI_ScrollRegion *regio
       }
       if(!showing) { ui_pop_flags(); }
     }
-    UI_Rect(region->viewport)
+    UI_Rect(region->content)
     {
       result.content_box = ui_build_box_from_key(content_flags|UI_BoxFlag_Clip, key);
     }

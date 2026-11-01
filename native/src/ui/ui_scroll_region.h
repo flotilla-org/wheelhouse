@@ -28,13 +28,19 @@ struct UI_ScrollRegionParams
   // Overlay bars keep their look but reserve their strip and stay shown,
   // where the system wants scroll bars always shown.
   B32 overlay_reserve;
+  // The content box takes the whole rect, and reserved gutters lie over its
+  // edges: for content that keeps clear of them itself where it scrolls, and
+  // runs to the edge where it doesn't (a table's headers beside a bar kept
+  // to its span).
+  B32 content_under_gutters;
 };
 
 typedef struct UI_ScrollRegion UI_ScrollRegion;
 struct UI_ScrollRegion
 {
   UI_ScrollRegionParams params;
-  Rng2F32 viewport;
+  Rng2F32 viewport; // what's left beside the reserved gutters
+  Rng2F32 content;  // the content box: the viewport, or the rect if content_under_gutters
   B32 bar_enabled[Axis2_COUNT];
 };
 

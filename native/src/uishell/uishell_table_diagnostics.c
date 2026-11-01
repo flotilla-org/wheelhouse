@@ -407,8 +407,6 @@ uishell_table_diagnostics(RD_WindowState *ws)
         UI_Box *thumb = &ui_nil_box, *grid_box = &ui_nil_box;
         for(U32 frame = 0; frame < 4; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, style, none, away, UIShell_TableDiagBar_Thumb, &thumb); }
         TableCheck(!ui_box_is_nil(thumb), "a huge table shows a vertical scroll bar");
-        TableCheck(!ui_box_is_nil(grid_box) && grid_box->rect.x1 <= 900 && (style == UI_ScrollBarStyle_Overlay || grid_box->rect.x1 < 900),
-                   "a classic bar takes its gutter from the grid; an overlay one floats");
         if(ui_box_is_nil(thumb) || ui_box_is_nil(grid_box)) { continue; }
         {
           UIShell_TableDraw *first = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
@@ -430,6 +428,21 @@ uishell_table_diagnostics(RD_WindowState *ws)
         BinnacleAxisSnapshot *rows = &d->snap.axes[BINNACLE_ROWS];
         B32 last_shown = rows->strip_len > 0 && rows->strip[rows->strip_len-1].position == rows->count-1;
         TableCheck(last_shown && d->snap.axes[BINNACLE_ROWS].thumb.fraction > 0.99, "dragging the thumb to the end shows the last row");
+        // Under a classic bar the grid runs to the edge, and its End Gap
+        // brings the last row clear of the bar.
+        if(last_shown && !ui_box_is_nil(thumb))
+        {
+          BinnacleStripItem *last = &rows->strip[rows->strip_len-1];
+          UI_Box *vbar = ui_box_from_key(ui_key_from_stringf(grid_box->key, "scroll_region_bar_%i", Axis2_Y));
+          UI_Box *hbar = ui_box_from_key(ui_key_from_stringf(grid_box->key, "scroll_region_bar_%i", Axis2_X));
+          if(style == UI_ScrollBarStyle_Classic)
+          {
+            TableCheck(!ui_box_is_nil(vbar) && vbar->rect.x0 < grid_box->rect.x1 && !ui_box_is_nil(hbar) && hbar->rect.y0 < grid_box->rect.y1,
+                       "classic bars lie over the grid's edges");
+            TableCheck(!ui_box_is_nil(hbar) && grid_box->rect.y0 + last->offset + last->size <= hbar->rect.y0 + 0.5f,
+                       "scrolled to the end, the last row ends clear of the horizontal bar");
+          }
+        }
         if(style != UI_ScrollBarStyle_Classic) { continue; }
         // Back to the top with the track above the thumb, a page at a time.
         U64 anchor = rows->anchor.position;
