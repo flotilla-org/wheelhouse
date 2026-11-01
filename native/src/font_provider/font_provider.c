@@ -126,6 +126,31 @@ fp_glyph_raster_scaled(Arena *arena, FP_GlyphRaster src, F32 scale)
   return result;
 }
 
+// A table of a font file, or of face `face_index` of a collection, in place;
+// empty when it has no such table.
+internal String8
+fp_sfnt_table(String8 font, U32 face_index, U32 tag)
+{
+  String8 result = {0};
+  U64 dir = 0;
+  if(fp_be32(font, 0) == fp_tag_from_string("ttcf"))
+  {
+    dir = (face_index < fp_be32(font, 8)) ? fp_be32(font, 12 + (U64)face_index*4) : font.size;
+  }
+  U64 tables = fp_be16(font, dir + 4);
+  for EachIndex(idx, tables)
+  {
+    U64 rec = dir + 12 + idx*16;
+    if(fp_be32(font, rec) == tag)
+    {
+      U64 offset = fp_be32(font, rec + 8), size = fp_be32(font, rec + 12);
+      if(offset + size <= font.size) { result = str8(font.str + offset, size); }
+      break;
+    }
+  }
+  return result;
+}
+
 // The PNG CBDT holds for a glyph, from the strike nearest above size_px (or
 // the largest): CoreText doesn't draw CBDT. left and top are in the strike's
 // pixels, as FP_GlyphRaster's are.

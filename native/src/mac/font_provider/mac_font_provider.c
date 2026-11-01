@@ -39,6 +39,7 @@ mac_fp_font_release(MAC_FP_Font *font)
     if(font->colr != 0) { CFRelease(font->colr); }
     if(font->cblc != 0) { CFRelease(font->cblc); }
     if(font->cbdt != 0) { CFRelease(font->cbdt); }
+    if(font->bitmap_only != 0) { CFRelease(font->bitmap_only); }
     if(font->cg_font != 0)
     {
       CGFontRelease(font->cg_font);
@@ -149,6 +150,27 @@ fp_init(void)
   mac_fp_state->arena = arena;
 }
 
+// A font CoreGraphics won't open, kept for its CBLC and CBDT when it has
+// them: CoreGraphics refuses a font without outlines.
+internal FP_Handle
+mac_fp_open_bitmap_only(CFDataRef data, U32 face_index)
+{
+  MAC_FP_Font *font = 0;
+  String8 bytes = (data != 0) ? str8((U8 *)CFDataGetBytePtr(data), (U64)CFDataGetLength(data)) : str8_zero();
+  String8 cblc = fp_sfnt_table(bytes, face_index, fp_tag_from_string("CBLC"));
+  String8 cbdt = fp_sfnt_table(bytes, face_index, fp_tag_from_string("CBDT"));
+  if(cblc.size != 0 && cbdt.size != 0)
+  {
+    font = mac_fp_font_alloc();
+    font->bitmap_only = (CFDataRef)CFRetain(data);
+    font->cblc = CFDataCreateWithBytesNoCopy(0, cblc.str, (CFIndex)cblc.size, kCFAllocatorNull);
+    font->cbdt = CFDataCreateWithBytesNoCopy(0, cbdt.str, (CFIndex)cbdt.size, kCFAllocatorNull);
+    font->has_color_tables = 1;
+    font->color_tables_read = 1;
+  }
+  return mac_fp_handle_from_font(font);
+}
+
 fp_hook FP_Handle
 fp_font_open(String8 path)
 {
@@ -161,12 +183,14 @@ fp_font_open(String8 path)
     font->cg_font = CGFontCreateWithDataProvider(font->provider);
     font->has_color_tables = mac_fp_cg_font_has_color_tables(font->cg_font);
   }
+  FP_Handle result = mac_fp_handle_from_font(font);
   if(font->cg_font == 0)
   {
+    CFDataRef data = (font->provider != 0) ? CGDataProviderCopyData(font->provider) : 0;
     mac_fp_font_release(font);
-    font = 0;
+    result = mac_fp_open_bitmap_only(data, 0);
+    if(data != 0) { CFRelease(data); }
   }
-  FP_Handle result = mac_fp_handle_from_font(font);
   scratch_end(scratch);
   return result;
 }
@@ -184,12 +208,15 @@ fp_font_open_from_static_data_string(String8 *data_ptr)
       font->has_color_tables = mac_fp_cg_font_has_color_tables(font->cg_font);
     }
   }
+  FP_Handle result = mac_fp_handle_from_font(font);
   if(font->cg_font == 0)
   {
     mac_fp_font_release(font);
-    font = 0;
+    CFDataRef data = (data_ptr != 0 && data_ptr->str != 0 && data_ptr->size != 0) ?
+      CFDataCreateWithBytesNoCopy(0, data_ptr->str, (CFIndex)data_ptr->size, kCFAllocatorNull) : 0;
+    result = mac_fp_open_bitmap_only(data, 0);
+    if(data != 0) { CFRelease(data); }
   }
-  FP_Handle result = mac_fp_handle_from_font(font);
   return result;
 }
 
@@ -485,8 +512,17 @@ fp_font_open_face(String8 path, U32 face_index)
 {
   CFURLRef url = CFURLCreateFromFileSystemRepresentation(0, path.str, (CFIndex)path.size, 0);
   CFArrayRef descriptors = (url != 0) ? CTFontManagerCreateFontDescriptorsFromURL(url) : 0;
+  FP_Handle result = mac_fp_open_face_from_descriptors(descriptors, face_index);
+  if(fp_handle_match(result, fp_handle_zero()) && url != 0)
+  {
+    CGDataProviderRef provider = CGDataProviderCreateWithURL(url);
+    CFDataRef data = (provider != 0) ? CGDataProviderCopyData(provider) : 0;
+    result = mac_fp_open_bitmap_only(data, face_index);
+    if(data != 0) { CFRelease(data); }
+    if(provider != 0) { CGDataProviderRelease(provider); }
+  }
   if(url != 0) { CFRelease(url); }
-  return mac_fp_open_face_from_descriptors(descriptors, face_index);
+  return result;
 }
 
 fp_hook FP_Handle
@@ -494,8 +530,13 @@ fp_font_open_face_from_memory(String8 data, U32 face_index)
 {
   CFDataRef cf_data = CFDataCreateWithBytesNoCopy(0, data.str, (CFIndex)data.size, kCFAllocatorNull);
   CFArrayRef descriptors = (cf_data != 0) ? CTFontManagerCreateFontDescriptorsFromData(cf_data) : 0;
+  FP_Handle result = mac_fp_open_face_from_descriptors(descriptors, face_index);
+  if(fp_handle_match(result, fp_handle_zero()))
+  {
+    result = mac_fp_open_bitmap_only(cf_data, face_index);
+  }
   if(cf_data != 0) { CFRelease(cf_data); }
-  return mac_fp_open_face_from_descriptors(descriptors, face_index);
+  return result;
 }
 
 internal String8
@@ -542,7 +583,47 @@ fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
   ProfBeginFunction();
   FP_GlyphRaster result = {0};
   MAC_FP_Font *font = mac_fp_font_from_handle(handle);
-  if(font != 0 && font->cg_font != 0 && params->size_px > 0)
+
+  //- CBDT, which CoreText doesn't draw: its PNG, decoded and scaled. A font
+  // that is only CBDT has no cg_font, so this comes first.
+  B32 done = 0;
+  if(font != 0 && params->size_px > 0)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    // A colour bitmap is drawn as it is: embolden, skew and the subpixel
+    // offset don't apply to emoji, though they still part its cache keys.
+    mac_fp_read_color_tables(font);
+    if(font->cblc != 0)
+    {
+      String8 cblc = mac_fp_data_string(font->cblc);
+      String8 cbdt = mac_fp_data_string(font->cbdt);
+      String8 png = {0};
+      S16 left = 0, top = 0;
+      U32 ppem = 0;
+      if(cblc.size != 0 && fp_cbdt_png(cblc, cbdt, params->glyph_id, params->size_px, &png, &left, &top, &ppem))
+      {
+        int w = 0, h = 0, n = 0;
+        U8 *rgba = stbi_load_from_memory(png.str, (int)png.size, &w, &h, &n, 4);
+        if(rgba != 0 && w > 0 && h > 0)
+        {
+          FP_GlyphRaster strike = {FP_RasterKind_RGBA, v2s16((S16)w, (S16)h), left, top, 0};
+          strike.pixels = push_array(scratch.arena, U8, (U64)w*(U64)h*4);
+          for EachIndex(idx, (U64)w*(U64)h)
+          {
+            U32 a = rgba[idx*4+3];
+            for EachIndex(c, 3) { strike.pixels[idx*4+c] = (U8)((rgba[idx*4+c]*a + 127)/255); }
+            strike.pixels[idx*4+3] = (U8)a;
+          }
+          result = fp_glyph_raster_scaled(arena, strike, params->size_px/(F32)ppem);
+          done = 1;
+        }
+        if(rgba != 0) { stbi_image_free(rgba); }
+      }
+    }
+    scratch_end(scratch);
+  }
+
+  if(!done && font != 0 && font->cg_font != 0 && params->size_px > 0)
   {
     Temp scratch = scratch_begin(&arena, 1);
     
@@ -575,39 +656,7 @@ fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
     CTFontRef ct_font = CTFontCreateWithGraphicsFont(font->cg_font, params->size_px, 0, descriptor);
     if(descriptor != 0) { CFRelease(descriptor); }
     
-    //- CBDT, which CoreText doesn't draw: its PNG, decoded and scaled
     CGGlyph glyph = (CGGlyph)params->glyph_id;
-    B32 done = 0;
-    // A colour bitmap is drawn as it is: embolden, skew and the subpixel
-    // offset don't apply to emoji, though they still part its cache keys.
-    mac_fp_read_color_tables(font);
-    if(font->cblc != 0)
-    {
-      String8 cblc = mac_fp_data_string(font->cblc);
-      String8 cbdt = mac_fp_data_string(font->cbdt);
-      String8 png = {0};
-      S16 left = 0, top = 0;
-      U32 ppem = 0;
-      if(cblc.size != 0 && fp_cbdt_png(cblc, cbdt, params->glyph_id, params->size_px, &png, &left, &top, &ppem))
-      {
-        int w = 0, h = 0, n = 0;
-        U8 *rgba = stbi_load_from_memory(png.str, (int)png.size, &w, &h, &n, 4);
-        if(rgba != 0 && w > 0 && h > 0)
-        {
-          FP_GlyphRaster strike = {FP_RasterKind_RGBA, v2s16((S16)w, (S16)h), left, top, 0};
-          strike.pixels = push_array(scratch.arena, U8, (U64)w*(U64)h*4);
-          for EachIndex(idx, (U64)w*(U64)h)
-          {
-            U32 a = rgba[idx*4+3];
-            for EachIndex(c, 3) { strike.pixels[idx*4+c] = (U8)((rgba[idx*4+c]*a + 127)/255); }
-            strike.pixels[idx*4+3] = (U8)a;
-          }
-          result = fp_glyph_raster_scaled(arena, strike, params->size_px/(F32)ppem);
-          done = 1;
-        }
-        if(rgba != 0) { stbi_image_free(rgba); }
-      }
-    }
     
     //- bounds, with room for synthesis and the subpixel shift; a bitmap
     // glyph's outline is empty, so it gets the advance by the line's height
@@ -636,7 +685,7 @@ fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
       color = fp_colr_glyph_has_layers(mac_fp_data_string(font->colr), params->glyph_id) || font->has_sbix || font->cbdt != 0;
     }
     
-    if(!done && rect.size.width > 0 && rect.size.height > 0 && w > 0 && h > 0 && w < 4096 && h < 4096)
+    if(rect.size.width > 0 && rect.size.height > 0 && w > 0 && h > 0 && w < 4096 && h < 4096)
     {
       U64 bpp = color ? 4 : 1;
       U8 *pixels = push_array(scratch.arena, U8, (U64)w*(U64)h*bpp);

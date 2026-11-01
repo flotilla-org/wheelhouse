@@ -34,6 +34,10 @@ struct MAC_FP_Font
   CFDataRef cblc;
   CFDataRef cbdt;
   B32 has_sbix;
+  // A font CoreGraphics won't open because it has no outlines, such as Noto
+  // Color Emoji's CBDT build: its bytes, which cblc and cbdt point into. It
+  // has no cg_font and draws only its bitmaps.
+  CFDataRef bitmap_only;
 };
 
 typedef struct MAC_FP_State MAC_FP_State;
@@ -52,6 +56,7 @@ internal FP_Handle mac_fp_handle_from_font(MAC_FP_Font *font);
 internal MAC_FP_Font *mac_fp_font_alloc(void);
 internal void mac_fp_font_release(MAC_FP_Font *font);
 internal B32 mac_fp_cg_font_has_color_tables(CGFontRef cg_font);
+internal FP_Handle mac_fp_open_bitmap_only(CFDataRef data, U32 face_index);
 internal String8 mac_fp_system_font_path_from_family(Arena *arena, String8 family);
 
 #endif // MAC_FONT_PROVIDER_H
