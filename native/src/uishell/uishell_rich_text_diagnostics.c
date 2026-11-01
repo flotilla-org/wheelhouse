@@ -898,14 +898,20 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       Rng2F32 lr = ui_box_is_nil(lb.box) ? r2f32p(0, 0, 0, 0) : uishell_rt_diag_code_rect(s, longc, lb.box->rect);
       RichCheck(lc && abs_f32(dim_2f32(lr).y - row*UISHELL_RT_CODE_INLINE_LINES) < 0.5f && !lc->line_numbers,
                 "inline, a long code Block is capped at 30 lines, without line numbers");
-      // A long line scrolls sideways, unfocused too; the document doesn't move.
-      d->mouse = center_2f32(lr);
+      // A long line scrolls sideways, unfocused too; the document doesn't
+      // move. Its top lines, in view whatever the font's size.
+      wheelhouse_rich_text_reveal(s->doc, s->sub, longc->key, 0, &error);
+      s = uishell_rt_diag_frames(d, 3);
+      lb = uishell_rt_diag_box(scratch.arena, longc->key);
+      lr = ui_box_is_nil(lb.box) ? r2f32p(0, 0, 0, 0) : uishell_rt_diag_code_rect(s, longc, lb.box->rect);
+      d->mouse = v2f32((lr.x0 + lr.x1)/2, lr.y0 + row*1.5f);
       WheelhouseRichWindow before_wheel = {0};
       wheelhouse_rich_text_window(s->doc, s->sub, &before_wheel, &error);
       F64 top_before = before_wheel.top;
       s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Scroll, .pos = d->mouse, .delta_2f32 = v2f32(1, 0)});
       s = uishell_rt_diag_frames(d, 2);
       wheelhouse_rich_text_window(s->doc, s->sub, &before_wheel, &error);
+      fprintf(stderr, "RICH_TEXT_CODE sideways scroll=%.1f content=%.1f width=%.1f top=%.1f->%.1f\n", lc->scroll.x, lc->content_dim.x, dim_2f32(lr).x, top_before, before_wheel.top);
       RichCheck(lc->scroll.x > 0 && before_wheel.top == top_before && lc->content_dim.x > dim_2f32(lr).x,
                 "a line wider than the Block scrolls sideways, without wrapping");
       lc->scroll.x = 0;
