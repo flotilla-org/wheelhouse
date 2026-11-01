@@ -167,8 +167,14 @@ impl Pass {
     }
 
     /// Whether the family exists to seed with.
+    /// The family, or the one fontique stands in for it: it leaves PingFang
+    /// out (its outlines are hvgl) and uses Heiti in its place.
     fn seed(&mut self, lang: &str, script: &str, family: &str) -> bool {
-        let Some(id) = self.fonts.collection.family_id(family) else { return false };
+        let stand_in = family.strip_prefix("PingFang ").map(|region| format!("Heiti {region}"));
+        let Some(id) = self.fonts.collection.family_id(family).or_else(|| stand_in.and_then(|f| self.fonts.collection.family_id(&f)))
+        else {
+            return false;
+        };
         let script = Script::from_bytes(script.as_bytes().try_into().expect("a four-letter script"));
         let language = Language::parse(lang).expect("a language");
         let key = FallbackKey::new(script, Some(&language));
