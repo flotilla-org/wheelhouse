@@ -169,8 +169,7 @@ impl Endpoint {
     fn start() -> Self {
         use std::os::unix::fs::DirBuilderExt;
         extern "C" fn wake() {}
-        // Short, as macOS's temporary directory leaves no room for a socket.
-        let dir = std::path::PathBuf::from(format!("/tmp/wh-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+        let dir = crate::socket_test_dir();
         std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
         let path = dir.join("socket");
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();

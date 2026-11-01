@@ -13,6 +13,13 @@ mod quit;
 mod recording;
 
 pub type Wake = extern "C" fn();
+
+/// A fresh directory path for a test's socket: short, as macOS's temporary
+/// directory leaves no room for one. The test makes and removes it.
+#[cfg(all(test, unix))]
+fn socket_test_dir() -> std::path::PathBuf {
+    format!("/tmp/wh-{}", &uuid::Uuid::new_v4().to_string()[..8]).into()
+}
 #[repr(C)]
 pub struct Text {
     pub data: *const u8,
@@ -427,8 +434,7 @@ mod transport {
             extern "C" fn wake() {
                 WAKES.fetch_add(1, Ordering::SeqCst);
             }
-            // Short, as macOS's temporary directory leaves no room for a socket.
-            let dir = PathBuf::from(format!("/tmp/wh-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+            let dir = crate::socket_test_dir();
             fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
             let path = dir.join("socket");
             let server = Ingress::start(path.clone(), wake, None).unwrap();
@@ -455,7 +461,7 @@ mod transport {
         fn a_socket_is_refused_a_parent_that_isnt_private() {
             use std::os::unix::fs::{symlink, PermissionsExt};
             extern "C" fn wake() {}
-            let root = PathBuf::from(format!("/tmp/wh-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+            let root = crate::socket_test_dir();
             let shared = root.join("shared");
             std::fs::create_dir_all(&shared).unwrap();
             std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
