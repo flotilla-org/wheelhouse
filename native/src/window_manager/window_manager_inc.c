@@ -13,7 +13,12 @@
 WM_HookDecls
 # include "linux/window_manager/linux_window_manager.c"
 # undef WM_HOOK_NAME
+# define WM_HOOK_NAME(name) wm_wayland_##name
+WM_HookDecls
+# include "linux/window_manager/wayland/linux_wayland_window_manager.c"
+# undef WM_HOOK_NAME
 # define WM_HOOK_NAME(name) wm_##name
+# include "linux/window_manager/linux_wm_shared.c"
 #elif OS_MAC
 # include "mac/window_manager/mac_window_manager.c"
 #else
@@ -29,6 +34,7 @@ WM_HookDecls
 global WM_Backend wm_backends[] =
 {
   {str8_lit_comp("x11"), wm_x11_init, WM_HookTableInit(x11)},
+  {str8_lit_comp("wayland"), wm_wayland_init, WM_HookTableInit(wayland)},
 };
 
 // --window_manager:<name> (or WHEELHOUSE_WINDOW_MANAGER) names the only one

@@ -309,7 +309,11 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   failures += !uishell_query_ui_diagnostics(ws);
   failures += !uishell_setting_typing_diagnostics();
 #if OS_LINUX
-  failures += !uishell_edit_x11_text_diagnostics(ws);
+  // It sends X11 key events; the Wayland window manager has none to send.
+  if(wm_native_surface(wm_window_zero()).kind == WM_NativeSurfaceKind_X11)
+  {
+    failures += !uishell_edit_x11_text_diagnostics(ws);
+  }
 #endif
 #if OS_MAC
   failures += !uishell_edit_command_diagnostics(1);

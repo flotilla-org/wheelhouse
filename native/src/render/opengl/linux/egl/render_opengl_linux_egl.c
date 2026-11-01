@@ -19,15 +19,30 @@ r_ogl_os_init(CmdLine *cmdln)
   }
 
   //- rjf: get EGL display
-  // Only X11 so far: a Wayland window manager would also hand this backend a
-  // wl_display here, and a wl_egl_window per window.
   WM_NativeSurface native = wm_native_surface(wm_window_zero());
-  if(native.kind != WM_NativeSurfaceKind_X11)
+  if(native.kind == WM_NativeSurfaceKind_X11)
   {
-    wm_graphical_message(1, str8_lit("Fatal Error"), str8_lit("OpenGL through EGL needs an X11 window manager."));
+    r_ogl_lnx_state->display = eglGetPlatformDisplay(EGL_PLATFORM_X11_KHR, native.x11.display, 0);
+  }
+  else if(native.kind == WM_NativeSurfaceKind_Wayland)
+  {
+    void *library = dlopen("libwayland-egl.so.1", RTLD_NOW|RTLD_LOCAL);
+    B32 loaded = library != 0;
+#define X(ret, name, params) *(void **)&r_ogl_lnx_##name = loaded ? dlsym(library, #name) : 0; loaded &= r_ogl_lnx_##name != 0;
+    R_OGL_LNX_WaylandEGLXList
+#undef X
+    if(!loaded)
+    {
+      wm_graphical_message(1, str8_lit("Fatal Error"), str8_lit("OpenGL on Wayland needs libwayland-egl.so.1."));
+      abort_self(1);
+    }
+    r_ogl_lnx_state->display = eglGetPlatformDisplay(EGL_PLATFORM_WAYLAND_KHR, native.wayland.display, 0);
+  }
+  else
+  {
+    wm_graphical_message(1, str8_lit("Fatal Error"), str8_lit("OpenGL through EGL needs an X11 or Wayland window manager."));
     abort_self(1);
   }
-  r_ogl_lnx_state->display = eglGetPlatformDisplay(EGL_PLATFORM_X11_KHR, native.x11.display, 0);
   if(r_ogl_lnx_state->display == EGL_NO_DISPLAY)
   {
     wm_graphical_message(1, str8_lit("Fatal Error"), str8_lit("Failed to get EGL display."));
@@ -59,9 +74,11 @@ r_ogl_os_init(CmdLine *cmdln)
   }
 
   //- rjf: choose config
-  // The same buffers GLX asked for. Windows are created with the root's
+  // The same buffers GLX asked for. X11 windows are created with the root's
   // visual, and NVIDIA refuses a window surface whose config has another, so
-  // the config must match it; one that also makes pbuffers is preferred.
+  // the config must match it. A Wayland compositor blends by a buffer's
+  // alpha, so there the config must have none. One that also makes pbuffers
+  // is preferred.
   {
     EGLint options[] =
     {
@@ -85,10 +102,12 @@ r_ogl_os_init(CmdLine *cmdln)
     S32 best_score = -1;
     for(EGLint idx = 0; idx < configs_count; idx += 1)
     {
-      EGLint visual_id = 0, surface_type = 0;
+      EGLint visual_id = 0, surface_type = 0, alpha_size = 0;
       eglGetConfigAttrib(r_ogl_lnx_state->display, configs[idx], EGL_NATIVE_VISUAL_ID, &visual_id);
       eglGetConfigAttrib(r_ogl_lnx_state->display, configs[idx], EGL_SURFACE_TYPE, &surface_type);
-      S32 score = 2*((U64)visual_id == native.x11.visual_id) + !!(surface_type & EGL_PBUFFER_BIT);
+      eglGetConfigAttrib(r_ogl_lnx_state->display, configs[idx], EGL_ALPHA_SIZE, &alpha_size);
+      B32 matches = native.kind == WM_NativeSurfaceKind_X11 ? (U64)visual_id == native.x11.visual_id : alpha_size == 0;
+      S32 score = 2*matches + !!(surface_type & EGL_PBUFFER_BIT);
       if(score > best_score)
       {
         best_score = score;
@@ -145,9 +164,20 @@ r_ogl_os_window_equip(WM_Window window)
   {
     w = push_array(r_ogl_lnx_state->arena, R_OGL_LNX_Window, 1);
   }
-  // On the X11 platform the native window is a pointer to the XID.
-  unsigned long xid = (unsigned long)native.x11.window;
-  w->surface = eglCreatePlatformWindowSurface(r_ogl_lnx_state->display, r_ogl_lnx_state->config, &xid, 0);
+  MemoryZeroStruct(w);
+  if(native.kind == WM_NativeSurfaceKind_Wayland)
+  {
+    Rng2F32 rect = wm_client_rect_from_window(window);
+    w->wl_size = v2s32(Max((S32)dim_2f32(rect).x, 1), Max((S32)dim_2f32(rect).y, 1));
+    w->wl_window = r_ogl_lnx_wl_egl_window_create(native.wayland.surface, w->wl_size.x, w->wl_size.y);
+    w->surface = eglCreatePlatformWindowSurface(r_ogl_lnx_state->display, r_ogl_lnx_state->config, w->wl_window, 0);
+  }
+  else
+  {
+    // On the X11 platform the native window is a pointer to the XID.
+    unsigned long xid = (unsigned long)native.x11.window;
+    w->surface = eglCreatePlatformWindowSurface(r_ogl_lnx_state->display, r_ogl_lnx_state->config, &xid, 0);
+  }
   if(w->surface == EGL_NO_SURFACE)
   {
     wm_graphical_message(1, str8_lit("Fatal Error"), str8_lit("Couldn't create EGL surface."));
@@ -167,6 +197,11 @@ r_ogl_os_window_unequip(WM_Window os, R_Handle r)
   }
   eglDestroySurface(r_ogl_lnx_state->display, w->surface);
   w->surface = EGL_NO_SURFACE;
+  if(w->wl_window != 0)
+  {
+    r_ogl_lnx_wl_egl_window_destroy(w->wl_window);
+    w->wl_window = 0;
+  }
   SLLStackPush(r_ogl_lnx_state->free_window, w);
 }
 
@@ -174,7 +209,25 @@ internal void
 r_ogl_os_select_window(WM_Window os, R_Handle r)
 {
   R_OGL_LNX_Window *w = (R_OGL_LNX_Window *)r.u64[0];
+  // A Wayland surface's buffers take the size the frame is drawn at.
+  if(w->wl_window != 0)
+  {
+    Rng2F32 rect = wm_client_rect_from_window(os);
+    Vec2S32 size = v2s32(Max((S32)dim_2f32(rect).x, 1), Max((S32)dim_2f32(rect).y, 1));
+    if(size.x != w->wl_size.x || size.y != w->wl_size.y)
+    {
+      w->wl_size = size;
+      r_ogl_lnx_wl_egl_window_resize(w->wl_window, size.x, size.y, 0, 0);
+    }
+  }
   eglMakeCurrent(r_ogl_lnx_state->display, w->surface, w->surface, r_ogl_lnx_state->context);
+  // Frame callbacks pace a Wayland window (wm_window_frame_ready); a swap
+  // that waited for its own would block the UI while the window is hidden.
+  if(w->wl_window != 0 && !w->swap_interval_set)
+  {
+    w->swap_interval_set = 1;
+    eglSwapInterval(r_ogl_lnx_state->display, 0);
+  }
 }
 
 internal void
