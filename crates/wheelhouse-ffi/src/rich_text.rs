@@ -130,7 +130,8 @@ pub struct WheelhouseRichCell {
     pub len: u32,
 }
 
-/// A node's content, without its children.
+/// A node's content, without its children. An array with a count of 0 has a
+/// pointer that is not NULL but must not be read.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WheelhouseRichNode {
@@ -465,7 +466,7 @@ pub unsafe extern "C" fn wheelhouse_rich_text_free(h: *mut WheelhouseRichText) {
 
 /// Parse the whole document again (under 4 GiB): unchanged nodes keep their
 /// versions. Deltas already polled stay valid. `changed_out` (if not NULL)
-/// gets 1 if anything changed.
+/// gets 1 if anything changed, and 0 otherwise or on an error.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_rich_text_reload(
     h: *mut WheelhouseRichText,
@@ -473,6 +474,9 @@ pub unsafe extern "C" fn wheelhouse_rich_text_reload(
     changed_out: *mut u32,
     error_out: *mut *mut c_char,
 ) -> u32 {
+    if let Some(out) = changed_out.as_mut() {
+        *out = 0;
+    }
     run(h, error_out, |h| {
         let source = markdown(markdown_text)?;
         let changed = h.rich.reload(&source);

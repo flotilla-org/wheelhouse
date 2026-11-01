@@ -1414,7 +1414,8 @@ typedef struct {
   uint32_t len;
 } WheelhouseRichCell;
 
-// A node's content, without its children.
+// A node's content, without its children. An array with a count of 0 has a
+// pointer that is not NULL but must not be read.
 typedef struct {
   uint64_t key;
   // WHEELHOUSE_RICH_KIND_* (a Container below 16, a Block from 16).
@@ -2593,7 +2594,7 @@ void wheelhouse_rich_text_free(WheelhouseRichText *h);
 
 // Parse the whole document again (under 4 GiB): unchanged nodes keep their
 // versions. Deltas already polled stay valid. `changed_out` (if not NULL)
-// gets 1 if anything changed.
+// gets 1 if anything changed, and 0 otherwise or on an error.
 uint32_t wheelhouse_rich_text_reload(WheelhouseRichText *h,
                                      WheelhouseText markdown_text,
                                      uint32_t *changed_out,
