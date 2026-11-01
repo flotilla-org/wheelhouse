@@ -10,6 +10,7 @@
  * Arguments: markdown fixture files. */
 #include "wheelhouse.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -260,12 +261,14 @@ static int contains(WheelhouseBytes b, const char *s) {
 }
 
 static void drive_view(const char *markdown) {
-    WheelhouseRichText *h = wheelhouse_rich_text_open(text(markdown));
-    assert(h);
+    WheelhouseRichText *h = wheelhouse_rich_text_open(text(markdown), &error);
+    assert(h && !error);
     uint64_t sub;
     ok(wheelhouse_rich_text_subscribe(h, &sub, &error));
     ok(wheelhouse_rich_text_set_metrics(h, sub, 400.0f, 10.0f, 40.0f, &error));
     ok(wheelhouse_rich_text_set_viewport(h, sub, 100.0, &error));
+    fails(wheelhouse_rich_text_set_viewport(h, sub, NAN, &error));
+    fails(wheelhouse_rich_text_set_metrics(h, sub, INFINITY, 10.0f, 40.0f, &error));
 
     WheelhouseRichWindow window;
     ok(wheelhouse_rich_text_window(h, sub, &window, &error));
@@ -357,8 +360,8 @@ static void drive_view(const char *markdown) {
     while (!status.done) ok(wheelhouse_rich_text_find_step(h, sub, 1, &status, &error));
     assert(status.count > 0 && !status.capped && status.current == WHEELHOUSE_NONE);
     WheelhouseRichMatch match;
-    assert(wheelhouse_rich_text_find_match(h, sub, 0, &match));
-    assert(!wheelhouse_rich_text_find_match(h, sub, status.count, &match));
+    ok(wheelhouse_rich_text_find_match(h, sub, 0, &match, &error));
+    fails(wheelhouse_rich_text_find_match(h, sub, status.count, &match, &error));
     uint64_t list = 0;
     Model model = fresh(h);
     Node *root = lookup(&model, WHEELHOUSE_RICH_ROOT_KEY);
@@ -392,7 +395,10 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) fixtures[i - 1] = read_file(argv[i]);
     int count = argc - 1;
 
-    WheelhouseRichText *h = wheelhouse_rich_text_open(text(fixtures[0]));
+    assert(!wheelhouse_rich_text_open((WheelhouseText){NULL, 1}, &error) && error);
+    wheelhouse_string_free(error);
+    error = NULL;
+    WheelhouseRichText *h = wheelhouse_rich_text_open(text(fixtures[0]), &error);
     assert(h && wheelhouse_rich_text_generation(h) == 1);
     uint64_t every, rarely;
     ok(wheelhouse_rich_text_subscribe(h, &every, &error));

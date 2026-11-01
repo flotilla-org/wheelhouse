@@ -5,6 +5,9 @@
 //! borrowed from the handle until the next call on it. Byte offsets are into
 //! the core's text: markdown with invalid UTF-8 has U+FFFD in place of its
 //! bad bytes, so hit-test against the delta's text, not the host's bytes.
+//!
+//! Every call that can fail is guarded by `run`. The plain reads, of a
+//! handle's generation and a delta's fields, can't panic and aren't guarded.
 use super::*;
 use wheelhouse_core::rich_text::{
     copy_block, Alert, Align, Anchor, Attr, Color, Delta, Detail, FindOptions, FindStatus, Format, Key, ListOp, Match, Metrics,
@@ -441,15 +444,15 @@ unsafe fn markdown(text: Text) -> Result<String, String> {
 }
 
 /// Open UTF-8 markdown under 4 GiB; free it with wheelhouse_rich_text_free.
-/// NULL on invalid input (a NULL pointer with a length, or 4 GiB or more) or
-/// if parsing panicked.
+/// NULL with an error on invalid input (a NULL pointer with a length, or 4
+/// GiB or more) or if parsing panicked.
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_rich_text_open(markdown_text: Text) -> *mut WheelhouseRichText {
-    let Ok(source) = markdown(markdown_text) else { return ptr::null_mut() };
-    match catch_unwind(|| RichText::open(&source)) {
-        Ok(rich) => Box::into_raw(Box::new(WheelhouseRichText { rich, poisoned: false, window: vec![] })),
-        Err(_) => ptr::null_mut(),
-    }
+pub unsafe extern "C" fn wheelhouse_rich_text_open(markdown_text: Text, error_out: *mut *mut c_char) -> *mut WheelhouseRichText {
+    pure(error_out, || {
+        let rich = RichText::open(&markdown(markdown_text)?);
+        Ok(Box::into_raw(Box::new(WheelhouseRichText { rich, poisoned: false, window: vec![] })))
+    })
+    .unwrap_or(ptr::null_mut())
 }
 
 #[no_mangle]
@@ -585,6 +588,14 @@ fn part(part: u32) -> Result<Part, String> {
     }
 }
 
+/// NaN or infinity would stay in the height index's sums for good.
+fn finite(values: &[f64]) -> Result<(), String> {
+    match values.iter().all(|v| v.is_finite()) {
+        true => Ok(()),
+        false => Err("not a finite number".into()),
+    }
+}
+
 unsafe fn view<T>(
     h: *mut WheelhouseRichText,
     subscription: u64,
@@ -606,6 +617,7 @@ pub unsafe extern "C" fn wheelhouse_rich_text_set_viewport(
     error_out: *mut *mut c_char,
 ) -> u32 {
     view(h, subscription, error_out, |_, view| {
+        finite(&[height])?;
         view.set_viewport(height);
         Ok(())
     })
@@ -625,6 +637,7 @@ pub unsafe extern "C" fn wheelhouse_rich_text_set_metrics(
     error_out: *mut *mut c_char,
 ) -> u32 {
     view(h, subscription, error_out, |doc, view| {
+        finite(&[width.into(), line_height.into(), chars_per_line.into()])?;
         view.set_metrics(doc, Metrics { width, line_height, chars_per_line });
         Ok(())
     })
@@ -643,7 +656,11 @@ pub unsafe extern "C" fn wheelhouse_rich_text_set_height(
     width: f32,
     error_out: *mut *mut c_char,
 ) -> u32 {
-    view(h, subscription, error_out, |doc, view| view.set_height(doc, Key(key), part(entry_part)?, height, width)).is_some() as u32
+    view(h, subscription, error_out, |doc, view| {
+        finite(&[height.into(), width.into()])?;
+        view.set_height(doc, Key(key), part(entry_part)?, height, width)
+    })
+    .is_some() as u32
 }
 
 /// Scrolling up breaks follow-tail, and reaching the bottom re-arms it.
@@ -655,6 +672,7 @@ pub unsafe extern "C" fn wheelhouse_rich_text_scroll_by(
     error_out: *mut *mut c_char,
 ) -> u32 {
     view(h, subscription, error_out, |doc, view| {
+        finite(&[delta])?;
         view.scroll_by(doc, delta);
         Ok(())
     })
@@ -709,6 +727,11 @@ pub unsafe extern "C" fn wheelhouse_rich_text_scroll_to(
             WHEELHOUSE_RICH_POSITION_FRACTION => Position::Fraction(a.fraction),
             other => return Err(format!("unknown position {other}")),
         };
+        let used = match position {
+            Position::Text { line_offset, .. } => line_offset,
+            Position::Fraction(fraction) => fraction,
+        };
+        finite(&[used.into(), a.viewport_offset])?;
         view.scroll_to(doc, Anchor { key: Key(a.key), part: part(a.part)?, position, viewport_offset: a.viewport_offset })
     })
     .is_some() as u32
@@ -755,6 +778,7 @@ pub unsafe extern "C" fn wheelhouse_rich_text_set_anchor_text(
     error_out: *mut *mut c_char,
 ) -> u32 {
     view(h, subscription, error_out, |_, view| {
+        finite(&[line_top.into()])?;
         view.set_anchor_text(byte, line_top);
         Ok(())
     })
@@ -771,6 +795,7 @@ pub unsafe extern "C" fn wheelhouse_rich_text_relayout_anchor(
     error_out: *mut *mut c_char,
 ) -> u32 {
     view(h, subscription, error_out, |_, view| {
+        finite(&[line_top.into()])?;
         view.relayout_anchor(line_top);
         Ok(())
     })
@@ -1089,15 +1114,16 @@ pub unsafe extern "C" fn wheelhouse_rich_text_find_step(
     .is_some() as u32
 }
 
-/// 0 past the count.
+/// 0 with an error past the count.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_rich_text_find_match(
     h: *mut WheelhouseRichText,
     subscription: u64,
     index: usize,
     out: *mut WheelhouseRichMatch,
+    error_out: *mut *mut c_char,
 ) -> u32 {
-    view(h, subscription, ptr::null_mut(), |_, view| {
+    view(h, subscription, error_out, |_, view| {
         let out = out.as_mut().ok_or("null output")?;
         *out = found(*view.find_state().ok_or("not finding")?.matches().get(index).ok_or("no such match")?);
         Ok(())

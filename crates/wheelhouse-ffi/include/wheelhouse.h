@@ -2585,9 +2585,9 @@ WheelhouseOverviewFrame *wheelhouse_overview_frame(WheelhouseCore *h,
 void wheelhouse_overview_frame_free(WheelhouseOverviewFrame *frame);
 
 // Open UTF-8 markdown under 4 GiB; free it with wheelhouse_rich_text_free.
-// NULL on invalid input (a NULL pointer with a length, or 4 GiB or more) or
-// if parsing panicked.
-WheelhouseRichText *wheelhouse_rich_text_open(WheelhouseText markdown_text);
+// NULL with an error on invalid input (a NULL pointer with a length, or 4
+// GiB or more) or if parsing panicked.
+WheelhouseRichText *wheelhouse_rich_text_open(WheelhouseText markdown_text, char **error_out);
 
 void wheelhouse_rich_text_free(WheelhouseRichText *h);
 
@@ -2791,11 +2791,12 @@ uint32_t wheelhouse_rich_text_find_step(WheelhouseRichText *h,
                                         WheelhouseRichFindStatus *out,
                                         char **error_out);
 
-// 0 past the count.
+// 0 with an error past the count.
 uint32_t wheelhouse_rich_text_find_match(WheelhouseRichText *h,
                                          uint64_t subscription,
                                          size_t index,
-                                         WheelhouseRichMatch *out);
+                                         WheelhouseRichMatch *out,
+                                         char **error_out);
 
 // Select and reveal the next match (`forward` 1) or the previous one. 0
 // (no error) when there are none yet.
