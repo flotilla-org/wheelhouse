@@ -442,3 +442,168 @@ fp_system_color_emoji_fonts(void)
   }
   return mac_fp_state->system_color_emoji_fonts;
 }
+
+////////////////////////////////
+//~ Glyph-Id Rasterization
+
+internal FP_Handle
+mac_fp_open_face_from_descriptors(CFArrayRef descriptors, U32 face_index)
+{
+  MAC_FP_Font *font = 0;
+  if(descriptors != 0 && (CFIndex)face_index < CFArrayGetCount(descriptors))
+  {
+    CTFontDescriptorRef descriptor = (CTFontDescriptorRef)CFArrayGetValueAtIndex(descriptors, face_index);
+    CTFontRef ct_font = CTFontCreateWithFontDescriptor(descriptor, 12.f, 0);
+    if(ct_font != 0)
+    {
+      CGFontRef cg_font = CTFontCopyGraphicsFont(ct_font, 0);
+      if(cg_font != 0)
+      {
+        font = mac_fp_font_alloc();
+        font->cg_font = cg_font;
+        font->has_color_tables = mac_fp_cg_font_has_color_tables(cg_font);
+      }
+      CFRelease(ct_font);
+    }
+  }
+  if(descriptors != 0) { CFRelease(descriptors); }
+  return mac_fp_handle_from_font(font);
+}
+
+fp_hook FP_Handle
+fp_font_open_face(String8 path, U32 face_index)
+{
+  CFURLRef url = CFURLCreateFromFileSystemRepresentation(0, path.str, (CFIndex)path.size, 0);
+  CFArrayRef descriptors = (url != 0) ? CTFontManagerCreateFontDescriptorsFromURL(url) : 0;
+  if(url != 0) { CFRelease(url); }
+  return mac_fp_open_face_from_descriptors(descriptors, face_index);
+}
+
+fp_hook FP_Handle
+fp_font_open_face_from_memory(String8 data, U32 face_index)
+{
+  CFDataRef cf_data = CFDataCreateWithBytesNoCopy(0, data.str, (CFIndex)data.size, kCFAllocatorNull);
+  CFArrayRef descriptors = (cf_data != 0) ? CTFontManagerCreateFontDescriptorsFromData(cf_data) : 0;
+  if(cf_data != 0) { CFRelease(cf_data); }
+  return mac_fp_open_face_from_descriptors(descriptors, face_index);
+}
+
+internal String8
+mac_fp_table(Arena *arena, CGFontRef cg_font, char *tag)
+{
+  String8 result = {0};
+  CFDataRef data = CGFontCopyTableForTag(cg_font, fp_tag_from_string(tag));
+  if(data != 0)
+  {
+    result = push_str8_copy(arena, str8((U8 *)CFDataGetBytePtr(data), (U64)CFDataGetLength(data)));
+    CFRelease(data);
+  }
+  return result;
+}
+
+// CoreText doesn't hint, so the hinting flag has nothing to change here.
+fp_hook FP_GlyphRaster
+fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
+{
+  ProfBeginFunction();
+  FP_GlyphRaster result = {0};
+  MAC_FP_Font *font = mac_fp_font_from_handle(handle);
+  if(font != 0 && font->cg_font != 0 && params->size_px > 0)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    
+    //- the font, varied
+    CTFontDescriptorRef descriptor = 0;
+    if(params->coord_count != 0)
+    {
+      String8 fvar = mac_fp_table(scratch.arena, font->cg_font, "fvar");
+      String8 avar = mac_fp_table(scratch.arena, font->cg_font, "avar");
+      FP_AxisValue axes[64];
+      U64 axis_count = fp_user_axis_values_from_normalized(fvar, avar, params->coords, params->coord_count, axes, ArrayCount(axes));
+      CFMutableDictionaryRef variation = CFDictionaryCreateMutable(0, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+      for EachIndex(idx, axis_count)
+      {
+        S64 tag = axes[idx].tag;
+        F64 value = axes[idx].value;
+        CFNumberRef key = CFNumberCreate(0, kCFNumberSInt64Type, &tag);
+        CFNumberRef number = CFNumberCreate(0, kCFNumberFloat64Type, &value);
+        CFDictionarySetValue(variation, key, number);
+        CFRelease(key);
+        CFRelease(number);
+      }
+      CFTypeRef keys[] = {kCTFontVariationAttribute};
+      CFTypeRef values[] = {variation};
+      CFDictionaryRef attributes = CFDictionaryCreate(0, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+      descriptor = CTFontDescriptorCreateWithAttributes(attributes);
+      CFRelease(attributes);
+      CFRelease(variation);
+    }
+    CTFontRef ct_font = CTFontCreateWithGraphicsFont(font->cg_font, params->size_px, 0, descriptor);
+    if(descriptor != 0) { CFRelease(descriptor); }
+    
+    //- bounds, with room for synthesis and the subpixel shift
+    CGGlyph glyph = (CGGlyph)params->glyph_id;
+    CGRect rect = CTFontGetBoundingRectsForGlyphs(ct_font, kCTFontOrientationHorizontal, &glyph, 0, 1);
+    F32 slant = tanf(params->skew*3.14159265f/180.f);
+    F32 stroke = params->embolden ? params->size_px/24.f : 0;
+    F32 pad = 2.f + stroke;
+    F32 lo = (F32)rect.origin.y, hi = (F32)(rect.origin.y + rect.size.height);
+    S32 x0 = (S32)floor_f32((F32)rect.origin.x + Min(slant*lo, slant*hi) - pad);
+    S32 x1 = (S32)ceil_f32((F32)(rect.origin.x + rect.size.width) + Max(slant*lo, slant*hi) + pad + 1.f);
+    S32 y0 = (S32)floor_f32(lo - pad);
+    S32 y1 = (S32)ceil_f32(hi + pad);
+    S32 w = x1 - x0, h = y1 - y0;
+    
+    //- colour: COLR layers, or a bitmap font's strikes
+    B32 color = 0;
+    if(font->has_color_tables)
+    {
+      String8 colr = mac_fp_table(scratch.arena, font->cg_font, "COLR");
+      String8 sbix = mac_fp_table(scratch.arena, font->cg_font, "sbix");
+      String8 cbdt = mac_fp_table(scratch.arena, font->cg_font, "CBDT");
+      color = fp_colr_glyph_has_layers(colr, params->glyph_id) || sbix.size != 0 || cbdt.size != 0;
+    }
+    
+    if(rect.size.width > 0 && rect.size.height > 0 && w > 0 && h > 0 && w < 4096 && h < 4096)
+    {
+      U64 bpp = color ? 4 : 1;
+      U8 *pixels = push_array(arena, U8, (U64)w*(U64)h*bpp);
+      CGColorSpaceRef space = color ? CGColorSpaceCreateDeviceRGB() : 0;
+      CGContextRef ctx = CGBitmapContextCreate(pixels, w, h, 8, (size_t)w*bpp, space,
+                                               color ? (kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big) : kCGImageAlphaOnly);
+      if(ctx != 0)
+      {
+        B32 smooth = !!(params->flags & FP_RasterFlag_Smooth);
+        CGContextSetAllowsAntialiasing(ctx, smooth);
+        CGContextSetShouldAntialias(ctx, smooth);
+        CGContextSetAllowsFontSmoothing(ctx, 0);
+        CGContextSetShouldSmoothFonts(ctx, 0);
+        CGContextSetAllowsFontSubpixelPositioning(ctx, 1);
+        CGContextSetShouldSubpixelPositionFonts(ctx, 1);
+        CGContextSetAllowsFontSubpixelQuantization(ctx, 0);
+        CGContextSetShouldSubpixelQuantizeFonts(ctx, 0);
+        CGContextSetRGBFillColor(ctx, 1, 1, 1, 1);
+        CGContextSetRGBStrokeColor(ctx, 1, 1, 1, 1);
+        CGContextSetTextMatrix(ctx, CGAffineTransformMake(1, 0, slant, 1, 0, 0));
+        if(stroke > 0)
+        {
+          CGContextSetTextDrawingMode(ctx, kCGTextFillStroke);
+          CGContextSetLineWidth(ctx, stroke);
+        }
+        CGPoint position = CGPointMake(params->subpixel_x - (F32)x0, -(F32)y0);
+        CTFontDrawGlyphs(ct_font, &glyph, &position, 1, ctx);
+        CGContextRelease(ctx);
+        result.kind = color ? FP_RasterKind_RGBA : FP_RasterKind_Mask;
+        result.dim = v2s16((S16)w, (S16)h);
+        result.left = (S16)x0;
+        result.top = (S16)y1;
+        result.pixels = pixels;
+      }
+      if(space != 0) { CGColorSpaceRelease(space); }
+    }
+    CFRelease(ct_font);
+    scratch_end(scratch);
+  }
+  ProfEnd();
+  return result;
+}

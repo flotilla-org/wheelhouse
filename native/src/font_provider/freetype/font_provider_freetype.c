@@ -218,6 +218,27 @@ fp_font_open(String8 path)
 }
 
 fp_hook FP_Handle
+fp_font_open_face(String8 path, U32 face_index)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 path_copy = push_str8_copy(scratch.arena, path);
+  FP_FT_Font font = {0};
+  FT_New_Face(fp_ft_state->library, (char *)path_copy.str, (FT_Long)face_index, &font.face);
+  FP_Handle handle = fp_ft_handle_from_font(font);
+  scratch_end(scratch);
+  return handle;
+}
+
+fp_hook FP_Handle
+fp_font_open_face_from_memory(String8 data, U32 face_index)
+{
+  FP_FT_Font font = {0};
+  FT_New_Memory_Face(fp_ft_state->library, data.str, (FT_Long)data.size, (FT_Long)face_index, &font.face);
+  FP_Handle handle = fp_ft_handle_from_font(font);
+  return handle;
+}
+
+fp_hook FP_Handle
 fp_font_open_from_static_data_string(String8 *data_ptr)
 {
   FP_FT_Font font = {0};
@@ -409,6 +430,127 @@ fp_raster(Arena *arena, FP_Handle handle, F32 size, FP_RasterFlags flags, String
     result.face_box_origin_from_left = 0;
     result.atlas     = atlas;
     result.kind      = has_source_color ? FP_RasterKind_RGBA : FP_RasterKind_Mask;
+    scratch_end(scratch);
+  }
+  ProfEnd();
+  return result;
+}
+
+// Loads, emboldens and renders the glyph at the face's current size, and
+// copies the bitmap out; colour as premultiplied RGBA.
+internal FP_GlyphRaster
+fp_ft_glyph_raster(Arena *arena, FT_Face face, FP_GlyphRasterParams *params, FT_Int32 load_flags)
+{
+  FP_GlyphRaster result = {0};
+  B32 smooth = !!(params->flags & FP_RasterFlag_Smooth);
+  if(FT_Load_Glyph(face, params->glyph_id, load_flags) == 0)
+  {
+    FT_GlyphSlot slot = face->glyph;
+    if(params->embolden && slot->format == FT_GLYPH_FORMAT_OUTLINE)
+    {
+      FT_GlyphSlot_Embolden(slot);
+    }
+    if(slot->format != FT_GLYPH_FORMAT_BITMAP)
+    {
+      FT_Render_Glyph(slot, smooth ? FT_RENDER_MODE_NORMAL : FT_RENDER_MODE_MONO);
+    }
+    FT_Bitmap *bmp = &slot->bitmap;
+    B32 color = (bmp->pixel_mode == FT_PIXEL_MODE_BGRA);
+    Vec2S16 dim = v2s16((S16)bmp->width, (S16)bmp->rows);
+    U64 bpp = color ? 4 : 1;
+    if(dim.x > 0 && dim.y > 0)
+    {
+      U8 *pixels = push_array(arena, U8, (U64)dim.x*(U64)dim.y*bpp);
+      for(S32 row = 0; row < dim.y; row += 1)
+      {
+        S64 pitch = bmp->pitch;
+        U8 *src = (pitch >= 0 ? bmp->buffer + row*pitch : bmp->buffer + (dim.y - 1 - row)*-pitch);
+        U8 *dst = pixels + (U64)row*(U64)dim.x*bpp;
+        for(S32 col = 0; col < dim.x; col += 1)
+        {
+          switch(bmp->pixel_mode)
+          {
+            case FT_PIXEL_MODE_BGRA:
+            {
+              dst[col*4+0] = src[col*4+2];
+              dst[col*4+1] = src[col*4+1];
+              dst[col*4+2] = src[col*4+0];
+              dst[col*4+3] = src[col*4+3];
+            }break;
+            case FT_PIXEL_MODE_MONO: { dst[col] = (src[col/8] & (0x80 >> (col%8))) ? 255 : 0; }break;
+            case FT_PIXEL_MODE_GRAY: { dst[col] = src[col]; }break;
+            default: { dst[col] = 0; }break;
+          }
+        }
+      }
+      result.dim = dim;
+      result.pixels = pixels;
+      result.left = (S16)slot->bitmap_left;
+      result.top = (S16)slot->bitmap_top;
+      result.kind = color ? FP_RasterKind_RGBA : FP_RasterKind_Mask;
+    }
+  }
+  return result;
+}
+
+// The face keeps size, transform and variations between calls, and fp_raster
+// shares it: this sets all three and puts the last two back.
+fp_hook FP_GlyphRaster
+fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
+{
+  ProfBeginFunction();
+  FP_GlyphRaster result = {0};
+  FT_Face face = fp_ft_font_from_handle(handle).face;
+  if(face != 0 && params->size_px > 0)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    B32 smooth = !!(params->flags & FP_RasterFlag_Smooth);
+    FT_Int32 load_flags = FT_LOAD_COLOR;
+    if(!(params->flags & FP_RasterFlag_Hinted))
+    {
+      load_flags |= FT_LOAD_NO_HINTING;
+    }
+    else
+    {
+      load_flags |= (smooth ? FT_LOAD_TARGET_LIGHT : FT_LOAD_TARGET_MONO);
+    }
+    
+    //- colour strikes (CBDT, sbix) come at their own sizes: the nearest, scaled
+    if(face->num_fixed_sizes > 0 && FT_HAS_COLOR(face))
+    {
+      F32 scale = fp_ft_select_size(face, params->size_px*(72.f/96.f));
+      FP_GlyphRaster strike = fp_ft_glyph_raster(scratch.arena, face, params, load_flags);
+      if(strike.kind == FP_RasterKind_RGBA)
+      {
+        result = fp_glyph_raster_scaled(arena, strike, scale);
+      }
+    }
+    
+    //- outlines, COLRv0 layers included
+    if(result.pixels == 0 && FT_IS_SCALABLE(face))
+    {
+      FT_Set_Char_Size(face, 0, (FT_F26Dot6)round_f32(params->size_px*64.f), 72, 72);
+      B32 variable = FT_HAS_MULTIPLE_MASTERS(face);
+      if(variable)
+      {
+        FT_Fixed *coords = push_array(scratch.arena, FT_Fixed, params->coord_count + 1);
+        for EachIndex(idx, params->coord_count) { coords[idx] = (FT_Fixed)params->coords[idx]*4; }
+        FT_Set_Var_Blend_Coordinates(face, (FT_UInt)params->coord_count, params->coord_count ? coords : 0);
+      }
+      FT_Matrix matrix = {0x10000, 0, 0, 0x10000};
+      if(params->skew != 0)
+      {
+        matrix.xy = (FT_Fixed)(tanf(params->skew*3.14159265f/180.f)*65536.f);
+      }
+      FT_Vector delta = {(FT_Pos)round_f32(params->subpixel_x*64.f), 0};
+      FT_Set_Transform(face, &matrix, &delta);
+      result = fp_ft_glyph_raster(arena, face, params, load_flags);
+      FT_Set_Transform(face, 0, 0);
+      if(variable)
+      {
+        FT_Set_Var_Blend_Coordinates(face, 0, 0);
+      }
+    }
     scratch_end(scratch);
   }
   ProfEnd();

@@ -940,3 +940,293 @@ fp_system_color_emoji_fonts(void)
   }
   return fp_dwrite_state->system_color_emoji_fonts;
 }
+
+////////////////////////////////
+//~ Glyph-Id Rasterization
+
+#if !defined(STBI_INCLUDE_STB_IMAGE_H)
+# define STB_IMAGE_IMPLEMENTATION
+# define STBI_ONLY_PNG
+# define STBI_ONLY_BMP
+# include "third_party/stb/stb_image.h"
+#endif
+
+internal FP_Handle
+fp_dwrite_open_face(IDWriteFontFile *file, U32 face_index)
+{
+  FP_DWrite_Font font = {0};
+  font.file = file;
+  if(file != 0)
+  {
+    DWRITE_FONT_FACE_TYPE type = (face_index == 0 ? DWRITE_FONT_FACE_TYPE_TRUETYPE : DWRITE_FONT_FACE_TYPE_TRUETYPE_COLLECTION);
+    HRESULT error = IDWriteFactory_CreateFontFace(fp_dwrite_state->factory, type, 1, &file, face_index, DWRITE_FONT_SIMULATIONS_NONE, &font.face);
+    if(FAILED(error) && face_index == 0)
+    {
+      error = IDWriteFactory_CreateFontFace(fp_dwrite_state->factory, DWRITE_FONT_FACE_TYPE_TRUETYPE_COLLECTION, 1, &file, 0, DWRITE_FONT_SIMULATIONS_NONE, &font.face);
+    }
+  }
+  FP_Handle handle = {0};
+  if(font.face != 0)
+  {
+    handle = fp_dwrite_handle_from_font(font);
+  }
+  else if(file != 0)
+  {
+    IDWriteFontFile_Release(file);
+  }
+  return handle;
+}
+
+fp_hook FP_Handle
+fp_font_open_face(String8 path, U32 face_index)
+{
+  Temp scratch = scratch_begin(0, 0);
+  IDWriteFontFile *file = 0;
+  String16 path16 = str16_from_8(scratch.arena, path);
+  IDWriteFactory_CreateFontFileReference(fp_dwrite_state->factory, (WCHAR *)path16.str, 0, &file);
+  FP_Handle handle = fp_dwrite_open_face(file, face_index);
+  scratch_end(scratch);
+  return handle;
+}
+
+fp_hook FP_Handle
+fp_font_open_face_from_memory(String8 data, U32 face_index)
+{
+  // The static-data loader's key is a String8 that must live as long as the file.
+  String8 *data_ptr = push_array(fp_dwrite_state->arena, String8, 1);
+  *data_ptr = data;
+  IDWriteFontFile *file = 0;
+  IDWriteFactory_CreateCustomFontFileReference(fp_dwrite_state->factory, &data_ptr, sizeof(String8 *), (IDWriteFontFileLoader *)&fp_dwrite_static_data_font_file_loader, &file);
+  return fp_dwrite_open_face(file, face_index);
+}
+
+internal String8
+fp_dwrite_table(IDWriteFontFace *face, char *tag, void **context)
+{
+  String8 result = {0};
+  void const *data = 0;
+  UINT32 size = 0;
+  BOOL exists = 0;
+  // DWRITE_MAKE_OPENTYPE_TAG: the tag's bytes in memory order.
+  UINT32 dw_tag = (U32)(U8)tag[0] | ((U32)(U8)tag[1] << 8) | ((U32)(U8)tag[2] << 16) | ((U32)(U8)tag[3] << 24);
+  *context = 0;
+  if(SUCCEEDED(IDWriteFontFace_TryGetFontTable(face, dw_tag, &data, &size, context, &exists)) && exists)
+  {
+    result = str8((U8 *)data, size);
+  }
+  return result;
+}
+
+// Coverage for one glyph run, grayscale; null when it draws nothing.
+internal U8 *
+fp_dwrite_alpha(Arena *arena, DWRITE_GLYPH_RUN *run, DWRITE_MATRIX *transform, F32 x, F32 y, FP_RasterFlags flags, RECT *rect_out)
+{
+  U8 *result = 0;
+  IDWriteGlyphRunAnalysis *analysis = 0;
+  B32 smooth = !!(flags & FP_RasterFlag_Smooth);
+  DWRITE_GRID_FIT_MODE grid_fit = (flags & FP_RasterFlag_Hinted) ? DWRITE_GRID_FIT_MODE_ENABLED : DWRITE_GRID_FIT_MODE_DISABLED;
+  // NATURAL_SYMMETRIC hints vertically only, so the pen keeps its subpixel x.
+  HRESULT error = IDWriteFactory2_CreateGlyphRunAnalysis((IDWriteFactory2 *)fp_dwrite_state->factory, run, transform,
+                                                         smooth ? DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC : DWRITE_RENDERING_MODE_ALIASED,
+                                                         DWRITE_MEASURING_MODE_NATURAL, grid_fit,
+                                                         FP_DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE, x, y, &analysis);
+  if(SUCCEEDED(error) && analysis != 0)
+  {
+    RECT rect = {0};
+    if(SUCCEEDED(IDWriteGlyphRunAnalysis_GetAlphaTextureBounds(analysis, FP_DWRITE_TEXTURE_ALIASED_1x1, &rect)) &&
+       rect.right > rect.left && rect.bottom > rect.top)
+    {
+      U32 size = (U32)((rect.right - rect.left)*(rect.bottom - rect.top));
+      U8 *alpha = push_array(arena, U8, size);
+      if(SUCCEEDED(IDWriteGlyphRunAnalysis_CreateAlphaTexture(analysis, FP_DWRITE_TEXTURE_ALIASED_1x1, &rect, alpha, size)))
+      {
+        result = alpha;
+        *rect_out = rect;
+      }
+    }
+    IDWriteGlyphRunAnalysis_Release(analysis);
+  }
+  return result;
+}
+
+fp_hook FP_GlyphRaster
+fp_raster_glyph(Arena *arena, FP_Handle handle, FP_GlyphRasterParams *params)
+{
+  ProfBeginFunction();
+  FP_GlyphRaster result = {0};
+  FP_DWrite_Font font = fp_dwrite_font_from_handle(handle);
+  if(font.face != 0 && fp_dwrite_state->dwrite2_is_supported && params->size_px > 0)
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    
+    //- the face, varied and emboldened
+    IDWriteFontFace *face = font.face;
+    IDWriteFontFace *owned_face = 0;
+    DWRITE_FONT_SIMULATIONS simulations = params->embolden ? DWRITE_FONT_SIMULATIONS_BOLD : DWRITE_FONT_SIMULATIONS_NONE;
+    if(params->coord_count != 0)
+    {
+      void *fvar_context = 0, *avar_context = 0;
+      String8 fvar = fp_dwrite_table(face, "fvar", &fvar_context);
+      String8 avar = fp_dwrite_table(face, "avar", &avar_context);
+      FP_AxisValue axes[64];
+      U64 axis_count = fp_user_axis_values_from_normalized(fvar, avar, params->coords, params->coord_count, axes, ArrayCount(axes));
+      if(fvar_context != 0) { IDWriteFontFace_ReleaseFontTable(face, fvar_context); }
+      if(avar_context != 0) { IDWriteFontFace_ReleaseFontTable(face, avar_context); }
+      FP_DWrite_FontAxisValue values[64];
+      for EachIndex(idx, axis_count)
+      {
+        // DWRITE_FONT_AXIS_TAG is built as DWRITE_MAKE_OPENTYPE_TAG is.
+        U32 tag = axes[idx].tag;
+        values[idx].axis_tag = ((tag >> 24) & 0xff) | ((tag >> 8) & 0xff00) | ((tag << 8) & 0xff0000) | (tag << 24);
+        values[idx].value = axes[idx].value;
+      }
+      IDWriteFontFace5 *face5 = 0;
+      IDWriteFontResource *resource = 0;
+      IDWriteFontFace5 *varied = 0;
+      if(axis_count != 0 &&
+         SUCCEEDED(IDWriteFontFace_QueryInterface(face, &IID_IDWriteFontFace5, (void **)&face5)) &&
+         SUCCEEDED(IDWriteFontFace5_GetFontResource(face5, &resource)) &&
+         SUCCEEDED(IDWriteFontResource_CreateFontFace(resource, simulations, values, (UINT32)axis_count, &varied)))
+      {
+        owned_face = (IDWriteFontFace *)varied;
+      }
+      if(resource != 0) { IDWriteFontResource_Release(resource); }
+      if(face5 != 0) { IDWriteFontFace5_Release(face5); }
+    }
+    if(owned_face == 0 && params->embolden)
+    {
+      IDWriteFactory_CreateFontFace(fp_dwrite_state->factory, IDWriteFontFace_GetType(face), 1, &font.file,
+                                    IDWriteFontFace_GetIndex(face), simulations, &owned_face);
+    }
+    if(owned_face != 0)
+    {
+      face = owned_face;
+    }
+    
+    //- the run
+    U16 glyph = (U16)params->glyph_id;
+    FLOAT advance = 0;
+    DWRITE_GLYPH_OFFSET offset = {0};
+    DWRITE_GLYPH_RUN run = {face, params->size_px, 1, &glyph, &advance, &offset, 0, 0};
+    DWRITE_MATRIX skew = {1, 0, -tanf(params->skew*3.14159265f/180.f), 1, 0, 0};
+    DWRITE_MATRIX *transform = (params->skew != 0 ? &skew : 0);
+    
+    //- colour bitmaps: sbix and CBDT, as PNG
+    B32 done = 0;
+    IDWriteFontFace4 *face4 = 0;
+    if(SUCCEEDED(IDWriteFontFace_QueryInterface(face, &IID_IDWriteFontFace4, (void **)&face4)) && face4 != 0)
+    {
+      UINT32 formats = 0;
+      if(SUCCEEDED(IDWriteFontFace4_GetGlyphImageFormats(face4, glyph, 0, 0xffff, &formats)) && (formats & FP_DWRITE_GLYPH_IMAGE_FORMATS_PNG))
+      {
+        FP_DWrite_GlyphImageData image = {0};
+        void *image_context = 0;
+        UINT32 ppem = (UINT32)ClampBot(1, (S32)ceil_f32(params->size_px));
+        if(SUCCEEDED(IDWriteFontFace4_GetGlyphImageData(face4, glyph, ppem, FP_DWRITE_GLYPH_IMAGE_FORMATS_PNG, &image, &image_context)))
+        {
+          int w = 0, h = 0, n = 0;
+          U8 *rgba = stbi_load_from_memory((stbi_uc const *)image.image_data, (int)image.image_data_size, &w, &h, &n, 4);
+          if(rgba != 0 && w > 0 && h > 0 && image.pixels_per_em > 0)
+          {
+            FP_GlyphRaster strike = {FP_RasterKind_RGBA, v2s16((S16)w, (S16)h), (S16)-image.horizontal_left_origin[0], (S16)image.horizontal_left_origin[1], 0};
+            strike.pixels = push_array(scratch.arena, U8, (U64)w*(U64)h*4);
+            for EachIndex(idx, (U64)w*(U64)h)
+            {
+              U32 a = rgba[idx*4+3];
+              for EachIndex(c, 3) { strike.pixels[idx*4+c] = (U8)((rgba[idx*4+c]*a + 127)/255); }
+              strike.pixels[idx*4+3] = (U8)a;
+            }
+            result = fp_glyph_raster_scaled(arena, strike, params->size_px/(F32)image.pixels_per_em);
+            done = 1;
+          }
+          if(rgba != 0) { stbi_image_free(rgba); }
+          IDWriteFontFace4_ReleaseGlyphImageData(face4, image_context);
+        }
+      }
+      IDWriteFontFace4_Release(face4);
+    }
+    
+    //- colour layers: COLRv0
+    if(!done)
+    {
+      IDWriteColorGlyphRunEnumerator *layers = 0;
+      HRESULT error = IDWriteFactory2_TranslateColorGlyphRun((IDWriteFactory2 *)fp_dwrite_state->factory, params->subpixel_x, 0, &run, 0,
+                                                             DWRITE_MEASURING_MODE_NATURAL, transform, 0, &layers);
+      if(SUCCEEDED(error) && layers != 0)
+      {
+        typedef struct Layer Layer;
+        struct Layer { Layer *next; U8 *alpha; RECT rect; Vec4F32 color; };
+        Layer *first = 0, *last = 0;
+        RECT bounds = {max_S32, max_S32, min_S32, min_S32};
+        for(;;)
+        {
+          BOOL has_run = 0;
+          DWRITE_COLOR_GLYPH_RUN const *color_run = 0;
+          if(FAILED(IDWriteColorGlyphRunEnumerator_MoveNext(layers, &has_run)) || !has_run ||
+             FAILED(IDWriteColorGlyphRunEnumerator_GetCurrentRun(layers, &color_run)) || color_run == 0)
+          {
+            break;
+          }
+          DWRITE_GLYPH_RUN layer_run = color_run->glyphRun;
+          Layer *layer = push_array(scratch.arena, Layer, 1);
+          layer->alpha = fp_dwrite_alpha(scratch.arena, &layer_run, transform, color_run->baselineOriginX, color_run->baselineOriginY, params->flags, &layer->rect);
+          layer->color = fp_dwrite_rgba_from_color_glyph_run(color_run);
+          if(layer->alpha != 0)
+          {
+            SLLQueuePush(first, last, layer);
+            bounds.left = Min(bounds.left, layer->rect.left);
+            bounds.top = Min(bounds.top, layer->rect.top);
+            bounds.right = Max(bounds.right, layer->rect.right);
+            bounds.bottom = Max(bounds.bottom, layer->rect.bottom);
+          }
+        }
+        IDWriteColorGlyphRunEnumerator_Release(layers);
+        if(first != 0)
+        {
+          S32 w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
+          U8 *pixels = push_array(arena, U8, (U64)w*(U64)h*4);
+          for(Layer *layer = first; layer != 0; layer = layer->next)
+          {
+            S32 lw = layer->rect.right - layer->rect.left;
+            for(S32 y = layer->rect.top; y < layer->rect.bottom; y += 1)
+            {
+              for(S32 x = layer->rect.left; x < layer->rect.right; x += 1)
+              {
+                F32 a = layer->color.w*(F32)layer->alpha[(y - layer->rect.top)*lw + (x - layer->rect.left)]/255.f;
+                U8 *dst = pixels + ((U64)(y - bounds.top)*(U64)w + (U64)(x - bounds.left))*4;
+                F32 src[4] = {layer->color.x*a, layer->color.y*a, layer->color.z*a, a};
+                for EachIndex(c, 4) { dst[c] = (U8)Clamp(0, (S32)round_f32(src[c]*255.f + dst[c]*(1.f - a)), 255); }
+              }
+            }
+          }
+          result.kind = FP_RasterKind_RGBA;
+          result.dim = v2s16((S16)w, (S16)h);
+          result.left = (S16)bounds.left;
+          result.top = (S16)-bounds.top;
+          result.pixels = pixels;
+        }
+        done = 1;
+      }
+    }
+    
+    //- coverage
+    if(!done)
+    {
+      RECT rect = {0};
+      U8 *alpha = fp_dwrite_alpha(arena, &run, transform, params->subpixel_x, 0, params->flags, &rect);
+      if(alpha != 0)
+      {
+        result.kind = FP_RasterKind_Mask;
+        result.dim = v2s16((S16)(rect.right - rect.left), (S16)(rect.bottom - rect.top));
+        result.left = (S16)rect.left;
+        result.top = (S16)-rect.top;
+        result.pixels = alpha;
+      }
+    }
+    
+    if(owned_face != 0) { IDWriteFontFace_Release(owned_face); }
+    scratch_end(scratch);
+  }
+  ProfEnd();
+  return result;
+}
