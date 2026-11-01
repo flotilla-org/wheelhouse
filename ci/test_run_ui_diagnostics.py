@@ -24,6 +24,7 @@ CHECKED_IN = CI / "ui-diagnostics.toml"
 WINDOWS = [
     "shared_ui", "sidebar", "scroll_region", "preview", "tooltip", "panel", "jackstay_input",
     "terminal_link", "terminal_clipboard", "terminal_selection", "terminal_glyph", "glyph_raster", "rich_text",
+    "text_view",
 ]
 UISHELL_MAIN = CI.parent / "native" / "src" / "uishell" / "uishell_main.c"
 
