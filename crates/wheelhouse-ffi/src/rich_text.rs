@@ -1044,12 +1044,15 @@ pub unsafe extern "C" fn wheelhouse_rich_text_copy_block(
     .is_some() as u32
 }
 
-/// Synthetic markdown of at least `lines` lines, the same for the same seed:
-/// the document the scale tests and the native View's timing test read.
-/// Free the bytes with wheelhouse_bytes_free.
+const GENERATE_MAX_LINES: usize = 1_000_000;
+
+/// Synthetic markdown of at least `lines` lines (at most a million), the
+/// same for the same seed: the document the scale tests and the native
+/// View's timing test read. Free the bytes with wheelhouse_bytes_free.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_rich_text_generate(seed: u64, lines: usize, out: *mut Bytes, error_out: *mut *mut c_char) -> u32 {
     pure(error_out, || {
+        let lines = lines.min(GENERATE_MAX_LINES);
         let markdown = wheelhouse_rich_text::generate::render(&wheelhouse_rich_text::generate::large(seed, lines));
         write_bytes(out, markdown.into_bytes())
     })

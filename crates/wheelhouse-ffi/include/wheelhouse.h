@@ -2775,9 +2775,9 @@ uint32_t wheelhouse_rich_text_copy_block(WheelhouseRichText *h,
                                          WheelhouseBytes *out,
                                          char **error_out);
 
-// Synthetic markdown of at least `lines` lines, the same for the same seed:
-// the document the scale tests and the native View's timing test read.
-// Free the bytes with wheelhouse_bytes_free.
+// Synthetic markdown of at least `lines` lines (at most a million), the
+// same for the same seed: the document the scale tests and the native
+// View's timing test read. Free the bytes with wheelhouse_bytes_free.
 uint32_t wheelhouse_rich_text_generate(uint64_t seed,
                                        size_t lines,
                                        WheelhouseBytes *out,

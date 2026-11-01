@@ -87,14 +87,19 @@ pub unsafe extern "C" fn wheelhouse_table_open_cells(
     // SAFETY: the caller's contract.
     let opened = unsafe {
         pure(ptr::null_mut(), || {
+            // A table with no cells is an empty one, whatever its sizes say:
+            // nothing is sized from them before cells are read.
             let count = column_count.checked_mul(row_count).ok_or("too many cells")?;
+            if count == 0 {
+                return Ok(Table::from_cells(vec![], vec![], vec![], Metrics { line, digit }));
+            }
             let cells = slice(cells, count)?;
-            let right = if right.is_null() { vec![0; column_count] } else { slice(right, column_count)?.to_vec() };
-            let mut rows = Vec::with_capacity(row_count);
-            for row in cells.chunks(column_count.max(1)) {
+            let right = if right.is_null() { &[][..] } else { slice(right, column_count)? };
+            let mut rows = vec![];
+            for row in cells.chunks(column_count) {
                 rows.push(row.iter().map(|t| t.read()).collect::<Result<Vec<_>, _>>()?);
             }
-            let header = if rows.is_empty() { vec![String::new(); column_count] } else { rows.remove(0) };
+            let header = rows.remove(0);
             let right = right.iter().map(|&r| r != 0).collect();
             Ok(Table::from_cells(header, rows, right, Metrics { line, digit }))
         })

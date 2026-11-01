@@ -128,6 +128,9 @@ wm_set_selection_text(String8 string)
   lnx_wm_state->selection_ascii = 1;
   for(U64 i = 0; i < string.size; i++) { lnx_wm_state->selection_ascii &= string.str[i] < 128; }
   if(lnx_wm_state->display == 0) { return; }
+  // A drag changes the selection each frame: while PRIMARY is still ours,
+  // only its text changes.
+  if(string.size != 0 && lnx_wm_state->selection_owned) { return; }
   Window owner = string.size != 0 ? lnx_wm_state->clipboard_owner : None;
   XSetSelectionOwner(lnx_wm_state->display, XA_PRIMARY, owner, CurrentTime);
   lnx_wm_state->selection_owned = owner != None && XGetSelectionOwner(lnx_wm_state->display, XA_PRIMARY) == owner;

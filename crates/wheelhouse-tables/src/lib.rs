@@ -297,6 +297,8 @@ impl Table {
         );
         for c in 0..columns {
             let longest = std::iter::once(header.get(c)).chain(rows.iter().map(|r| r.get(c))).flatten().map(|t| t.chars().count()).max();
+            // Characters, not columns: wide and combining characters make it
+            // an approximation, near enough for a column's starting width.
             // Two digits of padding, as the View draws cells.
             let digits = (longest.unwrap_or(0) as f32 + 2.0).clamp(CELLS_MIN_DIGITS, CELLS_MAX_DIGITS);
             grid.set_size(Axis::Cols, Key(c as u64), digits * metrics.digit);

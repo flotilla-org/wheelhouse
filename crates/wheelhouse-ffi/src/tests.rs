@@ -1,5 +1,6 @@
 //! Marshalling the core can't see: what C reads from snapshots and effects.
 use super::*;
+use crate::tables::*;
 use std::ffi::CStr;
 use std::mem::MaybeUninit;
 use wheelhouse_core::tab_workspace_id;
@@ -1384,5 +1385,26 @@ fn the_overview_reaches_c_and_flies_between_workspaces() {
         assert!(!error.is_null());
         wheelhouse_string_free(error);
         wheelhouse_destroy(h);
+    }
+}
+
+/// Sizes with no cells behind them open an empty table, allocating nothing
+/// from the sizes; cells open by row, the first the header.
+#[test]
+fn a_table_of_given_cells_opens_from_its_cells_alone() {
+    unsafe {
+        for (columns, rows) in [(usize::MAX, 0), (0, usize::MAX)] {
+            let table = wheelhouse_table_open_cells(ptr::null(), columns, rows, ptr::null(), 20.0, 8.0);
+            assert!(!table.is_null());
+            wheelhouse_table_free(table);
+        }
+        let cells = [text("name"), text("crew"), text("Kestrel"), text("4")];
+        let table = wheelhouse_table_open_cells(cells.as_ptr(), 2, 2, [0, 1].as_ptr(), 20.0, 8.0);
+        assert!(!table.is_null());
+        let mut align = 9;
+        assert_eq!(wheelhouse_table_cell(table, 0, 1, &mut align).read().unwrap(), "4");
+        assert_eq!(align, WHEELHOUSE_TABLE_ALIGN_RIGHT);
+        assert_eq!(wheelhouse_table_header(table, 1, 0, 0).read().unwrap(), "name");
+        wheelhouse_table_free(table);
     }
 }
