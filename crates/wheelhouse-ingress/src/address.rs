@@ -6,13 +6,16 @@
 use std::{
     io::Write,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
-/// A random version 4 UUID naming this instance. Uniqueness is all it needs:
-/// the endpoint is protected by the private directory or the pipe's DACL,
-/// not by being hard to guess.
-pub fn instance_uuid() -> String {
-    uuid::Uuid::new_v4().to_string()
+/// This instance's UUID, a random version 4 one made once: its default
+/// address and its event cursors carry it. Uniqueness is all it needs: the
+/// endpoint is protected by the private directory or the pipe's DACL, not by
+/// being hard to guess.
+pub fn instance_uuid() -> &'static str {
+    static INSTANCE: OnceLock<String> = OnceLock::new();
+    INSTANCE.get_or_init(|| uuid::Uuid::new_v4().to_string())
 }
 
 /// The longest Unix socket path, NUL excluded (`sun_path` is 104 bytes on

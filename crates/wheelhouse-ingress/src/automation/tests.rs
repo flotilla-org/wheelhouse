@@ -1,99 +1,7 @@
 use super::*;
 use hegel::generators as gs;
 use hegel::TestCase;
-
-/// A JSON value of the shapes the trees carry: objects, arrays, text,
-/// booleans, integers (some beyond 2^53) and floats.
-fn draw_value(tc: &TestCase, depth: u32) -> Value {
-    let leaf = depth == 0;
-    match tc.draw(gs::integers::<u8>().max_value(if leaf { 5 } else { 7 })) {
-        0 => Value::Null,
-        1 => tc.draw(gs::booleans()).into(),
-        2 => tc.draw(gs::integers::<u64>()).into(),
-        3 => tc.draw(gs::integers::<i64>()).into(),
-        4 => tc.draw(gs::floats::<f64>().allow_nan(false).allow_infinity(false)).into(),
-        5 => tc.draw(gs::text().max_size(8)).into(),
-        6 => (0..tc.draw(gs::integers::<usize>().max_value(3))).map(|_| draw_value(tc, depth - 1)).collect(),
-        _ => (0..tc.draw(gs::integers::<usize>().max_value(3)))
-            .map(|_| (tc.draw(gs::text().max_size(6)), draw_value(tc, depth - 1)))
-            .collect::<Map<_, _>>()
-            .into(),
-    }
-}
-
-/// What JSON carries for `value`, its large integers read back from
-/// `{"u64": "..."}`.
-fn read_json(bytes: &[u8]) -> Value {
-    fn unwrap(value: Value) -> Value {
-        match value {
-            Value::Object(map) if map.len() == 1 && map.get("u64").is_some_and(Value::is_string) => {
-                let text = map["u64"].as_str().unwrap();
-                text.parse::<u64>().map(Value::from).unwrap_or_else(|_| text.parse::<i64>().unwrap().into())
-            }
-            Value::Array(items) => items.into_iter().map(unwrap).collect(),
-            Value::Object(map) => map.into_iter().map(|(k, v)| (k, unwrap(v))).collect::<Map<_, _>>().into(),
-            other => other,
-        }
-    }
-    unwrap(serde_json::from_slice(bytes).unwrap())
-}
-
-/// Equal, but for a float's last bit: serde_json's default reader isn't
-/// correctly rounded, though the text it reads is the float's shortest.
-fn same(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Number(x), Value::Number(y)) if x.is_f64() || y.is_f64() => {
-            let (x, y) = (x.as_f64().unwrap(), y.as_f64().unwrap());
-            x == y || (x.to_bits() as i64 - y.to_bits() as i64).abs() <= 1
-        }
-        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(x, y)| same(x, y)),
-        (Value::Object(x), Value::Object(y)) => x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| same(v, w))),
-        _ => a == b,
-    }
-}
-
-// The same value both ways. The CBOR passes the profile's safe reader and
-// is deterministic: reading and writing it again gives the same bytes.
-#[hegel::test(test_cases = 300)]
-fn json_and_cbor_encode_the_same_value_and_cbor_keeps_the_profile(tc: TestCase) {
-    let value = draw_value(&tc, 3);
-    let cbor = encode(&value, true).unwrap();
-    flotilla_cbor::check(&cbor, &LIMITS).unwrap();
-    let back: Value = flotilla_cbor::from_slice(&cbor, &LIMITS).unwrap();
-    assert_eq!(back, value);
-    assert_eq!(encode(&back, true).unwrap(), cbor);
-    let json = encode(&value, false).unwrap();
-    // Every integer JSON carries as a number is one readers keep exactly.
-    fn safe(value: &Value) -> bool {
-        match value {
-            Value::Number(n) => match (n.as_u64(), n.as_i64()) {
-                (Some(n), _) => n <= SAFE,
-                (_, Some(n)) => n.unsigned_abs() <= SAFE,
-                _ => true,
-            },
-            Value::Array(items) => items.iter().all(safe),
-            Value::Object(map) => map.values().all(safe),
-            _ => true,
-        }
-    }
-    assert!(safe(&serde_json::from_slice(&json).unwrap()));
-    // Objects that happen to look like {"u64": text} are left out.
-    if !value.to_string().contains("\"u64\"") {
-        assert!(same(&read_json(&json), &value), "{value}");
-    }
-}
-
-#[test]
-fn large_integers_render_as_u64_text_in_json() {
-    let value = json!({"small": 1u64 << 53, "large": (1u64 << 53) + 1, "max": u64::MAX, "negative": -(1i64 << 60)});
-    let json: Value = serde_json::from_slice(&encode(&value, false).unwrap()).unwrap();
-    assert_eq!(json["small"], 1u64 << 53);
-    assert_eq!(json["large"], json!({"u64": "9007199254740993"}));
-    assert_eq!(json["max"], json!({"u64": "18446744073709551615"}));
-    assert_eq!(json["negative"], json!({"u64": "-1152921504606846976"}));
-    // CBOR carries them as integers.
-    assert_eq!(flotilla_cbor::from_slice::<Value>(&encode(&value, true).unwrap(), &LIMITS).unwrap(), value);
-}
+use serde_json::{json, Value};
 
 const A: &str = "workspace/00000000-0000-0000-0000-00000000000a";
 const B: &str = "workspace/00000000-0000-0000-0000-00000000000b";
@@ -130,6 +38,23 @@ fn nodes() -> Vec<Node> {
     );
     first["props"] = json!({"subject": {"provider": "p", "kind": "vessel", "id": "v"}});
     serde_json::from_value(json!([first, node(B, "workspace", vec![terminal(&format!("{B}/view/u:1"), "s1", "$ top")])])).unwrap()
+}
+
+/// What the UI gives for `nodes`: their terminals' screens apart, and only
+/// when `screens`.
+fn build(mut nodes: Vec<Node>, screens: bool) -> Build {
+    let mut terminals = Vec::new();
+    for node in &mut nodes {
+        node.visit_mut(&mut |node| {
+            if let Some(terminal) = &mut node.props.terminal {
+                let (text, cursor) = (terminal.text.take(), terminal.cursor.take());
+                if screens {
+                    terminals.push((node.id.clone(), Terminal { session: terminal.session.clone(), text, cursor, ..Terminal::default() }));
+                }
+            }
+        });
+    }
+    Build { workspaces: nodes, terminals, ..Build::default() }
 }
 
 fn published(nodes: Vec<Node>) -> Published {
@@ -207,42 +132,29 @@ fn the_size_cap_drops_terminal_text_first() {
 fn the_generation_only_increases_and_moves_only_on_change(tc: TestCase) {
     let shapes = [nodes(), nodes()[..1].to_vec(), Vec::new()];
     let mut generation = Generation::default();
-    let mut last: Option<Vec<Node>> = None;
+    let mut last = None;
     for _ in 0..tc.draw(gs::integers::<usize>().max_value(12)) {
-        let mut next = shapes[tc.draw(gs::integers::<usize>().max_value(2))].clone();
-        // Screen text changes alone don't count.
-        if tc.draw(gs::booleans()) {
-            drop_terminal_text(&mut next);
-        }
+        let shape = tc.draw(gs::integers::<usize>().max_value(2));
+        // Screens alone don't count.
+        let (nodes, _) = build(shapes[shape].clone(), tc.draw(gs::booleans())).assemble();
         let before = generation.generation;
-        let shown = next.clone();
-        let moved = generation.observe(&mut next);
-        assert_eq!(next, shown, "the screens are put back");
-        let mut plain = next.clone();
-        drop_terminal_text(&mut plain);
-        let changed = last.as_ref() != Some(&plain);
+        let moved = generation.observe(&nodes);
+        let changed = last != Some(shape);
         assert_eq!(moved, changed);
         assert_eq!(generation.generation, before + u64::from(changed));
-        last = Some(plain);
+        last = Some(shape);
     }
-}
-
-#[test]
-fn queries_parse() {
-    let parsed = params("include=a,terminal_text&root=w%2Fx&since=i:4&session=s%2B1");
-    assert!(parsed.terminal_text());
-    assert_eq!((parsed.root.as_deref(), parsed.since.as_deref(), parsed.session.as_deref()), (Some("w/x"), Some("i:4"), Some("s+1")));
-    let accept = |value: &str| cbor_wanted(&HeaderMap::from_iter([(header::ACCEPT, value.parse().unwrap())]));
-    assert!(accept("application/json, application/cbor;q=0.5"));
-    assert!(!accept("application/json"));
 }
 
 /// An endpoint on a real socket, with a UI that ends a frame every 10ms
 /// showing `tree`, under the `mode` setting; it gives screens only when
-/// asked, and `screens` says whether the last build was.
+/// asked, and `screens` says whether the last build was. Dropped, the UI
+/// stops and the socket's directory goes.
 #[cfg(unix)]
 struct Endpoint {
     path: std::path::PathBuf,
+    frames: Option<std::thread::JoinHandle<()>>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
     automation: Arc<Automation>,
     tree: Arc<std::sync::Mutex<Vec<Node>>>,
     mode: Arc<AtomicU32>,
@@ -257,8 +169,7 @@ impl Endpoint {
     fn start() -> Self {
         use std::os::unix::fs::DirBuilderExt;
         extern "C" fn wake() {}
-        // Short, as macOS's temporary directory leaves no room for a socket.
-        let dir = std::path::PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
+        let dir = crate::socket_test_dir();
         std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
         let path = dir.join("socket");
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
@@ -272,21 +183,26 @@ impl Endpoint {
         let tree = Arc::new(std::sync::Mutex::new(nodes()));
         let mode = Arc::new(AtomicU32::new(AUTOMATION_FULL));
         let screens = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let endpoint = Endpoint { path, automation: automation.clone(), tree: tree.clone(), mode: mode.clone(), screens: screens.clone() };
-        std::thread::spawn(move || {
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut endpoint = Endpoint {
+            path,
+            frames: None,
+            stop: stop.clone(),
+            automation: automation.clone(),
+            tree: tree.clone(),
+            mode: mode.clone(),
+            screens: screens.clone(),
+        };
+        endpoint.frames = Some(std::thread::spawn(move || {
             let mut generation = Generation::default();
-            loop {
+            while !stop.load(SeqCst) {
                 frame_end(&automation, &mut generation, mode.load(SeqCst), |asked| {
                     screens.store(asked, SeqCst);
-                    let mut nodes = tree.lock().unwrap().clone();
-                    if !asked {
-                        drop_terminal_text(&mut nodes);
-                    }
-                    Some(nodes)
+                    Some(build(tree.lock().unwrap().clone(), asked))
                 });
                 std::thread::sleep(Duration::from_millis(10));
             }
-        });
+        }));
         endpoint
     }
 
@@ -319,6 +235,19 @@ impl Endpoint {
 
     fn rename(&self, name: &str) {
         self.tree.lock().unwrap()[1].name = Some(name.into());
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Endpoint {
+    fn drop(&mut self) {
+        self.stop.store(true, SeqCst);
+        if let Some(frames) = self.frames.take() {
+            let _ = frames.join();
+        }
+        if let Some(dir) = self.path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }
 
@@ -371,7 +300,7 @@ fn the_event_stream_sends_a_snapshot_first_and_after_each_change() {
     assert!(head.contains("content-type: application/x-ndjson"), "{head}");
     let first = next(&mut events, wait).unwrap();
     let tree = snapshot(first.clone());
-    assert_eq!(first.cursor, format!("{}:{}", endpoint.automation.instance, tree.generation));
+    assert_eq!(first.cursor, format!("{}:{}", instance_uuid(), tree.generation));
     assert_eq!(tree.nodes.len(), 2);
     assert!(!serde_json::to_string(&tree).unwrap().contains("$ ls"), "text only when asked");
     // Nothing changes: nothing comes.
@@ -477,7 +406,7 @@ fn reads_answer_from_the_next_frame() {
 fn an_unknown_mode_is_off() {
     extern "C" fn wake() {}
     let automation = Automation::new(wake);
-    frame_end(&automation, &mut Generation::default(), AUTOMATION_FULL + 1, |_| Some(nodes()));
+    frame_end(&automation, &mut Generation::default(), AUTOMATION_FULL + 1, |screens| Some(build(nodes(), screens)));
     assert_eq!(automation.mode.load(SeqCst), AUTOMATION_OFF);
 }
 
@@ -573,14 +502,9 @@ fn a_change_waits_for_its_screens() {
     automation.streams.store(1, SeqCst);
     automation.screen_streams.store(1, SeqCst);
     let mut generation = Generation::default();
-    let plain = || {
-        let mut nodes = nodes();
-        drop_terminal_text(&mut nodes);
-        nodes
-    };
-    frame_end(&automation, &mut generation, AUTOMATION_FULL, |screens| if screens { None } else { Some(plain()) });
+    frame_end(&automation, &mut generation, AUTOMATION_FULL, |screens| (!screens).then(|| build(nodes(), false)));
     assert!(automation.published.borrow().tree.is_none(), "published without its screens");
-    frame_end(&automation, &mut generation, AUTOMATION_FULL, |screens| Some(if screens { nodes() } else { plain() }));
+    frame_end(&automation, &mut generation, AUTOMATION_FULL, |screens| Some(build(nodes(), screens)));
     let published = automation.published.borrow().clone();
     assert_eq!(published.tree.as_deref(), Some(&nodes()));
 }

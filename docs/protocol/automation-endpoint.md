@@ -54,9 +54,10 @@ an enclosing one: running Wheelhouse inside Wheelhouse is the everyday case.
 
 **Who may connect** is who can reach the endpoint, and nothing else: there
 is no authentication (ADR 0014's trust boundary is the user). On Unix the
-socket is mode 0600 in a directory Wheelhouse makes, or checks, mode 0700
-and owned by the user, and refuses otherwise; on Windows the pipe's DACL
-grants only SYSTEM and the user (ADR 0011).
+socket is mode 0600. Wheelhouse makes the default address's directory, mode
+0700, when it isn't there, and refuses to listen in a directory the user
+doesn't own or that others can use; on Windows the pipe's DACL grants only
+SYSTEM and the user (ADR 0011).
 
 The user setting `automation: off | observe | full` (default `full`) is read
 from the user file at launch. Any other value is taken as `off`, with a
@@ -132,9 +133,8 @@ changing one bumps it. A response over 4 MiB drops terminal text and says
 **Encoding.** JSON by default. With `Accept: application/cbor`, the same value
 as CBOR in [flotilla ADR 0063](https://github.com/flotilla-org/flotilla)'s
 profile, written by `flotilla-cbor`: deterministic, text map keys, and no
-tags. In JSON, an integer beyond ±2^53 is `{"u64": "<decimal>"}`, a negative
-one too (`{"u64": "-…"}`), since JSON readers can't keep it exactly. CBOR
-carries it as an integer.
+tags. No field in schema 1 can exceed 2^53; one that ever can follows ADR
+0063's JSON rule.
 
 **Change detection.** One `generation` counter, which the Placement Tree will
 share when it lands. While a read waits for the tree or an event stream is

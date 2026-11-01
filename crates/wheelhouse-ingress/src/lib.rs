@@ -13,6 +13,13 @@ mod quit;
 mod recording;
 
 pub type Wake = extern "C" fn();
+
+/// A fresh directory path for a test's socket: short, as macOS's temporary
+/// directory leaves no room for one. The test makes and removes it.
+#[cfg(all(test, unix))]
+fn socket_test_dir() -> std::path::PathBuf {
+    format!("/tmp/wh-{}", &uuid::Uuid::new_v4().to_string()[..8]).into()
+}
 #[repr(C)]
 pub struct Text {
     pub data: *const u8,
@@ -402,14 +409,7 @@ mod transport {
                 (true, None, 1, UNSUPPORTED, &[][..]),
             ] {
                 let (queue, receiver) = mpsc::sync_channel(4);
-                let mut server = Ingress {
-                    queue: receiver,
-                    automation: Arc::new(Automation::new(noop)),
-                    generation: Generation::default(),
-                    malformed: false,
-                    shutdown: None,
-                    thread: None,
-                };
+                let mut server = ingress(receiver);
                 let (reply, ack) = oneshot::channel();
                 queue.send(Pending::Patch { bodies: vec![Bytes::new(), Bytes::new()], replace, reply }).unwrap();
                 let mut host = Calls(Vec::new(), retracted);
@@ -434,8 +434,7 @@ mod transport {
             extern "C" fn wake() {
                 WAKES.fetch_add(1, Ordering::SeqCst);
             }
-            // Short, as macOS's temporary directory leaves no room for a socket.
-            let dir = PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
+            let dir = crate::socket_test_dir();
             fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
             let path = dir.join("socket");
             let server = Ingress::start(path.clone(), wake, None).unwrap();
@@ -462,7 +461,7 @@ mod transport {
         fn a_socket_is_refused_a_parent_that_isnt_private() {
             use std::os::unix::fs::{symlink, PermissionsExt};
             extern "C" fn wake() {}
-            let root = PathBuf::from(format!("/tmp/wh-{}", &crate::address::instance_uuid()[..8]));
+            let root = crate::socket_test_dir();
             let shared = root.join("shared");
             std::fs::create_dir_all(&shared).unwrap();
             std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -477,6 +476,11 @@ mod transport {
             std::fs::remove_dir_all(&root).unwrap();
         }
         extern "C" fn noop() {}
+        /// An ingress with no listener, drained by hand.
+        fn ingress(queue: mpsc::Receiver<Pending>) -> Ingress {
+            let automation = Arc::new(Automation::new(noop));
+            Ingress { queue, automation, generation: Generation::default(), malformed: false, shutdown: None, thread: None }
+        }
         #[derive(Default)]
         struct Host {
             reads: u32,
@@ -523,14 +527,7 @@ mod transport {
                 *(context as *const u32)
             }
             let (_queue, receiver) = mpsc::sync_channel(1);
-            let mut server = Ingress {
-                queue: receiver,
-                automation: Arc::new(Automation::new(noop)),
-                generation: Generation::default(),
-                malformed: false,
-                shutdown: None,
-                thread: None,
-            };
+            let mut server = ingress(receiver);
             server.automation.streams.store(1, std::sync::atomic::Ordering::SeqCst);
             for (result, published) in [(0u32, false), (1, true)] {
                 let host = AutomationHost { mode: AUTOMATION_FULL, observe: Some(observe), context: &result as *const u32 as *mut c_void };
@@ -541,14 +538,7 @@ mod transport {
         #[test]
         fn failed_observation_is_shared_only_within_the_drain() {
             let (queue, receiver) = mpsc::sync_channel(64);
-            let mut server = Ingress {
-                queue: receiver,
-                automation: Arc::new(Automation::new(noop)),
-                generation: Generation::default(),
-                malformed: false,
-                shutdown: None,
-                thread: None,
-            };
+            let mut server = ingress(receiver);
             let mut host = Host { fail: true, ..Host::default() };
             let reads: Vec<_> = (0..4).map(|_| read(&queue)).collect();
             unsafe {
@@ -569,14 +559,7 @@ mod transport {
         #[test]
         fn burst_reads_share_snapshot_but_patches_invalidate_it() {
             let (queue, receiver) = mpsc::sync_channel(64);
-            let mut server = Ingress {
-                queue: receiver,
-                automation: Arc::new(Automation::new(noop)),
-                generation: Generation::default(),
-                malformed: false,
-                shutdown: None,
-                thread: None,
-            };
+            let mut server = ingress(receiver);
             let mut host = Host::default();
             let mut reads = Vec::new();
             drop(read(&queue)); // Cancelled reads do not call the observer.
@@ -1032,7 +1015,7 @@ pub unsafe extern "C" fn wheelhouse_ingress_automation(server: *mut Ingress, hos
             if ok {
                 *malformed = !build.valid;
             }
-            (ok && build.valid).then(|| build.assemble())
+            (ok && build.valid).then_some(build)
         });
     }
     #[cfg(not(any(unix, windows)))]
