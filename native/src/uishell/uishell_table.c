@@ -23,6 +23,16 @@ struct UIShell_TableState
   // The name a failed open was tried with, so it isn't retried each frame.
   U8 failed[1024];
   U64 failed_size;
+  // As of the last Snapshot, per UI axis: binnacle's Thumb, the content's
+  // length it stands for, and the scrolling Strip's length (a page). The
+  // bars are laid out from these, before this frame's Grid lays out.
+  UI_ScrollThumb thumb[Axis2_COUNT];
+  F32 content_px[Axis2_COUNT];
+  F32 page_px[Axis2_COUNT];
+  // Bumped when either Thumb moves, which keeps an overlay bar up a while.
+  U64 scrolled;
+  // The fraction a thumb drag last asked for, so a held thumb asks once.
+  F64 dragged_to[Axis2_COUNT];
 };
 
 // Cells painted, counted by the table diagnostics.
@@ -399,16 +409,27 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   // takes a line above the Grid, as of the last frame.
   String8 status = push_str8_copy(scratch.arena, uishell_table_text(wheelhouse_table_status(state->table)));
   F32 status_h = status.size != 0 ? line : 0;
-  Vec2F32 grid_dim = v2f32(dim.x, Max(dim.y - status_h, 0));
-  UI_Box *box;
   if(status.size != 0) UI_Parent(root) UI_PrefWidth(ui_px(dim.x, 1)) UI_PrefHeight(ui_px(status_h, 1))
   {
     ui_label(status);
   }
-  UI_Parent(root) UI_PrefWidth(ui_px(grid_dim.x, 1)) UI_PrefHeight(ui_px(grid_dim.y, 1))
+  // The Grid in a scroll region, with either style's bars, as other Views
+  // have. Its Thumbs are estimates in no units, so the bars take them as
+  // they are, from the last Snapshot.
+  UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, status_h, dim.x, Max(dim.y, status_h)),
+                                                        UI_ScrollAxisPolicy_Auto, UI_ScrollAxisPolicy_Auto);
+  params.content_dim_px = v2f32(state->content_px[Axis2_X], state->content_px[Axis2_Y]);
+  UI_ScrollRegion region = ui_scroll_region_layout(params);
+  UI_ScrollRegionThumbAxis axes[Axis2_COUNT] = {0};
+  for EachEnumVal(Axis2, axis)
   {
-    box = ui_build_box_from_string(UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise|UI_BoxFlag_Clip, str8_lit("table_grid"));
+    axes[axis] = (UI_ScrollRegionThumbAxis){state->thumb[axis], (F32)(state->scrolled & 0xffff),
+                                            &state->thumb[axis].fraction, sizeof(state->thumb[axis].fraction)};
   }
+  UI_ScrollRegionThumbSignal bars = ui_scroll_region_build_thumbs(root, ui_key_from_string(root->key, str8_lit("table_grid")), &region, axes,
+                                                                  UI_BoxFlag_Clickable|UI_BoxFlag_Scroll|UI_BoxFlag_ScrollPrecise|UI_BoxFlag_Clip);
+  UI_Box *box = bars.content_box;
+  Vec2F32 grid_dim = dim_2f32(region.viewport);
 
   // Input from this frame, against last frame's layout.
   UI_Signal sig = ui_signal_from_box(box);
@@ -447,6 +468,39 @@ WH_VIEW_UI_FUNCTION_DEF(table)
     a.args.scroll = (BinnacleScroll){sig.scroll_px.x + sig.scroll.x*line*3, sig.scroll_px.y + sig.scroll.y*line*3};
     uishell_table_act(grid, a);
   }
+  // The bars: a drag puts the thumb at its fraction, an arrow scrolls an
+  // item and the track a page.
+  for EachEnumVal(Axis2, axis)
+  {
+    UI_ScrollBarSignal bar = bars.bar[axis];
+    U32 binnacle_axis = axis == Axis2_Y ? BINNACLE_ROWS : BINNACLE_COLS;
+    BinnacleAction a = {0};
+    if(bar.kind != UI_ScrollBarActionKind_Drag) { state->dragged_to[axis] = -1; }
+    else if(bar.drag_moved)
+    {
+      F64 fraction = Clamp(0.0, *(F64 *)bar.drag_origin + bar.drag_pct, 1.0);
+      if(fraction != state->dragged_to[axis])
+      {
+        state->dragged_to[axis] = fraction;
+        a.kind = BINNACLE_ACTION_SCROLL_TO;
+        a.args.scroll_to = (BinnacleScrollTo){binnacle_axis, fraction};
+        uishell_table_act(grid, a);
+      }
+    }
+    if(bar.step != 0 && bar.page)
+    {
+      F32 page = bar.step*state->page_px[axis];
+      a.kind = BINNACLE_ACTION_SCROLL;
+      a.args.scroll = axis == Axis2_Y ? (BinnacleScroll){0, page} : (BinnacleScroll){page, 0};
+      uishell_table_act(grid, a);
+    }
+    else if(bar.step != 0)
+    {
+      a.kind = BINNACLE_ACTION_SCROLL_BY;
+      a.args.scroll_by = (BinnacleScrollBy){binnacle_axis, bar.step};
+      uishell_table_act(grid, a);
+    }
+  }
   UI_Focus(UI_FocusKind_On) if(ui_is_focus_active())
   {
     for(UI_Event *evt = 0; ui_next_event(&evt);)
@@ -467,6 +521,18 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   // arrays the draw reads.
   for(BinnacleEffect effect; binnacle_grid_poll_effect(grid, &effect);) {}
   binnacle_grid_snapshot(grid, &draw->snap);
+  // Next frame's bars: a Thumb stands for the scrolling Strip's share of the
+  // content it scrolls through; the pinned Strips stay put.
+  for EachEnumVal(Axis2, axis)
+  {
+    BinnacleAxisSnapshot *a = &draw->snap.axes[axis == Axis2_Y ? BINNACLE_ROWS : BINNACLE_COLS];
+    UI_ScrollThumb thumb = {a->thumb.fraction, a->thumb.size};
+    F32 body = Max(a->scrolling_end - a->scrolling_start, 0);
+    if(thumb.fraction != state->thumb[axis].fraction) { state->scrolled += 1; }
+    state->thumb[axis] = thumb;
+    state->page_px[axis] = body;
+    state->content_px[axis] = thumb.size >= 1 || thumb.size <= 0 ? 0 : a->extent - body + (F32)(body/thumb.size);
+  }
   ui_box_equip_custom_draw(box, uishell_table_draw, draw);
   // A drag can autoscroll and a pending view fills next frame; a live
   // table only changes at its next tick.
