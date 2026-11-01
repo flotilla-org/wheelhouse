@@ -313,7 +313,8 @@ thread_local! {
 
 /// Pass width INFINITY for no wrapping: a large finite width aligns RTL or
 /// centred lines against that width, far from 0, where f32 loses precision.
-/// A NaN width is an error, and a negative one is 0. On failure, returns 0 with an error and leaves out untouched.
+/// A NaN width is an error, and a negative one is 0. On failure, returns 0
+/// with an error and leaves out untouched.
 #[no_mangle]
 pub unsafe extern "C" fn wh_text_layout(
     ctx: *const WhText,

@@ -2563,7 +2563,8 @@ size_t wh_text_coords(const WhText *ctx, uint32_t coords, const int16_t **out);
 
 // Pass width INFINITY for no wrapping: a large finite width aligns RTL or
 // centred lines against that width, far from 0, where f32 loses precision.
-// A NaN width is an error, and a negative one is 0. On failure, returns 0 with an error and leaves out untouched.
+// A NaN width is an error, and a negative one is 0. On failure, returns 0
+// with an error and leaves out untouched.
 uint32_t wh_text_layout(const WhText *ctx,
                         const WhTextInput *input,
                         float width,
