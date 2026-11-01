@@ -7849,9 +7849,11 @@ rd_window_frame(void)
     Rng2F32 content_rect = r2f32p(window_rect.x0, top_bar_rect.y1, window_rect.x0+window_rect_dim.x, bottom_bar_rect.y0);
     F32 window_edge_px = rd_window_edge_inset_px(ws);
     content_rect = pad_2f32(content_rect, -window_edge_px);
-    // Window-edge padding belongs at the outer edges, not at the internal seam
-    // with title-bar chrome. Panel spacing is applied by the panel layout.
+    // Window-edge padding belongs at the outer edges, not at the internal seams
+    // with title-bar chrome and the status bar. Panel spacing is applied by
+    // the panel layout.
     content_rect.y0 = top_bar_rect.y1;
+    if(show_status_bar) { content_rect.y1 = bottom_bar_rect.y0; }
     Rng2F32 control_surface_rect = uishell_controlled_split_control_rect(&root_controlled_split, content_rect);
     F32 control_surface_border = floor_f32(Clamp(0.f, rd_setting_f32_from_name(str8_lit("panel_border_px")), 4.f));
     // The tool strip is a source too: its cards stay while the sidebar is collapsed.
