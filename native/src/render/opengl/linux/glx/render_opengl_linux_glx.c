@@ -77,8 +77,15 @@ r_ogl_os_init(CmdLine *cmdln)
   
   // Bind a 1x1 pbuffer until the first window: NVIDIA's GLX never gives a window a working
   // framebuffer once the context has been current with no drawable (#605).
-  int pbuffer_options[] = {GLX_PBUFFER_WIDTH, 1, GLX_PBUFFER_HEIGHT, 1, None};
-  GLXPbuffer pbuffer = glXCreatePbuffer(lnx_wm_state->display, framebuffer_config, pbuffer_options);
+  // A config without GLX_PBUFFER_BIT would raise BadMatch, which Xlib's default handler exits on.
+  GLXPbuffer pbuffer = 0;
+  int drawable_type = 0;
+  if(glXGetFBConfigAttrib(lnx_wm_state->display, framebuffer_config, GLX_DRAWABLE_TYPE, &drawable_type) == Success &&
+     (drawable_type & GLX_PBUFFER_BIT))
+  {
+    int pbuffer_options[] = {GLX_PBUFFER_WIDTH, 1, GLX_PBUFFER_HEIGHT, 1, None};
+    pbuffer = glXCreatePbuffer(lnx_wm_state->display, framebuffer_config, pbuffer_options);
+  }
   glXMakeCurrent(lnx_wm_state->display, pbuffer, r_ogl_lnx_ctx);
 }
 

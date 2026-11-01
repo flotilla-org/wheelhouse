@@ -491,7 +491,7 @@ cond_var_alloc(void)
   pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
   int init_result = pthread_cond_init(&entity->cv.cond_handle, &attr);
   pthread_condattr_destroy(&attr);
-  if(init_result == -1)
+  if(init_result != 0)
   {
     lnx_entity_release(entity);
     entity = 0;
@@ -501,7 +501,7 @@ cond_var_alloc(void)
   {
     init2_result = pthread_mutex_init(&entity->cv.rwlock_mutex_handle, 0);
   }
-  if(init2_result == -1)
+  if(init2_result != 0)
   {
     pthread_cond_destroy(&entity->cv.cond_handle);
     lnx_entity_release(entity);
