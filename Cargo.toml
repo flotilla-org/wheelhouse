@@ -26,13 +26,13 @@ license = "MIT"
 
 [workspace.dependencies]
 # binnacle draws the tables (#505). Pinned by revision: the repos move together.
-binnacle-core = { git = "https://github.com/flotilla-org/binnacle.git", rev = "1024708f9292d9f88e79a97eceec712ef436aced" }
-binnacle-ffi = { git = "https://github.com/flotilla-org/binnacle.git", rev = "1024708f9292d9f88e79a97eceec712ef436aced" }
-binnacle-memory = { git = "https://github.com/flotilla-org/binnacle.git", rev = "1024708f9292d9f88e79a97eceec712ef436aced" }
-binnacle-described = { git = "https://github.com/flotilla-org/binnacle.git", rev = "1024708f9292d9f88e79a97eceec712ef436aced" }
-binnacle-described-http = { git = "https://github.com/flotilla-org/binnacle.git", rev = "1024708f9292d9f88e79a97eceec712ef436aced" }
-binnacle-format = { git = "https://github.com/flotilla-org/binnacle.git", rev = "1024708f9292d9f88e79a97eceec712ef436aced" }
-binnacle-testkit = { git = "https://github.com/flotilla-org/binnacle.git", rev = "1024708f9292d9f88e79a97eceec712ef436aced" }
+binnacle-core = { git = "https://github.com/flotilla-org/binnacle.git", rev = "b6bddfe1b669e81f34fc73c92d63d27892b1b826" }
+binnacle-ffi = { git = "https://github.com/flotilla-org/binnacle.git", rev = "b6bddfe1b669e81f34fc73c92d63d27892b1b826" }
+binnacle-memory = { git = "https://github.com/flotilla-org/binnacle.git", rev = "b6bddfe1b669e81f34fc73c92d63d27892b1b826" }
+binnacle-described = { git = "https://github.com/flotilla-org/binnacle.git", rev = "b6bddfe1b669e81f34fc73c92d63d27892b1b826" }
+binnacle-described-http = { git = "https://github.com/flotilla-org/binnacle.git", rev = "b6bddfe1b669e81f34fc73c92d63d27892b1b826" }
+binnacle-format = { git = "https://github.com/flotilla-org/binnacle.git", rev = "b6bddfe1b669e81f34fc73c92d63d27892b1b826" }
+binnacle-testkit = { git = "https://github.com/flotilla-org/binnacle.git", rev = "b6bddfe1b669e81f34fc73c92d63d27892b1b826" }
 # Shared crates (flotilla ADR 0068), pinned once here.
 flotilla-cbor = { git = "https://github.com/flotilla-org/rigging", rev = "8c5fef84c6ce9c01ea56fb680a83986c1f14941d" }
 ansi_term = "0.12"

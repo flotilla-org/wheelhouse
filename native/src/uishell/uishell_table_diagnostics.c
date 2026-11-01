@@ -257,10 +257,6 @@ uishell_table_diagnostics(RD_WindowState *ws)
     snap = uishell_table_diag_frame(table, 1200, 800, 0);
     TableCheck(taken && uishell_table_diag_selected(&snap, BINNACLE_COLS, col) && !uishell_table_diag_selected(&snap, BINNACLE_ROWS, row),
                "Ctrl+Space selects the focused column");
-    evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_F3};
-    TableCheck(uishell_table_key(grid, &evt), "F3 steps find");
-    evt = (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_F3, .modifiers = WM_Modifier_Shift};
-    TableCheck(uishell_table_key(grid, &evt), "Shift+F3 steps find back");
     wheelhouse_table_free(table);
   }
 
@@ -505,6 +501,84 @@ uishell_table_diagnostics(RD_WindowState *ws)
                    "the arrow below the track scrolls one row down");
       }
     }
+
+    // Find (#535): the View's search row's text is the Find Query, with the
+    // row's toggles. Enter's search and F3 step to the next match, and
+    // Shift+Enter's and Shift+F3's find_prev back, wrapping; the row counts
+    // them and the grid marks them; closing the row closes find.
+    {
+      CFG_Node *view = rd_fixture_view(panel, str8_lit("table"), str8_lit("records"), 1);
+      RD_ViewAddress address = rd_view_address_from_cfg(view);
+      RD_ViewState *vs = rd_view_state_from_view(address, 0);
+      CFG_Node *query = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("query"));
+      cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, query, str8_lit("cmd")), str8_lit("search"));
+      cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, query, str8_lit("input")), str8_lit("bergen"));
+      vs->query_is_open = 1;
+      UIShell_CmdList saved_cmds = rd_state->cmds[0];
+      U64 saved_gen = rd_state->cmds_gen;
+      rd_state->cmds_gen = 0;
+      MemoryZeroStruct(&rd_state->cmds[0]);
+      UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = address, .view = address)
+      {
+        UI_Event none = {0};
+        Vec2F32 away = v2f32(450, 300);
+        UI_Box *part = &ui_nil_box, *grid_box = &ui_nil_box;
+        for(U32 frame = 0; frame < 3; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+        UIShell_TableState *state = (UIShell_TableState *)vs->user_data;
+        TableCheck(vs->query_extras == uishell_table_query_extras, "the table adds its find bar to its query row");
+        WheelhouseTableFind find = state && state->table ? wheelhouse_table_find(state->table) : (WheelhouseTableFind){0};
+        U64 total = find.total;
+        TableCheck(find.open && total > 1 && !find.stepped, "the search row's text finds, and counts the matches");
+        TableCheck(!ui_box_is_nil(grid_box) && ((UIShell_TableDraw *)grid_box->custom_draw_user_data)->finding, "the grid marks the matches");
+        TableCheck(str8_match(uishell_table_find_count(scratch.arena, find, 0), push_str8f(scratch.arena, "%llu matches", (unsigned long long)total), 0),
+                   "before a step the row says how many match");
+        // One step, run as its command, then a frame to show it.
+        char *steps[] = {"search", "find_next", "find_prev", "find_prev"};
+        U64 want[] = {0, 1, 0, total-1};
+        for EachElement(i, steps)
+        {
+          uishell_push_stored_cmd(str8_cstring(steps[i]), uishell_regs());
+          uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part);
+          MemoryZeroStruct(&rd_state->cmds[0]);
+          grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part);
+          find = wheelhouse_table_find(state->table);
+          String8 label = push_str8f(scratch.arena, "%s steps to match %llu of %llu", steps[i], (unsigned long long)want[i]+1, (unsigned long long)total);
+          TableCheck(find.stepped && find.has_index && find.index == want[i] && state->find_current, (char *)label.str);
+        }
+        TableCheck(find.wrapped && state->find_dir < 0, "stepping back from the first match wraps to the last");
+        TableCheck(!ui_box_is_nil(grid_box) && ((UIShell_TableDraw *)grid_box->custom_draw_user_data)->snap.has_find_match,
+                   "the current match is in the Snapshot the grid draws");
+        String8 last = push_str8f(scratch.arena, "%llu of %llu", (unsigned long long)total, (unsigned long long)total);
+        TableCheck(str8_match(uishell_table_find_count(scratch.arena, find, state->find_current), last, 0), "after a step the row says which match");
+        // Matching case: the data spells it Bergen.
+        state->find_case = 1;
+        for(U32 frame = 0; frame < 2; frame += 1) { uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+        find = wheelhouse_table_find(state->table);
+        TableCheck(find.open && find.total == 0 && str8_match(uishell_table_find_count(scratch.arena, find, 0), str8_lit("No matches"), 0),
+                   "matching case finds nothing for the wrong case");
+        state->find_case = 0;
+        // Closing the row closes find.
+        vs->query_is_open = 0;
+        for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+        find = wheelhouse_table_find(state->table);
+        TableCheck(!find.open && !ui_box_is_nil(grid_box) && !((UIShell_TableDraw *)grid_box->custom_draw_user_data)->finding,
+                   "closing the search row closes find");
+      }
+      rd_state->cmds[0] = saved_cmds;
+      rd_state->cmds_gen = saved_gen;
+    }
+    // What the row says of a count, partial or in collapsed groups.
+    {
+      WheelhouseTableFind one = {.open = 1, .total = 1};
+      WheelhouseTableFind many = {.open = 1, .total = 12345, .partial = 1, .hidden = 2, .stepped = 1, .has_index = 1, .index = 1233};
+      TableCheck(str8_match(uishell_table_find_count(scratch.arena, one, 0), str8_lit("1 match"), 0), "one match");
+      TableCheck(str8_match(uishell_table_find_count(scratch.arena, many, 1), str8_lit("1,234 of 12,345+, 2 in collapsed groups"), 0),
+                 "a partial count with matches in collapsed groups");
+      TableCheck(str8_match(uishell_table_find_count(scratch.arena, many, 0), str8_lit("12,345+ matches, 2 in collapsed groups"), 0),
+                 "a step whose match left counts again");
+      TableCheck(uishell_table_find_count(scratch.arena, (WheelhouseTableFind){0}, 0).size == 0, "nothing while find is closed");
+    }
+
     ui_set_active_scroll_bar_style(saved_style);
     ws->sidebar = saved_sidebar;
     ui_select_state(saved_ui);

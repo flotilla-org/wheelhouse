@@ -220,6 +220,7 @@ read_only global UIShell_DefaultBinding uishell_app_viewer_default_binding_table
   UISHELL_BIND("search_backwards", R, WM_Modifier_Accel),
   UISHELL_BIND("find_next", F3, 0),
   UISHELL_BIND("find_prev", F3, WM_Modifier_Accel),
+  UISHELL_BIND("find_prev", F3, WM_Modifier_Shift),
 };
 
 #define UISHELL_CMD_PACK_BINDING_FUNCTIONS(prefix, table) \
