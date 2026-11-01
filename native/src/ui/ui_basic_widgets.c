@@ -1227,28 +1227,31 @@ ui_scroll_list_item_from_row(UI_ScrollListRowBlockArray *blocks, U64 row)
   return result;
 }
 
-// uishell: single styled implementation backing both ui_scroll_bar (classic)
-// and the overlay style. The vertical-movement math is written exactly once
-// here; the only style differences are the arrow buttons + bordered gutter
-// (classic only) and the thumb's rendering (a button vs. a faded pill).
+// uishell: single styled implementation backing both the classic and the
+// overlay style. It knows no units: it draws `thumb` and says what the user
+// did, and the caller moves its content (ui_scroll_pt_from_bar_signal for a
+// UI_ScrollPt). The only style differences are the arrow buttons + bordered
+// gutter (classic only) and the thumb's rendering (a button vs. a faded pill).
 // vis_t is a normalized [0,1] visibility used only by the overlay thumb's
-// opacity; classic callers pass 1.f.
-internal UI_ScrollPt
-ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style, F32 vis_t, UI_ScrollPt pt, Rng1S64 idx_range, S64 view_num_indices)
+// opacity; classic callers pass 1.f. drag_origin (drag_origin_size bytes, at
+// most UI_SCROLL_BAR_DRAG_ORIGIN_MAX) is copied when a drag begins and handed
+// back on each frame of it, so a drag moves from where it began.
+internal UI_ScrollBarSignal
+ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style, F32 vis_t, UI_ScrollThumb thumb,
+                     void *drag_origin, U64 drag_origin_size)
 {
   B32 overlay = (style == UI_ScrollBarStyle_Overlay);
   ui_push_tag(str8_lit("scroll_bar"));
   if(!overlay) { ui_push_font_size(ui_bottom_font_size()*0.65f); }
 
   //- rjf: unpack
-  S64 idx_range_dim = Max(dim_1s64(idx_range), 1);
-  F32 thumb_fraction = Clamp(0.05f, (F32)((F64)Max(view_num_indices, 1)/((F64)idx_range_dim + Max(view_num_indices, 1))), 1.f);
-  if(idx_range.min == idx_range.max) { thumb_fraction = 1.f; }
-  F32 position_fraction = Clamp(0.f, (F32)(((F64)(pt.idx-idx_range.min) + ui_scroll_pt_offset(pt))/(F64)idx_range_dim), 1.f);
+  B32 scrollable = thumb.size < 1;
+  F32 thumb_fraction = scrollable ? Clamp(0.05f, (F32)thumb.size, 1.f) : 1.f;
+  F32 position_fraction = Clamp(0.f, (F32)thumb.fraction, 1.f);
 
   //- rjf: produce extra flags for cases in which scrolling is disabled
   UI_BoxFlags disabled_flags = 0;
-  if(idx_range.min == idx_range.max)
+  if(!scrollable)
   {
     disabled_flags |= UI_BoxFlag_Disabled;
   }
@@ -1287,7 +1290,7 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
     UI_Parent(scroll_area_box)
     {
       // rjf: space before
-      if(idx_range.max != idx_range.min)
+      if(scrollable)
       {
         ui_set_next_pref_size(axis, ui_pct(position_fraction*(1.f-thumb_fraction), 0));
         // overlay floats over content, so its track is layout-only (non-clickable)
@@ -1325,7 +1328,7 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
       }
 
       // rjf: space after
-      if(idx_range.max != idx_range.min)
+      if(scrollable)
       {
         ui_set_next_pref_size(axis, ui_pct((1.f-position_fraction)*(1.f-thumb_fraction), 0));
         UI_Box *space_after_box = ui_build_box_from_stringf(overlay ? 0 : UI_BoxFlag_Clickable, "##scroll_area_after");
@@ -1348,53 +1351,100 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
     max_scroll_sig = ui_buttonf("%S##_max_scroll_%i", arrow_string, axis);
   }
 
-  //- rjf: pt * signals -> new pt (min/max sigs are zero for overlay)
-  UI_ScrollPt new_pt = pt;
+  //- rjf: signals -> what the user did (min/max sigs are zero for overlay)
+  UI_ScrollBarSignal result = {0};
   {
     typedef struct UI_ScrollBarDragData UI_ScrollBarDragData;
     struct UI_ScrollBarDragData
     {
-      UI_ScrollPt start_pt;
       F32 scroll_space_px;
+      U64 origin[UI_SCROLL_BAR_DRAG_ORIGIN_MAX/sizeof(U64)]; // U64s: handed back aligned
     };
     if(ui_dragging(scroller_sig))
     {
       if(ui_pressed(scroller_sig))
       {
-        // Begin at the displayed position, including animation displacement.
-        UI_ScrollPt displayed_pt = pt;
-        ui_scroll_pt_scroll(&displayed_pt, pt.off, idx_range, 0);
-        displayed_pt.off = 0;
-        UI_ScrollBarDragData drag_data = {displayed_pt, (floor_f32(dim_2f32(scroll_area_box->rect).v[axis])-floor_f32(dim_2f32(scroller_box->rect).v[axis]))};
+        UI_ScrollBarDragData drag_data = {(floor_f32(dim_2f32(scroll_area_box->rect).v[axis])-floor_f32(dim_2f32(scroller_box->rect).v[axis]))};
+        Assert(drag_origin_size <= sizeof(drag_data.origin));
+        if(drag_origin != 0) { MemoryCopy(drag_data.origin, drag_origin, Min(drag_origin_size, sizeof(drag_data.origin))); }
         ui_store_drag_struct(&drag_data);
       }
       UI_ScrollBarDragData *drag_data = ui_get_drag_struct(UI_ScrollBarDragData);
-      UI_ScrollPt original_pt = drag_data->start_pt;
       F32 drag_delta = ui_drag_delta().v[axis];
-      F32 drag_pct = drag_data->scroll_space_px > 0 ? drag_delta / drag_data->scroll_space_px : 0;
-      new_pt = original_pt;
-      if(drag_delta != 0)
-      {
-        // Subtract indices as integers; dragging must not float a large index.
-        ui_scroll_pt_scroll(&new_pt, drag_pct*idx_range_dim, idx_range, 0);
-      }
+      result.kind = UI_ScrollBarActionKind_Drag;
+      result.drag_origin = drag_data->origin;
+      result.drag_moved = (drag_delta != 0);
+      result.drag_pct = drag_data->scroll_space_px > 0 ? drag_delta / drag_data->scroll_space_px : 0;
     }
+    // Held, the track and the arrows repeat each frame.
     if(ui_dragging(min_scroll_sig) || ui_dragging(space_before_sig))
     {
-      S64 new_idx = new_pt.idx - (ui_dragging(space_before_sig) ? Max(view_num_indices, 1) : 1);
-      new_idx = Clamp(idx_range.min, new_idx, idx_range.max);
-      ui_scroll_pt_target_idx(&new_pt, new_idx);
+      result.step = -1;
+      result.page = ui_dragging(space_before_sig);
     }
     if(ui_dragging(max_scroll_sig) || ui_dragging(space_after_sig))
     {
-      S64 new_idx = new_pt.idx + (ui_dragging(space_after_sig) ? Max(view_num_indices, 1) : 1);
-      new_idx = Clamp(idx_range.min, new_idx, idx_range.max);
-      ui_scroll_pt_target_idx(&new_pt, new_idx);
+      result.step = +1;
+      result.page = ui_dragging(space_after_sig);
     }
   }
 
   if(!overlay) { ui_pop_font_size(); }
   ui_pop_tag();
+  return result;
+}
+
+//- uishell: the bar over a UI_ScrollPt, in its content's units
+
+StaticAssert(sizeof(UI_ScrollPt) <= UI_SCROLL_BAR_DRAG_ORIGIN_MAX, ui_scroll_pt_fits_drag_origin);
+
+// The thumb of `pt` in `range` (its legal positions) with `visible` shown.
+internal UI_ScrollThumb
+ui_scroll_thumb_from_pt(UI_ScrollPt pt, Rng1S64 range, S64 visible)
+{
+  S64 range_dim = Max(dim_1s64(range), 1);
+  UI_ScrollThumb thumb = {0};
+  thumb.size = range.max <= range.min ? 1 : (F64)Max(visible, 1)/((F64)range_dim + Max(visible, 1));
+  // A range wider than a point scrolls, even where a huge `visible` swamps
+  // range_dim and the F64 sum rounds the share up to 1; the largest F64
+  // below 1 still draws as the full-track thumb it always did.
+  if(range.max > range.min && thumb.size >= 1) { thumb.size = 1 - 0x1p-53; }
+  thumb.fraction = ((F64)(pt.idx-range.min) + ui_scroll_pt_offset(pt))/(F64)range_dim;
+  return thumb;
+}
+
+// Where a drag of pt's bar begins: the displayed position, including
+// animation displacement.
+internal UI_ScrollPt
+ui_scroll_pt_drag_origin(UI_ScrollPt pt, Rng1S64 range)
+{
+  UI_ScrollPt origin = pt;
+  ui_scroll_pt_scroll(&origin, pt.off, range, 0);
+  origin.off = 0;
+  return origin;
+}
+
+// pt moved as `sig` says, where the bar was given ui_scroll_pt_drag_origin(pt).
+// A drag moves whole indices as integers; dragging must not float a large index.
+internal UI_ScrollPt
+ui_scroll_pt_from_bar_signal(UI_ScrollPt pt, Rng1S64 range, S64 visible, UI_ScrollBarSignal sig)
+{
+  S64 range_dim = Max(dim_1s64(range), 1);
+  UI_ScrollPt new_pt = pt;
+  if(sig.kind == UI_ScrollBarActionKind_Drag)
+  {
+    MemoryCopy(&new_pt, sig.drag_origin, sizeof(new_pt));
+    if(sig.drag_moved)
+    {
+      ui_scroll_pt_scroll(&new_pt, sig.drag_pct*range_dim, range, 0);
+    }
+  }
+  if(sig.step != 0)
+  {
+    S64 new_idx = new_pt.idx + sig.step*(sig.page ? Max(visible, 1) : 1);
+    new_idx = Clamp(range.min, new_idx, range.max);
+    ui_scroll_pt_target_idx(&new_pt, new_idx);
+  }
   return new_pt;
 }
 

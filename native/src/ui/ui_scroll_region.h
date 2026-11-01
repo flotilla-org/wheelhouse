@@ -53,6 +53,26 @@ struct UI_ScrollRegionSignal
   UI_ScrollPt2 position; // requested positions; content owns their application
 };
 
+// An axis in no units, for content that scrolls by something other than a
+// UI_ScrollPt: its thumb; `activity`, any value that changes when the content
+// scrolls (an overlay bar shows for a while after it does); and what a drag
+// begins from (see ui_scroll_bar_styled).
+typedef struct UI_ScrollRegionThumbAxis UI_ScrollRegionThumbAxis;
+struct UI_ScrollRegionThumbAxis
+{
+  UI_ScrollThumb thumb;
+  F32 activity;
+  void *drag_origin;
+  U64 drag_origin_size;
+};
+
+typedef struct UI_ScrollRegionThumbSignal UI_ScrollRegionThumbSignal;
+struct UI_ScrollRegionThumbSignal
+{
+  UI_Box *content_box;
+  UI_ScrollBarSignal bar[Axis2_COUNT]; // content owns their application
+};
+
 // Defaults read UI style/font metrics, never shell settings. Layout itself is
 // pure, so content can measure against viewport before building the region.
 internal UI_ScrollRegionParams ui_scroll_region_params(Rng2F32 rect, UI_ScrollAxisPolicy x, UI_ScrollAxisPolicy y);
@@ -63,5 +83,9 @@ internal Rng2F32 ui_scroll_region_bar_rect(UI_ScrollRegion *region, Axis2 axis, 
 // input or change content offsets. Callers signal content_box themselves.
 internal UI_ScrollRegionSignal ui_scroll_region_build(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
                                                       UI_ScrollRegionAxis axes[Axis2_COUNT], UI_BoxFlags content_flags);
+// The same over axes in no units; ui_scroll_region_build is this over
+// UI_ScrollPts.
+internal UI_ScrollRegionThumbSignal ui_scroll_region_build_thumbs(UI_Box *parent, UI_Key key, UI_ScrollRegion *region,
+                                                                  UI_ScrollRegionThumbAxis axes[Axis2_COUNT], UI_BoxFlags content_flags);
 
 #endif

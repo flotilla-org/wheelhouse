@@ -55,6 +55,42 @@ typedef enum UI_ScrollBarStyle
 }
 UI_ScrollBarStyle;
 
+// uishell: a scroll bar's thumb, in no units: where it sits along its travel
+// (0 the start, 1 the end) and the share of the content shown (1 or more:
+// nothing to scroll).
+typedef struct UI_ScrollThumb UI_ScrollThumb;
+struct UI_ScrollThumb
+{
+  F64 fraction;
+  F64 size;
+};
+
+typedef enum UI_ScrollBarActionKind
+{
+  UI_ScrollBarActionKind_None,
+  UI_ScrollBarActionKind_Drag,
+}
+UI_ScrollBarActionKind;
+
+#define UI_SCROLL_BAR_DRAG_ORIGIN_MAX 64
+
+// What the user did to a scroll bar this frame, for its caller to apply in
+// its own units. None (the zero value): the thumb isn't held. Drag: the thumb is held, and drag_pct is the pointer's
+// movement since the press as a share of the thumb's travel (moved: it has
+// moved at all), from the drag_origin given at the press. step: an arrow
+// (-1 towards the start, +1 the end), or with page the track beside the
+// thumb; held, each repeats every frame.
+typedef struct UI_ScrollBarSignal UI_ScrollBarSignal;
+struct UI_ScrollBarSignal
+{
+  UI_ScrollBarActionKind kind;
+  void *drag_origin;
+  F32 drag_pct;
+  B32 drag_moved;
+  S32 step;
+  B32 page;
+};
+
 typedef struct UI_ScrollListParams UI_ScrollListParams;
 struct UI_ScrollListParams
 {
@@ -163,7 +199,11 @@ internal UI_ScrollListRowBlockArray ui_scroll_list_row_block_array_from_chunk_li
 internal U64 ui_scroll_list_row_from_item(UI_ScrollListRowBlockArray *blocks, U64 item);
 internal U64 ui_scroll_list_item_from_row(UI_ScrollListRowBlockArray *blocks, U64 row);
 
-internal UI_ScrollPt ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style, F32 vis_t, UI_ScrollPt pt, Rng1S64 idx_range, S64 view_num_indices);
+internal UI_ScrollBarSignal ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style, F32 vis_t, UI_ScrollThumb thumb,
+                                                void *drag_origin, U64 drag_origin_size);
+internal UI_ScrollThumb ui_scroll_thumb_from_pt(UI_ScrollPt pt, Rng1S64 range, S64 visible);
+internal UI_ScrollPt ui_scroll_pt_drag_origin(UI_ScrollPt pt, Rng1S64 range);
+internal UI_ScrollPt ui_scroll_pt_from_bar_signal(UI_ScrollPt pt, Rng1S64 range, S64 visible, UI_ScrollBarSignal sig);
 internal void ui_set_active_scroll_bar_style(UI_ScrollBarStyle style);
 internal UI_ScrollBarStyle ui_active_scroll_bar_style(void);
 internal void ui_scroll_list_begin(UI_ScrollListParams *params, UI_ScrollPt *scroll_pt_out, Vec2S64 *cursor_out, Vec2S64 *mark_out, Rng1S64 *visible_row_range_out, UI_ScrollListSignal *signal_out);
