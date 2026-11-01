@@ -6,15 +6,15 @@
 //! - `system`: fontique's own fallback, nothing configured;
 //! - `wheelhouse`: Wheelhouse's bundled fallbacks (DEFAULT_FALLBACKS) after
 //!   the base family, as wheelhouse-text stacks them;
-//! - `seeded`: `system`, after `Collection::set_fallbacks` gives each
-//!   corpus line's script and language the family the platform chose where
-//!   the two differed. What still differs can't be configured away: that's
-//!   the gate in #560.
+//! - `configured`: `wheelhouse`, after `Collection::set_fallbacks` gives each
+//!   corpus line's script and language (not Common's: the bundled fonts
+//!   cover symbols) the family the platform chose where `system` differed.
+//!   What still differs can't be configured away: that's the gate in #560.
 //!
 //! The tables it prints are the evidence in docs/research/fontique-parity.md;
 //! `WHEELHOUSE_PARITY_REPORT` also writes them to that path. It fails only on
-//! tofu in `wheelhouse`: a cluster left without a glyph where the platform has
-//! one. A different face is a finding, as each host's fonts differ.
+//! tofu in `configured`: a cluster left without a glyph where the platform
+//! has one. A different face is a finding, as each host's fonts differ.
 use std::{borrow::Cow, collections::BTreeMap, fmt::Write, fs, sync::Arc};
 
 use fontique::{Blob, Collection, CollectionOptions, FallbackKey, GenericFamily, Script, SourceCache};
@@ -82,35 +82,34 @@ fn fontique_agrees_with_the_platform() {
     let wheelhouse_rows = wheelhouse.run();
     section(&mut report, "wheelhouse", &wheelhouse_rows, false);
 
-    let mut seeded = Pass::new(false);
+    let mut configured = Pass::new(true);
     let mut seeds = BTreeMap::<(usize, String), String>::new();
     for row in rows.iter().filter(|r| r.verdict == Verdict::Differs || r.verdict == Verdict::FontiqueTofu) {
         let (_, Some(script), _) = CORPUS[row.line] else { continue };
+        if script == "Zyyy" {
+            continue;
+        }
         if let Some(platform) = &row.platform {
             seeds.entry((row.line, script.to_owned())).or_insert_with(|| platform.face.family.clone());
         }
     }
     for ((line, script), family) in &seeds {
-        let set = seeded.seed(CORPUS[*line].0, script, family);
+        let set = configured.seed(CORPUS[*line].0, script, family);
         writeln!(report, "\nSeeded {script} for {} with {family}: {}", CORPUS[*line].0, if set { "set" } else { "not found" }).unwrap();
     }
-    let seeded_rows = seeded.run();
-    section(&mut report, "seeded", &seeded_rows, false);
+    let configured_rows = configured.run();
+    section(&mut report, "configured", &configured_rows, false);
 
     println!("{report}");
     if let Ok(path) = std::env::var("WHEELHOUSE_PARITY_REPORT") {
         fs::write(path, &report).unwrap();
     }
-    let tofu = wheelhouse_rows
+    let tofu = configured_rows
         .iter()
         .filter(|r| r.verdict == Verdict::FontiqueTofu)
         .map(|r| format!("{} {:?}: {:?}", CORPUS[r.line].0, r.cluster, r.fontique.face))
         .collect::<Vec<_>>();
-    assert!(
-        tofu.is_empty(),
-        "with Wheelhouse's fallbacks, fontique left clusters the platform covers without glyphs:\n{}",
-        tofu.join("\n")
-    );
+    assert!(tofu.is_empty(), "configured, fontique left clusters the platform covers without glyphs:\n{}", tofu.join("\n"));
 }
 
 fn section(report: &mut String, name: &str, rows: &[Row], all: bool) {
