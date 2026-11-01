@@ -6582,6 +6582,19 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           //////////////////////////
           //- rjf: build panel container box
           //
+          // A clip box draws a pixel inside its rect, so a View would never
+          // draw the body's top row, and under the selected tab's notch that
+          // row showed as a strip of bare background, which read as the tab
+          // reaching into the View (#586). With top tabs the panel box clips
+          // to its rect and shifts its contents up a pixel, so the View's own
+          // clip lands on that row; the frame, built before the panel box and
+          // so painted over it, covers the row except under the notch. The
+          // panel box keeps its rect, so the tab bar keeps its clicks. Not for
+          // bottom tabs: there the row would show whatever scrolls past the
+          // View's last pixel, and a table's row rule would close the notch.
+          B32 view_reaches_tab = (panel_border_px >= 1.f && chrome_plan->selected_tab_visible && panel->tab_side != Side_Max);
+          Rng2F32 view_rect = content_rect;
+          if(view_reaches_tab) { view_rect.y0 -= 1.f; }
           UI_Box *panel_box = &ui_nil_box;
           if(build_panel) UI_Rect(content_rect) UI_ChildLayoutAxis(Axis2_Y) UI_CornerRadius(0) UI_Focus(UI_FocusKind_On)
           {
@@ -6591,10 +6604,12 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             // is retired in favour of inactive-panel dimming (always DisableFocusBorder).
             panel_box = ui_build_box_from_key(UI_BoxFlag_MouseClickable|
                                               UI_BoxFlag_Clip|
+                                              view_reaches_tab*UI_BoxFlag_ClipToRect|
                                               UI_BoxFlag_DisableFocusOverlay|
                                               UI_BoxFlag_DisableFocusBorder|
                                               ((DEV_draw_panel_surface && panel_tree.focused == panel)*UI_BoxFlag_RenderToSurface),
                                               panel_key);
+            panel_box->view_off.y = panel_box->view_off_target.y = view_reaches_tab ? 1.f : 0.f;
           }
           
           //////////////////////////
@@ -6638,18 +6653,23 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
               if(wh_renderer_has_trait(renderer, RD_ViewTrait_ExpressionDrop) &&
                  rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_Expr)
               {
-                UI_FixedSize(dim_2f32(content_rect))
+                UI_FixedSize(dim_2f32(view_rect))
                   view_drop_site = ui_build_box_from_key(UI_BoxFlag_DropSite|UI_BoxFlag_Floating, ui_key_from_stringf(rd_view_ui_key(selected_tab), "drop_site"));
               }
             }
             
             //- uishell: a Slot's notice, in a banner above its View
-            if(!rd_view_address_is_nil(selected_tab)) { content_rect = uishell_slot_banner(selected_tab_cfg, content_rect); }
+            if(!rd_view_address_is_nil(selected_tab))
+            {
+              Rng2F32 below_banner = uishell_slot_banner(selected_tab_cfg, view_rect);
+              content_rect.y0 += below_banner.y0 - view_rect.y0;
+              view_rect = below_banner;
+            }
             
             //- rjf: build view container
             UI_Box *view_container_box = &ui_nil_box;
-            UI_FixedWidth(dim_2f32(content_rect).x)
-              UI_FixedHeight(dim_2f32(content_rect).y)
+            UI_FixedWidth(dim_2f32(view_rect).x)
+              UI_FixedHeight(dim_2f32(view_rect).y)
               UI_ChildLayoutAxis(Axis2_Y)
             {
               view_container_box = ui_build_box_from_key(0, ui_key_zero());
@@ -6681,7 +6701,7 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
             //- rjf: build tab view
             UI_Parent(view_container_box) if(!rd_view_address_is_nil(selected_tab)) ProfScope("build tab view")
             {
-              rd_view_ui(content_rect);
+              rd_view_ui(view_rect);
             }
             
             //- rjf: accept expression drops
@@ -10411,7 +10431,7 @@ rd_window_frame(void)
       if(box->flags & UI_BoxFlag_Clip)
       {
         Rng2F32 top_clip = dr_top_clip();
-        Rng2F32 new_clip = pad_2f32(box->rect, -1);
+        Rng2F32 new_clip = (box->flags & UI_BoxFlag_ClipToRect) ? box->rect : pad_2f32(box->rect, -1);
         if(top_clip.x1 != 0 || top_clip.y1 != 0)
         {
           new_clip = intersect_2f32(new_clip, top_clip);

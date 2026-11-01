@@ -372,6 +372,8 @@ typedef U64 UI_BoxFlags;
 
 //- rjf: debug
 # define UI_BoxFlag_Debug                     (UI_BoxFlags)(1ull<<53)
+// With Clip: clip to the rect itself, rather than one pixel inside it.
+# define UI_BoxFlag_ClipToRect                (UI_BoxFlags)(1ull<<59)
 
 //- rjf: bundles
 # define UI_BoxFlag_Clickable           (UI_BoxFlag_MouseClickable|UI_BoxFlag_KeyboardClickable)
