@@ -1,0 +1,97 @@
+---
+source: crates/wheelhouse-rich-text/src/conversation_tests.rs
+expression: rich.copy_all().unwrap()
+---
+## User
+
+Why does `ka lo` fail? See [the log][log].
+
+[log]: https://example.com/log
+
+## Assistant
+
+I'll run the *suite*.
+
+```rust
+fn mi() {
+    ne();
+}
+```
+
+| a | b |
+|---|---|
+| 1 | 2 |
+
+**Bash** cargo test
+
+```sh
+cargo test
+```
+
+```
+error: ka lo
+100%
+see the docs
+```
+
+**Edit** src/lib.rs
+
+```
+--- a/src/lib.rs
++++ b/src/lib.rs
+-ka
++lo
+```
+
+**Read** notes.md
+
+```
+# Notes
+
+- one
+- two
+```
+
+**Screenshot**
+
+**Task** Find the flaky test
+
+```
+It's `sa_do`.
+```
+
+**Subagent** t2
+
+## User
+
+Find the flaky test.
+
+**Grep** flaky
+
+```
+src/a.rs:3: flaky
+```
+
+**Bash** cargo build
+
+--- compaction ---
+
+--- interrupted ---
+
+## User
+
+Try again
+
+## Assistant
+
+Done: *all* green.
+
+**Bash** cargo test
+
+```
+ok
+```
+
+## Assistant
+
+Still **stream

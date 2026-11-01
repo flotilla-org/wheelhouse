@@ -256,6 +256,10 @@ fn tool_key(thread: &str, id: &str) -> Key {
     Key::named(&[thread, "tool", id])
 }
 
+/// The slot of a thread outside the one a View shows: never placed, so
+/// nothing goes in it.
+const NOWHERE: Key = Key(0);
+
 fn subagent_key(thread: &str) -> Key {
     Key::named(&[thread, "thread"])
 }
@@ -384,11 +388,14 @@ pub(crate) struct Conversation {
     /// Backfill's bytes per step, tuned to its budget.
     step: usize,
     tuning: Tuning,
+    /// The thread shown at the root: a subagent's, opened as its own View;
+    /// None for the conversation's own threads.
+    root: Option<String>,
 }
 
 impl Conversation {
     /// Ingests the hello and the tail; the rest waits for backfill.
-    pub fn open(bytes: &[u8], tuning: Tuning, sink: &mut Sink) -> Conversation {
+    pub fn open(bytes: &[u8], tuning: Tuning, root: Option<&str>, sink: &mut Sink) -> Conversation {
         let head = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
         let mut conversation = Conversation {
             backlog: bytes[..head].to_vec(),
@@ -396,6 +403,7 @@ impl Conversation {
             lines: Lines::starting_at(head as u64),
             step: tuning.step.unwrap_or(FIRST_STEP),
             tuning,
+            root: root.map(str::to_owned),
             ..Conversation::default()
         };
         let first = conversation.backlog.iter().position(|&b| b == b'\n').map_or(head, |i| i + 1);
@@ -738,8 +746,12 @@ impl Conversation {
     }
 
     fn thread_slot(&self, thread: &str) -> Key {
+        if self.root.as_deref() == Some(thread) {
+            return Key::ROOT;
+        }
         match self.threads.get(thread).and_then(|t| t.parent.as_ref()) {
             Some(_) => subagent_key(thread),
+            None if self.root.is_some() => NOWHERE,
             None => Key::ROOT,
         }
     }
@@ -890,6 +902,124 @@ impl Conversation {
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+/// What a hover action copies (#546).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CopyAction {
+    /// A Turn's markdown as plain text: a Turn holds no reasoning or tool
+    /// calls, which are Sections beside it.
+    Message,
+    /// A tool call's result, without its ANSI escapes.
+    ToolOutput,
+    /// A tool call's `command` argument.
+    Command,
+}
+
+impl CopyAction {
+    pub const ALL: [CopyAction; 3] = [CopyAction::Message, CopyAction::ToolOutput, CopyAction::Command];
+}
+
+/// A fence of backticks longer than any run in `text`.
+fn fence(text: &str) -> String {
+    let (mut longest, mut run) = (0, 0);
+    for c in text.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    "`".repeat(longest.max(2) + 1)
+}
+
+fn fenced(info: &str, text: &str) -> String {
+    let fence = fence(text);
+    format!("{fence}{info}\n{text}\n{fence}")
+}
+
+fn output(r: &ToolResult) -> Option<String> {
+    let media = r.media_type.as_str();
+    if media == MARKDOWN {
+        return Some(r.content.trim_end_matches('\n').to_owned());
+    }
+    if media == DIFF {
+        let patch = r.structured.as_ref().and_then(|s| s.get("patch").or(Some(s))).and_then(Value::as_str);
+        let text = if r.content.is_empty() { patch.unwrap_or("") } else { &r.content };
+        return Some(text.trim_end_matches('\n').to_owned());
+    }
+    if media.starts_with("image/") {
+        return None;
+    }
+    let mut log = Log::default();
+    log.feed(&r.content);
+    Some(log.chunks().into_iter().map(|chunk| chunk.text).collect::<Vec<_>>().join("\n"))
+}
+
+fn command(args: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(args).ok()?;
+    value.get("command").and_then(Value::as_str).map(str::to_owned)
+}
+
+impl Conversation {
+    /// What `action` copies of the item `key`; None if it doesn't apply.
+    pub fn copy(&self, key: Key, action: CopyAction) -> Option<String> {
+        match (&self.items.get(&key)?.body, action) {
+            (Body::Text { md, .. }, CopyAction::Message) => Some(md.raw.trim_end_matches('\n').to_owned()),
+            (Body::Tool { result: Some(r), .. }, CopyAction::ToolOutput) => output(r),
+            (Body::Tool { args, .. }, CopyAction::Command) => command(args),
+            _ => None,
+        }
+    }
+
+    /// Whether [`Conversation::copy`] has something for `action`, without
+    /// building it: a hover asks every frame.
+    pub fn can_copy(&self, key: Key, action: CopyAction) -> bool {
+        match (self.items.get(&key).map(|i| &i.body), action) {
+            (Some(Body::Text { .. }), CopyAction::Message) => true,
+            (Some(Body::Tool { result: Some(r), .. }), CopyAction::ToolOutput) => !r.media_type.starts_with("image/"),
+            (Some(Body::Tool { args, .. }), CopyAction::Command) => command(args).is_some(),
+            _ => false,
+        }
+    }
+
+    /// The transcript as markdown, in the order shown: messages under their
+    /// role, tool calls with their command and output, a subagent's thread
+    /// after the call that started it. Reasoning is left out, as a
+    /// message's copy leaves it out.
+    pub fn transcript(&self) -> String {
+        let mut parts = vec![];
+        self.transcript_into(Key::ROOT, &mut parts);
+        parts.join("\n\n")
+    }
+
+    fn transcript_into(&self, slot: Key, parts: &mut Vec<String>) {
+        for &(_, key) in self.slots.get(&slot).into_iter().flatten() {
+            let Some(item) = self.items.get(&key) else { continue };
+            match &item.body {
+                Body::Text { role, md } => {
+                    let label = match role {
+                        Role::User => "User",
+                        Role::Assistant => "Assistant",
+                        Role::System => "System",
+                    };
+                    parts.push(format!("## {label}\n\n{}", md.raw.trim_end_matches('\n')));
+                }
+                Body::Reasoning { .. } => {}
+                Body::Tool { name, title, args, result, .. } => {
+                    let mut part = if title.is_empty() { format!("**{name}**") } else { format!("**{name}** {title}") };
+                    if let Some(command) = command(args) {
+                        part = format!("{part}\n\n{}", fenced("sh", &command));
+                    }
+                    if let Some(text) = result.as_ref().and_then(output).filter(|t| !t.is_empty()) {
+                        part = format!("{part}\n\n{}", fenced("", &text));
+                    }
+                    parts.push(part);
+                }
+                Body::Subagent { .. } => parts.push(format!("**Subagent** {}", item.thread)),
+                Body::Divider { text } => parts.push(format!("--- {text} ---")),
+                Body::Notice { text } => parts.push(format!("> {text}")),
+            }
+            self.transcript_into(key, parts);
         }
     }
 }

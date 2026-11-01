@@ -589,6 +589,17 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 #define WHEELHOUSE_RICH_COPY_MARKDOWN 2
 
+// What a Container's hover action copies (wheelhouse#546), and the bits of
+// wheelhouse_rich_text_copy_actions' mask.
+// A Turn's markdown as plain text, without reasoning or tool calls.
+#define WHEELHOUSE_RICH_ACTION_MESSAGE 1
+
+// A tool call's output, without its ANSI escapes.
+#define WHEELHOUSE_RICH_ACTION_TOOL_OUTPUT 2
+
+// A tool call's `command` argument.
+#define WHEELHOUSE_RICH_ACTION_COMMAND 4
+
 #define WHEELHOUSE_RICH_FIND_REGEX 1
 
 #define WHEELHOUSE_RICH_FIND_CASE_SENSITIVE 2
@@ -2777,6 +2788,13 @@ uint32_t wheelhouse_rich_text_reload(WheelhouseRichText *h,
 // wheelhouse_rich_text_free. NULL with an error on invalid input.
 WheelhouseRichText *wheelhouse_rich_text_open_conversation(WheelhouseText jsonl, char **error_out);
 
+// One thread of a conversation (`thread`, a subagent's) at the root: what a
+// View of that thread alone shows. Otherwise as
+// wheelhouse_rich_text_open_conversation.
+WheelhouseRichText *wheelhouse_rich_text_open_thread(WheelhouseText jsonl,
+                                                     WheelhouseText thread,
+                                                     char **error_out);
+
 // Bytes appended to a conversation's file, in any pieces: a line waits for
 // its newline. `changed_out` (if not NULL) gets 1 if anything changed. An
 // error for a markdown document.
@@ -2916,6 +2934,15 @@ uint32_t wheelhouse_rich_text_set_collapsed(WheelhouseRichText *h,
                                             uint32_t collapsed,
                                             char **error_out);
 
+// `out` gets 1 if this subscription's View has the Container `key`
+// collapsed: by wheelhouse_rich_text_set_collapsed, until it is expanded
+// again or a reveal expands it.
+uint32_t wheelhouse_rich_text_collapsed(WheelhouseRichText *h,
+                                        uint64_t subscription,
+                                        uint64_t key,
+                                        uint32_t *out,
+                                        char **error_out);
+
 // Its entries are borrowed from the handle until the next call on it.
 uint32_t wheelhouse_rich_text_window(WheelhouseRichText *h,
                                      uint64_t subscription,
@@ -2976,6 +3003,28 @@ uint32_t wheelhouse_rich_text_copy_block(WheelhouseRichText *h,
                                          uint32_t copy_format,
                                          WheelhouseBytes *out,
                                          char **error_out);
+
+// The WHEELHOUSE_RICH_ACTION_* bits that copy something of the Container
+// `key`; 0 for none, and for markdown.
+uint32_t wheelhouse_rich_text_copy_actions(WheelhouseRichText *h,
+                                           uint64_t key,
+                                           uint32_t *out,
+                                           char **error_out);
+
+// What one WHEELHOUSE_RICH_ACTION_* copies of the Container `key`,
+// collapsed or not; an error if it doesn't apply. Free the bytes with
+// wheelhouse_bytes_free.
+uint32_t wheelhouse_rich_text_copy_action(WheelhouseRichText *h,
+                                          uint64_t key,
+                                          uint32_t action,
+                                          WheelhouseBytes *out,
+                                          char **error_out);
+
+// A conversation's whole transcript as markdown, backfilling what is left
+// first. An error for markdown. Free the bytes with wheelhouse_bytes_free.
+uint32_t wheelhouse_rich_text_copy_all(WheelhouseRichText *h,
+                                       WheelhouseBytes *out,
+                                       char **error_out);
 
 // Synthetic markdown of at least `lines` lines (at most a million), the
 // same for the same seed: the document the scale tests and the native
