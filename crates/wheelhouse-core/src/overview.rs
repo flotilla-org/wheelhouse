@@ -21,7 +21,7 @@ pub use logical::{
     entries, logical_layout, Cluster, Group, GroupKey, LogicalLayout, OverviewEntry, Tile, LOCAL_SECTION_KIND, OTHER_WORKSPACES,
 };
 pub use morph::{morph, MORPH_MS};
-pub use scene::{scene, GridPacking, Scene, SceneGroup, SceneOptions, SceneRect, SceneTile, ViewMode};
+pub use scene::{scene, GridPacking, Scene, SceneGroup, SceneOptions, SceneRect, SceneTile, ViewMode, Zoom};
 pub use window::{OverviewMode, OverviewWindow, Stretch};
 
 #[cfg(test)]

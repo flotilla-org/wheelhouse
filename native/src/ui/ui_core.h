@@ -93,6 +93,8 @@ typedef enum UI_EventKind
   UI_EventKind_MouseMove,
   UI_EventKind_Scroll,
   UI_EventKind_FileDrop,
+  // A pinch: `delta_2f32.x` is how much it grew (WM_EventKind_Magnify).
+  UI_EventKind_Magnify,
   UI_EventKind_COUNT
 }
 UI_EventKind;

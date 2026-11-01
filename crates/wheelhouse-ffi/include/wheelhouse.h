@@ -1374,6 +1374,11 @@ typedef struct {
   size_t stretch_group;
   double stretch_x;
   double stretch_y;
+  // A grid is open in the overview, so it zooms by hand
+  // (wheelhouse_overview_zoom, _fit_all), and whether all of it is in
+  // view (the Fit all toggle is on).
+  uint32_t zoomable;
+  uint32_t fits_all;
 } WheelhouseOverviewFrame;
 
 // As ListOpView, with a Rich Text key: INSERT reads `at` and `key`, REMOVE
@@ -2562,6 +2567,20 @@ uint32_t wheelhouse_overview_slide(WheelhouseCore *h,
 // scene units, as far as it goes: rows only scroll down, and a grid only
 // when it is zoomed in on a tile too narrow to read whole.
 uint32_t wheelhouse_overview_pan(WheelhouseCore *h, double dx, double dy, char **error_out);
+
+// Zoom a grid in by `factor` (below 1 zooms out) about the point at `at_x`,
+// `at_y`, shares of the region's width and height: a pinch or a Cmd+scroll
+// at the pointer. From the whole grid in view to its narrowest tile
+// filling the region. A cut, like a pan; nothing outside a grid.
+uint32_t wheelhouse_overview_zoom(WheelhouseCore *h,
+                                  double factor,
+                                  double at_x,
+                                  double at_y,
+                                  char **error_out);
+
+// The Fit all toggle: fly out to the whole grid, or, when it is all in
+// view, back to where the grid starts.
+uint32_t wheelhouse_overview_fit_all(WheelhouseCore *h, double now_ms, char **error_out);
 
 // Collapse or expand a cluster (indexes into the frame's groups and the
 // group's clusters).

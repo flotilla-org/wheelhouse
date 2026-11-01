@@ -525,11 +525,11 @@ fn unusable_sizes_take_their_defaults(tc: TestCase) {
         SceneOptions { mode: options.mode, packing: options.packing, keep_clusters_whole: options.keep_clusters_whole, ..defaults };
     assert_eq!(scene.options, chosen);
     let finite = |c: Camera| c.cx.is_finite() && c.cy.is_finite() && c.w.is_finite() && c.w > 0.0;
-    assert!(finite(scene.overview_camera(None, None)));
+    assert!(finite(scene.overview_camera(None, None, None)));
     for tile in &scene.tiles {
         assert!(close(tile.rect.width(), defaults.aspect * tile.rect.height()) && tile.rect.height() > 0.0);
         assert!(finite(scene.rest_camera(tile.workspace_id).unwrap()));
-        assert!(finite(scene.overview_camera(Some(tile.workspace_id), None)));
+        assert!(finite(scene.overview_camera(Some(tile.workspace_id), None, None)));
     }
 }
 
@@ -584,7 +584,7 @@ fn cameras_show_what_they_are_for(tc: TestCase) {
     if options.mode == ViewMode::Rows {
         assert!(scene.row_window(tile.group).unwrap().contains(&SceneRect { y0: tile.rect.y0, y1: tile.rect.y1, ..tile.rect }));
     }
-    let overview = scene.overview_camera(Some(pick), None).view(options.aspect);
+    let overview = scene.overview_camera(Some(pick), None, None).view(options.aspect);
     assert!(overview.contains(&tile.rect), "the overview {overview:?} doesn't show {tile:?}");
     if options.mode == ViewMode::Grid {
         let fit = Camera::fit(&scene.bounds, options.aspect, 1.0);
@@ -597,7 +597,7 @@ fn cameras_show_what_they_are_for(tc: TestCase) {
                 "{overview:?} leaves {b:?}"
             );
         } else {
-            assert!(same(scene.overview_camera(Some(pick), None), fit));
+            assert!(same(scene.overview_camera(Some(pick), None, None), fit));
         }
     }
     let group = tc.draw(gs::integers::<usize>().max_value(scene.groups.len() - 1));
@@ -812,7 +812,8 @@ fn switching_flies_between_tiles_unless_motion_is_off() {
 /// - going back from the overview opens the current workspace, and back
 ///   from an open workspace does nothing;
 /// - a drag stretches only one way, past one end, and never in an open
-///   workspace; let go, it comes to rest.
+///   workspace; let go, it comes to rest;
+/// - zooming a grid by hand cuts, and Fit all flies.
 #[hegel::test(test_cases = 300)]
 fn a_windows_camera_follows_its_mode(tc: TestCase) {
     let mut entries = draw_entries(&tc);
@@ -827,7 +828,7 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
     for _ in 0..tc.draw(gs::integers::<usize>().max_value(25)) {
         now += tc.draw(gs::sampled_from(&[0.0, 16.0, 100.0, 300.0, 1000.0][..]));
         let before = window.camera(now);
-        let flies = match tc.draw(gs::integers::<u8>().max_value(15)) {
+        let flies = match tc.draw(gs::integers::<u8>().max_value(17)) {
             0 => {
                 let current = pick(&tc, &window).or_else(|| entries.first().map(|e| e.workspace_id));
                 let switched = current != window.current();
@@ -935,6 +936,16 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
             14 => {
                 window.release(now);
                 false
+            }
+            15 => {
+                let at = || tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0).allow_nan(false).allow_infinity(false));
+                let factor = tc.draw(gs::floats::<f64>().min_value(0.1).max_value(10.0).allow_nan(false).allow_infinity(false));
+                window.zoom_by(factor, at(), at());
+                false
+            }
+            16 => {
+                window.fit_all(now);
+                true
             }
             _ => {
                 motion = !motion;
@@ -1160,11 +1171,11 @@ fn a_new_readable_width_forgets_the_scrolling_and_a_resize_keeps_it() {
     // Wider by a fifth: the share shrinks, and the scrolling stays.
     window.set_grid(GridPacking::Shelves, 400.0, 1200.0, 0.0);
     let resized = window.target().unwrap();
-    let rest = window.scene().overview_camera(window.current(), None);
+    let rest = window.scene().overview_camera(window.current(), None, None);
     assert!(!near(resized, rest), "a resize went back to the current tile");
     // A new readable width goes back to the current tile.
     window.set_grid(GridPacking::Shelves, 300.0, 1200.0, 0.0);
-    assert!(near(window.target().unwrap(), window.scene().overview_camera(window.current(), None)));
+    assert!(near(window.target().unwrap(), window.scene().overview_camera(window.current(), None, None)));
 }
 
 // ---------- grabbing, dragging and gliding ----------
@@ -1480,4 +1491,119 @@ fn without_motion_or_an_overview_nothing_glides() {
     window.release(8016.0);
     assert_eq!(window.scene().groups[0].slide, slide);
     assert!(window.stretch().is_none() && !window.moving());
+}
+
+// ---------- zooming by hand ----------
+
+/// A grid of `count` workspaces in one project, open in the overview, its
+/// flight over, with a readable width out of a region 1000 wide.
+fn grid(count: u64, readable: f64) -> OverviewWindow {
+    let project = || segment("project", entity("project", 0));
+    let entries: Vec<_> = (1..=count).map(|i| entry("tree", vec![project(), segment("convoy", entity("convoy", i))], i)).collect();
+    let mut window = OverviewWindow::default();
+    window.set_view_mode(ViewMode::Grid, 0.0);
+    window.set_grid(GridPacking::Shelves, readable, 1000.0, 0.0);
+    window.update(entries, Some(tab_workspace_id(1)), 1.6, 0.0);
+    window.open(0.0);
+    window.update_unchanged(window.current(), 1.6, 5000.0);
+    window
+}
+
+/// Zoomed by any factor about any point, a grid's camera stays between its
+/// narrowest tile filling the region and the whole grid, within the scene;
+/// what was under the pointer stays there unless an edge of the scene
+/// stops it. Zooming all the way out fits the whole grid.
+#[hegel::test(test_cases = 300)]
+fn zooming_a_grid_keeps_what_is_under_the_pointer(tc: TestCase) {
+    let mut window = grid(tc.draw(gs::integers::<u64>().min_value(1).max_value(40)), tc.draw(gs::sampled_from(vec![0.0, 200.0, 400.0])));
+    window.set_motion(false);
+    for _ in 0..tc.draw(gs::integers::<usize>().max_value(6)) {
+        let from = window.target().unwrap();
+        let (factor, at_x, at_y) = (float(&tc, 0.1, 10.0), float(&tc, 0.0, 1.0), float(&tc, 0.0, 1.0));
+        window.zoom_by(factor, at_x, at_y);
+        let to = window.target().unwrap();
+        let (closest, fit) = window.scene().zoom_range();
+        assert!(to.w >= closest * (1.0 - 1e-9) && to.w <= fit * (1.0 + 1e-9), "{to:?} outside {closest}..{fit}");
+        assert!(near(window.camera(0.0).unwrap(), to), "zooming is a cut");
+        let (a, b) = (from.view(1.6), to.view(1.6));
+        let bounds = window.scene().bounds;
+        let tolerance = 1e-9 * (1.0 + fit);
+        let axes = [
+            (a.x0 + at_x * a.width(), b.x0 + at_x * b.width(), b.x0, b.x1, bounds.x0..bounds.x1),
+            (a.y0 + at_y * a.height(), b.y0 + at_y * b.height(), b.y0, b.y1, bounds.y0..bounds.y1),
+        ];
+        for (was, is, lo, hi, span) in axes {
+            let at_edge =
+                (lo - span.start).abs() <= tolerance || (hi - span.end).abs() <= tolerance || hi - lo >= span.end - span.start - tolerance;
+            assert!((was - is).abs() <= tolerance * 1e3 || at_edge, "the point under the pointer moved from {was} to {is}");
+        }
+        assert_eq!(window.fits_all(), to.w >= fit * (1.0 - 1e-9));
+    }
+    window.zoom_by(1e-9, 0.5, 0.5);
+    assert!(window.fits_all());
+}
+
+/// The Fit all toggle flies out to the whole grid and back to where the
+/// grid starts; zoom and pan go back there when the overview reopens, the
+/// view mode changes or the readable width changes, and stay through a
+/// resize. Rows don't zoom.
+#[test]
+fn fit_all_and_what_forgets_a_zoom() {
+    let mut window = grid(30, 400.0);
+    let start = window.target().unwrap();
+    assert!(window.zoomable() && !window.fits_all(), "the grid starts zoomed in on the current tile");
+    window.fit_all(5000.0);
+    assert!(window.flying(5000.0) && window.fits_all());
+    assert!(near(window.camera(20000.0).unwrap(), window.target().unwrap()));
+    window.fit_all(20000.0);
+    assert!(!window.fits_all() && near(window.target().unwrap(), start));
+
+    // Zoomed in by hand and scrolled: kept through a resize.
+    window.zoom_by(2.0, 0.5, 0.5);
+    let zoomed = window.target().unwrap();
+    assert!(close(zoomed.w, start.w / 2.0));
+    window.pan(0.5, 0.0);
+    window.set_grid(GridPacking::Shelves, 400.0, 1200.0, 20000.0);
+    assert!(close(window.target().unwrap().w, zoomed.w), "a resize keeps the zoom");
+    // A new readable width forgets it.
+    window.set_grid(GridPacking::Shelves, 300.0, 1200.0, 20000.0);
+    let rest = window.scene().overview_camera(window.current(), None, None);
+    assert!(near(window.target().unwrap(), rest));
+    // So does reopening, and a new view mode.
+    window.zoom_by(0.5, 0.5, 0.5);
+    window.close(20000.0);
+    window.open(20000.0);
+    assert!(near(window.target().unwrap(), rest));
+    window.zoom_by(0.5, 0.5, 0.5);
+    window.set_view_mode(ViewMode::Rows, 20000.0);
+    assert!(!window.zoomable());
+    let rows = window.target().unwrap();
+    window.zoom_by(3.0, 0.5, 0.5);
+    window.fit_all(20000.0);
+    assert_eq!(window.target().unwrap(), rows, "rows don't zoom");
+    window.set_view_mode(ViewMode::Grid, 20000.0);
+    assert!(near(window.target().unwrap(), rest));
+}
+
+/// Zoomed all the way in on a treemap's smallest tile, it stays within the
+/// scene as workspaces come and go: when every tile grows, no closer than
+/// the narrowest filling the region.
+#[test]
+fn a_zoom_stays_within_the_scene_as_it_changes() {
+    let uneven: Vec<_> =
+        (1..=13u64).map(|i| entry("tree", vec![segment("project", entity("project", if i <= 12 { 0 } else { 1 }))], i)).collect();
+    let mut window = OverviewWindow::default();
+    window.set_view_mode(ViewMode::Grid, 0.0);
+    window.set_grid(GridPacking::Treemap, 0.0, 1000.0, 0.0);
+    window.update(uneven, Some(tab_workspace_id(13)), 1.6, 0.0);
+    window.open(0.0);
+    window.zoom_by(1e9, 0.5, 0.5);
+    let closest = window.scene().zoom_range().0;
+    assert!(close(window.target().unwrap().w, closest) && closest < 1.6 - 1e-6, "the treemap's tiles differ");
+    let even: Vec<_> = (13..=14u64).map(|i| entry("tree", vec![segment("project", entity("project", 1))], i)).collect();
+    window.update(even, window.current(), 1.6, 1000.0);
+    let (closest, fit) = window.scene().zoom_range();
+    let w = window.target().unwrap().w;
+    assert!(closest > window.scene().tiles.iter().map(|t| t.rect.width()).fold(0.0, f64::max) - 1e-9);
+    assert!(w >= closest * (1.0 - 1e-9) && w <= fit * (1.0 + 1e-9), "{w} outside {closest}..{fit}");
 }
