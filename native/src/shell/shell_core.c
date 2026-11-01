@@ -104,8 +104,14 @@ wh_handler_from_url(String8 url)
 internal String8
 wh_media_type_from_path(String8 path)
 {
-  String8 ext = str8_skip_last_dot(str8_skip_last_slash(path));
-  if(ext.size == str8_skip_last_slash(path).size) { return str8_zero(); }
+  String8 name = str8_skip_last_slash(path);
+  String8 ext = str8_skip_last_dot(name);
+  if(ext.size == name.size) { return str8_zero(); }
+  String8 events = str8_lit(".events.jsonl");
+  if(name.size > events.size && str8_match(str8_postfix(name, events.size), events, StringMatchFlag_CaseInsensitive))
+  {
+    return str8_lit(WH_CONVERSATION_MEDIA_TYPE);
+  }
   String8 markdown[] = {str8_lit("md"), str8_lit("markdown"), str8_lit("mdown"), str8_lit("mkd"), str8_lit("mkdn")};
   for EachElement(i, markdown)
   {
