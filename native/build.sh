@@ -108,7 +108,7 @@ fi
 
 # --- Per-Build Settings ------------------------------------------------------
 link_dll="-fPIC"
-link_os_gfx="-lX11 -lXext"
+link_os_gfx="-lX11 -lXext -lXrandr"
 link_render="-lGL -lEGL"
 link_font_provider="-lfreetype"
 

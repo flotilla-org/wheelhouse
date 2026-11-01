@@ -1720,6 +1720,11 @@ wm_set_preferred_window_decorations(B32 enabled)
 }
 
 internal void
+wm_set_application_icon(Vec2S32 dim, U8 *rgba)
+{
+}
+
+internal void
 wm_set_preferred_native_menu_bar(B32 enabled)
 {
 }
