@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use super::find::Find;
 use super::heights::{Entry as Row, HeightIndex};
 use super::select::Selection;
-use super::tree::{Detail, Entry, Key, Kind, NodeId, Part, Tree};
+use super::tree::{Detail, Entry, EntryEdit, Key, Kind, NodeId, Part, Tree};
 
 /// For estimates.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -235,6 +235,32 @@ impl View {
         if let Some(selection) = &mut self.selection {
             selection.clamp(doc, before);
         }
+        if let Some(find) = &mut self.find {
+            find.restart();
+        }
+    }
+
+    /// One splice's entries, as it left the tree.
+    pub(crate) fn apply_edit(&mut self, doc: &Tree, edit: &EntryEdit) {
+        self.heights.remove(edit.at..edit.at + edit.removed);
+        let rows: Vec<Row> = doc.entries()[edit.at..edit.at + edit.inserted].iter().map(|&e| self.row(doc, e)).collect();
+        self.heights.insert(edit.at, &rows);
+        for &i in &edit.stale {
+            let row = self.heights.get(i);
+            self.heights.set(i, row.stale());
+        }
+        debug_assert_eq!(self.heights.len(), doc.entries().len());
+        if let Some(selection) = &mut self.selection {
+            if !selection.clamp(doc, &edit.was) {
+                self.selection = None;
+            }
+        }
+    }
+
+    /// After a batch of edits.
+    pub(crate) fn settle(&mut self, doc: &Tree, anchor: Option<AnchorWas>) {
+        self.collapsed.retain(|&key| doc.get(key).is_some_and(|id| !doc.kind(id).is_block()));
+        self.restore_anchor(doc, anchor);
         if let Some(find) = &mut self.find {
             find.restart();
         }

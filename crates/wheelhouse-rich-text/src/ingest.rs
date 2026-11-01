@@ -76,18 +76,98 @@ pub(crate) struct StagedNode {
     pub side: Side,
     pub hash: u64,
     pub source: SourceInfo,
+    /// Its text goes to this scratch string, not the pages.
+    pub scratch: Option<u32>,
 }
 
+#[derive(Default)]
 pub(crate) struct Staged {
     /// In document order: a parent before its children.
     pub nodes: Vec<StagedNode>,
     texts: String,
+    /// The first ordinal for the root's children: a streaming tail's Blocks
+    /// follow the frozen ones.
+    first: u32,
 }
 
 impl Staged {
     pub fn text(&self, s: usize) -> &str {
         let (start, len) = self.nodes[s].text;
         &self.texts[start as usize..(start + len) as usize]
+    }
+
+    /// A root standing in for the node whose children a splice replaces.
+    pub fn under(key: Key, first: u32) -> Staged {
+        let mut staged = Staged { nodes: vec![], texts: String::new(), first };
+        staged.nodes.push(StagedNode {
+            key,
+            kind: Kind::Root,
+            level: 0,
+            hidden: false,
+            parent: NIL,
+            children: vec![],
+            text: (0, 0),
+            spans: vec![],
+            side: Side::default(),
+            hash: 0,
+            source: SourceInfo::default(),
+            scratch: None,
+        });
+        staged
+    }
+
+    /// `root` and its descendants are a streaming tail.
+    pub fn scratch(&mut self, root: u32, slot: u32) {
+        let mut stack = vec![root];
+        while let Some(at) = stack.pop() {
+            self.nodes[at as usize].scratch = Some(slot);
+            stack.extend(&self.nodes[at as usize].children);
+        }
+    }
+
+    pub fn roots(&self) -> &[u32] {
+        &self.nodes[0].children
+    }
+
+    pub fn child_key(&self, parent: u32) -> Key {
+        let node = &self.nodes[parent as usize];
+        let first = if parent == 0 { self.first } else { 0 };
+        node.key.child(first + node.children.len() as u32)
+    }
+
+    /// A node under `parent`, keyed by `key` or else by its ordinal.
+    pub fn push(&mut self, parent: u32, kind: Kind, key: Option<Key>, text: &str, spans: Vec<Span>, detail: Detail) -> u32 {
+        let key = key.unwrap_or_else(|| self.child_key(parent));
+        let start = self.texts.len() as u32;
+        self.texts.push_str(text);
+        let side = Side { detail, ..Side::default() };
+        let hash = content_hash(kind, 0, false, text, &spans, &side);
+        let id = self.nodes.len() as u32;
+        self.nodes.push(StagedNode {
+            key,
+            kind,
+            level: 0,
+            hidden: false,
+            parent,
+            children: vec![],
+            text: (start, text.len() as u32),
+            spans,
+            side,
+            hash,
+            source: SourceInfo::default(),
+            scratch: None,
+        });
+        self.nodes[parent as usize].children.push(id);
+        id
+    }
+
+    /// Like [`Staged::push`], with strings for the spans to name.
+    pub fn push_with_strings(&mut self, parent: u32, kind: Kind, text: &str, spans: Vec<Span>, strings: Vec<String>) -> u32 {
+        let id = self.push(parent, kind, None, text, spans, Detail::None);
+        let node = &mut self.nodes[id as usize];
+        node.side.strings = strings;
+        node.hash = content_hash(kind, 0, false, text, &node.spans, &node.side);
+        id
     }
 }
 
@@ -125,12 +205,7 @@ fn union(a: Option<(u32, u32)>, r: &Range<usize>) -> Option<(u32, u32)> {
 impl<'s> Builder<'s> {
     fn add(&mut self, kind: Kind, range: &Range<usize>) -> u32 {
         let parent = self.stack.last().copied().unwrap_or(NIL);
-        let mut key = if parent == NIL {
-            Key::ROOT
-        } else {
-            let parent = &self.staged.nodes[parent as usize];
-            parent.key.child(parent.children.len() as u32)
-        };
+        let mut key = if parent == NIL { Key::ROOT } else { self.staged.child_key(parent) };
         while !self.keys.insert(key) {
             key = key.rehash();
         }
@@ -148,6 +223,7 @@ impl<'s> Builder<'s> {
             side: Side::default(),
             hash: 0,
             source: SourceInfo { block: (range.start as u32, range.end as u32), ..SourceInfo::default() },
+            scratch: None,
         });
         if parent != NIL {
             self.staged.nodes[parent as usize].children.push(id);
@@ -487,16 +563,60 @@ fn marker(src: &str, at: usize) -> String {
 }
 
 pub(crate) fn parse(source: &str) -> Staged {
-    let mut builder =
-        Builder { src: source, staged: Staged { nodes: vec![], texts: String::new() }, stack: vec![], leaf: None, keys: HashSet::new() };
+    let mut builder = Builder {
+        src: source,
+        staged: Staged { nodes: vec![], texts: String::new(), first: 0 },
+        stack: vec![],
+        leaf: None,
+        keys: HashSet::new(),
+    };
     let all = 0..source.len();
     builder.open_container(Kind::Root, Detail::None, &all);
-    for (event, range) in Parser::new_ext(source, options()).into_offset_iter() {
-        builder.event(event, range);
-    }
-    builder.close_leaf();
-    while !builder.stack.is_empty() {
-        builder.close_container();
-    }
+    builder.run();
     builder.staged
+}
+
+/// Markdown's Blocks as children of `parent`, a Container already staged.
+/// Source offsets are moved by `offset`: `source` is a message's tail.
+pub(crate) fn parse_into(staged: &mut Staged, parent: u32, source: &str, offset: u32) {
+    let first = staged.nodes.len();
+    let keys = staged.nodes.iter().map(|n| n.key).collect();
+    let mut builder = Builder { src: source, staged: std::mem::take(staged), stack: vec![parent], leaf: None, keys };
+    builder.run();
+    *staged = builder.staged;
+    if offset > 0 {
+        for node in &mut staged.nodes[first..] {
+            node.source.shift(offset);
+        }
+    }
+}
+
+impl Builder<'_> {
+    fn run(&mut self) {
+        for (event, range) in Parser::new_ext(self.src, options()).into_offset_iter() {
+            self.event(event, range);
+        }
+        self.close_leaf();
+        while !self.stack.is_empty() {
+            self.close_container();
+        }
+    }
+}
+
+impl SourceInfo {
+    fn shift(&mut self, by: u32) {
+        let pair = |p: &mut (u32, u32)| {
+            p.0 += by;
+            p.1 += by;
+        };
+        pair(&mut self.block);
+        pair(&mut self.content);
+        for segment in &mut self.segments {
+            segment.source += by;
+        }
+        for span in &mut self.spans {
+            pair(&mut span.outer);
+            pair(&mut span.inner);
+        }
+    }
 }

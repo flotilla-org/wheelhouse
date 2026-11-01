@@ -238,3 +238,325 @@ pub fn edit(c: &mut impl Choose, blocks: &mut Vec<String>) {
         }
     }
 }
+
+/// Synthetic conversations in the contract's stream form (#548).
+pub mod conversation {
+    use std::collections::HashMap;
+
+    use conversation_events::{
+        Custom, Event, FunctionCall, Hello, Message, MessagesSnapshot, Parent, ReasoningMessageContent, ReasoningMessageEnd,
+        ReasoningMessageStart, Role, RunError, RunFinished, RunStarted, TextMessageContent, TextMessageEnd, TextMessageStart, ToolCall,
+        ToolCallArgs, ToolCallEnd, ToolCallResult, ToolCallStart, ToolKind, ToolStatus, Truncated, CONTRACT,
+    };
+    use serde_json::json;
+
+    use super::{block, inline, word, words, Choose, Seeded};
+
+    #[derive(Default)]
+    struct Writer {
+        events: Vec<Event>,
+        seq: HashMap<String, u64>,
+        ids: u64,
+        /// The last text message, for a snapshot to repeat.
+        last: Option<(String, String, Role, String)>,
+    }
+
+    impl Writer {
+        fn seq(&mut self, thread: &str) -> u64 {
+            let seq = self.seq.entry(thread.to_owned()).or_default();
+            *seq += 1;
+            *seq
+        }
+
+        fn id(&mut self, prefix: &str) -> String {
+            self.ids += 1;
+            format!("{prefix}{}", self.ids)
+        }
+
+        fn message(&mut self, c: &mut impl Choose, thread: &str, role: Role, text: &str) {
+            let id = self.id("m");
+            let t = thread.to_owned();
+            let seq = self.seq(thread);
+            self.events.push(Event::TextMessageStart(TextMessageStart { thread_id: t.clone(), seq, message_id: id.clone(), role }));
+            for delta in pieces(c, text) {
+                let seq = self.seq(thread);
+                self.events.push(Event::TextMessageContent(TextMessageContent {
+                    thread_id: t.clone(),
+                    seq,
+                    message_id: id.clone(),
+                    delta,
+                }));
+            }
+            let seq = self.seq(thread);
+            self.events.push(Event::TextMessageEnd(TextMessageEnd { thread_id: t.clone(), seq, message_id: id.clone() }));
+            self.last = Some((t, id, role, text.to_owned()));
+        }
+
+        fn reasoning(&mut self, c: &mut impl Choose, thread: &str) {
+            let id = self.id("rs");
+            let t = thread.to_owned();
+            let seq = self.seq(thread);
+            self.events.push(Event::ReasoningMessageStart(ReasoningMessageStart {
+                thread_id: t.clone(),
+                seq,
+                message_id: id.clone(),
+                role: None,
+            }));
+            let text = format!("Summary: {}", inline(c, 2, 6));
+            for delta in pieces(c, &text) {
+                let seq = self.seq(thread);
+                self.events.push(Event::ReasoningMessageContent(ReasoningMessageContent {
+                    thread_id: t.clone(),
+                    seq,
+                    message_id: id.clone(),
+                    delta,
+                }));
+            }
+            let seq = self.seq(thread);
+            self.events.push(Event::ReasoningMessageEnd(ReasoningMessageEnd { thread_id: t, seq, message_id: id }));
+        }
+
+        /// A started call and its id.
+        fn call(&mut self, thread: &str, name: &str, kind: ToolKind, title: String) -> String {
+            let id = self.id("c");
+            let t = thread.to_owned();
+            let seq = self.seq(thread);
+            self.events.push(Event::ToolCallStart(ToolCallStart {
+                thread_id: t.clone(),
+                seq,
+                tool_call_id: id.clone(),
+                tool_call_name: name.into(),
+                parent_message_id: None,
+                title: Some(title.clone()),
+                kind: Some(kind),
+            }));
+            let seq = self.seq(thread);
+            let delta = json!({ "input": title }).to_string();
+            self.events.push(Event::ToolCallArgs(ToolCallArgs { thread_id: t.clone(), seq, tool_call_id: id.clone(), delta }));
+            let seq = self.seq(thread);
+            self.events.push(Event::ToolCallEnd(ToolCallEnd { thread_id: t, seq, tool_call_id: id.clone() }));
+            id
+        }
+
+        fn result(
+            &mut self,
+            thread: &str,
+            call: &str,
+            media_type: &str,
+            content: String,
+            status: ToolStatus,
+            truncated: Option<Truncated>,
+        ) {
+            let message_id = self.id("r");
+            let seq = self.seq(thread);
+            let structured = (media_type == "image/png").then(|| json!({ "alt": "a synthetic picture" }));
+            self.events.push(Event::ToolCallResult(ToolCallResult {
+                thread_id: thread.into(),
+                seq,
+                message_id,
+                tool_call_id: call.into(),
+                content,
+                role: None,
+                status: Some(status),
+                media_type: Some(media_type.into()),
+                structured,
+                truncated,
+            }));
+        }
+
+        fn tool(&mut self, c: &mut impl Choose, thread: &str, scale: usize) {
+            let kinds = [ToolKind::Shell, ToolKind::Edit, ToolKind::Read, ToolKind::Search, ToolKind::Web, ToolKind::Mcp, ToolKind::Other];
+            let kind = kinds[c.below(kinds.len())];
+            let call = self.call(thread, &word(c), kind, words(c, 1, 3));
+            let statuses = [ToolStatus::Ok, ToolStatus::Ok, ToolStatus::Failed, ToolStatus::Interrupted, ToolStatus::AwaitingApproval];
+            let status = statuses[c.below(statuses.len())];
+            let truncated =
+                c.chance(6).then(|| Truncated { total_bytes: 70_000 + c.below(1000) as u64, reference: format!("log:{}", c.below(99)) });
+            let (media, content) = match c.below(8) {
+                0..=2 => ("text/x-ansi", ansi(c, scale)),
+                3 => ("text/plain", (0..1 + c.below(4 * scale)).map(|_| format!("{}\n", words(c, 1, 8))).collect()),
+                4 => ("text/markdown", super::render(&(0..1 + c.below(3)).map(|_| block(c)).collect::<Vec<_>>())),
+                5 => ("text/x-diff", format!("--- a/{0}\n+++ b/{0}\n-{1}\n+{2}\n", word(c), word(c), word(c))),
+                6 => ("image/png", String::new()),
+                _ => ("application/octet-stream", words(c, 1, 4)),
+            };
+            self.result(thread, &call, media, content, status, truncated);
+        }
+
+        fn subagent(&mut self, c: &mut impl Choose, thread: &str, scale: usize) {
+            let call = self.call(thread, "Task", ToolKind::Agent, words(c, 2, 4));
+            let child = self.id("t");
+            let (seq, run_id) = (self.seq(&child), self.id("run"));
+            self.events.push(Event::RunStarted(RunStarted {
+                thread_id: child.clone(),
+                seq,
+                run_id,
+                parent_run_id: None,
+                parent: Some(Parent { thread_id: thread.into(), tool_call_id: call.clone() }),
+            }));
+            let text = inline(c, 2, 6);
+            self.message(c, &child, Role::User, &text);
+            for _ in 0..1 + c.below(3) {
+                self.item(c, &child, scale, false);
+            }
+            let seq = self.seq(&child);
+            let outcome = if c.chance(4) { "interrupted" } else { "completed" };
+            self.events.push(Event::RunFinished(RunFinished {
+                thread_id: child,
+                seq,
+                outcome: Some(outcome.into()),
+                ..RunFinished::default()
+            }));
+            self.result(thread, &call, "text/markdown", inline(c, 2, 6), ToolStatus::Ok, None);
+        }
+
+        fn snapshot(&mut self, c: &mut impl Choose, thread: &str) {
+            let mut messages = vec![];
+            // A late joiner's snapshot repeats items it already has.
+            if let Some((t, id, role, text)) = self.last.clone().filter(|(t, ..)| t == thread) {
+                let _ = t;
+                messages.push(Message { id, role, content: Some(json!(format!("{text} {}", word(c)))), ..Message::default() });
+            }
+            let (user, assistant, call, result) = (self.id("m"), self.id("m"), self.id("c"), self.id("r"));
+            messages.push(Message { id: user, role: Role::User, content: Some(json!(inline(c, 1, 4))), ..Message::default() });
+            messages.push(Message {
+                id: assistant,
+                role: Role::Assistant,
+                content: Some(json!(inline(c, 1, 6))),
+                tool_calls: vec![ToolCall {
+                    id: call.clone(),
+                    call_type: "function".into(),
+                    function: FunctionCall { name: "Bash".into(), arguments: "{}".into() },
+                    title: Some(words(c, 1, 2)),
+                    kind: Some(ToolKind::Shell),
+                }],
+                ..Message::default()
+            });
+            messages.push(Message {
+                id: result,
+                role: Role::Tool,
+                content: Some(json!(format!("{}\n", words(c, 1, 5)))),
+                tool_call_id: Some(call),
+                status: Some(ToolStatus::Ok),
+                media_type: Some("text/plain".into()),
+                ..Message::default()
+            });
+            let seq = self.seq(thread);
+            self.events.push(Event::MessagesSnapshot(MessagesSnapshot { thread_id: thread.into(), seq, messages }));
+        }
+
+        fn item(&mut self, c: &mut impl Choose, thread: &str, scale: usize, top: bool) {
+            match c.below(24) {
+                0..=4 => {
+                    let text = inline(c, 2, 10);
+                    self.message(c, thread, Role::User, &text)
+                }
+                5..=10 => {
+                    let blocks: Vec<String> = (0..1 + c.below(2 * scale)).map(|_| block(c)).collect();
+                    self.message(c, thread, Role::Assistant, &super::render(&blocks));
+                }
+                11 | 12 => self.reasoning(c, thread),
+                13..=19 => self.tool(c, thread, scale),
+                20 if top => self.subagent(c, thread, scale),
+                21 => {
+                    let seq = self.seq(thread);
+                    self.events.push(Event::Custom(Custom { thread_id: thread.into(), seq, name: "compaction".into(), value: json!({}) }));
+                }
+                22 => {
+                    let seq = self.seq(thread);
+                    self.events.push(Event::RunError(RunError { thread_id: thread.into(), seq, message: words(c, 2, 5), code: None }));
+                }
+                23 if top => self.snapshot(c, thread),
+                _ => {
+                    let text = words(c, 2, 6);
+                    self.message(c, thread, Role::System, &text)
+                }
+            }
+        }
+    }
+
+    /// Text in up to four deltas, cut at character boundaries.
+    fn pieces(c: &mut impl Choose, text: &str) -> Vec<String> {
+        let mut cuts: Vec<usize> = (0..c.below(4)).map(|_| c.below(text.len() + 1)).filter(|&i| text.is_char_boundary(i)).collect();
+        cuts.sort_unstable();
+        let mut out = vec![];
+        let mut at = 0;
+        for cut in cuts {
+            out.push(text[at..cut].to_owned());
+            at = cut;
+        }
+        out.push(text[at..].to_owned());
+        out
+    }
+
+    /// Coloured lines, a progress bar's carriage returns, and a link.
+    fn ansi(c: &mut impl Choose, scale: usize) -> String {
+        let mut out = String::new();
+        for _ in 0..1 + c.below(6 * scale) {
+            match c.below(6) {
+                0 => out.push_str(&format!("\x1b[1;31merror\x1b[0m: {}\n", words(c, 1, 6))),
+                1 => out.push_str(&format!("\x1b[38;5;{}m{}\x1b[39m {}\n", c.below(256), word(c), words(c, 1, 4))),
+                2 => out.push_str(&format!("\x1b[48;2;{};{};{}m{}\x1b[49m\n", c.below(256), c.below(256), c.below(256), word(c))),
+                3 => out.push_str(&format!("10%\r50%\r100% {}\n", word(c))),
+                4 => out.push_str(&format!("see \x1b]8;;https://example.com/{0}\x07{0}\x1b]8;;\x07\n", word(c))),
+                _ => out.push_str(&format!("{}\n", words(c, 1, 10))),
+            }
+        }
+        out
+    }
+
+    /// A conversation of about `items` top-level items, every message ended.
+    pub fn events(c: &mut impl Choose, items: usize) -> Vec<Event> {
+        let mut w = Writer::default();
+        w.events.push(Event::Hello(Hello { contract: CONTRACT }));
+        let seq = w.seq("t0");
+        w.events.push(Event::RunStarted(RunStarted { thread_id: "t0".into(), seq, run_id: "run0".into(), ..RunStarted::default() }));
+        for _ in 0..items {
+            w.item(c, "t0", 1, true);
+        }
+        w.events
+    }
+
+    pub fn jsonl(events: &[Event]) -> Vec<u8> {
+        let mut out = vec![];
+        conversation_events::write(&mut out, events).expect("a Vec takes writes");
+        out
+    }
+
+    /// The same conversation with its deltas cut into more events.
+    pub fn split_deltas(c: &mut impl Choose, events: &[Event]) -> Vec<Event> {
+        let mut out = vec![];
+        for event in events {
+            match event {
+                Event::TextMessageContent(e) => out.extend(
+                    pieces(c, &e.delta).into_iter().map(|delta| Event::TextMessageContent(TextMessageContent { delta, ..e.clone() })),
+                ),
+                Event::ReasoningMessageContent(e) => out.extend(
+                    pieces(c, &e.delta)
+                        .into_iter()
+                        .map(|delta| Event::ReasoningMessageContent(ReasoningMessageContent { delta, ..e.clone() })),
+                ),
+                Event::ToolCallArgs(e) => {
+                    out.extend(pieces(c, &e.delta).into_iter().map(|delta| Event::ToolCallArgs(ToolCallArgs { delta, ..e.clone() })))
+                }
+                e => out.push(e.clone()),
+            }
+        }
+        out
+    }
+
+    /// A transcript of at least `bytes` bytes, for scale.
+    pub fn large(seed: u64, bytes: usize) -> Vec<u8> {
+        let mut c = Seeded(seed);
+        let mut w = Writer::default();
+        w.events.push(Event::Hello(Hello { contract: CONTRACT }));
+        let mut out = vec![];
+        let mut written = 0;
+        while out.len() < bytes {
+            w.item(&mut c, "t0", 6, true);
+            conversation_events::write(&mut out, &w.events[written..]).expect("a Vec takes writes");
+            written = w.events.len();
+        }
+        out
+    }
+}

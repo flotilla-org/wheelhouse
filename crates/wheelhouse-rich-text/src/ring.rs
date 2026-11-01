@@ -148,7 +148,7 @@ pub(crate) fn changes(doc: &Tree, ring: &Ring, since: u64, generation: u64) -> D
     }
     let mut upserts: Vec<NodeId> = order.iter().filter(|key| seen[key].touched).filter_map(live).collect();
     // Document order: the root, then by index entry.
-    upserts.sort_by_key(|&id| (doc.parent(id).is_some(), doc.node(id).entry));
+    upserts.sort_by_key(|&id| (doc.parent(id).is_some(), doc.row(id).unwrap_or(usize::MAX)));
     ops.extend(upserts.into_iter().map(|id| Op::Upsert(Box::new(doc.content(id)))));
     for key in &order {
         let entry = &seen[key];

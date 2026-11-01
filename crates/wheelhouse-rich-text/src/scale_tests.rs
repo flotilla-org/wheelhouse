@@ -1,6 +1,6 @@
 //! Scale: a 10k-line document, and lookups in big height indexes. The
 //! timings print with `--nocapture`; run in release for real numbers.
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::generate::{self, Choose, Seeded};
 use super::heights::{Entry as Row, HeightIndex, CHUNK};
@@ -94,4 +94,62 @@ fn lookups_are_logarithmic() {
     }
     // A thousandfold more entries costs a few more Fenwick steps, not more scanning.
     assert!(per_lookup[3] < per_lookup[0] + 100.0, "{per_lookup:?}");
+}
+
+/// About the size of a long agent session's transcript (#563).
+const LARGE_TRANSCRIPT: usize = 35 << 20;
+
+fn transcript_scale(bytes: usize) -> (Duration, Duration, Vec<Duration>, RichText) {
+    let jsonl = generate::conversation::large(5, bytes);
+    let start = Instant::now();
+    let mut rich = RichText::open_conversation(&jsonl);
+    let opened = start.elapsed();
+    let id = rich.subscribe();
+    let start = Instant::now();
+    rich.poll(id).unwrap();
+    let polled = start.elapsed();
+    let mut steps = vec![];
+    loop {
+        let start = Instant::now();
+        let left = rich.backfill(BACKFILL_BUDGET);
+        steps.push(start.elapsed());
+        rich.poll(id).unwrap();
+        if left == 0 {
+            break;
+        }
+    }
+    (opened, polled, steps, rich)
+}
+
+#[test]
+fn opening_a_transcript_ingests_only_its_tail() {
+    let jsonl = generate::conversation::large(5, 4 << 20);
+    let rich = RichText::open_conversation(&jsonl);
+    let doc = rich.doc();
+    let items = doc.children(doc.root().unwrap()).count();
+    assert!(items <= TAIL_ITEMS, "{items} items in the tail");
+    assert!(rich.backfill_remaining() > jsonl.len() - TAIL_BYTES - 64 * 1024, "{} bytes left", rich.backfill_remaining());
+}
+
+/// Run in release: `cargo test --release -p wheelhouse-rich-text -- --ignored --nocapture transcript`.
+#[test]
+#[ignore = "a timing report, for release builds"]
+fn a_large_transcripts_tail_takes_less_than_a_frame() {
+    let (opened, polled, steps, rich) = transcript_scale(LARGE_TRANSCRIPT);
+    let total: Duration = steps.iter().sum();
+    let mut sorted = steps.clone();
+    sorted.sort();
+    eprintln!(
+        "{} MB transcript: tail of {} items ingested in {opened:?}, its snapshot polled in {polled:?}; backfill in {} steps of median {:?}, \
+         p99 {:?}, worst {:?}, {total:?} in all; {} nodes, {} entries",
+        LARGE_TRANSCRIPT >> 20,
+        TAIL_ITEMS,
+        steps.len(),
+        sorted[sorted.len() / 2],
+        sorted[sorted.len() * 99 / 100],
+        sorted[sorted.len() - 1],
+        rich.doc().len(),
+        rich.doc().entries().len(),
+    );
+    assert!(opened + polled < Duration::from_millis(16), "the tail took {:?}", opened + polled);
 }

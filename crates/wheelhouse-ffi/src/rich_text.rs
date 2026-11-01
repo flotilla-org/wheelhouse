@@ -27,9 +27,9 @@ pub const WHEELHOUSE_RICH_KIND_LIST_ITEM: u32 = 2;
 pub const WHEELHOUSE_RICH_KIND_QUOTE: u32 = 3;
 /// A footnote's definition: a Container with a label.
 pub const WHEELHOUSE_RICH_KIND_FOOTNOTE: u32 = 4;
-/// Reserved for transcripts.
+/// A conversation's message.
 pub const WHEELHOUSE_RICH_KIND_TURN: u32 = 5;
-/// Reserved for transcripts.
+/// A tool call, reasoning, or a subagent's thread.
 pub const WHEELHOUSE_RICH_KIND_SECTION: u32 = 6;
 pub const WHEELHOUSE_RICH_KIND_PARAGRAPH: u32 = 16;
 pub const WHEELHOUSE_RICH_KIND_HEADING: u32 = 17;
@@ -38,6 +38,13 @@ pub const WHEELHOUSE_RICH_KIND_CODE: u32 = 18;
 pub const WHEELHOUSE_RICH_KIND_RULE: u32 = 19;
 /// A table's text is its cells as TSV.
 pub const WHEELHOUSE_RICH_KIND_EMBED: u32 = 20;
+/// Lines of tool output, with literal colours.
+pub const WHEELHOUSE_RICH_KIND_LOG: u32 = 21;
+/// A break in a conversation; its text says why (`compaction`, or a run's
+/// outcome such as `interrupted`).
+pub const WHEELHOUSE_RICH_KIND_DIVIDER: u32 = 22;
+/// A note standing in for content, such as output that was cut.
+pub const WHEELHOUSE_RICH_KIND_NOTICE: u32 = 23;
 
 pub const WHEELHOUSE_RICH_ATTR_EMPHASIS: u32 = 0;
 pub const WHEELHOUSE_RICH_ATTR_STRONG: u32 = 1;
@@ -57,6 +64,20 @@ pub const WHEELHOUSE_RICH_ATTR_COLOR_PALETTE: u32 = 8;
 pub const WHEELHOUSE_RICH_ATTR_COLOR_RGB: u32 = 9;
 /// U+FFFC standing for an inline object: `value` indexes the objects.
 pub const WHEELHOUSE_RICH_ATTR_INLINE_OBJECT: u32 = 10;
+/// A background colour: `value` as WHEELHOUSE_RICH_ATTR_COLOR_PALETTE's.
+pub const WHEELHOUSE_RICH_ATTR_BACKGROUND_PALETTE: u32 = 11;
+/// `value` is 0xRRGGBB.
+pub const WHEELHOUSE_RICH_ATTR_BACKGROUND_RGB: u32 = 12;
+pub const WHEELHOUSE_RICH_ATTR_UNDERLINE: u32 = 13;
+/// The theme's default colour as the text's: `value` is
+/// WHEELHOUSE_RICH_DEFAULT_*. Inverse video swaps the defaults in.
+pub const WHEELHOUSE_RICH_ATTR_COLOR_DEFAULT: u32 = 14;
+/// The theme's default colour as the background: `value` is
+/// WHEELHOUSE_RICH_DEFAULT_*.
+pub const WHEELHOUSE_RICH_ATTR_BACKGROUND_DEFAULT: u32 = 15;
+
+pub const WHEELHOUSE_RICH_DEFAULT_FOREGROUND: u32 = 0;
+pub const WHEELHOUSE_RICH_DEFAULT_BACKGROUND: u32 = 1;
 
 pub const WHEELHOUSE_RICH_TASK_NONE: u32 = 0;
 pub const WHEELHOUSE_RICH_TASK_OPEN: u32 = 1;
@@ -214,6 +235,26 @@ struct Buffers {
     cells: Vec<WheelhouseRichCell>,
 }
 
+fn color_attr(color: Color, background: bool) -> u32 {
+    match (color, background) {
+        (Color::Palette(_), false) => WHEELHOUSE_RICH_ATTR_COLOR_PALETTE,
+        (Color::Rgb(..), false) => WHEELHOUSE_RICH_ATTR_COLOR_RGB,
+        (Color::Foreground | Color::Background, false) => WHEELHOUSE_RICH_ATTR_COLOR_DEFAULT,
+        (Color::Palette(_), true) => WHEELHOUSE_RICH_ATTR_BACKGROUND_PALETTE,
+        (Color::Rgb(..), true) => WHEELHOUSE_RICH_ATTR_BACKGROUND_RGB,
+        (Color::Foreground | Color::Background, true) => WHEELHOUSE_RICH_ATTR_BACKGROUND_DEFAULT,
+    }
+}
+
+fn color_value(color: Color) -> u32 {
+    match color {
+        Color::Palette(index) => u32::from(index),
+        Color::Rgb(r, g, b) => (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
+        Color::Foreground => WHEELHOUSE_RICH_DEFAULT_FOREGROUND,
+        Color::Background => WHEELHOUSE_RICH_DEFAULT_BACKGROUND,
+    }
+}
+
 fn range<T>(items: &[T], (first, count): (usize, usize)) -> *const T {
     if count == 0 {
         // Non-NULL and aligned, as the header's empty arrays are.
@@ -245,10 +286,9 @@ impl Buffers {
                         (WHEELHOUSE_RICH_ATTR_LINK, target, if reference == NO_STRING { NONE } else { reference as usize })
                     }
                     Attr::FootnoteReference { label } => (WHEELHOUSE_RICH_ATTR_FOOTNOTE_REFERENCE, label, NONE),
-                    Attr::Color(Color::Palette(index)) => (WHEELHOUSE_RICH_ATTR_COLOR_PALETTE, u32::from(index), NONE),
-                    Attr::Color(Color::Rgb(r, g, b)) => {
-                        (WHEELHOUSE_RICH_ATTR_COLOR_RGB, (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b), NONE)
-                    }
+                    Attr::Color(color) => (color_attr(color, false), color_value(color), NONE),
+                    Attr::Background(color) => (color_attr(color, true), color_value(color), NONE),
+                    Attr::Underline => (WHEELHOUSE_RICH_ATTR_UNDERLINE, 0, NONE),
                     Attr::InlineObject { object } => (WHEELHOUSE_RICH_ATTR_INLINE_OBJECT, object, NONE),
                 };
                 WheelhouseRichSpan { start: span.start, len: span.len, attr, value, reference }
