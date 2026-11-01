@@ -80,6 +80,7 @@ extern "C" {
     fn gc_stats(h: *mut c_void, out: *mut u64);
     fn gc_zoom_bucket(size: f32) -> f32;
     fn gc_pen_split(x: f32, whole: *mut i32, subpixel_x: *mut f32);
+    fn gc_sfnt_table(font: *const u8, font_size: u64, face_index: u32, tag: u32, offset: *mut u64) -> u64;
     fn gc_cbdt_png(
         cblc: *const u8,
         cblc_size: u64,
@@ -207,6 +208,15 @@ pub fn user_axis_values(fvar: &[u8], avar: &[u8], coords: &[i16]) -> Vec<f32> {
     };
     out.truncate(n as usize);
     out
+}
+
+/// Native's table lookup (font_provider.c), for a font CoreGraphics won't
+/// open: the table `tag` of a font file, or of face `face_index` of a
+/// collection.
+pub fn sfnt_table<'a>(font: &'a [u8], face_index: u32, tag: &[u8; 4]) -> Option<&'a [u8]> {
+    let mut offset = 0;
+    let len = unsafe { gc_sfnt_table(font.as_ptr(), font.len() as u64, face_index, u32::from_be_bytes(*tag), &mut offset) };
+    (len > 0).then(|| &font[offset as usize..(offset + len) as usize])
 }
 
 pub struct CbdtPng<'a> {

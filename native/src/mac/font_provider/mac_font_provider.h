@@ -36,7 +36,8 @@ struct MAC_FP_Font
   B32 has_sbix;
   // A font CoreGraphics won't open because it has no outlines, such as Noto
   // Color Emoji's CBDT build: its bytes, which cblc and cbdt point into. It
-  // has no cg_font and draws only its bitmaps.
+  // has no cg_font and draws only its bitmaps, through fp_raster_glyph; the
+  // metrics, codepoint and string raster hooks skip it, as they need cg_font.
   CFDataRef bitmap_only;
 };
 

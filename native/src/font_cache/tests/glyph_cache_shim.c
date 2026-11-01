@@ -276,6 +276,15 @@ gc_user_axis_values(U8 *fvar, U64 fvar_size, U8 *avar, U64 avar_size, S16 *coord
   return result;
 }
 
+// The table's offset in font and its size, or 0 for none.
+GC_EXPORT U64
+gc_sfnt_table(U8 *font, U64 font_size, U32 face_index, U32 tag, U64 *offset_out)
+{
+  String8 table = fp_sfnt_table(str8(font, font_size), face_index, tag);
+  *offset_out = (U64)(table.str - font);
+  return table.size;
+}
+
 // The PNG's offset in cbdt and its size, or 0 for none.
 GC_EXPORT U64
 gc_cbdt_png(U8 *cblc, U64 cblc_size, U8 *cbdt, U64 cbdt_size, U32 glyph_id, F32 size_px, U64 *offset_out, S32 *left_out, S32 *top_out, U32 *ppem_out)
