@@ -1,0 +1,40 @@
+{"type":"Hello","contract":1}
+{"type":"RunStarted","threadId":"22222222-2222-4222-8222-222222222222","seq":1,"runId":"u0001-22222222"}
+{"type":"TextMessageStart","threadId":"22222222-2222-4222-8222-222222222222","seq":2,"messageId":"u0001-22222222","role":"user"}
+{"type":"TextMessageContent","threadId":"22222222-2222-4222-8222-222222222222","seq":3,"messageId":"u0001-22222222","delta":"Find where the config is loaded and run the tests."}
+{"type":"TextMessageEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":4,"messageId":"u0001-22222222"}
+{"type":"TextMessageStart","threadId":"22222222-2222-4222-8222-222222222222","seq":5,"messageId":"msg_par_a","role":"assistant"}
+{"type":"TextMessageContent","threadId":"22222222-2222-4222-8222-222222222222","seq":6,"messageId":"msg_par_a","delta":"Looking in three places at once."}
+{"type":"TextMessageEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":7,"messageId":"msg_par_a"}
+{"type":"ToolCallStart","threadId":"22222222-2222-4222-8222-222222222222","seq":8,"toolCallId":"toolu_par_bash","toolCallName":"Bash","title":"cargo test -p demo --quiet","kind":"shell","parentMessageId":"msg_par_a"}
+{"type":"ToolCallArgs","threadId":"22222222-2222-4222-8222-222222222222","seq":9,"toolCallId":"toolu_par_bash","delta":"{\"command\":\"cargo test -p demo\\n  --quiet\",\"description\":\"Run the tests\"}"}
+{"type":"ToolCallEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":10,"toolCallId":"toolu_par_bash"}
+{"type":"ToolCallStart","threadId":"22222222-2222-4222-8222-222222222222","seq":11,"toolCallId":"toolu_par_grep","toolCallName":"Grep","title":"load_config","kind":"search","parentMessageId":"msg_par_a"}
+{"type":"ToolCallArgs","threadId":"22222222-2222-4222-8222-222222222222","seq":12,"toolCallId":"toolu_par_grep","delta":"{\"pattern\":\"load_config\",\"path\":\"src\"}"}
+{"type":"ToolCallEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":13,"toolCallId":"toolu_par_grep"}
+{"type":"ToolCallStart","threadId":"22222222-2222-4222-8222-222222222222","seq":14,"toolCallId":"toolu_par_glob","toolCallName":"Glob","title":"**/*.toml","kind":"search","parentMessageId":"msg_par_a"}
+{"type":"ToolCallArgs","threadId":"22222222-2222-4222-8222-222222222222","seq":15,"toolCallId":"toolu_par_glob","delta":"{\"pattern\":\"**/*.toml\"}"}
+{"type":"ToolCallEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":16,"toolCallId":"toolu_par_glob"}
+{"type":"ToolCallStart","threadId":"22222222-2222-4222-8222-222222222222","seq":17,"toolCallId":"toolu_par_read","toolCallName":"Read","title":"/home/user/demo/src/config.rs","kind":"read","parentMessageId":"msg_par_a"}
+{"type":"ToolCallArgs","threadId":"22222222-2222-4222-8222-222222222222","seq":18,"toolCallId":"toolu_par_read","delta":"{\"file_path\":\"/home/user/demo/src/config.rs\"}"}
+{"type":"ToolCallEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":19,"toolCallId":"toolu_par_read"}
+{"type":"ToolCallStart","threadId":"22222222-2222-4222-8222-222222222222","seq":20,"toolCallId":"toolu_par_web","toolCallName":"WebFetch","title":"https://example.com/docs","kind":"web","parentMessageId":"msg_par_a"}
+{"type":"ToolCallArgs","threadId":"22222222-2222-4222-8222-222222222222","seq":21,"toolCallId":"toolu_par_web","delta":"{\"url\":\"https://example.com/docs\",\"prompt\":\"Summarise\"}"}
+{"type":"ToolCallEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":22,"toolCallId":"toolu_par_web"}
+{"type":"ToolCallStart","threadId":"22222222-2222-4222-8222-222222222222","seq":23,"toolCallId":"toolu_par_mcp","toolCallName":"mcp__tracker__get_issue","title":"tracker: get_issue","kind":"mcp","parentMessageId":"msg_par_a"}
+{"type":"ToolCallArgs","threadId":"22222222-2222-4222-8222-222222222222","seq":24,"toolCallId":"toolu_par_mcp","delta":"{\"id\":42}"}
+{"type":"ToolCallEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":25,"toolCallId":"toolu_par_mcp"}
+{"type":"ToolCallStart","threadId":"22222222-2222-4222-8222-222222222222","seq":26,"toolCallId":"toolu_par_todo","toolCallName":"TodoWrite","title":"TodoWrite","kind":"other","parentMessageId":"msg_par_a"}
+{"type":"ToolCallArgs","threadId":"22222222-2222-4222-8222-222222222222","seq":27,"toolCallId":"toolu_par_todo","delta":"{\"todos\":[{\"content\":\"Check config\",\"status\":\"pending\"}]}"}
+{"type":"ToolCallEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":28,"toolCallId":"toolu_par_todo"}
+{"type":"ToolCallResult","threadId":"22222222-2222-4222-8222-222222222222","seq":29,"toolCallId":"toolu_par_grep","messageId":"toolu_par_grep-result","status":"ok","mediaType":"text/plain","content":"src/config.rs:12:fn load_config()","truncated":null}
+{"type":"ToolCallResult","threadId":"22222222-2222-4222-8222-222222222222","seq":30,"toolCallId":"toolu_par_read","messageId":"toolu_par_read-result","status":"ok","mediaType":"text/plain","content":"1\tfn load_config() {}\n","truncated":null}
+{"type":"ToolCallResult","threadId":"22222222-2222-4222-8222-222222222222","seq":31,"toolCallId":"toolu_par_glob","messageId":"toolu_par_glob-result","status":"ok","mediaType":"text/plain","content":"Cargo.toml","truncated":null}
+{"type":"ToolCallResult","threadId":"22222222-2222-4222-8222-222222222222","seq":32,"toolCallId":"toolu_par_bash","messageId":"toolu_par_bash-result","status":"failed","mediaType":"text/x-ansi","content":"\u001b[31merror\u001b[0m: 1 test failed\n","truncated":null}
+{"type":"ToolCallResult","threadId":"22222222-2222-4222-8222-222222222222","seq":33,"toolCallId":"toolu_par_web","messageId":"toolu_par_web-result","status":"ok","mediaType":"text/plain","content":"Example docs.","truncated":null}
+{"type":"ToolCallResult","threadId":"22222222-2222-4222-8222-222222222222","seq":34,"toolCallId":"toolu_par_mcp","messageId":"toolu_par_mcp-result","status":"ok","mediaType":"text/plain","content":"{\"title\":\"Demo\"}","truncated":null}
+{"type":"ToolCallResult","threadId":"22222222-2222-4222-8222-222222222222","seq":35,"toolCallId":"toolu_par_todo","messageId":"toolu_par_todo-result","status":"ok","mediaType":"text/plain","content":"Todos updated","truncated":null}
+{"type":"TextMessageStart","threadId":"22222222-2222-4222-8222-222222222222","seq":36,"messageId":"msg_par_b","role":"assistant"}
+{"type":"TextMessageContent","threadId":"22222222-2222-4222-8222-222222222222","seq":37,"messageId":"msg_par_b","delta":"One test fails; the config loads in `src/config.rs`."}
+{"type":"TextMessageEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":38,"messageId":"msg_par_b"}
+{"type":"RunFinished","threadId":"22222222-2222-4222-8222-222222222222","seq":39,"runId":"u0001-22222222","outcome":"completed"}

@@ -1,0 +1,19 @@
+{"type":"Hello","contract":1}
+{"type":"RunStarted","threadId":"33333333-3333-4333-8333-333333333333","seq":1,"runId":"u0001-33333333"}
+{"type":"TextMessageStart","threadId":"33333333-3333-4333-8333-333333333333","seq":2,"messageId":"u0001-33333333","role":"user"}
+{"type":"TextMessageContent","threadId":"33333333-3333-4333-8333-333333333333","seq":3,"messageId":"u0001-33333333","delta":"Run the long build."}
+{"type":"TextMessageEnd","threadId":"33333333-3333-4333-8333-333333333333","seq":4,"messageId":"u0001-33333333"}
+{"type":"ToolCallStart","threadId":"33333333-3333-4333-8333-333333333333","seq":5,"toolCallId":"toolu_int_cut","toolCallName":"Bash","title":"make all","kind":"shell","parentMessageId":"msg_int_a"}
+{"type":"ToolCallArgs","threadId":"33333333-3333-4333-8333-333333333333","seq":6,"toolCallId":"toolu_int_cut","delta":"{\"command\":\"make all\"}"}
+{"type":"ToolCallEnd","threadId":"33333333-3333-4333-8333-333333333333","seq":7,"toolCallId":"toolu_int_cut"}
+{"type":"ToolCallResult","threadId":"33333333-3333-4333-8333-333333333333","seq":8,"toolCallId":"toolu_int_cut","messageId":"toolu_int_cut-result","status":"interrupted","mediaType":"text/x-ansi","content":"[Request interrupted by user for tool use]","truncated":null}
+{"type":"RunFinished","threadId":"33333333-3333-4333-8333-333333333333","seq":9,"runId":"u0001-33333333","outcome":"interrupted"}
+{"type":"RunStarted","threadId":"33333333-3333-4333-8333-333333333333","seq":10,"runId":"u0005-33333333"}
+{"type":"TextMessageStart","threadId":"33333333-3333-4333-8333-333333333333","seq":11,"messageId":"u0005-33333333","role":"user"}
+{"type":"TextMessageContent","threadId":"33333333-3333-4333-8333-333333333333","seq":12,"messageId":"u0005-33333333","delta":"Just build the library."}
+{"type":"TextMessageEnd","threadId":"33333333-3333-4333-8333-333333333333","seq":13,"messageId":"u0005-33333333"}
+{"type":"ToolCallStart","threadId":"33333333-3333-4333-8333-333333333333","seq":14,"toolCallId":"toolu_int_open","toolCallName":"Bash","title":"make lib","kind":"shell","parentMessageId":"msg_int_b"}
+{"type":"ToolCallArgs","threadId":"33333333-3333-4333-8333-333333333333","seq":15,"toolCallId":"toolu_int_open","delta":"{\"command\":\"make lib\"}"}
+{"type":"ToolCallEnd","threadId":"33333333-3333-4333-8333-333333333333","seq":16,"toolCallId":"toolu_int_open"}
+{"type":"ToolCallResult","threadId":"33333333-3333-4333-8333-333333333333","seq":17,"toolCallId":"toolu_int_open","messageId":"toolu_int_open-result","status":"interrupted","mediaType":"text/plain","content":"","truncated":null}
+{"type":"RunFinished","threadId":"33333333-3333-4333-8333-333333333333","seq":18,"runId":"u0005-33333333","outcome":"interrupted"}

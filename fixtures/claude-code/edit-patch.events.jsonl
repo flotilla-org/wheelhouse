@@ -1,0 +1,17 @@
+{"type":"Hello","contract":1}
+{"type":"RunStarted","threadId":"44444444-4444-4444-8444-444444444444","seq":1,"runId":"u0001-44444444"}
+{"type":"TextMessageStart","threadId":"44444444-4444-4444-8444-444444444444","seq":2,"messageId":"u0001-44444444","role":"user"}
+{"type":"TextMessageContent","threadId":"44444444-4444-4444-8444-444444444444","seq":3,"messageId":"u0001-44444444","delta":"Rename the constant."}
+{"type":"TextMessageEnd","threadId":"44444444-4444-4444-8444-444444444444","seq":4,"messageId":"u0001-44444444"}
+{"type":"ToolCallStart","threadId":"44444444-4444-4444-8444-444444444444","seq":5,"toolCallId":"toolu_edit","toolCallName":"Edit","title":"/home/user/demo/src/lib.rs","kind":"edit","parentMessageId":"msg_edit_a"}
+{"type":"ToolCallArgs","threadId":"44444444-4444-4444-8444-444444444444","seq":6,"toolCallId":"toolu_edit","delta":"{\"file_path\":\"/home/user/demo/src/lib.rs\",\"old_string\":\"const OLD: u8 = 1;\",\"new_string\":\"const NEW: u8 = 1;\"}"}
+{"type":"ToolCallEnd","threadId":"44444444-4444-4444-8444-444444444444","seq":7,"toolCallId":"toolu_edit"}
+{"type":"ToolCallResult","threadId":"44444444-4444-4444-8444-444444444444","seq":8,"toolCallId":"toolu_edit","messageId":"toolu_edit-result","status":"ok","mediaType":"text/x-diff","structured":{"filePath":"/home/user/demo/src/lib.rs","hunks":[{"oldStart":1,"oldLines":2,"newStart":1,"newLines":2,"lines":[" // demo","-const OLD: u8 = 1;","+const NEW: u8 = 1;"]}]},"content":"--- /home/user/demo/src/lib.rs\n+++ /home/user/demo/src/lib.rs\n@@ -1,2 +1,2 @@\n // demo\n-const OLD: u8 = 1;\n+const NEW: u8 = 1;\n","truncated":null}
+{"type":"ToolCallStart","threadId":"44444444-4444-4444-8444-444444444444","seq":9,"toolCallId":"toolu_write","toolCallName":"Write","title":"/home/user/demo/NOTES.md","kind":"edit","parentMessageId":"msg_edit_b"}
+{"type":"ToolCallArgs","threadId":"44444444-4444-4444-8444-444444444444","seq":10,"toolCallId":"toolu_write","delta":"{\"file_path\":\"/home/user/demo/NOTES.md\",\"content\":\"notes\\n\"}"}
+{"type":"ToolCallEnd","threadId":"44444444-4444-4444-8444-444444444444","seq":11,"toolCallId":"toolu_write"}
+{"type":"ToolCallResult","threadId":"44444444-4444-4444-8444-444444444444","seq":12,"toolCallId":"toolu_write","messageId":"toolu_write-result","status":"ok","mediaType":"text/plain","content":"File created successfully at: /home/user/demo/NOTES.md","truncated":null}
+{"type":"TextMessageStart","threadId":"44444444-4444-4444-8444-444444444444","seq":13,"messageId":"msg_edit_c","role":"assistant"}
+{"type":"TextMessageContent","threadId":"44444444-4444-4444-8444-444444444444","seq":14,"messageId":"msg_edit_c","delta":"Renamed."}
+{"type":"TextMessageEnd","threadId":"44444444-4444-4444-8444-444444444444","seq":15,"messageId":"msg_edit_c"}
+{"type":"RunFinished","threadId":"44444444-4444-4444-8444-444444444444","seq":16,"runId":"u0001-44444444","outcome":"completed"}

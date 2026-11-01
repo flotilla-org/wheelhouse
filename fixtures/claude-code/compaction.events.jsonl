@@ -1,0 +1,18 @@
+{"type":"Hello","contract":1}
+{"type":"RunStarted","threadId":"66666666-6666-4666-8666-666666666666","seq":1,"runId":"u0001-66666666"}
+{"type":"TextMessageStart","threadId":"66666666-6666-4666-8666-666666666666","seq":2,"messageId":"u0001-66666666","role":"user"}
+{"type":"TextMessageContent","threadId":"66666666-6666-4666-8666-666666666666","seq":3,"messageId":"u0001-66666666","delta":"Keep refactoring."}
+{"type":"TextMessageEnd","threadId":"66666666-6666-4666-8666-666666666666","seq":4,"messageId":"u0001-66666666"}
+{"type":"TextMessageStart","threadId":"66666666-6666-4666-8666-666666666666","seq":5,"messageId":"msg_cmp_a","role":"assistant"}
+{"type":"TextMessageContent","threadId":"66666666-6666-4666-8666-666666666666","seq":6,"messageId":"msg_cmp_a","delta":"Done with the first pass."}
+{"type":"TextMessageEnd","threadId":"66666666-6666-4666-8666-666666666666","seq":7,"messageId":"msg_cmp_a"}
+{"type":"Custom","threadId":"66666666-6666-4666-8666-666666666666","seq":8,"name":"compaction","value":{"trigger":"auto","preTokens":150000}}
+{"type":"RunFinished","threadId":"66666666-6666-4666-8666-666666666666","seq":9,"runId":"u0001-66666666","outcome":"completed"}
+{"type":"RunStarted","threadId":"66666666-6666-4666-8666-666666666666","seq":10,"runId":"u0005-66666666"}
+{"type":"TextMessageStart","threadId":"66666666-6666-4666-8666-666666666666","seq":11,"messageId":"u0005-66666666","role":"user"}
+{"type":"TextMessageContent","threadId":"66666666-6666-4666-8666-666666666666","seq":12,"messageId":"u0005-66666666","delta":"Now the second pass."}
+{"type":"TextMessageEnd","threadId":"66666666-6666-4666-8666-666666666666","seq":13,"messageId":"u0005-66666666"}
+{"type":"TextMessageStart","threadId":"66666666-6666-4666-8666-666666666666","seq":14,"messageId":"msg_cmp_b","role":"assistant"}
+{"type":"TextMessageContent","threadId":"66666666-6666-4666-8666-666666666666","seq":15,"messageId":"msg_cmp_b","delta":"Second pass done."}
+{"type":"TextMessageEnd","threadId":"66666666-6666-4666-8666-666666666666","seq":16,"messageId":"msg_cmp_b"}
+{"type":"RunFinished","threadId":"66666666-6666-4666-8666-666666666666","seq":17,"runId":"u0005-66666666","outcome":"completed"}
