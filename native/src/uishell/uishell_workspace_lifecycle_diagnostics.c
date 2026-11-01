@@ -97,6 +97,19 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   uishell_sidebar_refresh(state);
 
   //- Open the fixture subject workspace and give it a user layout change.
+  //  The host diagnostics ended its subject; its provider says it is live
+  //  again, so the core lets a close keep it.
+  {
+    WheelhouseFact live[3] = {0};
+    String8 keys[3] = {str8_lit("flotilla.convoy.phase"), str8_lit("entity.kind"), str8_lit("entity.id")};
+    String8 values[3] = {str8_lit("active"), str8_lit("vessel"), str8_lit("multi")};
+    for(U64 i = 0; i < ArrayCount(live); i++)
+    { live[i].key = uishell_sidebar_text(keys[i]); live[i].kind = WHEELHOUSE_FACT_TEXT; live[i].text = uishell_sidebar_text(values[i]); }
+    LifecycleCheck(wheelhouse_apply_entity(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(str8_lit("vessel")),
+                                          uishell_sidebar_text(str8_lit("multi")), uishell_sidebar_text(str8_lit("fixture")), live, ArrayCount(live), 0),
+                   "the fixture subject is live");
+    uishell_sidebar_refresh(state);
+  }
   UIShell_SidebarNode node = {0};
   LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_lit("multi"), 0, &node), "fixture subject row");
   if(node.state != WHEELHOUSE_LIVE)
@@ -113,7 +126,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   CFG_Node *marker = cfg_node_new(rd_state->cfg, subject, str8_lit("lifecycle_marker"));
   CFG_ID subject_id = subject->id, marker_id = marker->id;
   U64 open_count = split.inventory.count;
-  LifecycleCheck(uishell_sidebar_close_kind(node, uishell_sidebar_node_status(state, node)) == UIShell_SidebarCloseKind_Detach,
+  LifecycleCheck(uishell_sidebar_close_kind(node) == UIShell_SidebarCloseKind_Detach,
                  "a live subject workspace offers detach");
 
   //- Detach from the palette (no explicit workspace) acts on the Visible Workspace.
@@ -149,7 +162,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
   uishell_sidebar_refresh(state);
   UIShell_SidebarNode loose_node = {0};
   LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &loose_node) &&
-                 uishell_sidebar_close_kind(loose_node, uishell_sidebar_node_status(state, loose_node)) == UIShell_SidebarCloseKind_Destroy,
+                 uishell_sidebar_close_kind(loose_node) == UIShell_SidebarCloseKind_Destroy,
                  "a subjectless workspace offers close");
   LifecycleCheck(!uishell_workspace_cfg_has_subject(loose), "new workspaces have no subject");
 
@@ -162,8 +175,8 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
                    "a local workspace's row is its host entity");
     WheelhouseEntity local = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit(".workspace"), local_id);
     LifecycleCheck(uishell_sidebar_card_find(state, local, 0) != WHEELHOUSE_NONE, "a local workspace has details for its hover card");
-    CFG_Node *home = cfg_node_child_from_string_or_alloc(rd_state->cfg, loose, str8_lit("lives_with"));
-    cfg_node_new(rd_state->cfg, home, str8_lit("p"));
+    // Its home is the core's.
+    LifecycleCheck(uishell_workspace_set_home(window, loose, 0, str8_zero(), str8_lit("p")), "a local workspace is re-homed with a project");
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
     UIShell_SidebarNode homed = {0}, parent = {0};
@@ -173,7 +186,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
                    str8_match(uishell_sidebar_string(parent.entity.id), str8_lit("p"), 0) &&
                    str8_match(uishell_sidebar_string(homed.entity.id), local_id, 0),
                    "a local workspace that lives with a project is placed in its group, live");
-    cfg_node_release(rd_state->cfg, home);
+    LifecycleCheck(uishell_workspace_set_home(window, loose, 0, str8_zero(), str8_zero()), "its project is cleared");
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
     found = uishell_workspace_lifecycle_find(state, str8_zero(), loose_id, &homed);
@@ -256,8 +269,10 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
       lit = uishell_workspace_lifecycle_drag(ws, window, scratch.arena, loose_row, seed_row, line);
       LifecycleCheck(lit && str8_match(uishell_sidebar_local_lives_in(loose), builds_id, 0),
                      "dropping a workspace on another group moves it there");
-      cfg_node_release(rd_state->cfg, cfg_node_child_from_string(loose, str8_lit("lives_in")));
+      // Forgetting its group's section removes the group, and the core moves
+      // the workspace back to the default group.
       uishell_sidebar_local_forget_section(window, builds_section);
+      LifecycleCheck(!uishell_sidebar_local_lives_in(loose).size, "a workspace whose group goes has no group of its own");
       split = uishell_root_controlled_split_from_window(scratch.arena, window);
       uishell_sidebar_observe(state, &split);
       uishell_sidebar_refresh(state);
@@ -547,13 +562,18 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     CFG_Node *label = cfg_node_child_from_string(subject, str8_lit("label"));
     LifecycleCheck(label != &cfg_nil_node, "subject workspace has a label");
     String8 saved = push_str8_copy(scratch.arena, rd_label_from_cfg(subject));
+    // The name is the core's: the label is native's copy of it.
+    WheelhouseWorkspaceId subject_workspace = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(subject));
+    LifecycleCheck(wheelhouse_workspace_set_name(state->core, subject_workspace, 1, uishell_sidebar_text(str8_lit("Workspace 1")), 0),
+                   "name the subject workspace");
     cfg_node_equip_string(rd_state->cfg, label->first, str8_lit("Workspace 1"));
     UIShell_RegsScope(.window = window->id, .cfg = subject_id) { uishell_dispatch_window_command(str8_lit("detach_workspace")); }
     CFG_Node *fresh = uishell_new_workspace(window);
     LifecycleCheck(str8_match(subject->string, str8_lit("detached_workspace"), 0) &&
                    !str8_match(rd_label_from_cfg(fresh), str8_lit("Workspace 1"), 0),
                    "a new default name skips a detached workspace's name");
-    cfg_node_release(rd_state->cfg, fresh);
+    UIShell_RegsScope(.window = window->id, .cfg = fresh->id) { uishell_dispatch_window_command(str8_lit("close_workspace")); }
+    wheelhouse_workspace_set_name(state->core, subject_workspace, saved.size != 0, uishell_sidebar_text(saved), 0);
     cfg_node_equip_string(rd_state->cfg, label->first, saved);
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_observe(state, &split);
@@ -585,7 +605,9 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
-    LifecycleCheck(uishell_sidebar_workspace_subject_ended(ws, subject_id), "sidebar reports the subject ended");
+    UIShell_SidebarNode ended = {0};
+    LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_zero(), subject_id, &ended) &&
+                   uishell_sidebar_close_kind(ended) == UIShell_SidebarCloseKind_Destroy, "an ended subject's row offers close, not detach");
     ws->root_controlled_split_selected_workspace_id = subject_id;
     UIShell_RegsScope(.window = window->id) { uishell_dispatch_window_command(str8_lit("detach_workspace")); }
     LifecycleCheck(cfg_node_from_id(subject_id) == &cfg_nil_node, "detaching an ended subject's workspace destroys it");
@@ -645,7 +667,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     U64 home_position = home ? home->position : 0;
     uishell_sidebar_local_remove(state, str8_lit(".group"), uishell_sidebar_default_local_id);
     uishell_sidebar_local_put_group(state, str8_lit("home"), home_label, home_position, home_section, 1);
-    cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace, str8_lit("lives_in")), str8_lit("gone"));
+    LifecycleCheck(uishell_workspace_set_home(window, workspace, 1, str8_lit("gone"), str8_zero()), "home a workspace in a group that doesn't exist");
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
     UIShell_SidebarNode row = {0};
@@ -657,7 +679,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     LifecycleCheck(placed, "a workspace whose group is gone lives in the default group, whatever its id");
     uishell_sidebar_local_remove(state, str8_lit(".group"), str8_lit("home"));
     uishell_sidebar_local_put_group(state, uishell_sidebar_default_local_id, home_label, home_position, home_section, 1);
-    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(workspace, str8_lit("lives_in")));
+    uishell_workspace_set_home(window, workspace, 1, uishell_sidebar_default_local_id, str8_zero());
     uishell_sidebar_observe(state, &split);
     uishell_sidebar_refresh(state);
   }

@@ -1429,7 +1429,7 @@ typedef struct {
   // it exists, else the default group; none for a subject workspace.
   uint32_t home_kind;
   WheelhouseText home;
-} WorkspaceLifeView;
+} WheelhouseWorkspaceLife;
 
 // A rectangle of the scene.
 typedef struct {
@@ -2698,11 +2698,11 @@ uint32_t wheelhouse_semantic_workspaces(WheelhouseCore *h, WheelhouseBytes *out,
 
 // A registered workspace's lifecycle part. Free it with
 // wheelhouse_workspace_life_free.
-WorkspaceLifeView *wheelhouse_workspace_life(WheelhouseCore *h,
-                                             WheelhouseWorkspaceId workspace,
-                                             char **error_out);
+WheelhouseWorkspaceLife *wheelhouse_workspace_life(WheelhouseCore *h,
+                                                   WheelhouseWorkspaceId workspace,
+                                                   char **error_out);
 
-void wheelhouse_workspace_life_free(WorkspaceLifeView *life);
+void wheelhouse_workspace_life_free(WheelhouseWorkspaceLife *life);
 
 // The generation of every workspace's lifecycle part, and of which are
 // registered: it changes whenever any does. Cheap enough to read every

@@ -207,7 +207,7 @@ impl Window {
         if !node.lives_with.is_empty() {
             return Some(EffectiveHome::Project(node.lives_with.clone()));
         }
-        let default = self.groups.iter().filter(|g| g.is_default).next_back().map_or("workspaces", |g| g.id.as_str());
+        let default = self.groups.iter().rev().find(|g| g.is_default).map_or("workspaces", |g| g.id.as_str());
         let group = if self.groups.iter().any(|g| g.id == node.lives_in) { node.lives_in.as_str() } else { default };
         Some(EffectiveHome::Group(group.to_owned()))
     }

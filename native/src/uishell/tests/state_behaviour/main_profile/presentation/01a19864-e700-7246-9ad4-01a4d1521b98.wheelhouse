@@ -1,0 +1,218 @@
+// uishell 0.1.0 presentation file
+
+window:
+{
+  size: 800.000000 800.000000
+  window_id: "01a19864-e701-724c-b8c9-6b4527265498"
+  workspace_id: "01a19864-e702-7c44-992b-3da948f1ba28"
+  panel_presentation:
+  {
+    workspace:
+    {
+      panel: 1
+      focused
+    }
+    sidebar:
+    {
+      panel: 4
+      section_collapsed
+    }
+  }
+  sidebar_generation: 160
+  arrangement_generation: 38
+  workspace:
+  {
+    workspace_id: "01a19864-e703-7b47-a575-e30fc3c97def"
+    lives_in: "4343DBED-5EFC-4F7C-AC6B-3F0612FAFF03"
+    lives_with: q
+    panel_presentation: workspace:
+    {
+      panel: 4
+      focused
+    }
+    arrangement_generation: 63
+    visible
+    arrangement_presentation
+  }
+  workspace:
+  {
+    workspace_id: "01a19864-e704-7644-b104-9e81402b468e"
+    lives_with: p
+    panel_presentation: workspace:
+    {
+      panel: 1
+      focused
+    }
+    arrangement_generation: 65
+    arrangement_presentation
+  }
+  workspace:
+  {
+    workspace_id: "01a19864-e705-7242-97d4-41f452b76566"
+    sidebar_entity_kind: vessel
+    sidebar_entity_id: multi
+    view_presentation:
+    {
+      workspace:
+      {
+        key: primary
+        label: Primary
+        managed_target: "vessel:multi"
+      }
+      workspace:
+      {
+        key: "u:shell"
+        label: Shell
+      }
+      workspace:
+      {
+        key: "u:tools"
+        label: Tools
+      }
+    }
+    panel_presentation: workspace:
+    {
+      panel: 1
+      focused
+    }
+    arrangement_generation: 77
+    arrangement_presentation:
+    {
+      view:
+      {
+        slot: primary
+        expression: "printf 'Wheelhouse sidebar fixture\\n'; exec /bin/sh"
+        resource_id: primary
+        follows_provider
+      }
+      view:
+      {
+        slot: "u:shell"
+        resource_id: shell
+      }
+      view:
+      {
+        slot: "u:tools"
+        resource_id: tools
+      }
+    }
+  }
+  detached_workspace:
+  {
+    workspace_id: "01a19864-e706-7743-a054-802d07f077d2"
+    sidebar_entity_kind: vessel
+    sidebar_entity_id: v
+    view_presentation: workspace:
+    {
+      key: primary
+      label: Terminal
+      managed_target: "vessel:v"
+    }
+    panel_presentation: workspace:
+    {
+      panel: 1
+      focused
+    }
+    arrangement_generation: 84
+    arrangement_presentation:
+    {
+      panel:
+      {
+        id: 2
+        doc_id: agents
+      }
+      view:
+      {
+        slot: primary
+        expression: "printf 'Wheelhouse sidebar fixture\\n'; exec /bin/sh"
+        resource_id: primary
+        follows_provider
+      }
+      panel:
+      {
+        id: 3
+        doc_id: files
+      }
+    }
+  }
+  workspace:
+  {
+    workspace_id: "01a19864-e707-7b48-909e-9b7154e6e5ff"
+    sidebar_entity_kind: vessel
+    sidebar_entity_id: "chip-v"
+    view_presentation: workspace:
+    {
+      key: primary
+      label: Terminal
+      managed_target: "vessel:chip-v@wheelhouse"
+    }
+    arrangement_generation: 104
+    arrangement_presentation:
+    {
+      panel:
+      {
+        id: 2
+        doc_id: agents
+      }
+      view:
+      {
+        slot: primary
+        expression: "printf 'Subject workspace fixture\\n'; exec /bin/sh"
+        resource_id: primary
+        follows_provider
+      }
+      panel:
+      {
+        id: 6
+        doc_id: files
+      }
+    }
+  }
+  workspace:
+  {
+    workspace_id: "01a19864-e709-7a41-8ccb-abc804747b64"
+    panel_presentation: workspace:
+    {
+      panel: 1
+      focused
+    }
+    lives_in: "4343DBED-5EFC-4F7C-AC6B-3F0612FAFF03"
+    arrangement_generation: 154
+    arrangement_presentation
+  }
+  input_host: workspace
+  arrangement_presentation
+  sidebar_presentation:
+  {
+    section:
+    {
+      key: tree
+      weight: 0.227200
+    }
+    section:
+    {
+      key: sessions
+      weight: 0.320000
+    }
+    section:
+    {
+      key: attention
+      weight: 0.040000
+    }
+    section:
+    {
+      key: ".section:workspaces"
+      weight: 0.248000
+    }
+    section:
+    {
+      key: ".unplaced"
+      weight: 0.185186
+    }
+    section:
+    {
+      key: ".section:919FC195-380A-4C7F-9A1E-2F64121D2110"
+      weight: 0.164800
+    }
+  }
+}

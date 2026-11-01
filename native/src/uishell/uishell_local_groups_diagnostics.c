@@ -421,7 +421,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
               "deleting the group or its section would move one workspace");
   uishell_sidebar_local_delete_group(window, tests_id);
   GroupsCheck(!uishell_sidebar_local_group(window, tests_id) &&
-              cfg_node_child_from_string(made, str8_lit("lives_in")) == &cfg_nil_node,
+              !uishell_sidebar_local_lives_in(made).size,
               "deleting a group moves its workspaces to the default group");
   uishell_local_groups_publish(state, window, arena);
   B32 retracted = 1;

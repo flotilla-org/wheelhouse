@@ -944,6 +944,23 @@ entry_point(CmdLine *cmdline)
     abort_self(state_failures ? 1 : 0);
   }
 
+  // --state_phase:migrate opens a profile as main wrote it before the core
+  // kept workspaces' Life (#631): `lives_in` and `lives_with` on workspace
+  // nodes, a `detached_workspace` node, and records without Life. It
+  // writes the state it opens with (migrated.txt), which must be what main
+  // opens it with, then quits, saving it.
+  if(str8_match(phase, str8_lit("migrate"), 0))
+  {
+    state_multi_ended = state_chip_gone = 1;
+    state_pump();
+    RD_WindowState *ws = state_open_window(&theme);
+    state_write(dir, "migrated.txt");
+    state_quit(ws);
+    scratch_end(scratch);
+    fprintf(stderr, "State behaviour (a profile from before Life): %u failures\n", state_failures);
+    abort_self(state_failures ? 1 : 0);
+  }
+
   //- First launch: rd_init queued the initial load of the (new) --user file.
   state_pump();
   RD_WindowState *ws = state_open_window(&theme);
@@ -1486,6 +1503,21 @@ entry_point(CmdLine *cmdline)
     StateCheck(state->store_commits == commits+1);
     StateCheck(state_weight(first_panel) != weight_before);
     state_check_committed(ws);
+  }
+
+  //- A frame reads no workspace's Life: publishing workspaces follows the
+  // core's one generation of them (#631), so frames that change nothing
+  // make no call a workspace.
+  {
+    state = ws->sidebar;
+    state_frame(ws);
+    U64 reads = state->life_calls;
+    for(U32 frame = 0; frame < 3; frame++)
+    {
+      rd_state->frame_index += 1;
+      state_frame(ws);
+    }
+    StateCheck(state->life_calls == reads);
   }
 
   //- A layout's empty middle panel (#486) gets no boundary of its own, and

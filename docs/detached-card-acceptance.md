@@ -34,7 +34,8 @@ dashboard record; Wheelhouse changes them with `wheelhouse_local_set` and
 `wheelhouse_local_remove` and reads them from `wheelhouse_dashboard_get`
 (`uishell_sidebar_locals`). A pinned card knows its pin by the `.ref`'s ID,
 its ghost id.
-Local workspaces name their group (`lives_in`). The shipped KDL places them,
+Local workspaces name their group in their Workspace Home, which the core
+keeps (before #631, `lives_in` on their config node). The shipped KDL places them,
 so each section is an ordinary docked `sidebar_section` View and its ghosts
 are tree rows: a `.ref` presents its target's label, status, live state and
 details. The
