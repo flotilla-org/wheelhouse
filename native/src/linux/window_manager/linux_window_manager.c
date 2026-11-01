@@ -225,8 +225,8 @@ lnx_wm_wait_for_event(LNX_WM_PropertyMatch match, XEvent *out, U64 timeout_us)
 ////////////////////////////////
 //~ rjf: @os_hooks Main Initialization API (Implemented Per-OS)
 
-internal void
-wm_init(void)
+internal B32
+wm_init(CmdLine *cmdln)
 {
   //- rjf: initialize basics
   Arena *arena = arena_alloc();
@@ -237,7 +237,9 @@ wm_init(void)
   {
     char *name = getenv("DISPLAY");
     fprintf(stderr, "Could not open X display \"%s\". Check DISPLAY and XAUTHORITY.\n", name ? name : "");
-    exit(1);
+    arena_release(arena);
+    lnx_wm_state = 0;
+    return 0;
   }
   if(pipe2(lnx_wm_state->wake_pipe, O_NONBLOCK|O_CLOEXEC) != 0) { perror("window wake pipe"); abort(); }
   
@@ -304,6 +306,7 @@ wm_init(void)
       lnx_wm_state->cursors[map[idx].cursor] = XCreateFontCursor(lnx_wm_state->display, map[idx].id);
     }
   }
+  return 1;
 }
 
 ////////////////////////////////
@@ -817,6 +820,19 @@ wm_native_surface(WM_Window handle)
 // _NET_WM_SYNC_REQUEST: the window manager holds the next step of an
 // interactive resize until the counter reaches the value it sent, so the
 // counter moves only once a frame at the new size has been swapped.
+// X11 has no display-opportunity signal: the swap paces frames.
+internal B32
+wm_window_frame_ready(WM_Window handle)
+{
+  return 1;
+}
+
+internal B32
+wm_window_frame_pending(WM_Window handle)
+{
+  return 0;
+}
+
 internal void
 wm_window_presented(WM_Window handle)
 {

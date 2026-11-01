@@ -322,5 +322,7 @@ internal R_Handle r_ogl_os_window_equip(WM_Window window);
 internal void r_ogl_os_window_unequip(WM_Window os, R_Handle r);
 internal void r_ogl_os_select_window(WM_Window os, R_Handle r);
 internal void r_ogl_os_window_swap(WM_Window os, R_Handle r);
+internal B32 r_ogl_os_window_frame_ready(WM_Window os);
+internal B32 r_ogl_os_window_frame_pending(WM_Window os);
 
 #endif // RENDER_OPENGL_H

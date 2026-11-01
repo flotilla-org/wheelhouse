@@ -472,13 +472,13 @@ r_window_request_frame(WM_Window window, R_Handle window_equip, B32 requested)
 r_hook B32
 r_window_frame_ready(WM_Window window, R_Handle window_equip)
 {
-  return 1;
+  return r_ogl_os_window_frame_ready(window);
 }
 
 r_hook B32
 r_window_frame_pending(WM_Window window, R_Handle window_equip)
 {
-  return 0;
+  return r_ogl_os_window_frame_pending(window);
 }
 
 r_hook void

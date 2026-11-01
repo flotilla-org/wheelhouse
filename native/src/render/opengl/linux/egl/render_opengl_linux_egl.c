@@ -183,3 +183,17 @@ r_ogl_os_window_swap(WM_Window os, R_Handle r)
   R_OGL_LNX_Window *w = (R_OGL_LNX_Window *)r.u64[0];
   eglSwapBuffers(r_ogl_lnx_state->display, w->surface);
 }
+
+// Admission comes from the surface where the window manager has a signal
+// for it (Wayland's frame callbacks); the swap paces frames otherwise.
+internal B32
+r_ogl_os_window_frame_ready(WM_Window os)
+{
+  return wm_window_frame_ready(os);
+}
+
+internal B32
+r_ogl_os_window_frame_pending(WM_Window os)
+{
+  return wm_window_frame_pending(os);
+}
