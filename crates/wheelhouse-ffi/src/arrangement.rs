@@ -371,22 +371,6 @@ fn result(
     give(value, owned)
 }
 
-/// A call without a sidebar handle: errors and panics become a message.
-pub(crate) unsafe fn pure<T>(error: *mut *mut c_char, f: impl FnOnce() -> Result<T, String>) -> Option<T> {
-    if !error.is_null() {
-        *error = ptr::null_mut();
-    }
-    match catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| Err("core panicked".into())) {
-        Ok(value) => Some(value),
-        Err(message) => {
-            if !error.is_null() {
-                *error = string(message);
-            }
-            None
-        }
-    }
-}
-
 /// Applies `edit` to `doc` by the core's rules, with `hidden` (and its
 /// `context`) saying which tabs a settle passes over. Returns the edited
 /// document and what the edit did, or NULL with an error for a malformed

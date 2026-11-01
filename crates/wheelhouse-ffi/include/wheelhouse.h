@@ -395,6 +395,124 @@ typedef struct BinnacleGrid BinnacleGrid;
 // A grid packing: a treemap, a rectangle per group by its tile count.
 #define WHEELHOUSE_OVERVIEW_TREEMAP 1
 
+// A node's content, new or changed: read it with wheelhouse_rich_delta_node.
+#define WHEELHOUSE_RICH_OP_UPSERT 0
+
+// A node and its child list go; its descendants go by their own ops.
+#define WHEELHOUSE_RICH_OP_REMOVE 1
+
+// `key`'s child list changes by `list`, in order.
+#define WHEELHOUSE_RICH_OP_CHILDREN 2
+
+#define WHEELHOUSE_RICH_KIND_ROOT 0
+
+#define WHEELHOUSE_RICH_KIND_LIST 1
+
+#define WHEELHOUSE_RICH_KIND_LIST_ITEM 2
+
+#define WHEELHOUSE_RICH_KIND_QUOTE 3
+
+// A footnote's definition: a Container with a label.
+#define WHEELHOUSE_RICH_KIND_FOOTNOTE 4
+
+// Reserved for transcripts.
+#define WHEELHOUSE_RICH_KIND_TURN 5
+
+// Reserved for transcripts.
+#define WHEELHOUSE_RICH_KIND_SECTION 6
+
+#define WHEELHOUSE_RICH_KIND_PARAGRAPH 16
+
+#define WHEELHOUSE_RICH_KIND_HEADING 17
+
+// Front matter is a hidden Code Block.
+#define WHEELHOUSE_RICH_KIND_CODE 18
+
+#define WHEELHOUSE_RICH_KIND_RULE 19
+
+// A table's text is its cells as TSV.
+#define WHEELHOUSE_RICH_KIND_EMBED 20
+
+#define WHEELHOUSE_RICH_ATTR_EMPHASIS 0
+
+#define WHEELHOUSE_RICH_ATTR_STRONG 1
+
+#define WHEELHOUSE_RICH_ATTR_CODE 2
+
+#define WHEELHOUSE_RICH_ATTR_STRIKETHROUGH 3
+
+// Inline math, drawn as code until a math Embed exists.
+#define WHEELHOUSE_RICH_ATTR_MATH 4
+
+#define WHEELHOUSE_RICH_ATTR_DISPLAY_MATH 5
+
+// `value` indexes the URL in the node's strings; `reference` the label of
+// the reference definition it used, or WHEELHOUSE_NONE.
+#define WHEELHOUSE_RICH_ATTR_LINK 6
+
+// `value` indexes its label in the strings.
+#define WHEELHOUSE_RICH_ATTR_FOOTNOTE_REFERENCE 7
+
+// `value` indexes the theme's palette.
+#define WHEELHOUSE_RICH_ATTR_COLOR_PALETTE 8
+
+// `value` is 0xRRGGBB.
+#define WHEELHOUSE_RICH_ATTR_COLOR_RGB 9
+
+// U+FFFC standing for an inline object: `value` indexes the objects.
+#define WHEELHOUSE_RICH_ATTR_INLINE_OBJECT 10
+
+#define WHEELHOUSE_RICH_TASK_NONE 0
+
+#define WHEELHOUSE_RICH_TASK_OPEN 1
+
+#define WHEELHOUSE_RICH_TASK_DONE 2
+
+#define WHEELHOUSE_RICH_ALERT_NONE 0
+
+#define WHEELHOUSE_RICH_ALERT_NOTE 1
+
+#define WHEELHOUSE_RICH_ALERT_TIP 2
+
+#define WHEELHOUSE_RICH_ALERT_IMPORTANT 3
+
+#define WHEELHOUSE_RICH_ALERT_WARNING 4
+
+#define WHEELHOUSE_RICH_ALERT_CAUTION 5
+
+#define WHEELHOUSE_RICH_ALIGN_NONE 0
+
+#define WHEELHOUSE_RICH_ALIGN_LEFT 1
+
+#define WHEELHOUSE_RICH_ALIGN_CENTER 2
+
+#define WHEELHOUSE_RICH_ALIGN_RIGHT 3
+
+// An entry: a Block, or a Container's header or footer row.
+#define WHEELHOUSE_RICH_PART_BLOCK 0
+
+#define WHEELHOUSE_RICH_PART_HEADER 1
+
+#define WHEELHOUSE_RICH_PART_FOOTER 2
+
+// The Scroll Anchor's place in its entry: a text position, or a fraction
+// of its height (an Embed's, or a row's).
+#define WHEELHOUSE_RICH_POSITION_TEXT 0
+
+#define WHEELHOUSE_RICH_POSITION_FRACTION 1
+
+#define WHEELHOUSE_RICH_COPY_PLAIN 0
+
+#define WHEELHOUSE_RICH_COPY_HTML 1
+
+#define WHEELHOUSE_RICH_COPY_MARKDOWN 2
+
+#define WHEELHOUSE_RICH_FIND_REGEX 1
+
+#define WHEELHOUSE_RICH_FIND_CASE_SENSITIVE 2
+
+#define WHEELHOUSE_RICH_ROOT_KEY 5929344362340505684
+
 // A View Spec's content: a local command (argv when argc is nonzero, else
 // the shell line in command; optional cwd).
 #define WHEELHOUSE_SLOT_COMMAND 0
@@ -602,6 +720,12 @@ typedef struct WheelhouseDelta WheelhouseDelta;
 // A batch of effects, taken once. It owns its text and survives the
 // sidebar; releasing it does not complete its requests.
 typedef struct WheelhouseEffects WheelhouseEffects;
+
+typedef struct WheelhouseRichDelta WheelhouseRichDelta;
+
+// A markdown document and its subscribers. Calls on one are serialised by
+// the host.
+typedef struct WheelhouseRichText WheelhouseRichText;
 
 typedef struct WheelhouseSnapshot WheelhouseSnapshot;
 
@@ -1241,6 +1365,166 @@ typedef struct {
   const WheelhouseOverviewRegion *regions;
   size_t region_count;
 } WheelhouseOverviewFrame;
+
+// As ListOpView, with a Rich Text key: INSERT reads `at` and `key`, REMOVE
+// `at`, MOVE `from` and `to`; the others are WHEELHOUSE_NONE and 0.
+typedef struct {
+  uint32_t kind;
+  size_t at;
+  size_t from;
+  size_t to;
+  uint64_t key;
+} WheelhouseRichListOp;
+
+typedef struct {
+  // WHEELHOUSE_RICH_OP_*.
+  uint32_t kind;
+  // The node upserted or removed, or the parent whose children change.
+  uint64_t key;
+  // A CHILDREN op's.
+  const WheelhouseRichListOp *list;
+  size_t list_count;
+} WheelhouseRichOp;
+
+// Bytes `start` to `start + len` of a node's text.
+typedef struct {
+  uint32_t start;
+  uint32_t len;
+  // WHEELHOUSE_RICH_ATTR_*.
+  uint32_t attr;
+  // What the attribute names (see each WHEELHOUSE_RICH_ATTR_*), else 0.
+  uint32_t value;
+  // A link's reference label (in the strings), or WHEELHOUSE_NONE.
+  size_t reference;
+} WheelhouseRichSpan;
+
+// An object laid out inline as a box. Nothing makes one yet.
+typedef struct {
+  WheelhouseText media_type;
+  WheelhouseText source;
+  WheelhouseText alt;
+  // Size hints in the host's units, or 0.
+  uint32_t width;
+  uint32_t height;
+} WheelhouseRichObject;
+
+// Bytes `start` to `start + len` of its Embed's text.
+typedef struct {
+  uint32_t start;
+  uint32_t len;
+} WheelhouseRichCell;
+
+// A node's content, without its children. An array with a count of 0 has a
+// pointer that is not NULL but must not be read.
+typedef struct {
+  uint64_t key;
+  // WHEELHOUSE_RICH_KIND_* (a Container below 16, a Block from 16).
+  uint32_t kind;
+  // Changes whenever its content does: cache layout by (key, version).
+  uint64_t version;
+  uint32_t level;
+  // Front matter: kept, but not shown.
+  uint32_t hidden;
+  WheelhouseText text;
+  const WheelhouseRichSpan *spans;
+  size_t span_count;
+  const WheelhouseText *strings;
+  size_t string_count;
+  const WheelhouseRichObject *objects;
+  size_t object_count;
+  // A list's.
+  uint32_t ordered;
+  uint64_t start;
+  uint32_t tight;
+  // A list item's WHEELHOUSE_RICH_TASK_*.
+  uint32_t task;
+  // A quote's WHEELHOUSE_RICH_ALERT_*.
+  uint32_t alert;
+  // A footnote's.
+  WheelhouseText label;
+  // A code Block's info string's first word.
+  WheelhouseText language;
+  // An Embed's.
+  WheelhouseText media_type;
+  // A table's columns' WHEELHOUSE_RICH_ALIGN_*, and its cells row by row,
+  // the header row first.
+  const uint32_t *alignments;
+  size_t column_count;
+  const WheelhouseRichCell *cells;
+  size_t row_count;
+} WheelhouseRichNode;
+
+// Scrolling is worked out from the Scroll Anchor, so heights changing above
+// it never move what is shown.
+typedef struct {
+  uint64_t key;
+  // WHEELHOUSE_RICH_PART_*.
+  uint32_t part;
+  // WHEELHOUSE_RICH_POSITION_*.
+  uint32_t position;
+  // TEXT: where the anchored line starts, and how far into it the anchor
+  // point is.
+  uint32_t byte;
+  float line_offset;
+  // FRACTION: from 0 to 1.
+  float fraction;
+  // How far below the viewport's top the anchor point sits.
+  double viewport_offset;
+} WheelhouseRichAnchor;
+
+typedef struct {
+  uint64_t key;
+  // WHEELHOUSE_RICH_PART_*.
+  uint32_t part;
+  // 1 if its height is as measured at the current width.
+  uint32_t measured;
+  double top;
+  float height;
+} WheelhouseRichWindowEntry;
+
+// The entries in the viewport plus half a viewport on each side, hidden
+// ones left out.
+typedef struct {
+  double top;
+  double viewport;
+  // Estimates included.
+  double total;
+  // 1 while following the end.
+  uint32_t at_end;
+  const WheelhouseRichWindowEntry *entries;
+  size_t entry_count;
+} WheelhouseRichWindow;
+
+// Fractions of the document's height.
+typedef struct {
+  double start;
+  double size;
+  double estimated;
+} WheelhouseRichThumb;
+
+typedef struct {
+  uint64_t anchor_key;
+  uint32_t anchor_byte;
+  uint64_t focus_key;
+  uint32_t focus_byte;
+} WheelhouseRichSelection;
+
+// Show "N of count+" until the scan is done, and after, if `capped`.
+typedef struct {
+  size_t count;
+  uint32_t done;
+  // 1 if the scan stopped at 100 000 matches.
+  uint32_t capped;
+  // The match last moved to, or WHEELHOUSE_NONE.
+  size_t current;
+} WheelhouseRichFindStatus;
+
+// Bytes `start` to `end` of a Block's text.
+typedef struct {
+  uint64_t key;
+  uint32_t start;
+  uint32_t end;
+} WheelhouseRichMatch;
 
 // A View Spec, or a resolution's recipe (whose presentation and role are
 // unset).
@@ -2300,6 +2584,240 @@ WheelhouseOverviewFrame *wheelhouse_overview_frame(WheelhouseCore *h,
                                                    char **error_out);
 
 void wheelhouse_overview_frame_free(WheelhouseOverviewFrame *frame);
+
+// Open UTF-8 markdown under 4 GiB; free it with wheelhouse_rich_text_free.
+// NULL with an error on invalid input (a NULL pointer with a length, or 4
+// GiB or more) or if parsing panicked.
+WheelhouseRichText *wheelhouse_rich_text_open(WheelhouseText markdown_text, char **error_out);
+
+void wheelhouse_rich_text_free(WheelhouseRichText *h);
+
+// Parse the whole document again (under 4 GiB): unchanged nodes keep their
+// versions. Deltas already polled stay valid. `changed_out` (if not NULL)
+// gets 1 if anything changed, and 0 otherwise or on an error.
+uint32_t wheelhouse_rich_text_reload(WheelhouseRichText *h,
+                                     WheelhouseText markdown_text,
+                                     uint32_t *changed_out,
+                                     char **error_out);
+
+// It rises with each reload that changes something. 0 for NULL.
+uint64_t wheelhouse_rich_text_generation(WheelhouseRichText *h);
+
+uint32_t wheelhouse_rich_text_subscribe(WheelhouseRichText *h, uint64_t *out, char **error_out);
+
+// 0 (no error) for a subscription that doesn't exist.
+uint32_t wheelhouse_rich_text_unsubscribe(WheelhouseRichText *h,
+                                          uint64_t subscription,
+                                          char **error_out);
+
+// 1 if a poll has something to deliver; 0 with an error for an unknown
+// subscription.
+uint32_t wheelhouse_rich_text_changed_since(WheelhouseRichText *h,
+                                            uint64_t subscription,
+                                            char **error_out);
+
+// What changed since this subscription's last delta: a snapshot for its
+// first, and for one that fell off the change ring's end. NULL with no
+// error when nothing changed. Release it with wheelhouse_rich_delta_release.
+WheelhouseRichDelta *wheelhouse_rich_text_poll(WheelhouseRichText *h,
+                                               uint64_t subscription,
+                                               char **error_out);
+
+uint64_t wheelhouse_rich_delta_generation(const WheelhouseRichDelta *delta);
+
+// 1 for a snapshot: clear the model before applying it.
+uint32_t wheelhouse_rich_delta_is_snapshot(const WheelhouseRichDelta *delta);
+
+// Removes come first, then upserts in document order, then child lists.
+size_t wheelhouse_rich_delta_op_count(const WheelhouseRichDelta *delta);
+
+uint32_t wheelhouse_rich_delta_op(const WheelhouseRichDelta *delta,
+                                  size_t index,
+                                  WheelhouseRichOp *out);
+
+// An UPSERT op's node; 0 for another op.
+uint32_t wheelhouse_rich_delta_node(const WheelhouseRichDelta *delta,
+                                    size_t index,
+                                    WheelhouseRichNode *out);
+
+void wheelhouse_rich_delta_release(WheelhouseRichDelta *delta);
+
+// In the host's units.
+uint32_t wheelhouse_rich_text_set_viewport(WheelhouseRichText *h,
+                                           uint64_t subscription,
+                                           double height,
+                                           char **error_out);
+
+// For estimating unmeasured heights. On a width change every measured
+// height becomes an estimate scaled by the width ratio, until measured
+// again.
+uint32_t wheelhouse_rich_text_set_metrics(WheelhouseRichText *h,
+                                          uint64_t subscription,
+                                          float width,
+                                          float line_height,
+                                          float chars_per_line,
+                                          char **error_out);
+
+// The host measured an entry (WHEELHOUSE_RICH_PART_*) `height` high at
+// `width`.
+uint32_t wheelhouse_rich_text_set_height(WheelhouseRichText *h,
+                                         uint64_t subscription,
+                                         uint64_t key,
+                                         uint32_t entry_part,
+                                         float height,
+                                         float width,
+                                         char **error_out);
+
+// Scrolling up breaks follow-tail, and reaching the bottom re-arms it.
+uint32_t wheelhouse_rich_text_scroll_by(WheelhouseRichText *h,
+                                        uint64_t subscription,
+                                        double delta,
+                                        char **error_out);
+
+uint32_t wheelhouse_rich_text_scroll_to_end(WheelhouseRichText *h,
+                                            uint64_t subscription,
+                                            char **error_out);
+
+// Breaks follow-tail.
+uint32_t wheelhouse_rich_text_scroll_to(WheelhouseRichText *h,
+                                        uint64_t subscription,
+                                        const WheelhouseRichAnchor *anchor,
+                                        char **error_out);
+
+// 0 (no error) at the document's top, with no anchor.
+uint32_t wheelhouse_rich_text_anchor(WheelhouseRichText *h,
+                                     uint64_t subscription,
+                                     WheelhouseRichAnchor *out,
+                                     char **error_out);
+
+// The host found where the viewport's top falls in the anchor's Block: in
+// the line starting at `byte`, whose top is `line_top` into the Block.
+// Nothing moves.
+uint32_t wheelhouse_rich_text_set_anchor_text(WheelhouseRichText *h,
+                                              uint64_t subscription,
+                                              uint32_t byte,
+                                              float line_top,
+                                              char **error_out);
+
+// The anchor's Block was laid out again (a new width), and the line the
+// anchor names now starts `line_top` into it: keep that line in place.
+uint32_t wheelhouse_rich_text_relayout_anchor(WheelhouseRichText *h,
+                                              uint64_t subscription,
+                                              float line_top,
+                                              char **error_out);
+
+// A collapsed Container's rows after its header count as zero, and
+// selections don't copy them.
+uint32_t wheelhouse_rich_text_set_collapsed(WheelhouseRichText *h,
+                                            uint64_t subscription,
+                                            uint64_t key,
+                                            uint32_t collapsed,
+                                            char **error_out);
+
+// Its entries are borrowed from the handle until the next call on it.
+uint32_t wheelhouse_rich_text_window(WheelhouseRichText *h,
+                                     uint64_t subscription,
+                                     WheelhouseRichWindow *out,
+                                     char **error_out);
+
+uint32_t wheelhouse_rich_text_thumb(WheelhouseRichText *h,
+                                    uint64_t subscription,
+                                    WheelhouseRichThumb *out,
+                                    char **error_out);
+
+// Points move onto character boundaries; an Embed is selected whole.
+uint32_t wheelhouse_rich_text_select(WheelhouseRichText *h,
+                                     uint64_t subscription,
+                                     uint64_t anchor_key,
+                                     uint32_t anchor_byte,
+                                     uint64_t focus_key,
+                                     uint32_t focus_byte,
+                                     char **error_out);
+
+// Move the focus, keeping the anchor.
+uint32_t wheelhouse_rich_text_extend(WheelhouseRichText *h,
+                                     uint64_t subscription,
+                                     uint64_t focus_key,
+                                     uint32_t focus_byte,
+                                     char **error_out);
+
+uint32_t wheelhouse_rich_text_select_block(WheelhouseRichText *h,
+                                           uint64_t subscription,
+                                           uint64_t key,
+                                           char **error_out);
+
+uint32_t wheelhouse_rich_text_select_all(WheelhouseRichText *h,
+                                         uint64_t subscription,
+                                         char **error_out);
+
+uint32_t wheelhouse_rich_text_clear_selection(WheelhouseRichText *h,
+                                              uint64_t subscription,
+                                              char **error_out);
+
+// 0 (no error) when there is none.
+uint32_t wheelhouse_rich_text_selection(WheelhouseRichText *h,
+                                        uint64_t subscription,
+                                        WheelhouseRichSelection *out,
+                                        char **error_out);
+
+// As WHEELHOUSE_RICH_COPY_*: empty if nothing is selected. Free the bytes
+// with wheelhouse_bytes_free.
+uint32_t wheelhouse_rich_text_copy(WheelhouseRichText *h,
+                                   uint64_t subscription,
+                                   uint32_t copy_format,
+                                   WheelhouseBytes *out,
+                                   char **error_out);
+
+// A whole Block, collapsed or not.
+uint32_t wheelhouse_rich_text_copy_block(WheelhouseRichText *h,
+                                         uint64_t key,
+                                         uint32_t copy_format,
+                                         WheelhouseBytes *out,
+                                         char **error_out);
+
+// Over every Block, collapsed or not: literal and case-insensitive unless
+// `flags` has WHEELHOUSE_RICH_FIND_*. Scan with
+// wheelhouse_rich_text_find_step.
+uint32_t wheelhouse_rich_text_find(WheelhouseRichText *h,
+                                   uint64_t subscription,
+                                   WheelhouseText query,
+                                   uint32_t flags,
+                                   char **error_out);
+
+// Scan about `budget` bytes more (at least one Block). A reload starts the
+// scan again.
+uint32_t wheelhouse_rich_text_find_step(WheelhouseRichText *h,
+                                        uint64_t subscription,
+                                        size_t budget,
+                                        WheelhouseRichFindStatus *out,
+                                        char **error_out);
+
+// 0 with an error past the count.
+uint32_t wheelhouse_rich_text_find_match(WheelhouseRichText *h,
+                                         uint64_t subscription,
+                                         size_t index,
+                                         WheelhouseRichMatch *out,
+                                         char **error_out);
+
+// Select and reveal the next match (`forward` 1) or the previous one. 0
+// (no error) when there are none yet.
+uint32_t wheelhouse_rich_text_find_next(WheelhouseRichText *h,
+                                        uint64_t subscription,
+                                        uint32_t forward,
+                                        WheelhouseRichMatch *out,
+                                        char **error_out);
+
+uint32_t wheelhouse_rich_text_find_end(WheelhouseRichText *h,
+                                       uint64_t subscription,
+                                       char **error_out);
+
+// Expand any collapsed Container holding it, and anchor it a third of the
+// way down the viewport. Breaks follow-tail.
+uint32_t wheelhouse_rich_text_reveal(WheelhouseRichText *h,
+                                     uint64_t subscription,
+                                     uint64_t key,
+                                     uint32_t byte,
+                                     char **error_out);
 
 // A registered workspace's slots. Free them with wheelhouse_slots_free.
 WheelhouseSlots *wheelhouse_slots_get(WheelhouseCore *h,

@@ -160,7 +160,7 @@ pub unsafe extern "C" fn wheelhouse_dock_check(
     proposal: *const WheelhouseDockProposal,
     error_out: *mut *mut c_char,
 ) -> u32 {
-    arrangement::pure(error_out, || {
+    pure(error_out, || {
         let p = proposal.as_ref().ok_or("null proposal")?;
         let p = Proposal {
             host: host(&p.host),
@@ -189,7 +189,7 @@ pub unsafe extern "C" fn wheelhouse_dock_placement(
     context: *mut c_void,
     error_out: *mut *mut c_char,
 ) -> u32 {
-    arrangement::pure(error_out, || {
+    pure(error_out, || {
         let v = view.as_ref().ok_or("null view")?;
         let r = optional_registration(v.registration)?;
         let view = View { exists: v.exists != 0, registration: r.as_ref(), source: host(&v.source), level: v.level };
@@ -208,7 +208,7 @@ pub unsafe extern "C" fn wheelhouse_dock_creation(
     context: *mut c_void,
     error_out: *mut *mut c_char,
 ) -> u32 {
-    arrangement::pure(error_out, || {
+    pure(error_out, || {
         let r = optional_registration(registration)?;
         let count = instances_fn(instances, context);
         Ok(rule(dock::creation(r.as_ref(), &host(destination.as_ref().ok_or("null host")?), count.as_ref().map(|f| f as dock::Instances))))
@@ -219,7 +219,7 @@ pub unsafe extern "C" fn wheelhouse_dock_creation(
 /// Closing `view`.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_dock_closure(view: *const WheelhouseDockView, error_out: *mut *mut c_char) -> u32 {
-    arrangement::pure(error_out, || {
+    pure(error_out, || {
         let v = view.as_ref().ok_or("null view")?;
         let r = optional_registration(v.registration)?;
         Ok(rule(dock::closure(&View { exists: v.exists != 0, registration: r.as_ref(), source: host(&v.source), level: v.level })))
@@ -232,7 +232,7 @@ pub unsafe extern "C" fn wheelhouse_dock_closure(view: *const WheelhouseDockView
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_dock_view_level(registration: *const WheelhouseViewRegistration, h: *const WheelhouseDockHost) -> u64 {
     let Some(h) = h.as_ref() else { return 0 };
-    arrangement::pure(ptr::null_mut(), || Ok(dock::view_level(optional_registration(registration)?.as_ref(), &host(h)))).unwrap_or(h.level)
+    pure(ptr::null_mut(), || Ok(dock::view_level(optional_registration(registration)?.as_ref(), &host(h)))).unwrap_or(h.level)
 }
 
 /// How a host of `kind` (WHEELHOUSE_DOCK_HOST_*) shows a panel of
@@ -317,7 +317,7 @@ pub unsafe extern "C" fn wheelhouse_dock_restore(
     registration_count: usize,
     error_out: *mut *mut c_char,
 ) -> *mut WheelhouseDockRestore {
-    arrangement::pure(error_out, || {
+    pure(error_out, || {
         let registrations = slice(registrations, registration_count)?.iter().map(|r| registration(r)).collect::<Result<Vec<_>, _>>()?;
         let given = slice(documents, count)?;
         let mut kinds: Vec<(WheelhouseTab, usize)> = vec![];

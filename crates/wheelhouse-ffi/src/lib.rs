@@ -27,6 +27,7 @@ pub mod dashboard;
 pub mod dock;
 pub mod documents;
 pub mod overview;
+pub mod rich_text;
 pub mod slots;
 pub mod stream;
 pub mod strip;
@@ -38,6 +39,7 @@ pub use dashboard::*;
 pub use dock::*;
 pub use documents::*;
 pub use overview::*;
+pub use rich_text::*;
 pub use slots::*;
 pub use stream::*;
 pub use strip::*;
@@ -127,28 +129,20 @@ pub struct WheelhouseCore {
     overview: wheelhouse_core::overview::OverviewWindow,
     overview_revision: Option<u64>,
 }
-unsafe fn run<T>(
-    handle: *mut WheelhouseCore,
-    error: *mut *mut c_char,
-    f: impl FnOnce(&mut WheelhouseCore) -> Result<T, String>,
-) -> Option<T> {
+impl Handle for WheelhouseCore {
+    const NAME: &'static str = "sidebar";
+    fn poisoned(&mut self) -> &mut bool {
+        &mut self.poisoned
+    }
+}
+
+/// Every call is guarded here: a panic never unwinds into the host, and an
+/// error, a panic's included, becomes a message in `error` if it isn't NULL.
+pub(crate) unsafe fn pure<T>(error: *mut *mut c_char, f: impl FnOnce() -> Result<T, String>) -> Option<T> {
     if !error.is_null() {
         *error = ptr::null_mut();
     }
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        let h = handle.as_mut().ok_or("null sidebar handle")?;
-        if h.poisoned {
-            return Err("sidebar handle is poisoned; recreate it".into());
-        }
-        f(h)
-    }));
-    let result = result.unwrap_or_else(|_| {
-        if let Some(h) = handle.as_mut() {
-            h.poisoned = true;
-        }
-        Err("core panicked; recreate sidebar".into())
-    });
-    match result {
+    match catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| Err("core panicked".into())) {
         Ok(value) => Some(value),
         Err(message) => {
             if !error.is_null() {
@@ -157,6 +151,27 @@ unsafe fn run<T>(
             None
         }
     }
+}
+
+/// A handle whose state a panic may leave half-changed: after one, every
+/// call on it fails.
+pub(crate) trait Handle {
+    const NAME: &'static str;
+    fn poisoned(&mut self) -> &mut bool;
+}
+
+/// `pure`, on a handle.
+pub(crate) unsafe fn run<H: Handle, T>(handle: *mut H, error: *mut *mut c_char, f: impl FnOnce(&mut H) -> Result<T, String>) -> Option<T> {
+    pure(error, || {
+        let h = handle.as_mut().ok_or_else(|| format!("null {} handle", H::NAME))?;
+        if *h.poisoned() {
+            return Err(format!("{} handle is poisoned; recreate it", H::NAME));
+        }
+        catch_unwind(AssertUnwindSafe(|| f(&mut *handle))).unwrap_or_else(|_| {
+            *(*handle).poisoned() = true;
+            Err(format!("core panicked; recreate the {}", H::NAME))
+        })
+    })
 }
 
 /// A compare-and-set's result: rejected with an error, and nothing changed.

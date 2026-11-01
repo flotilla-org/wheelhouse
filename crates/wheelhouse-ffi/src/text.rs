@@ -483,13 +483,16 @@ fn well_formed(v: &View<'_>) -> bool {
     }) && v.clusters.iter().all(|c| c.start.checked_add(c.len).is_some())
 }
 
+/// Runs a query over a well-formed layout: None for a malformed layout, a
+/// failed query or a panic.
 unsafe fn over<T>(layout: *const WhTextLayout, f: impl FnOnce(&View<'_>) -> Option<T>) -> Option<T> {
     // SAFETY: the caller's contract.
     let v = unsafe { view(layout) }?;
     if !well_formed(&v) {
         return None;
     }
-    catch_unwind(AssertUnwindSafe(|| f(&v))).ok().flatten()
+    // SAFETY: a NULL error is never written.
+    unsafe { pure(ptr::null_mut(), || f(&v).ok_or_else(String::new)) }
 }
 
 fn affinity(a: Affinity) -> u32 {
