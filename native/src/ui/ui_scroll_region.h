@@ -28,13 +28,19 @@ struct UI_ScrollRegionParams
   // Overlay bars keep their look but reserve their strip and stay shown,
   // where the system wants scroll bars always shown.
   B32 overlay_reserve;
+  // The content box takes the whole rect, and reserved gutters lie over its
+  // edges: for content that keeps clear of them itself where it scrolls, and
+  // runs to the edge where it doesn't (a table's headers beside a bar kept
+  // to its span).
+  B32 content_under_gutters;
 };
 
 typedef struct UI_ScrollRegion UI_ScrollRegion;
 struct UI_ScrollRegion
 {
   UI_ScrollRegionParams params;
-  Rng2F32 viewport;
+  Rng2F32 viewport; // what's left beside the reserved gutters
+  Rng2F32 content;  // the content box: the viewport, or the rect if content_under_gutters
   B32 bar_enabled[Axis2_COUNT];
 };
 
@@ -55,8 +61,10 @@ struct UI_ScrollRegionSignal
 
 // An axis in no units, for content that scrolls by something other than a
 // UI_ScrollPt: its thumb; `activity`, any value that changes when the content
-// scrolls (an overlay bar shows for a while after it does); and what a drag
-// begins from (see ui_scroll_bar_styled).
+// scrolls (an overlay bar shows for a while after it does); what a drag
+// begins from (see ui_scroll_bar_styled); and `span`, the part of the
+// viewport along the axis that scrolls (from its start; empty: all of it),
+// which the bar keeps to, clear of content that stays put.
 typedef struct UI_ScrollRegionThumbAxis UI_ScrollRegionThumbAxis;
 struct UI_ScrollRegionThumbAxis
 {
@@ -64,6 +72,7 @@ struct UI_ScrollRegionThumbAxis
   F32 activity;
   void *drag_origin;
   U64 drag_origin_size;
+  Rng1F32 span;
 };
 
 typedef struct UI_ScrollRegionThumbSignal UI_ScrollRegionThumbSignal;

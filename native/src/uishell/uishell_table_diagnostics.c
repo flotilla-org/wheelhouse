@@ -77,6 +77,79 @@ uishell_table_diag_bench(String8 name, F32 line, F32 digit)
   return us;
 }
 
+// One frame of the table View at 900x600 in `style`, with `event` at
+// `mouse`. Returns the grid box (the scroll region's content, so its key is
+// the region's); `part` gets the vertical bar's part named by `which`.
+typedef enum { UIShell_TableDiagBar_Thumb, UIShell_TableDiagBar_Before, UIShell_TableDiagBar_After, UIShell_TableDiagBar_Down } UIShell_TableDiagBar;
+internal UI_Box *
+uishell_table_diag_view_frame(RD_WindowState *ws, CFG_Node *view, UI_ScrollBarStyle style, UI_Event event, Vec2F32 mouse,
+                              UIShell_TableDiagBar which, UI_Box **part)
+{
+  UI_EventNode node = {.v = event};
+  UI_EventList events = {0};
+  if(event.kind != UI_EventKind_Null) { events.first = events.last = &node; events.count = 1; }
+  UI_AnimationInfo animation = {0};
+  animation.scroll_animation_rate = animation.hot_animation_rate = 1.f;
+  ui_set_active_scroll_bar_style(style);
+  ui_begin_build(ws->os, &events, &ws->ui->icon_info, ws->theme, &animation, 1.f/60, 1.f/60);
+  ui_state->mouse = mouse;
+  // Overlay bars show only once scrolled, or always where reserved.
+  ui_state->scroll_bars_reserved = 1;
+  UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+  {
+    wh_view_ui_direct(wh_renderer_from_name(str8_lit("table")), rd_view_address_from_cfg(view), r2f32p(0, 0, 900, 600));
+  }
+  ui_end_build();
+  UI_Box *grid_box = &ui_nil_box;
+  for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
+  {
+    if(box->custom_draw == uishell_table_draw) { grid_box = box; }
+  }
+  *part = &ui_nil_box;
+  if(!ui_box_is_nil(grid_box))
+  {
+    UI_Key bar_key = ui_key_from_stringf(grid_box->key, "scroll_region_bar_%i", Axis2_Y);
+    UI_Key track_key = ui_key_from_stringf(bar_key, "##_scroll_area_%i", Axis2_Y);
+    UI_Key key = which == UIShell_TableDiagBar_Thumb ? ui_key_from_stringf(track_key, "##_scroller_%i", Axis2_Y) :
+      which == UIShell_TableDiagBar_Before ? ui_key_from_string(track_key, str8_lit("##scroll_area_before")) :
+      which == UIShell_TableDiagBar_After ? ui_key_from_string(track_key, str8_lit("##scroll_area_after")) :
+      ui_key_from_stringf(bar_key, "%S##_max_scroll_%i", ui_icon_string_from_kind(UI_IconKind_DownArrow), Axis2_Y);
+    UI_Box *box = ui_box_from_key(key);
+    if(!ui_box_is_nil(box) && box->last_touched_build_index+1 >= ui_state->build_index) { *part = box; }
+  }
+  return grid_box;
+}
+
+// Clicks the vertical bar's part `which` and returns the grid box of the
+// frame after, whose draw data is that frame's (nil: the part isn't there).
+internal UI_Box *
+uishell_table_diag_click_bar(RD_WindowState *ws, CFG_Node *view, UI_ScrollBarStyle style, UIShell_TableDiagBar which, UI_Box **part)
+{
+  UI_Event none = {0};
+  Vec2F32 away = v2f32(450, 300);
+  uishell_table_diag_view_frame(ws, view, style, none, away, which, part);
+  if(ui_box_is_nil(*part)) { return &ui_nil_box; }
+  Vec2F32 at = center_2f32((*part)->rect);
+  UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = at};
+  UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at};
+  uishell_table_diag_view_frame(ws, view, style, press, at, which, part);
+  uishell_table_diag_view_frame(ws, view, style, release, at, which, part);
+  return uishell_table_diag_view_frame(ws, view, style, none, away, which, part);
+}
+
+// Whether the rows moved a page from `from` towards `dir` (-1 up, +1 down):
+// the scrolling Strip's length in rows, give or take one, measured in `d`.
+internal B32
+uishell_table_diag_paged(UIShell_TableDraw *d, U64 from, S64 dir)
+{
+  BinnacleAxisSnapshot *rows = &d->snap.axes[BINNACLE_ROWS];
+  if(rows->strip_len < 2) { return 0; }
+  F32 row_size = rows->strip[1].size > 0 ? rows->strip[1].size : 1;
+  S64 page_rows = (S64)((rows->scrolling_end - rows->scrolling_start)/row_size);
+  S64 paged = dir*((S64)rows->anchor.position - (S64)from);
+  return paged > 0 && paged + 1 >= page_rows && paged <= page_rows + 1;
+}
+
 internal B32
 uishell_table_diagnostics(RD_WindowState *ws)
 {
@@ -350,6 +423,89 @@ uishell_table_diagnostics(RD_WindowState *ws)
       TableCheck(drawn <= visible && visible < 2000, "the View paints only the cells in view");
       printf("TABLE_PAINT table=%.*s drawn=%llu visible=%llu\n", str8_varg(names[n]), (unsigned long long)drawn, (unsigned long long)visible);
     }
+
+    // The bars (#577): a huge table in either style shows a vertical bar
+    // whose thumb, dragged to the end of its track, shows the last row; the
+    // classic arrow scrolls one row and the track a page.
+    UI_ScrollBarStyle saved_style = ui_active_scroll_bar_style();
+    for(U32 style = 0; style < 2; style += 1)
+    {
+      CFG_Node *view = rd_fixture_view(panel, str8_lit("table"), str8_lit("huge"), 1);
+      UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = rd_view_address_from_cfg(view), .view = rd_view_address_from_cfg(view))
+      {
+        UI_Event none = {0};
+        Vec2F32 away = v2f32(450, 300);
+        UI_Box *thumb = &ui_nil_box, *grid_box = &ui_nil_box;
+        for(U32 frame = 0; frame < 4; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, style, none, away, UIShell_TableDiagBar_Thumb, &thumb); }
+        TableCheck(!ui_box_is_nil(thumb), "a huge table shows a vertical scroll bar");
+        if(ui_box_is_nil(thumb) || ui_box_is_nil(grid_box)) { continue; }
+        {
+          UIShell_TableDraw *first = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          F32 scrolling_start = grid_box->rect.y0 + first->snap.axes[BINNACLE_ROWS].scrolling_start;
+          TableCheck(thumb->parent->rect.y0 >= scrolling_start - 0.5f, "the vertical bar keeps clear of the column headers");
+        }
+        // Classic, from the top: the track below the thumb scrolls down a
+        // page. (Near the end of a huge table the track below the thumb is
+        // too thin to click, so this comes before the drag.)
+        if(style == UI_ScrollBarStyle_Classic)
+        {
+          U64 from = ((UIShell_TableDraw *)grid_box->custom_draw_user_data)->snap.axes[BINNACLE_ROWS].anchor.position;
+          UI_Box *after = &ui_nil_box;
+          grid_box = uishell_table_diag_click_bar(ws, view, style, UIShell_TableDiagBar_After, &after);
+          TableCheck(!ui_box_is_nil(grid_box) && uishell_table_diag_paged((UIShell_TableDraw *)grid_box->custom_draw_user_data, from, +1),
+                     "the track below the thumb scrolls down a page");
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, style, none, away, UIShell_TableDiagBar_Thumb, &thumb); }
+          if(ui_box_is_nil(thumb) || ui_box_is_nil(grid_box)) { continue; }
+        }
+        // Drag the thumb past the end of its track.
+        Vec2F32 grab = center_2f32(thumb->rect);
+        Rng2F32 track = thumb->parent->rect;
+        for(U32 frame = 0; frame < 2; frame += 1) { uishell_table_diag_view_frame(ws, view, style, none, grab, UIShell_TableDiagBar_Thumb, &thumb); }
+        UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = grab};
+        uishell_table_diag_view_frame(ws, view, style, press, grab, UIShell_TableDiagBar_Thumb, &thumb);
+        Vec2F32 end = v2f32(grab.x, track.y1 + 40);
+        for(U32 frame = 0; frame < 2; frame += 1) { uishell_table_diag_view_frame(ws, view, style, none, end, UIShell_TableDiagBar_Thumb, &thumb); }
+        UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = end};
+        uishell_table_diag_view_frame(ws, view, style, release, end, UIShell_TableDiagBar_Thumb, &thumb);
+        for(U32 frame = 0; frame < 3; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, style, none, away, UIShell_TableDiagBar_Thumb, &thumb); }
+        UIShell_TableDraw *d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+        BinnacleAxisSnapshot *rows = &d->snap.axes[BINNACLE_ROWS];
+        B32 last_shown = rows->strip_len > 0 && rows->strip[rows->strip_len-1].position == rows->count-1;
+        TableCheck(last_shown && d->snap.axes[BINNACLE_ROWS].thumb.fraction > 0.99, "dragging the thumb to the end shows the last row");
+        // Under a classic bar the grid runs to the edge, and its End Gap
+        // brings the last row clear of the bar.
+        if(last_shown && !ui_box_is_nil(thumb))
+        {
+          BinnacleStripItem *last = &rows->strip[rows->strip_len-1];
+          UI_Box *vbar = ui_box_from_key(ui_key_from_stringf(grid_box->key, "scroll_region_bar_%i", Axis2_Y));
+          UI_Box *hbar = ui_box_from_key(ui_key_from_stringf(grid_box->key, "scroll_region_bar_%i", Axis2_X));
+          if(style == UI_ScrollBarStyle_Classic)
+          {
+            TableCheck(!ui_box_is_nil(vbar) && vbar->rect.x0 < grid_box->rect.x1 && !ui_box_is_nil(hbar) && hbar->rect.y0 < grid_box->rect.y1,
+                       "classic bars lie over the grid's edges");
+            TableCheck(!ui_box_is_nil(hbar) && grid_box->rect.y0 + last->offset + last->size <= hbar->rect.y0 + 0.5f,
+                       "scrolled to the end, the last row ends clear of the horizontal bar");
+          }
+        }
+        if(style != UI_ScrollBarStyle_Classic) { continue; }
+        // Back towards the top with the track above the thumb, a page at a
+        // time. Each check reads the frame it follows: the draw data is
+        // rebuilt every frame.
+        U64 from = rows->anchor.position;
+        UI_Box *before = &ui_nil_box;
+        grid_box = uishell_table_diag_click_bar(ws, view, style, UIShell_TableDiagBar_Before, &before);
+        TableCheck(!ui_box_is_nil(grid_box) && uishell_table_diag_paged((UIShell_TableDraw *)grid_box->custom_draw_user_data, from, -1),
+                   "the track above the thumb scrolls up a page");
+        if(ui_box_is_nil(grid_box)) { continue; }
+        // The arrow below the track scrolls one row down.
+        from = ((UIShell_TableDraw *)grid_box->custom_draw_user_data)->snap.axes[BINNACLE_ROWS].anchor.position;
+        UI_Box *arrow = &ui_nil_box;
+        grid_box = uishell_table_diag_click_bar(ws, view, style, UIShell_TableDiagBar_Down, &arrow);
+        TableCheck(!ui_box_is_nil(grid_box) && ((UIShell_TableDraw *)grid_box->custom_draw_user_data)->snap.axes[BINNACLE_ROWS].anchor.position == from+1,
+                   "the arrow below the track scrolls one row down");
+      }
+    }
+    ui_set_active_scroll_bar_style(saved_style);
     ws->sidebar = saved_sidebar;
     ui_select_state(saved_ui);
   }
