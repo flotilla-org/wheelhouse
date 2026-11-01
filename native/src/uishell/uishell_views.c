@@ -3128,7 +3128,7 @@ uishell_text_rng_from_visual_line(TXT_TextInfo *info, UIShell_TextVisualLine *li
 internal TXT_TokenArray
 uishell_text_token_array_from_visual_line(Arena *arena, TXT_TextInfo *info, UIShell_TextVisualLine *visual_line)
 {
-  TXT_TokenArray line_tokens = txt_token_array_from_info_line_num__linear_scan(info, visual_line->line_num);
+  TXT_TokenArray line_tokens = txt_token_array_from_info_line_num(info, visual_line->line_num);
   TXT_TokenArray result = {0};
   if(line_tokens.count != 0)
   {
