@@ -1548,12 +1548,15 @@ typedef struct {
   size_t row_count;
   // A Turn's WHEELHOUSE_RICH_ROLE_*.
   uint32_t role;
-  // A Section's WHEELHOUSE_RICH_SECTION_*, WHEELHOUSE_RICH_TOOL_* and
-  // WHEELHOUSE_RICH_STATUS_*, and its tool's name and title.
+  // A Section's WHEELHOUSE_RICH_SECTION_*.
   uint32_t section;
+  // A Section's WHEELHOUSE_RICH_TOOL_*.
   uint32_t tool;
+  // A Section's WHEELHOUSE_RICH_STATUS_*.
   uint32_t status;
+  // A tool Section's tool name, such as `Bash`.
   WheelhouseText name;
+  // A tool Section's input summary; a subagent's thread id.
   WheelhouseText title;
 } WheelhouseRichNode;
 

@@ -431,7 +431,9 @@ static void drive_conversation(const char *jsonl) {
         logs += n->kind == WHEELHOUSE_RICH_KIND_LOG;
     }
     assert(sections > 0 && turns > 0 && logs > 0);
-    fails(wheelhouse_rich_text_container(h, 12345, &c, &error));
+    uint64_t absent = 12345;
+    while (lookup(&m, absent)) ++absent;
+    fails(wheelhouse_rich_text_container(h, absent, &c, &error));
     clear(&m);
     m.generation = 0;
     wheelhouse_rich_text_free(h);

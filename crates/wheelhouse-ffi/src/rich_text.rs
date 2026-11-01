@@ -230,12 +230,15 @@ pub struct WheelhouseRichNode {
     pub row_count: usize,
     /// A Turn's WHEELHOUSE_RICH_ROLE_*.
     pub role: u32,
-    /// A Section's WHEELHOUSE_RICH_SECTION_*, WHEELHOUSE_RICH_TOOL_* and
-    /// WHEELHOUSE_RICH_STATUS_*, and its tool's name and title.
+    /// A Section's WHEELHOUSE_RICH_SECTION_*.
     pub section: u32,
+    /// A Section's WHEELHOUSE_RICH_TOOL_*.
     pub tool: u32,
+    /// A Section's WHEELHOUSE_RICH_STATUS_*.
     pub status: u32,
+    /// A tool Section's tool name, such as `Bash`.
     pub name: Text,
+    /// A tool Section's input summary; a subagent's thread id.
     pub title: Text,
 }
 
