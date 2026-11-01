@@ -20,6 +20,7 @@ use axum::{
     Router,
 };
 use flotilla_cbor::{Framing, Limits};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio::sync::watch;
@@ -135,6 +136,9 @@ pub struct Automation {
     pub requested: AtomicU64,
     /// Open event streams; while any is, every frame compares the tree.
     pub streams: AtomicUsize,
+    /// Reads and streams that asked for terminal text; while none has, the
+    /// UI gives no screens.
+    pub screens: AtomicUsize,
     pub published: watch::Sender<Arc<Published>>,
 }
 
@@ -146,6 +150,7 @@ impl Automation {
             mode: AtomicU32::new(MODE_UNKNOWN),
             requested: AtomicU64::new(0),
             streams: AtomicUsize::new(0),
+            screens: AtomicUsize::new(0),
             published: watch::channel(Arc::default()).0,
         }
     }
@@ -154,12 +159,14 @@ impl Automation {
         format!("{}:{generation}", self.instance)
     }
 
-    /// The tree as of the UI's next frame: 404 while automation is off,
-    /// 503 when no frame comes in time.
-    async fn fresh(&self) -> Result<Arc<Published>, StatusCode> {
+    /// The tree as of the UI's next frame, with screens if `params` asks:
+    /// 404 while automation is off, 503 when no frame comes in time.
+    async fn fresh(self: &Arc<Self>, params: &Params) -> Result<Arc<Published>, StatusCode> {
         if self.mode.load(SeqCst) == AUTOMATION_OFF {
             return Err(StatusCode::NOT_FOUND);
         }
+        // Counted before the ticket, so the frame that serves it sees it.
+        let _screens = params.terminal_text().then(|| Held::new(self, |a| &a.screens).0);
         let mut published = self.published.subscribe();
         let ticket = self.requested.fetch_add(1, SeqCst) + 1;
         (self.wake)();
@@ -193,13 +200,13 @@ fn content_type(cbor: bool) -> &'static str {
 fn reply(cbor: bool, body: Option<Vec<u8>>) -> Response {
     match body {
         Some(body) => ([(header::CACHE_CONTROL, "no-store"), (header::CONTENT_TYPE, content_type(cbor))], body).into_response(),
-        None => (StatusCode::INTERNAL_SERVER_ERROR, "the tree exceeds 4 MiB").into_response(),
+        None => (StatusCode::INTERNAL_SERVER_ERROR, "the response exceeds 4 MiB").into_response(),
     }
 }
 
 async fn semantic(State(automation): State<Arc<Automation>>, Query(params): Query<Params>, headers: HeaderMap) -> Response {
     let cbor = cbor_wanted(&headers);
-    let published = match automation.fresh().await {
+    let published = match automation.fresh(&params).await {
         Ok(published) => published,
         Err(status) => return status.into_response(),
     };
@@ -214,7 +221,7 @@ async fn caller(State(automation): State<Arc<Automation>>, Query(params): Query<
     let Some(session) = params.session.clone().filter(|session| !session.is_empty()) else {
         return (StatusCode::BAD_REQUEST, "session is required").into_response();
     };
-    let published = match automation.fresh().await {
+    let published = match automation.fresh(&params).await {
         Ok(published) => published,
         Err(status) => return status.into_response(),
     };
@@ -230,60 +237,81 @@ async fn caller(State(automation): State<Arc<Automation>>, Query(params): Query<
     reply(cbor, encode(&Caller { schema: SCHEMA, generation: published.generation, session, views }, cbor))
 }
 
-/// Ends a stream's count when the client goes.
-struct Stream(Arc<Automation>);
+/// One of an [`Automation`]'s counts, held up while this lives.
+struct Held(Arc<Automation>, fn(&Automation) -> &AtomicUsize);
 
-impl Drop for Stream {
+impl Held {
+    /// Held, and the count before.
+    fn new(automation: &Arc<Automation>, count: fn(&Automation) -> &AtomicUsize) -> (Held, usize) {
+        (Held(automation.clone(), count), count(automation).fetch_add(1, SeqCst))
+    }
+}
+
+impl Drop for Held {
     fn drop(&mut self) {
-        self.0.streams.fetch_sub(1, SeqCst);
+        (self.1)(&self.0).fetch_sub(1, SeqCst);
     }
 }
 
 /// A snapshot first, unless `since` is current, then one after each change.
-/// The stream ends when automation turns off or `root` goes.
+/// The stream ends when automation turns off or `root` goes. A first
+/// snapshot over [`MAX_RESPONSE`] is a 500; a later one breaks the stream
+/// off unfinished.
 async fn events(State(automation): State<Arc<Automation>>, Query(params): Query<Params>, headers: HeaderMap) -> Response {
     let cbor = cbor_wanted(&headers);
-    let published = match automation.fresh().await {
+    // The cap first, so a refused client never makes the UI build.
+    let (stream, open) = Held::new(&automation, |a| &a.streams);
+    if open >= MAX_STREAMS {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let screens = params.terminal_text().then(|| Held::new(&automation, |a| &a.screens).0);
+    let published = match automation.fresh(&params).await {
         Ok(published) => published,
         Err(status) => return status.into_response(),
     };
-    if tree(&published, &params).is_none() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    if automation.streams.fetch_add(1, SeqCst) >= MAX_STREAMS {
-        automation.streams.fetch_sub(1, SeqCst);
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-    let stream = Stream(automation.clone());
-    let sent = (params.since.as_deref() == Some(&automation.cursor(published.generation))).then_some(published.generation);
-    let changes = automation.published.subscribe();
-    let lines = futures_util::stream::unfold((stream, changes, sent, params), move |(stream, mut changes, mut sent, params)| async move {
+    let first = match event(&automation, &published, &params, cbor) {
+        None => return StatusCode::NOT_FOUND.into_response(),
+        Some(_) if params.since.as_deref() == Some(&automation.cursor(published.generation)) => None,
+        Some(None) => return reply(cbor, None),
+        Some(line) => line,
+    };
+    let state = (stream, screens, automation.published.subscribe(), published.generation, params);
+    let rest = futures_util::stream::unfold(state, move |(stream, screens, mut changes, mut sent, params)| async move {
         loop {
             let published = changes.borrow_and_update().clone();
             // Automation turned off.
             published.tree.as_ref()?;
-            if sent != Some(published.generation) {
-                sent = Some(published.generation);
-                let tree = tree(&published, &params)?;
-                let cursor = stream.0.cursor(tree.generation);
-                let line = fit(tree, |tree| {
-                    let record = Record { frame: None, cursor: cursor.clone(), event: Event::Snapshot { tree: tree.clone() } };
-                    if cbor {
-                        FRAMING.encode(&Record { frame: Some("event".into()), ..record }).ok()
-                    } else {
-                        encode(&record, false).map(|mut line| {
-                            line.push(b'\n');
-                            line
-                        })
-                    }
-                })?;
-                return Some((Ok::<_, std::convert::Infallible>(line), (stream, changes, sent, params)));
+            if sent != published.generation {
+                sent = published.generation;
+                // Too large: break off, unlike the clean end of turning off.
+                let line = event(&stream.0, &published, &params, cbor)?.ok_or_else(|| std::io::Error::other("the snapshot exceeds 4 MiB"));
+                return Some((line, (stream, screens, changes, sent, params)));
             }
             changes.changed().await.ok()?;
         }
     });
+    let lines = futures_util::stream::iter(first.map(Ok)).chain(rest);
     let content_type = if cbor { "application/cbor" } else { "application/x-ndjson" };
     ([(header::CACHE_CONTROL, "no-store"), (header::CONTENT_TYPE, content_type)], Body::from_stream(lines)).into_response()
+}
+
+/// `published` as one event for `params`, a line of JSON or a CBOR frame:
+/// `None` while automation is off or when `root` has gone, `Some(None)` past
+/// [`MAX_RESPONSE`].
+fn event(automation: &Automation, published: &Published, params: &Params, cbor: bool) -> Option<Option<Vec<u8>>> {
+    let tree = tree(published, params)?;
+    let cursor = automation.cursor(tree.generation);
+    Some(fit(tree, |tree| {
+        let record = Record { frame: None, cursor: cursor.clone(), event: Event::Snapshot { tree: tree.clone() } };
+        if cbor {
+            FRAMING.encode(&Record { frame: Some("event".into()), ..record }).ok()
+        } else {
+            encode(&record, false).map(|mut line| {
+                line.push(b'\n');
+                line
+            })
+        }
+    }))
 }
 
 /// What `params` read of `published`: `None` while automation is off, or
@@ -421,19 +449,21 @@ impl Generation {
                 }
             });
         }
-        let bytes = serde_json::to_vec(&*nodes).expect("nodes serialise");
+        // Called from C, so no panics: a tree that won't serialise counts as
+        // changed.
+        let bytes = serde_json::to_vec(&*nodes).ok();
         let mut screens = screens.into_iter();
         for node in nodes.iter_mut() {
             node.visit_mut(&mut |node| {
                 if let Some(terminal) = &mut node.props.terminal {
-                    (terminal.text, terminal.cursor) = screens.next().expect("one per terminal");
+                    (terminal.text, terminal.cursor) = screens.next().unwrap_or_default();
                 }
             });
         }
-        let changed = self.last.as_ref() != Some(&bytes);
+        let changed = bytes.is_none() || self.last != bytes;
         if changed {
             self.generation += 1;
-            self.last = Some(bytes);
+            self.last = bytes;
         }
         changed
     }
@@ -441,10 +471,11 @@ impl Generation {
 
 /// The UI's side, at each frame's end: note the setting, and while a read
 /// waits or a stream is open, build the tree with `build`, compare it, and
-/// publish it if a read waits or it changed. `build` gives `None` when the
-/// tree isn't available now; reads then time out.
-pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32, build: impl FnOnce() -> Option<Vec<Node>>) {
-    let mode = mode.min(AUTOMATION_FULL);
+/// publish it if a read waits or it changed. `build` is told whether anyone
+/// asked for screens, and gives `None` when the tree isn't available now;
+/// reads then time out. A setting it doesn't know is taken as off.
+pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32, build: impl FnOnce(bool) -> Option<Vec<Node>>) {
+    let mode = if mode > AUTOMATION_FULL { AUTOMATION_OFF } else { mode };
     automation.mode.store(mode, SeqCst);
     let requested = automation.requested.load(SeqCst);
     let current = automation.published.borrow().clone();
@@ -454,7 +485,7 @@ pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32
     }
     let mut tree = match mode {
         AUTOMATION_OFF => None,
-        _ => match build() {
+        _ => match build(automation.screens.load(SeqCst) > 0) {
             Some(tree) => Some(tree),
             None => return,
         },

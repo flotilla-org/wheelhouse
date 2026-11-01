@@ -831,13 +831,15 @@ class IngressTests(unittest.TestCase):
     @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
     def test_automation_off_serves_none_of_its_routes(self):
-        path, _, _ = self.start_automation('off', user='automation: "off"\n')
-        for target in ['/v1/observed/semantic', '/v1/observed/self?session=agent-session', '/v1/observed/events']:
-            for cbor in (False, True):
-                self.assertEqual(self.get(path, target, cbor)[0], 404)
-        # The metadata routes are not affected.
-        self.assertEqual(self.get(path, '/v1/observed/workdirs')[0], 200)
-        publish(path, patch('project', 'p', {'display.label': 'still served'}))
+        # A value it doesn't know is off too.
+        for value in ('off', 'disabled'):
+            path, _, _ = self.start_automation(value, user='automation: "%s"\n' % value)
+            for target in ['/v1/observed/semantic', '/v1/observed/self?session=agent-session', '/v1/observed/events']:
+                for cbor in (False, True):
+                    self.assertEqual(self.get(path, target, cbor)[0], 404, (value, target))
+            # The metadata routes are not affected.
+            self.assertEqual(self.get(path, '/v1/observed/workdirs')[0], 200)
+            publish(path, patch('project', 'p', {'display.label': 'still served'}))
 
     # A stand-in for `flotilla pm connect` that ignores SIGTERM, as does the
     # child it starts; it appends "<its pid> <child pid>" to $WH_TEST_CONNECTOR.

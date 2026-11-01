@@ -58,10 +58,11 @@ extern void wheelhouse_ingress_poll_observed(WheelhouseIngress *,
 // The Automation Endpoint's reads (GET /v1/observed/semantic, /self and
 // /events; docs/protocol/automation-endpoint.md). At each frame's end,
 // wheelhouse_ingress_automation takes the host's automation setting (mode:
-// off serves none of them, 404), and while a client wants the Semantic Tree
-// calls observe on the UI thread, which gives out, synchronously, each core's
-// workspaces (a JSON array from wheelhouse_semantic_workspaces), the
-// workspaces windows show, and what it knows of terminals; then returns 1,
+// off, or any other value, serves none of them, 404), and while a client
+// wants the Semantic Tree calls observe on the UI thread, which gives out,
+// synchronously, each core's workspaces (a JSON array from
+// wheelhouse_semantic_workspaces), the workspaces windows show, and what it
+// knows of terminals, their screens only when screens is 1; then returns 1,
 // or 0 when it can't now.
 #define WHEELHOUSE_AUTOMATION_OFF 0u
 #define WHEELHOUSE_AUTOMATION_OBSERVE 1u
@@ -83,7 +84,7 @@ extern void wheelhouse_ingress_automation_selected(WheelhouseIngressAutomationBu
 extern void wheelhouse_ingress_automation_terminal(WheelhouseIngressAutomationBuild *, const WheelhouseIngressTerminal *);
 typedef struct {
   uint32_t mode;
-  uint32_t (*observe)(void *context, WheelhouseIngressAutomationBuild *out);
+  uint32_t (*observe)(void *context, WheelhouseIngressAutomationBuild *out, uint32_t screens);
   void *context;
 } WheelhouseIngressAutomationHost;
 extern void wheelhouse_ingress_automation(WheelhouseIngress *, const WheelhouseIngressAutomationHost *);

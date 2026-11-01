@@ -6,15 +6,16 @@
 // session, size and, when the setting allows, screen. Rust builds the
 // values.
 
-// The `automation` user setting: off, observe or full (the default).
+// The `automation` user setting: off, observe or full (the default when
+// missing). Any other value is off, as at launch (uishell_automation_enabled).
 internal U32
 uishell_automation_mode(void)
 {
   CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
   String8 value = cfg_node_child_from_string(user, str8_lit("automation"))->first->string;
-  if(str8_match(value, str8_lit("off"), StringMatchFlag_CaseInsensitive)) { return WHEELHOUSE_AUTOMATION_OFF; }
+  if(value.size == 0 || str8_match(value, str8_lit("full"), StringMatchFlag_CaseInsensitive)) { return WHEELHOUSE_AUTOMATION_FULL; }
   if(str8_match(value, str8_lit("observe"), StringMatchFlag_CaseInsensitive)) { return WHEELHOUSE_AUTOMATION_OBSERVE; }
-  return WHEELHOUSE_AUTOMATION_FULL;
+  return WHEELHOUSE_AUTOMATION_OFF;
 }
 
 // Whether `automation_terminal_text` lets clients read terminals' screens.
@@ -93,13 +94,14 @@ uishell_automation_session(Arena *arena, CFG_Node *view, UIShell_TerminalViewSta
 }
 
 // The ingress's observer: every window's workspaces, the one it shows, and
-// what the UI knows of its terminals.
+// what the UI knows of its terminals; their screens only when a client asked
+// and the setting allows.
 internal U32
-uishell_automation_observe(void *unused, WheelhouseIngressAutomationBuild *out)
+uishell_automation_observe(void *unused, WheelhouseIngressAutomationBuild *out, U32 wanted)
 {
   Temp scratch = scratch_begin(0, 0);
   U32 result = 1;
-  B32 screens = uishell_automation_terminal_text();
+  B32 screens = wanted && uishell_automation_terminal_text();
   for(RD_WindowState *ws = rd_state->first_window_state; ws != &rd_nil_window_state; ws = ws->order_next)
   {
     UIShell_SidebarState *state = uishell_sidebar_init(ws);

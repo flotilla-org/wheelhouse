@@ -65,7 +65,8 @@ warning on stderr, so a mistyped `off` leaves automation off.
 - `off`: there is no default listener and terminals get no
   `WHEELHOUSE_SOCKET`. An address given on the command line is still served,
   for metadata, and the automation routes answer 404 there. Turning it off
-  while Wheelhouse runs makes them answer 404 from the next frame.
+  while Wheelhouse runs makes them answer 404 from the next frame, as does
+  changing it to a value it doesn't know.
 - `observe` and `full` behave the same until commands exist (ADR 0014).
 
 The metadata routes, `/v1/observed/workdirs` included, are not affected by
@@ -136,7 +137,12 @@ share when it lands. While a read waits for the tree or an event stream is
 open, the UI builds the tree at each frame's end and compares it with the
 last one, and the generation goes up when it differs. Otherwise nothing is
 built. A terminal's screen text doesn't count as a change, but its size
-does.
+does. Screens are read only while some read or stream asks for
+`include=terminal_text`.
+
+**Cost.** While any stream is open, every frame builds and serialises the
+whole tree to compare it, until Core deltas (#441) give a cheaper signal.
+Close streams you no longer read.
 
 ### Events
 
@@ -153,8 +159,12 @@ drydock's `/v1/events` does. Each line is one event:
   have Core deltas (#441); `delta` events come then.
 - **A cursor that can't be resumed** (another instance's, an older one, or
   nonsense) gets a snapshot. Cursors are opaque, and no history is kept.
+- **The generation is global.** A stream with a `root` gets a snapshot when
+  any node changes, even one outside its root.
 - **The stream ends** when automation is turned off, or when its `root`
-  goes.
+  goes. A later snapshot over 4 MiB, even without terminal text, breaks it
+  off instead: the body stops unfinished (no final chunk), so a client can
+  tell the two apart. A first one over is a 500, as for a single read.
 - **Screen text never makes an event by itself.** A stream that asks for
   `include=terminal_text` gets the screens in the snapshots structural
   changes send, not live screen updates.

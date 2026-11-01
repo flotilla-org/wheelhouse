@@ -237,13 +237,15 @@ fn queries_parse() {
 }
 
 /// An endpoint on a real socket, with a UI that ends a frame every 10ms
-/// showing `tree`, under the `mode` setting.
+/// showing `tree`, under the `mode` setting; it gives screens only when
+/// asked, and `screens` says whether the last build was.
 #[cfg(unix)]
 struct Endpoint {
     path: std::path::PathBuf,
     automation: Arc<Automation>,
     tree: Arc<std::sync::Mutex<Vec<Node>>>,
     mode: Arc<AtomicU32>,
+    screens: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[cfg(unix)]
@@ -268,11 +270,19 @@ impl Endpoint {
         });
         let tree = Arc::new(std::sync::Mutex::new(nodes()));
         let mode = Arc::new(AtomicU32::new(AUTOMATION_FULL));
-        let endpoint = Endpoint { path, automation: automation.clone(), tree: tree.clone(), mode: mode.clone() };
+        let screens = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let endpoint = Endpoint { path, automation: automation.clone(), tree: tree.clone(), mode: mode.clone(), screens: screens.clone() };
         std::thread::spawn(move || {
             let mut generation = Generation::default();
             loop {
-                frame_end(&automation, &mut generation, mode.load(SeqCst), || Some(tree.lock().unwrap().clone()));
+                frame_end(&automation, &mut generation, mode.load(SeqCst), |asked| {
+                    screens.store(asked, SeqCst);
+                    let mut nodes = tree.lock().unwrap().clone();
+                    if !asked {
+                        drop_terminal_text(&mut nodes);
+                    }
+                    Some(nodes)
+                });
                 std::thread::sleep(Duration::from_millis(10));
             }
         });
@@ -281,10 +291,14 @@ impl Endpoint {
 
     /// A GET's status and head, and its body as it comes.
     fn get(&self, target: &str, headers: &str) -> (u16, String, Body) {
+        self.request(&format!("GET {target} HTTP/1.0\r\n{headers}\r\n"))
+    }
+
+    /// HTTP/1.0 bodies run to the close, unchunked; HTTP/1.1 ones are chunked.
+    fn request(&self, request: &str) -> (u16, String, Body) {
         use std::io::{BufRead, Write};
         let mut stream = std::os::unix::net::UnixStream::connect(&self.path).unwrap();
-        // HTTP/1.0: the body runs to the close, unchunked.
-        write!(stream, "GET {target} HTTP/1.0\r\n{headers}\r\n").unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
         stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
         let mut reader = std::io::BufReader::new(stream);
         let mut head = String::new();
@@ -427,6 +441,9 @@ fn reads_answer_from_the_next_frame() {
     let mut plain = nodes();
     drop_terminal_text(&mut plain);
     assert_eq!(json.nodes, plain);
+    assert!(!endpoint.screens.load(SeqCst), "no screens unless asked");
+    let (_, _, body) = endpoint.read("/v1/observed/semantic?include=terminal_text", "");
+    assert!(String::from_utf8(body).unwrap().contains("$ ls"));
     let (_, head, body) = endpoint.read("/v1/observed/semantic", "Accept: application/cbor\r\n");
     assert!(head.contains("content-type: application/cbor"), "{head}");
     assert_eq!(flotilla_cbor::from_slice::<Tree>(&body, &LIMITS).unwrap(), json);
@@ -439,4 +456,56 @@ fn reads_answer_from_the_next_frame() {
     assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["views"].as_array().unwrap().len(), 2);
     assert_eq!(endpoint.read("/v1/observed/self", "").0, 400);
     assert_eq!(endpoint.read("/v1/observed/semantic?root=workspace/none", "").0, 404);
+}
+
+// A setting the ingress doesn't know is taken as off.
+#[test]
+fn an_unknown_mode_is_off() {
+    extern "C" fn wake() {}
+    let automation = Automation::new(wake);
+    frame_end(&automation, &mut Generation::default(), AUTOMATION_FULL + 1, |_| Some(nodes()));
+    assert_eq!(automation.mode.load(SeqCst), AUTOMATION_OFF);
+}
+
+// Past the cap, a stream is refused before it makes the UI build.
+#[cfg(unix)]
+#[test]
+fn a_stream_past_the_cap_is_refused_without_a_build() {
+    let endpoint = Endpoint::start();
+    endpoint.automation.streams.store(MAX_STREAMS, SeqCst);
+    let requested = endpoint.automation.requested.load(SeqCst);
+    assert_eq!(endpoint.read("/v1/observed/events", "").0, 503);
+    assert_eq!(endpoint.automation.requested.load(SeqCst), requested);
+    assert_eq!(endpoint.automation.streams.load(SeqCst), MAX_STREAMS);
+}
+
+// Turning automation off ends a stream cleanly; a later snapshot over the
+// cap breaks it off, without the final chunk, and a first one is a 500.
+#[cfg(unix)]
+#[test]
+fn an_oversize_snapshot_breaks_the_stream_off() {
+    use std::io::{BufRead, Read};
+    let endpoint = Endpoint::start();
+    let stream = |endpoint: &Endpoint| endpoint.request("GET /v1/observed/events HTTP/1.1\r\nConnection: close\r\n\r\n");
+    let rest = |mut body: Body| {
+        let mut rest = Vec::new();
+        body.read_to_end(&mut rest).unwrap();
+        rest
+    };
+    let (status, head, mut body) = stream(&endpoint);
+    assert!(status == 200 && head.contains("transfer-encoding: chunked"), "{head}");
+    body.read_line(&mut String::new()).unwrap();
+    endpoint.mode.store(AUTOMATION_OFF, SeqCst);
+    assert!(rest(body).ends_with(b"0\r\n\r\n"), "turning off ends it cleanly");
+    endpoint.mode.store(AUTOMATION_FULL, SeqCst);
+    while endpoint.automation.mode.load(SeqCst) != AUTOMATION_FULL {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let (status, _, mut body) = stream(&endpoint);
+    assert_eq!(status, 200);
+    body.read_line(&mut String::new()).unwrap();
+    endpoint.rename(&"x".repeat(MAX_RESPONSE));
+    assert!(!rest(body).ends_with(b"0\r\n\r\n"), "an oversize snapshot ended it cleanly");
+    // Over the cap from the start: a 500, as for one read.
+    assert_eq!(endpoint.read("/v1/observed/events", "").0, 500);
 }

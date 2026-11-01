@@ -69,14 +69,16 @@ pub type Apply = unsafe extern "C" fn(*mut c_void, *const u8, usize) -> u32;
 pub type Retract = unsafe extern "C" fn(*mut c_void) -> u32;
 
 /// Builds the Semantic Tree on the UI thread, giving it to `out` through
-/// `wheelhouse_ingress_automation_workspaces`, `_selected` and `_terminal`;
+/// `wheelhouse_ingress_automation_workspaces`, `_selected` and `_terminal`,
+/// with terminals' screens only when `screens` is 1 (a client asked);
 /// returns 1, or 0 when it isn't available now.
-pub type AutomationObserve = unsafe extern "C" fn(context: *mut c_void, out: *mut AutomationBuild) -> u32;
+pub type AutomationObserve = unsafe extern "C" fn(context: *mut c_void, out: *mut AutomationBuild, screens: u32) -> u32;
 #[cfg(any(unix, windows))]
 pub use automation::Build as AutomationBuild;
 #[cfg(not(any(unix, windows)))]
 pub enum AutomationBuild {}
-/// The `automation` setting: off serves none of the routes.
+/// The `automation` setting: off serves none of the routes, nor does any
+/// value but these.
 pub const AUTOMATION_OFF: u32 = 0;
 pub const AUTOMATION_OBSERVE: u32 = 1;
 pub const AUTOMATION_FULL: u32 = 2;
@@ -982,10 +984,10 @@ pub unsafe extern "C" fn wheelhouse_ingress_poll_observed(
 pub unsafe extern "C" fn wheelhouse_ingress_automation(server: *mut Ingress, host: *const AutomationHost) {
     #[cfg(any(unix, windows))]
     if let (Some(server), Some(host)) = (server.as_mut(), host.as_ref()) {
-        automation::frame_end(&server.automation, &mut server.generation, host.mode, || {
+        automation::frame_end(&server.automation, &mut server.generation, host.mode, |screens| {
             let observe = host.observe?;
             let mut build = AutomationBuild { valid: true, ..Default::default() };
-            let ok = observe(host.context, &mut build) == 1;
+            let ok = observe(host.context, &mut build, u32::from(screens)) == 1;
             if ok && !build.valid {
                 eprintln!("wheelhouse ingress: the Semantic Tree's observer gave malformed JSON or text; answering 503");
             }
