@@ -38,6 +38,16 @@ struct UIShell_TableState
   F32 end_gap[Axis2_COUNT];
   // The fraction a thumb drag last asked for, so a held thumb asks once.
   F64 dragged_to[Axis2_COUNT];
+  // Find, from the View's search row: its toggles, and which way the last
+  // step went (1 next, -1 previous) for the wrap note.
+  B32 find_case;
+  B32 find_regex;
+  B32 find_by_cols;
+  S32 find_dir;
+  // As of the last Snapshot: whether the source finds (BINNACLE_FIND* bits),
+  // and whether a step's match is current.
+  U32 find_support;
+  B32 find_current;
 };
 
 // Cells painted, counted by the table diagnostics.
@@ -101,6 +111,9 @@ struct UIShell_TableDraw
   // The text's painter, if not the box's font (uishell_table_draw_text).
   UIShell_TableTextFunction *draw_text;
   void *text_user;
+  // Find is open: mark the cells that match, in match.
+  B32 finding;
+  Vec4F32 match;
 };
 
 internal Rng2F32
@@ -149,8 +162,25 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
   UIShell_TableTextFunction *draw_text = d->draw_text ? d->draw_text : uishell_table_draw_text;
   Rng2F32 body = r2f32p(o.x0+col_band, o.y0+row_band, o.x1, o.y1);
 
+  // Which shown cells match the Find Query, row by row over the Strips.
+  Temp scratch = scratch_begin(0, 0);
+  U8 *marks = 0;
+  if(d->finding && rows->strip_len != 0 && cols->strip_len != 0)
+  {
+    U64 *row_keys = push_array(scratch.arena, U64, rows->strip_len);
+    U64 *col_keys = push_array(scratch.arena, U64, cols->strip_len);
+    for(size_t r = 0; r < rows->strip_len; r += 1) { row_keys[r] = rows->strip[r].key; }
+    for(size_t c = 0; c < cols->strip_len; c += 1) { col_keys[c] = cols->strip[c].key; }
+    marks = push_array(scratch.arena, U8, rows->strip_len*cols->strip_len);
+    wheelhouse_table_find_marks(d->table, row_keys, rows->strip_len, col_keys, cols->strip_len, marks);
+  }
+  // Matches in the theme's match colour; the current one in the accent.
+  Vec4F32 match = d->match, current = accent;
+  current.w *= 0.4f;
+
   // Body cells: each row item crossing each column item, clipped to the
-  // Strips they draw in.
+  // Strips they draw in; a match washed under its text, the current one
+  // more strongly.
   for(size_t r = 0; r < rows->strip_len; r += 1)
   {
     BinnacleStripItem *ri = &rows->strip[r];
@@ -168,6 +198,11 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
         Vec4F32 loading = weak; loading.w *= 0.15f;
         dr_rect(intersect_2f32(cell, clip), loading, 0, 0, 1.f);
         continue;
+      }
+      if(marks != 0 && marks[r*cols->strip_len + c])
+      {
+        B32 is_current = snap->has_find_match && snap->find_match.row == ri->key && snap->find_match.col == ci->key;
+        dr_rect(intersect_2f32(cell, clip), is_current ? current : match, 0, 0, 1.f);
       }
       U32 align = 0;
       String8 text = uishell_table_text(wheelhouse_table_cell(d->table, ri->key, ci->key, &align));
@@ -262,6 +297,7 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
                                                      : r2f32p(o.x0, o.y0+snap->drop_offset-1.f, o.x1, o.y0+snap->drop_offset+1.f);
     dr_rect(drop, accent, 0, 0, 0.f);
   }
+  scratch_end(scratch);
 }
 
 internal U32
@@ -334,7 +370,6 @@ uishell_table_key(BinnacleGrid *grid, UI_Event *evt)
   else if(evt->key == WM_Key_A && (evt->modifiers & WM_Modifier_Accel)) { a.kind = BINNACLE_ACTION_SELECT_ALL; }
   else if(evt->key == WM_Key_Space && (evt->modifiers & WM_Modifier_Shift)) { a.kind = BINNACLE_ACTION_SELECT_ROW; }
   else if(evt->key == WM_Key_Space && (evt->modifiers & WM_Modifier_Ctrl)) { a.kind = BINNACLE_ACTION_SELECT_COLUMN; }
-  else if(evt->key == WM_Key_F3) { a.kind = (evt->modifiers & WM_Modifier_Shift) ? BINNACLE_ACTION_FIND_PREVIOUS : BINNACLE_ACTION_FIND_NEXT; }
   // Alt with Page Up or Down pages along the columns.
   else if((evt->key == WM_Key_PageUp || evt->key == WM_Key_PageDown) && (evt->modifiers & WM_Modifier_Alt))
   {
@@ -345,6 +380,107 @@ uishell_table_key(BinnacleGrid *grid, UI_Event *evt)
   else { return 0; }
   uishell_table_act(grid, a);
   return 1;
+}
+
+// What the find bar says of the matches: "3 of 120" once a step has landed
+// on a current match, else "120 matches"; "No matches"; "+" on a partial
+// count, and how many lie in collapsed groups. Empty while find is closed.
+internal String8
+uishell_table_find_count(Arena *arena, WheelhouseTableFind find, B32 current)
+{
+  if(!find.open) { return str8_zero(); }
+  if(find.total == 0 && !find.partial) { return str8_lit("No matches"); }
+  String8 total = push_str8f(arena, "%S%s", str8_from_u64(arena, find.total, 10, 0, ','), find.partial ? "+" : "");
+  String8 hidden = find.hidden == 0 ? str8_zero() :
+                   push_str8f(arena, ", %S in collapsed groups", str8_from_u64(arena, find.hidden, 10, 0, ','));
+  if(find.stepped && find.has_index && current)
+  {
+    return push_str8f(arena, "%S of %S%S", str8_from_u64(arena, find.index+1, 10, 0, ','), total, hidden);
+  }
+  return push_str8f(arena, "%S %s%S", total, find.total == 1 && !find.partial ? "match" : "matches", hidden);
+}
+
+// Whether the View's query row is a search, whose text is the table's
+// Find Query.
+internal B32
+uishell_table_searching(RD_ViewState *vs)
+{
+  String8 cmd = rd_view_query_cmd();
+  return vs->query_is_open && (str8_match(cmd, str8_lit("search"), 0) || str8_match(cmd, str8_lit("search_backwards"), 0));
+}
+
+// One find step, Next (1) or Previous (-1), noted for the wrap note.
+internal void
+uishell_table_find_step(UIShell_TableState *state, S32 dir)
+{
+  BinnacleAction a = {0};
+  a.kind = dir > 0 ? BINNACLE_ACTION_FIND_NEXT : BINNACLE_ACTION_FIND_PREVIOUS;
+  uishell_table_act(wheelhouse_table_grid(state->table), a);
+  state->find_dir = dir;
+  rd_request_frame();
+}
+
+// The table's part of its search row: the count, a note when a step wraps,
+// matching case, regexes where the source takes them, the order steps go
+// in, and Previous and Next.
+internal void
+uishell_table_query_extras(void *user_data)
+{
+  UIShell_TableState *state = (UIShell_TableState *)user_data;
+  if(state->table == 0 || !uishell_table_searching(rd_view_state_from_view(uishell_regs()->view, 0))) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  // The buttons are for the mouse: Enter and Escape stay the field's.
+  UI_PrefWidth(ui_text_dim(10, 1)) RD_Font(RD_FontSlot_Main) UI_Focus(UI_FocusKind_Off)
+  {
+    if(!(state->find_support & BINNACLE_FIND))
+    {
+      UI_TagF("weak") ui_labelf("This table has no find");
+    }
+    else
+    {
+      WheelhouseTableFind find = wheelhouse_table_find(state->table);
+      String8 count = uishell_table_find_count(scratch.arena, find, state->find_current);
+      ui_spacer(ui_em(0.5f, 1.f));
+      if(count.size != 0)
+      {
+        if(find.total == 0 && !find.partial) UI_TagF("bad") { ui_label(count); }
+        else UI_TagF("weak") { ui_label(count); }
+      }
+      if(find.open && find.stepped && find.wrapped)
+      {
+        UI_TagF("weak") ui_label(state->find_dir < 0 ? str8_lit("Wrapped to the end") : str8_lit("Wrapped to the start"));
+      }
+      ui_spacer(ui_em(0.5f, 1.f));
+      UI_TagF(state->find_case ? "pop" : "")
+      {
+        UI_Signal sig = ui_buttonf("Aa###find_case");
+        if(ui_hovering(sig)) UI_Tooltip { ui_labelf("Match case"); }
+        if(ui_clicked(sig)) { state->find_case = !state->find_case; rd_request_frame(); }
+      }
+      if(state->find_support & BINNACLE_FIND_REGEX) UI_TagF(state->find_regex ? "pop" : "")
+      {
+        UI_Signal sig = ui_buttonf(".*###find_regex");
+        if(ui_hovering(sig)) UI_Tooltip { ui_labelf("Use regular expression"); }
+        if(ui_clicked(sig)) { state->find_regex = !state->find_regex; rd_request_frame(); }
+      }
+      {
+        UI_Signal sig = ui_buttonf("%s###find_by", state->find_by_cols ? "By columns" : "By rows");
+        if(ui_hovering(sig)) UI_Tooltip { ui_labelf("The order find steps in"); }
+        if(ui_clicked(sig)) { state->find_by_cols = !state->find_by_cols; rd_request_frame(); }
+      }
+      RD_Font(RD_FontSlot_Icons)
+      {
+        UI_Signal previous = ui_buttonf("%S###find_previous", rd_icon_kind_text_table[RD_IconKind_UpArrow]);
+        if(ui_hovering(previous)) UI_Tooltip RD_Font(RD_FontSlot_Main) { ui_labelf("Previous match (Shift+Enter)"); }
+        if(ui_clicked(previous)) { uishell_table_find_step(state, -1); }
+        UI_Signal next = ui_buttonf("%S###find_next", rd_icon_kind_text_table[RD_IconKind_DownArrow]);
+        if(ui_hovering(next)) UI_Tooltip RD_Font(RD_FontSlot_Main) { ui_labelf("Next match (Enter)"); }
+        if(ui_clicked(next)) { uishell_table_find_step(state, 1); }
+      }
+      ui_spacer(ui_em(0.5f, 1.f));
+    }
+  }
+  scratch_end(scratch);
 }
 
 WH_VIEW_UI_FUNCTION_DEF(table)
@@ -362,7 +498,9 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   {
     uishell_table_release(state);
   }
-  rd_view_state_from_view(ctx->settings.view, 0)->release_user_data = uishell_table_release;
+  RD_ViewState *vs = rd_view_state_from_view(ctx->settings.view, 0);
+  vs->release_user_data = uishell_table_release;
+  vs->query_extras = uishell_table_query_extras;
   if(!state->table && name.size != 0 && name.size <= sizeof(state->name) &&
      !str8_match(name, str8(state->failed, state->failed_size), 0))
   {
@@ -415,6 +553,36 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   }
 
   BinnacleGrid *grid = wheelhouse_table_grid(state->table);
+  // Find follows the View's search row: its text, with the row's toggles, is
+  // the Find Query while it is open, and closing it closes find. Enter (the
+  // search command), F3 and the row's buttons step; Shift+Enter, Shift+F3
+  // and Cmd+F3 step back.
+  B32 finding = uishell_table_searching(vs) && (state->find_support & BINNACLE_FIND);
+  String8 find_text = finding ? rd_view_query_input() : str8_zero();
+  if(find_text.size != 0)
+  {
+    BinnacleFindQuery query = {0};
+    query.query.text = (BinnacleText){find_text.str, find_text.size};
+    query.query.flags = (state->find_case ? BINNACLE_TEXT_CASE_SENSITIVE : 0) |
+                        (state->find_regex && (state->find_support & BINNACLE_FIND_REGEX) ? BINNACLE_TEXT_REGEX : 0);
+    query.by = state->find_by_cols ? BINNACLE_COLS : BINNACLE_ROWS;
+    binnacle_grid_set_find(grid, &query);
+  }
+  else
+  {
+    binnacle_grid_set_find(grid, 0);
+  }
+  for(UIShell_Cmd *cmd = 0; uishell_next_view_cmd(&cmd);)
+  {
+    if(str8_match(cmd->name, str8_lit("search"), 0) || str8_match(cmd->name, str8_lit("find_next"), 0))
+    {
+      uishell_table_find_step(state, 1);
+    }
+    else if(str8_match(cmd->name, str8_lit("search_backwards"), 0) || str8_match(cmd->name, str8_lit("find_prev"), 0))
+    {
+      uishell_table_find_step(state, -1);
+    }
+  }
   // A described table's state (connecting, retrying, failed, partly shown)
   // takes a line above the Grid, as of the last frame.
   String8 status = push_str8_copy(scratch.arena, uishell_table_text(wheelhouse_table_status(state->table)));
@@ -529,7 +697,10 @@ WH_VIEW_UI_FUNCTION_DEF(table)
       uishell_table_act(grid, a);
     }
   }
-  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active())
+  // Keys go to the Grid unless its query row has them: Enter there steps
+  // find, and Escape closes it.
+  B32 row_focused = vs->query_is_open && !vs->contents_are_focused;
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && !row_focused)
   {
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
@@ -544,11 +715,16 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   if(!str8_match(status, uishell_table_text(wheelhouse_table_status(state->table)), 0)) { rd_request_frame(); }
   UIShell_TableDraw *draw = push_array(ui_build_arena(), UIShell_TableDraw, 1);
   draw->table = state->table;
+  draw->finding = find_text.size != 0;
+  UI_TagF("match") { draw->match = ui_color_from_name(str8_lit("background")); }
+  if(draw->match.w == 0) { draw->match = ui_color_from_name(str8_lit("selection")); }
   // Effects for the host: nothing acts on them yet (#506 has no actions),
   // so drain them to keep the queue bounded, before the Snapshot whose
   // arrays the draw reads.
   for(BinnacleEffect effect; binnacle_grid_poll_effect(grid, &effect);) {}
   binnacle_grid_snapshot(grid, &draw->snap);
+  state->find_support = draw->snap.find_support;
+  state->find_current = draw->snap.has_find_match;
   // Next frame's bars: a Thumb stands for the scrolling Strip's share of the
   // content it scrolls through; the pinned Strips stay put.
   for EachEnumVal(Axis2, axis)

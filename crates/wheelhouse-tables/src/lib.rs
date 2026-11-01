@@ -13,8 +13,11 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::time::Duration;
 
-use binnacle_core::{Axis, AxisConfig, Grid, Key, Located, Scalar, Stamped, Support, Viewport};
-use binnacle_memory::{pump, IdentitySource, MemorySource, PumpSource};
+use binnacle_core::{
+    Axis, AxisConfig, Distinct, DistinctQuery, Effect, FindDirection, FindMatch, FindQuery, Grid, Key, Located, Position, Scalar, Stamped,
+    Support, TextSupport, ViewSpec, Viewport,
+};
+use binnacle_memory::{pump, FindCount, FindStep, IdentitySource, MemorySource, Moved, PumpSource, Viewed};
 
 /// The tables, by the name a host opens them with.
 pub const NAMES: [&str; 3] = ["records", "huge", "live"];
@@ -200,6 +203,76 @@ enum Kind {
 /// A canned table: its Table Source and the text its cells draw.
 pub struct Table {
     kind: Kind,
+    find: Find,
+}
+
+/// What the host's find bar shows: the Find Query in force, the last
+/// step's place among the matches, and the count, kept until the query or
+/// the data changes.
+#[derive(Default)]
+struct Find {
+    query: Option<FindQuery>,
+    step: Option<FindStep>,
+    count: Option<FindCount>,
+}
+
+/// Where the last find step landed among the matches, as the find bar says
+/// it: its 0-based `index` if the source gave one, and whether it wrapped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stepped {
+    pub index: Option<u64>,
+    pub wrapped: bool,
+}
+
+/// A Table Source that keeps what its last find step found, which
+/// [`pump`] answers the Grid with but does not hand on.
+struct Recording<'a, S: ?Sized> {
+    source: &'a mut S,
+    step: &'a mut Option<FindStep>,
+}
+
+impl<S: PumpSource + ?Sized> PumpSource for Recording<'_, S> {
+    fn view(&mut self, spec: &ViewSpec) -> Viewed {
+        self.source.view(spec)
+    }
+    fn support(&mut self, axis: Axis, key: Key) -> Support {
+        self.source.support(axis, key)
+    }
+    fn quick_filter(&mut self, axis: Axis) -> Option<TextSupport> {
+        self.source.quick_filter(axis)
+    }
+    fn hide_support(&mut self, axis: Axis) -> bool {
+        self.source.hide_support(axis)
+    }
+    fn hide_cap(&mut self, axis: Axis) -> Option<usize> {
+        self.source.hide_cap(axis)
+    }
+    fn distinct(&mut self, axis: Axis, key: Key, query: &DistinctQuery) -> Option<Distinct> {
+        self.source.distinct(axis, key, query)
+    }
+    fn locate(&mut self, axis: Axis, key: Key) -> Located {
+        self.source.locate(axis, key)
+    }
+    fn find_support(&mut self) -> Option<TextSupport> {
+        self.source.find_support()
+    }
+    fn find_next(&mut self, query: &FindQuery, from: Option<FindMatch>, direction: FindDirection) -> Option<FindStep> {
+        let step = self.source.find_next(query, from, direction);
+        *self.step = step;
+        step
+    }
+    fn ancestors(&mut self, axis: Axis, key: Key) -> Vec<Key> {
+        self.source.ancestors(axis, key)
+    }
+    fn fits(&mut self, axis: Axis, key: Key) -> bool {
+        self.source.fits(axis, key)
+    }
+    fn movable(&mut self, axis: Axis) -> Option<bool> {
+        self.source.movable(axis)
+    }
+    fn move_items(&mut self, axis: Axis, keys: &[Key], to: Position) -> Result<Moved, String> {
+        self.source.move_items(axis, keys, to)
+    }
 }
 
 /// Where a cell's text sits across it.
@@ -254,7 +327,7 @@ impl Table {
                 let id = source.support(Axis::Rows, Key(0)).with_text(None).with_one_of(false).with_compare(None);
                 grid.set_support(Axis::Rows, Key(0), id);
                 let kind = Kind::Records { rows, source: Box::new(source) };
-                Some((Table { kind }, grid))
+                Some((Table { kind, find: Find::default() }, grid))
             }
             "huge" => {
                 let digits = HUGE_ROWS.to_string().len() as f32;
@@ -267,14 +340,14 @@ impl Table {
                     grid.set_support(Axis::Rows, Key(c), none);
                 }
                 let kind = Kind::Huge(Huge { rows: IdentitySource::new(HUGE_ROWS), cols: IdentitySource::new(HUGE_COLS) });
-                Some((Table { kind }, grid))
+                Some((Table { kind, find: Find::default() }, grid))
             }
             "live" => {
                 let grid = Grid::new(
                     AxisConfig::new(TICKERS as u64, line).header(line),
                     AxisConfig::new(TICKER_HEADERS.len() as u64, 12.0 * digit).header(5.0 * digit).gap(1.0),
                 );
-                Some((Table { kind: Kind::Live(Live::new()) }, grid))
+                Some((Table { kind: Kind::Live(Live::new()), find: Find::default() }, grid))
             }
             _ => None,
         }
@@ -311,7 +384,7 @@ impl Table {
             grid.set_support(Axis::Rows, Key(c), source.support(Axis::Rows, Key(c)));
         }
         let kind = Kind::Cells(Cells { header, rows, right, source: Box::new(source) });
-        (Table { kind }, grid)
+        (Table { kind, find: Find::default() }, grid)
     }
 
     /// The described table at `link` and an empty Grid for it, sized in
@@ -324,7 +397,7 @@ impl Table {
             AxisConfig::new(0, metrics.line).header(metrics.line),
             AxisConfig::new(0, 14.0 * metrics.digit).header(5.0 * metrics.digit).gap(1.0),
         );
-        Some((Table { kind: Kind::Described(Box::new(described)) }, grid))
+        Some((Table { kind: Kind::Described(Box::new(described)), find: Find::default() }, grid))
     }
 
     /// What the host shows about the table above it, if anything: a
@@ -343,7 +416,14 @@ impl Table {
     pub fn tick(&mut self, grid: &mut Grid, now: Duration) -> Option<Duration> {
         let live = match &mut self.kind {
             Kind::Live(live) => live,
-            Kind::Described(d) => return d.tick(grid),
+            Kind::Described(d) => {
+                // What came may change what matches: count again.
+                let (wake, changed) = d.tick(grid);
+                if changed {
+                    self.find.count = None;
+                }
+                return wake;
+            }
             _ => return None,
         };
         // A first call, or one after a long gap (a hidden tab, a sleep),
@@ -355,26 +435,77 @@ impl Table {
         while live.next <= now {
             live.tick(grid);
             live.next += TICK;
+            self.find.count = None;
         }
         Some(live.next - now)
     }
 
     /// Answers the Effects the source answers (View Specs, Locates, moves,
     /// find steps) and hands every other one to `pass_on`, in order.
+    /// A Find Query that changes is kept for [`Table::find_count`] and
+    /// [`Table::find_marks`], and passed on too.
     pub fn pump(&mut self, grid: &mut Grid, mut pass_on: impl FnMut(Stamped)) {
-        let mut seen = |_: &mut Grid, stamped: Stamped| {
-            use binnacle_core::Effect::*;
-            match stamped.effect {
-                ViewRequested { .. } | Locate { .. } | MoveRequested { .. } | FindStepRequested { .. } => {}
-                _ => pass_on(stamped),
+        let find = &mut self.find;
+        let mut step = None;
+        let mut seen = |_: &mut Grid, stamped: Stamped| match &stamped.effect {
+            // A View Spec can change which cells are shown: count again.
+            Effect::ViewRequested { .. } => find.count = None,
+            Effect::Locate { .. } | Effect::MoveRequested { .. } | Effect::FindStepRequested { .. } => {}
+            Effect::FindRequested { query } => {
+                *find = Find { query: query.clone(), step: None, count: None };
+                pass_on(stamped);
             }
+            _ => pass_on(stamped),
+        };
+        let mut recording = |source: &mut dyn PumpSource, grid: &mut Grid, seen: &mut dyn FnMut(&mut Grid, Stamped)| {
+            pump(grid, &mut Recording { source, step: &mut step }, seen)
         };
         match &mut self.kind {
-            Kind::Records { rows, source } => source.pump(rows, grid, &mut seen),
-            Kind::Cells(Cells { rows, source, .. }) => source.pump(rows, grid, &mut seen),
-            Kind::Huge(huge) => pump(grid, huge, &mut seen),
-            Kind::Live(Live { rows, source, .. }) => source.pump(rows, grid, &mut seen),
-            Kind::Described(d) => d.pump(grid, &mut seen),
+            Kind::Records { rows, source } => recording(&mut source.over(rows), grid, &mut seen),
+            Kind::Cells(Cells { rows, source, .. }) => recording(&mut source.over(rows), grid, &mut seen),
+            Kind::Huge(huge) => recording(huge, grid, &mut seen),
+            Kind::Live(Live { rows, source, .. }) => recording(&mut source.over(rows), grid, &mut seen),
+            Kind::Described(d) => recording(&mut d.source, grid, &mut seen),
+        }
+        if step.is_some() {
+            self.find.step = step;
+        }
+    }
+
+    /// Where the last find step landed among the matches of the Find Query
+    /// in force, or `None` before a step since the query changed.
+    pub fn find_stepped(&self) -> Option<Stepped> {
+        self.find.step.as_ref().map(|s| Stepped { index: s.index, wrapped: s.wrapped })
+    }
+
+    /// How many cells match the Find Query in force, counted once until the
+    /// query or the data changes; `None` while find is closed.
+    pub fn find_count(&mut self) -> Option<FindCount> {
+        let query = self.find.query.as_ref()?;
+        if self.find.count.is_none() {
+            self.find.count = Some(match &mut self.kind {
+                Kind::Records { rows, source } => source.find_count(rows, query),
+                Kind::Cells(Cells { rows, source, .. }) => source.find_count(rows, query),
+                Kind::Live(Live { rows, source, .. }) => source.find_count(rows, query),
+                Kind::Described(d) => d.source.find_count(query),
+                Kind::Huge(_) => FindCount::default(),
+            });
+        }
+        self.find.count
+    }
+
+    /// Which cells of the block `rows` by `cols` match the Find Query in
+    /// force, row by row; all `false` while find is closed.
+    pub fn find_marks(&mut self, rows: &[Key], cols: &[Key]) -> Vec<bool> {
+        let Some(query) = &self.find.query else {
+            return vec![false; rows.len() * cols.len()];
+        };
+        match &mut self.kind {
+            Kind::Records { rows: data, source } => source.find_marks(data, rows, cols, query),
+            Kind::Cells(Cells { rows: data, source, .. }) => source.find_marks(data, rows, cols, query),
+            Kind::Live(Live { rows: data, source, .. }) => source.find_marks(data, rows, cols, query),
+            Kind::Described(d) => d.source.find_marks(rows, cols, query),
+            Kind::Huge(_) => vec![false; rows.len() * cols.len()],
         }
     }
 

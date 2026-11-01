@@ -16,6 +16,24 @@ pub const WHEELHOUSE_TABLE_ALIGN_RIGHT: u32 = 1;
 /// wheelhouse_table_frame's answer when the table never changes by itself.
 pub const WHEELHOUSE_TABLE_NEVER: u64 = u64::MAX;
 
+/// What the host's find bar says, as of the last wheelhouse_table_frame.
+#[repr(C)]
+pub struct WheelhouseTableFind {
+    /// 1 while a Find Query is in force; the rest is zero while not.
+    pub open: u32,
+    /// How many cells match: total, or at least total while partial, of
+    /// which hidden lie in collapsed groups.
+    pub total: u64,
+    pub partial: u32,
+    pub hidden: u64,
+    /// 1 once a find step has landed since the Find Query changed: its
+    /// 0-based index among the matches if has_index, and whether it wrapped.
+    pub stepped: u32,
+    pub has_index: u32,
+    pub index: u64,
+    pub wrapped: u32,
+}
+
 /// A table and the Grid over it.
 pub struct WheelhouseTable {
     table: Table,
@@ -189,6 +207,68 @@ pub unsafe extern "C" fn wheelhouse_table_header(table: *mut WheelhouseTable, ax
     let axis = if axis == 0 { Axis::Rows } else { Axis::Cols };
     t.text = t.table.header(axis, Key(key), position);
     Text::borrowed(&t.text)
+}
+
+/// What the find bar says about the Find Query in force: the count, counted
+/// once until the query or the data changes, and where the last step landed.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_find(table: *mut WheelhouseTable) -> WheelhouseTableFind {
+    let mut find = WheelhouseTableFind { open: 0, total: 0, partial: 0, hidden: 0, stepped: 0, has_index: 0, index: 0, wrapped: 0 };
+    // SAFETY: the caller's contract.
+    let Some(t) = (unsafe { table.as_mut() }) else {
+        return find;
+    };
+    let Some(count) = t.table.find_count() else {
+        return find;
+    };
+    find.open = 1;
+    find.total = count.total;
+    find.partial = count.partial.into();
+    find.hidden = count.hidden;
+    if let Some(stepped) = t.table.find_stepped() {
+        find.stepped = 1;
+        find.has_index = stepped.index.is_some().into();
+        find.index = stepped.index.unwrap_or(0);
+        find.wrapped = stepped.wrapped.into();
+    }
+    find
+}
+
+/// Marks which cells of the block rows by cols (row and column Keys,
+/// rows_len and cols_len of them) match the Find Query in force: out, of
+/// rows_len*cols_len bytes, gets 1 for a match and 0 otherwise, row by row;
+/// all 0 while find is closed.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_find_marks(
+    table: *mut WheelhouseTable,
+    rows: *const u64,
+    rows_len: usize,
+    cols: *const u64,
+    cols_len: usize,
+    out: *mut u8,
+) {
+    let Some(len) = rows_len.checked_mul(cols_len) else {
+        return;
+    };
+    if out.is_null() || len == 0 {
+        return;
+    }
+    // SAFETY: the caller's contract: out holds rows_len*cols_len bytes.
+    let out = unsafe { std::slice::from_raw_parts_mut(out, len) };
+    out.fill(0);
+    // SAFETY: the caller's contract.
+    let Some(t) = (unsafe { table.as_mut() }) else {
+        return;
+    };
+    if rows.is_null() || cols.is_null() {
+        return;
+    }
+    // SAFETY: the caller's contract: rows_len and cols_len Keys.
+    let keys = |p: *const u64, n: usize| unsafe { std::slice::from_raw_parts(p, n) }.iter().map(|&k| Key(k)).collect::<Vec<_>>();
+    let marks = t.table.find_marks(&keys(rows, rows_len), &keys(cols, cols_len));
+    for (o, m) in out.iter_mut().zip(marks) {
+        *o = m.into();
+    }
 }
 
 #[no_mangle]

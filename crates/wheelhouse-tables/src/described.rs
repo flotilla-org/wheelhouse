@@ -10,7 +10,7 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
-use binnacle_core::{Axis, Grid, Key, Stamped};
+use binnacle_core::{Axis, Grid, Key};
 use binnacle_described::{DescribedSource, HostRequest, Received, Scope};
 use binnacle_described_http::{Endpoint, Event, Options, Transport};
 use binnacle_format::{format, FixedOffset, FormatContext, FormatOptions, Timestamp, Value};
@@ -203,8 +203,10 @@ impl Described {
 
     /// Feeds the source what came, telling `grid` what changed, and serves
     /// what the source asks. Returns how long until the table needs drawing
-    /// again by itself (relative dates), or `None`.
-    pub fn tick(&mut self, grid: &mut Grid) -> Option<Duration> {
+    /// again by itself (relative dates), or `None`, and whether any rows or
+    /// columns changed.
+    pub fn tick(&mut self, grid: &mut Grid) -> (Option<Duration>, bool) {
+        let mut changed = false;
         for event in self.watcher.take() {
             let received = match event {
                 Event::Message(message) => {
@@ -226,6 +228,7 @@ impl Described {
                 _ => continue,
             };
             if let Received::Applied(notices) = received {
+                changed |= !notices.is_empty();
                 let described = notices.iter().any(|(axis, _)| *axis == Axis::Cols);
                 for (axis, notice) in notices {
                     grid.notify(axis, notice);
@@ -244,7 +247,7 @@ impl Described {
         }
         let options = FormatOptions::default();
         let relative = self.source.columns().iter().any(|c| options.relative_dates(c.role()));
-        (relative && self.source.row_count() != 0).then_some(RELATIVE_DATES)
+        ((relative && self.source.row_count() != 0).then_some(RELATIVE_DATES), changed)
     }
 
     /// What to say about the table above it, if anything: connecting,
@@ -297,10 +300,6 @@ impl Described {
             Axis::Cols => self.source.column(key).map(|c| c.header().to_owned()).unwrap_or_default(),
             Axis::Rows => position.saturating_add(1).to_string(),
         }
-    }
-
-    pub fn pump(&mut self, grid: &mut Grid, seen: impl FnMut(&mut Grid, Stamped)) {
-        binnacle_memory::pump(grid, &mut self.source, seen);
     }
 }
 

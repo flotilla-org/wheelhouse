@@ -51,6 +51,11 @@ uishell_query_ui_diagnostics(RD_WindowState *ws)
         UI_Event escape = {.kind = UI_EventKind_Press, .key = WM_Key_Esc, .slot = UI_EventActionSlot_Cancel};
         ui_event_list_push(arena, &events, &escape);
       }
+      if(frame == 7)
+      {
+        UI_Event back = {.kind = UI_EventKind_Press, .key = WM_Key_Return, .modifiers = WM_Modifier_Shift};
+        ui_event_list_push(arena, &events, &back);
+      }
       UI_IconInfo icons = saved_window_ui->icon_info;
       UI_AnimationInfo animation = {0};
       ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -66,6 +71,19 @@ uishell_query_ui_diagnostics(RD_WindowState *ws)
       if(frame == 4 || frame == 6)
       { QueryCheck(str8_match(rd_view_query_input(), str8_lit("replacement"), 0)); }
       if(frame == 5) { QueryCheck(!vs->query_is_open && vs->query_string_size == 0); }
+      // Shift+Enter in a search finds the previous match of its text, and
+      // the row stays open.
+      if(frame == 7)
+      {
+        B32 back = 0;
+        for(UIShell_Cmd *cmd = 0; uishell_next_cmd(&cmd);)
+        {
+          back |= str8_match(cmd->name, str8_lit("find_prev"), 0) && str8_match(cmd->regs->string, str8_lit("replacement"), 0) &&
+                  rd_view_address_match(cmd->regs->view, rd_view_address_from_cfg(view));
+        }
+        QueryCheck(back && vs->query_is_open);
+        MemoryZeroStruct(&rd_state->cmds[0]);
+      }
       if(frame == 0 || frame == 3 || frame == 6)
       {
         QueryCheck(!ui_key_match(ui_state->edit_owner_key, ui_key_zero()));

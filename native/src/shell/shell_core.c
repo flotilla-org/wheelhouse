@@ -2076,6 +2076,7 @@ WH_VIEW_UI_FUNCTION_DEF(pending)
       arena_release(ext->arena);
     }
     if(vs->release_user_data) { vs->release_user_data(vs->user_data); vs->release_user_data = 0; }
+    vs->query_extras = 0;
     arena_pop_to(vs->arena, vs->arena_reset_pos);
     vs->user_data = 0;
     vs->user_data_size = 0;
@@ -2205,6 +2206,10 @@ rd_view_ui(Rng2F32 rect)
           vs->contents_are_focused = 0;
           uishell_cmd("focus_panel");
         }
+      }
+      if(vs->query_extras != 0 && vs->user_data != 0) UI_Transparency(1-search_row_open_t)
+      {
+        vs->query_extras(vs->user_data);
       }
     }
     
@@ -2348,6 +2353,19 @@ rd_view_ui(Rng2F32 rect)
     {
       vs->query_is_open = 0;
       vs->query_string_size = 0;
+    }
+    // Shift+Enter in a search finds the previous match; the row stays open,
+    // as Enter's search keeps it.
+    if(ui_is_focus_active() && str8_match(rd_view_query_cmd(), str8_lit("search"), 0))
+    {
+      for(UI_Event *evt = 0; ui_next_event(&evt);)
+      {
+        if(evt->kind == UI_EventKind_Press && evt->key == WM_Key_Return && evt->modifiers == WM_Modifier_Shift)
+        {
+          ui_eat_event(evt);
+          uishell_cmd("find_prev", .string = rd_view_query_input());
+        }
+      }
     }
     if(ui_is_focus_active() && ui_slot_press(UI_EventActionSlot_Accept))
     {

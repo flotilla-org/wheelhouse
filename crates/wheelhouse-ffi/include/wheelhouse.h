@@ -1804,6 +1804,23 @@ typedef struct {
   size_t count;
 } WheelhouseStrip;
 
+// What the host's find bar says, as of the last wheelhouse_table_frame.
+typedef struct {
+  // 1 while a Find Query is in force; the rest is zero while not.
+  uint32_t open;
+  // How many cells match: total, or at least total while partial, of
+  // which hidden lie in collapsed groups.
+  uint64_t total;
+  uint32_t partial;
+  uint64_t hidden;
+  // 1 once a find step has landed since the Find Query changed: its
+  // 0-based index among the matches if has_index, and whether it wrapped.
+  uint32_t stepped;
+  uint32_t has_index;
+  uint64_t index;
+  uint32_t wrapped;
+} WheelhouseTableFind;
+
 typedef struct {
   // WH_TEXT_FONT_*.
   uint32_t kind;
@@ -3156,6 +3173,21 @@ WheelhouseText wheelhouse_table_header(WheelhouseTable *table,
                                        uint32_t axis,
                                        uint64_t key,
                                        uint64_t position);
+
+// What the find bar says about the Find Query in force: the count, counted
+// once until the query or the data changes, and where the last step landed.
+WheelhouseTableFind wheelhouse_table_find(WheelhouseTable *table);
+
+// Marks which cells of the block rows by cols (row and column Keys,
+// rows_len and cols_len of them) match the Find Query in force: out, of
+// rows_len*cols_len bytes, gets 1 for a match and 0 otherwise, row by row;
+// all 0 while find is closed.
+void wheelhouse_table_find_marks(WheelhouseTable *table,
+                                 const uint64_t *rows,
+                                 size_t rows_len,
+                                 const uint64_t *cols,
+                                 size_t cols_len,
+                                 uint8_t *out);
 
 void wheelhouse_table_free(WheelhouseTable *table);
 
