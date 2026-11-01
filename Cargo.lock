@@ -1774,6 +1774,7 @@ dependencies = [
  "insta",
  "kdl",
  "pulldown-cmark",
+ "regex",
  "serde",
  "serde_json",
  "unicode-width",

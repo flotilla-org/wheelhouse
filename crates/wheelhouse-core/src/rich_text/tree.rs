@@ -445,6 +445,18 @@ impl Tree {
         }
     }
 
+    /// The Blocks' first entry and one past their last, for a node.
+    pub(crate) fn entry_range(&self, id: NodeId) -> (usize, usize) {
+        let node = self.node(id);
+        if node.parent == NIL {
+            return (0, self.entries.len());
+        }
+        if node.entry == NIL {
+            return (0, 0);
+        }
+        (node.entry as usize, (node.entry + node.entries) as usize)
+    }
+
     /// Whether `ancestor` is `id` or one of its ancestors.
     pub fn contains(&self, ancestor: NodeId, mut id: NodeId) -> bool {
         loop {
