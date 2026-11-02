@@ -9,3 +9,5 @@ members:
   - alias: binnacle
     url: https://github.com/flotilla-org/binnacle
     roles: [code]
+image:
+  layers: [rust, zig, display-x11]
