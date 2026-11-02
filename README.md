@@ -54,9 +54,8 @@ wheelhouse meta`, then runs the checks listed in `ci/windows-checks.toml` in ord
 going after a failure, prints a pass/fail summary at the end, and exits non-zero if anything
 failed. It sets up the Visual Studio C++ environment itself if `cl.exe` is not on `PATH`.
 `--skip build` reruns the checks against an existing build, `--group unit` runs only the
-Python unit checks, and `--list` prints the checks without running them. A check that needs to
-create symbolic links is skipped, with the reason, unless Developer Mode is on or the shell is
-elevated. CI runs the same list (see `ci/README.md`).
+Python unit checks, and `--list` prints the checks without running them. CI runs the same list (see
+`ci/README.md`).
 
 Terminal panes on Windows need Cleat's bundled ConPTY: the inbox ConPTY drops Kitty
 graphics. `native/build.bat` runs the Cleat checkout's `tools\prepare-conpty.ps1`, which fetches

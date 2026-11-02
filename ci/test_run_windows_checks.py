@@ -14,9 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
-import textwrap
 import unittest
-from unittest import mock
 
 CI = pathlib.Path(__file__).resolve().parent
 ROOT = CI.parent
@@ -163,19 +161,7 @@ class Runner(unittest.TestCase):
         self.assert_rejected("not an earlier check", check("one", needs='["two"]'), check("two"))
         self.assert_rejected("group must be one of", check("one", group="lint"))
         self.assert_rejected("unknown key", check("one", timeout="5"))
-        self.assert_rejected("unknown requirement 'admin'", check("one", requires='["admin"]'))
         self.assert_rejected("no [[check]] entries")
-
-
-class Requirements(unittest.TestCase):
-    def test_a_check_needing_symlinks_is_skipped_with_the_reason_when_they_are_unavailable(self):
-        runner = load_runner()
-        entry = {"name": "links", "requires": ["symlinks"]}
-        with mock.patch.object(runner, "can_symlink", return_value=False):
-            self.assertIn("Developer Mode", runner.missing_requirement(entry))
-        with mock.patch.object(runner, "can_symlink", return_value=True):
-            self.assertIsNone(runner.missing_requirement(entry))
-        self.assertIsNone(runner.missing_requirement({"name": "plain"}))
 
 
 class CheckedInList(unittest.TestCase):

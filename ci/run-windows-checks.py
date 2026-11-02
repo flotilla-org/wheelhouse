@@ -7,8 +7,8 @@
     python ci/run-windows-checks.py --list        # print the checks without running them
 
 Runs each selected check in file order from the repository root and keeps
-going after a failure. A check whose `needs` did not pass, or that `requires`
-something this machine lacks, is skipped with the reason. Prints a summary and
+going after a failure. A check whose `needs` did not pass is skipped with the
+reason. Prints a summary and
 exits 1 if any check failed. build.yml's Windows jobs run the same list.
 Standard library only (3.11+, for tomllib).
 """
@@ -20,7 +20,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import tomllib
 
@@ -28,10 +27,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_LIST = ROOT / "ci" / "windows-checks.toml"
 FORMAT = 1
 GROUPS = ("unit", "native")
-REQUIREMENTS = ("symlinks",)
 NAME = re.compile(r"[a-z][a-z0-9-]*")
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-KEYS = {"name", "group", "run", "env", "needs", "requires"}
+KEYS = {"name", "group", "run", "env", "needs"}
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
 
@@ -86,9 +84,6 @@ def load(path):
         for need in _strings(check.get("needs", []), where, "needs"):
             if need not in seen:
                 raise ListError(f"{where}: needs {need!r}, which is not an earlier check")
-        for requirement in _strings(check.get("requires", []), where, "requires"):
-            if requirement not in REQUIREMENTS:
-                raise ListError(f"{where}: unknown requirement {requirement!r}; expected one of {', '.join(REQUIREMENTS)}")
         seen.add(name)
     return checks
 
@@ -96,24 +91,6 @@ def load(path):
 def display(check):
     env = [f"{key}={value}" for key, value in check.get("env", {}).items()]
     return " ".join(env + check["run"])
-
-
-def can_symlink():
-    with tempfile.TemporaryDirectory(prefix="wheelhouse-symlink-probe-") as directory:
-        target = pathlib.Path(directory) / "target"
-        target.write_text("")
-        try:
-            (pathlib.Path(directory) / "link").symlink_to(target)
-        except (OSError, NotImplementedError):
-            return False
-    return True
-
-
-def missing_requirement(check):
-    """The reason this machine cannot run `check`, or None."""
-    if "symlinks" in check.get("requires", []) and not can_symlink():
-        return "needs symlink privilege: turn on Developer Mode (Settings > System > For developers) or run elevated"
-    return None
 
 
 _host = None
@@ -168,8 +145,8 @@ def run(checks, skipped):
     for check in checks:
         name = check["name"]
         unmet = [need for need in check.get("needs", []) if status_of.get(need, PASS) != PASS]
-        reason = f"{', '.join(unmet)} did not pass" if unmet else missing_requirement(check)
-        if reason:
+        if unmet:
+            reason = f"{', '.join(unmet)} did not pass"
             print(f"\n=== {name}: SKIP ({reason})", flush=True)
             status_of[name] = SKIP
             results.append((name, SKIP, reason))

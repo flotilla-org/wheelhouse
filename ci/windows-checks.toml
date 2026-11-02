@@ -14,8 +14,6 @@
 #   needs     checks that must pass first; if one fails, this is skipped.
 #             A check left out with --skip or --only counts as passed, so
 #             `--skip build` runs the rest against an existing build.
-#   requires  "symlinks": skipped, with the reason, when the user cannot
-#             create symbolic links (Developer Mode off and not elevated).
 format = 1
 
 # --- unit: the daily-driver job ----------------------------------------------
@@ -30,12 +28,9 @@ name = "daily-driver-windows"
 group = "unit"
 run = ["python", "tools/test-daily-driver-windows.py"]
 
-# Fakes the toolchain with symlinks and runs native/build.sh under bash.
-[[check]]
-name = "build-failures"
-group = "unit"
-run = ["python", "tools/test-build-failures.py"]
-requires = ["symlinks"]
+# Not tools/test-build-failures.py: it checks native/build.sh against a fake
+# POSIX toolchain (symlinks to a #! script), which does not run on Windows
+# even where symlinks can be made, so the job runs it on Linux only.
 
 [[check]]
 name = "terminal-input-readiness"

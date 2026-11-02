@@ -117,8 +117,6 @@ env = { WHEELHOUSE_TEST_BINARY = "build/wheelhouse" }
 needs = ["build"]
 ```
 
-`requires = ["symlinks"]` skips a check, with the reason, when the user
-cannot create symbolic links (Developer Mode off, not elevated). See the
-header of `windows-checks.toml` for the rest. `test_run_windows_checks.py`
+See the header of `windows-checks.toml` for the keys. `test_run_windows_checks.py`
 checks that `build.yml` runs each group on Windows and that no other
 `build.yml` step runs a listed script there.
