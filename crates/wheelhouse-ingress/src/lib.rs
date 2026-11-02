@@ -226,8 +226,8 @@ mod transport {
     #[cfg(windows)]
     mod windows;
 
-    /// Who is calling, as the kernel says (ADR 0011). Stated, not verified
-    /// (ADR 0014): no route admits or attributes by it.
+    /// Who is calling, as the kernel says. Stated, not verified (ADR 0014):
+    /// no route admits or attributes by it.
     #[cfg(unix)]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct Peer {
