@@ -200,7 +200,8 @@ if "%meta%"=="1" (
 )
 if "%no_meta%"=="" if exist metagen.exe (
   echo [running metagen]
-  metagen.exe || exit /b 1
+  rem .\ because cmd skips the current directory under NoDefaultCurrentDirectoryInExePath
+  .\metagen.exe || exit /b 1
 )
 popd
 
