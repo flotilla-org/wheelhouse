@@ -2971,6 +2971,10 @@ struct UIShell_TextViewState
   TxtPt cursor;
   TxtPt mark;
   S64 preferred_column;
+  // Text given by value (the `text` setting), as a code Block opened in a
+  // new View brings its code: in the content cache under this View's root.
+  C_Root value_root;
+  U128 value_hash;
 };
 
 typedef struct UIShell_TextVisualLine UIShell_TextVisualLine;
@@ -3418,6 +3422,96 @@ uishell_text_slice(UIShell_TextSliceParams *params, TxtPt *cursor, TxtPt *mark, 
   return result;
 }
 
+// The text view's lines as an Embedded View (#622): a code Block in Rich
+// Text. No bar, no wrapping, and no scroll region of its own: its parent
+// says where it is, which part of it shows, and how far it is scrolled, and
+// only the lines in that part are built.
+typedef struct UIShell_TextEmbedParams UIShell_TextEmbedParams;
+struct UIShell_TextEmbedParams
+{
+  TXT_TextInfo *info;
+  String8 data;
+  // In the parent's coordinates: the embed's rect, and what of it shows.
+  Rng2F32 rect;
+  Rng2F32 visible;
+  Vec2F32 scroll;
+  B32 show_line_numbers;
+  String8 search_query;
+};
+
+typedef struct UIShell_TextEmbedSignal UIShell_TextEmbedSignal;
+struct UIShell_TextEmbedSignal
+{
+  UI_Signal base;
+  // The lines built, the content's size, and where its first column is,
+  // for scrolling it.
+  Rng1S64 lines_built;
+  Vec2F32 content_dim;
+  F32 text_x;
+};
+
+// Measures the text view's rows, in its own font: what an embed's height is
+// made of.
+internal F32
+uishell_text_row_height(void)
+{
+  return rd_font_size()*1.45f;
+}
+
+internal UIShell_TextEmbedSignal
+uishell_text_embed(UIShell_TextEmbedParams *p, UIShell_TextViewState *tv, String8 key_string)
+{
+  UIShell_TextEmbedSignal result = {0};
+  Temp scratch = scratch_begin(0, 0);
+  FNT_Tag font = rd_font_from_slot(RD_FontSlot_Code);
+  F32 font_size = rd_font_size();
+  F32 row_height = uishell_text_row_height();
+  F32 advance = fnt_column_size_from_tag_size(font, font_size);
+  U64 line_count = p->info->lines_count;
+  F32 line_num_width = p->show_line_numbers ? floor_f32(advance*(log10(ClampBot(1, line_count))+3)) : 0;
+  UIShell_TextVisualLineArray lines = {0};
+  if(line_count != 0) { lines = uishell_text_visual_line_array_from_info(scratch.arena, p->data, p->info, max_U64, 0); }
+  // The slice pads its text by three quarters of the font size each side.
+  result.text_x = line_num_width + font_size*0.75f;
+  result.content_dim = v2f32(line_num_width + advance*p->info->lines_max_size + font_size*1.5f, row_height*lines.count);
+  tv->cursor.line = Clamp(1, tv->cursor.line, ClampBot(1, (S64)line_count));
+  tv->mark.line = Clamp(1, tv->mark.line, ClampBot(1, (S64)line_count));
+  F32 top = p->visible.y0 - p->rect.y0 + p->scroll.y, bottom = p->visible.y1 - p->rect.y0 + p->scroll.y;
+  S64 first = Clamp(0, (S64)floor_f32(top/row_height), (S64)lines.count);
+  S64 opl = Clamp(first, (S64)ceil_f32(bottom/row_height), (S64)lines.count);
+  result.lines_built = r1s64(first, opl);
+  UI_Box *clip = &ui_nil_box;
+  UI_Rect(p->rect) { clip = ui_build_box_from_string(UI_BoxFlag_Floating|UI_BoxFlag_Clip, key_string); }
+  UI_Parent(clip) UI_Focus(UI_FocusKind_On)
+  {
+    F32 width = Max(result.content_dim.x, dim_2f32(p->rect).x + p->scroll.x);
+    UI_Box *at = &ui_nil_box;
+    UI_Rect(r2f32p(-p->scroll.x, first*row_height - p->scroll.y, width - p->scroll.x, opl*row_height - p->scroll.y))
+    {
+      at = ui_build_box_from_string(UI_BoxFlag_Floating, str8_lit("text_embed_lines"));
+    }
+    UI_Parent(at) if(opl > first)
+    {
+      UIShell_TextSliceParams slice = {0};
+      slice.lines = lines.v + first;
+      slice.line_count = (U64)(opl - first);
+      slice.text_info = p->info;
+      slice.text_data = p->data;
+      slice.font = font;
+      slice.font_size = font_size;
+      slice.tab_size = advance*4.f;
+      slice.search_query = p->search_query;
+      slice.line_height_px = row_height;
+      slice.line_num_width_px = line_num_width;
+      slice.line_text_max_width_px = width;
+      slice.show_line_numbers = p->show_line_numbers;
+      result.base = uishell_text_slice(&slice, &tv->cursor, &tv->mark, &tv->preferred_column, str8_lit("text_slice")).base;
+    }
+  }
+  scratch_end(scratch);
+  return result;
+}
+
 internal S64
 uishell_text_visual_row_from_line(UIShell_TextVisualLineArray *lines, S64 line_num)
 {
@@ -3462,6 +3556,15 @@ uishell_text_line_from_needle(String8 data, TXT_TextInfo *info, String8 needle, 
   return result;
 }
 
+internal void
+uishell_text_view_release(void *user_data)
+{
+  UIShell_TextViewState *tv = (UIShell_TextViewState *)user_data;
+  if(tv->value_root.u64[0] != 0) { c_root_release(tv->value_root); }
+  tv->value_root = (C_Root){0};
+  tv->value_hash = u128_zero();
+}
+
 WH_VIEW_UI_FUNCTION_DEF(shell_text)
 {
   Rng2F32 rect = ctx->rect;
@@ -3475,6 +3578,24 @@ WH_VIEW_UI_FUNCTION_DEF(shell_text)
   B32 file_is_missing = (file_path.size != 0 && props.modified == 0);
   Rng1U64 range = rd_space_range_from_eval(eval);
   C_Key text_key = rd_key_from_eval_space_range(eval.space, range, 1);
+  String8 value = wh_view_setting(ctx, str8_lit("text"));
+  if(value.size == 0 && tv->value_root.u64[0] != 0) { uishell_text_view_release(tv); }
+  if(file_path.size == 0 && value.size != 0)
+  {
+    if(tv->value_root.u64[0] == 0)
+    {
+      tv->value_root = c_root_alloc();
+      // The text view sets no other release hook; its user data is `tv`.
+      rd_view_state_from_view(ctx->settings.view, 0)->release_user_data = uishell_text_view_release;
+    }
+    text_key = c_key_make(tv->value_root, c_id_make(0, 0));
+    U128 value_hash = u128_hash_from_str8(value);
+    if(!u128_match(value_hash, tv->value_hash))
+    {
+      Arena *data_arena = arena_alloc();
+      tv->value_hash = c_submit_data(text_key, &data_arena, push_str8_copy(data_arena, value));
+    }
+  }
   TXT_LangKind lang_kind = TXT_LangKind_Null;
   String8 lang = wh_view_setting(ctx, str8_lit("lang"));
   if(lang.size != 0)
