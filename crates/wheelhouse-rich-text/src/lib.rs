@@ -146,10 +146,12 @@ impl RichText {
 
     /// Nodes whose key and content are unchanged keep their versions. A
     /// conversation becomes markdown. Returns whether anything changed.
-    /// Offsets are `u32`, so markdown is under 4 GiB.
+    /// Offsets are `u32`, so markdown is under 4 GiB. CRLF and lone CR line
+    /// endings read as LF.
     pub fn reload(&mut self, markdown: &str) -> bool {
         self.conversation = None;
         assert!(u32::try_from(markdown.len()).is_ok(), "markdown under 4 GiB");
+        let markdown = &*ingest::lf_line_endings(markdown);
         let before = view::was(&self.doc);
         let anchors: Vec<(SubscriptionId, _)> = self.subscribers.iter().map(|(&id, s)| (id, s.view.anchor_was(&self.doc))).collect();
         let staged = ingest::parse(markdown);

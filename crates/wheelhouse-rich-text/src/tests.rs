@@ -620,3 +620,49 @@ fn a_widened_marker_moves_only_its_own_items_lines() {
     let parsed = RichText::open(&markdown);
     assert!(parsed.doc().preorder().iter().all(|&id| parsed.doc().kind(id) != Kind::Code), "echo stays a paragraph");
 }
+
+/// `markdown` with every line ending `eol`, whatever the checkout gave it.
+fn with_line_endings(markdown: &str, eol: &str) -> String {
+    markdown.replace("\r\n", "\n").replace('\n', eol)
+}
+
+#[test]
+fn crlf_and_lone_cr_line_endings_read_as_lf() {
+    for fixture in [BLOCKS, GFM, EXTENSIONS] {
+        let lf = outline(RichText::open(&with_line_endings(fixture, "\n")).doc());
+        assert!(!lf.contains("\\r"), "{lf}");
+        for eol in ["\r\n", "\r"] {
+            assert_eq!(outline(RichText::open(&with_line_endings(fixture, eol)).doc()), lf, "{eol:?} line endings");
+        }
+    }
+    let math = outline(RichText::open(&with_line_endings(EXTENSIONS, "\r\n")).doc());
+    assert!(math.contains(r#"[DisplayMath "\\int_0^1 x^2 \\, dx = \\frac{1}{3}"]"#), "{math}");
+}
+
+#[test]
+fn a_reload_that_changes_only_line_endings_changes_nothing() {
+    let mut rich = RichText::open(&with_line_endings(BLOCKS, "\n"));
+    assert!(!rich.reload(&with_line_endings(BLOCKS, "\r\n")));
+    assert!(!rich.reload(&with_line_endings(BLOCKS, "\r")));
+}
+
+#[test]
+fn copy_as_markdown_from_a_crlf_source_has_lf_line_endings() {
+    for fixture in [BLOCKS, GFM, EXTENSIONS] {
+        let copy = |eol: &str| {
+            let mut rich = RichText::open(&with_line_endings(fixture, eol));
+            let id = rich.subscribe();
+            let (doc, view) = rich.view_mut(id).unwrap();
+            view.select_all(doc);
+            view.copy(doc, Format::Markdown).unwrap()
+        };
+        let lf = copy("\n");
+        assert!(!lf.contains('\r'));
+        assert_eq!(copy("\r\n"), lf);
+        assert_eq!(copy("\r"), lf);
+    }
+    let rich = RichText::open(&with_line_endings(BLOCKS, "\r\n"));
+    let doc = rich.doc();
+    let code = find(doc, "fn main");
+    assert_eq!(copy_block(doc, code, Format::Markdown).unwrap(), "```rust\nfn main() {\n    println!(\"fenced\");\n}\n```");
+}

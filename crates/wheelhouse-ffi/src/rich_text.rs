@@ -4,7 +4,8 @@
 //! What a delta returns is borrowed from it until its release; a window is
 //! borrowed from the handle until the next call on it. Byte offsets are into
 //! the core's text: markdown with invalid UTF-8 has U+FFFD in place of its
-//! bad bytes, so hit-test against the delta's text, not the host's bytes.
+//! bad bytes and LF for its CRLF and lone CR line endings, so hit-test
+//! against the delta's text, not the host's bytes.
 //!
 //! Every call that can fail is guarded by `run`. The plain reads, of a
 //! handle's generation and a delta's fields, can't panic and aren't guarded.
