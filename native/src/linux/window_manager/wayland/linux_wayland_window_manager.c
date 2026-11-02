@@ -6,11 +6,11 @@
 // the clipboard and primary selection shared with other clients,
 // text-input-v3, activation and a themed cursor fallback.
 
-#include "linux/window_manager/wayland/generated/wayland-protocol.c"
-#include "linux/window_manager/wayland/generated/xdg-shell-protocol.c"
-#include "linux/window_manager/wayland/generated/xdg-decoration-unstable-v1-protocol.c"
-#include "linux/window_manager/wayland/generated/tablet-v2-protocol.c"
-#include "linux/window_manager/wayland/generated/cursor-shape-v1-protocol.c"
+#include "wayland_protocols/wayland-protocol.c"
+#include "wayland_protocols/xdg-shell-protocol.c"
+#include "wayland_protocols/xdg-decoration-unstable-v1-protocol.c"
+#include "wayland_protocols/tablet-v2-protocol.c"
+#include "wayland_protocols/cursor-shape-v1-protocol.c"
 
 // The display wait ends after this long without a frame callback (a hidden
 // window gets none), as Metal's does without a display link.

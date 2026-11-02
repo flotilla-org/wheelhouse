@@ -87,6 +87,12 @@ git_hash_full=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 
 # --- Compile/Link Line Definitions -------------------------------------------
 host_os=$(uname -s)
+# The Wayland window manager's protocol code, generated from the system's
+# protocol XML on every Linux build (tools/wayland-include.py).
+if [ "$host_os" = "Linux" ]; then
+  wayland_include=$(python3 "$repo_root/tools/wayland-include.py")
+  auto_compile_flags="$auto_compile_flags -I$wayland_include"
+fi
 clang_common="-I../native/src/ -I/usr/include/freetype2/ -I../local/ -D_GNU_SOURCE -g -DBUILD_GIT_HASH=\"$git_hash\" -DBUILD_GIT_HASH_FULL=\"$git_hash_full\" -Wno-unknown-warning-option -fdiagnostics-absolute-paths -Wall -Wno-missing-braces -Wno-unused-function -Wno-writable-strings -Wno-unused-value -Wno-unused-variable -Wno-unused-local-typedef -Wno-deprecated-register -Wno-deprecated-declarations -Wno-unused-but-set-variable -Wno-single-bit-bitfield-constant-conversion -Wno-compare-distinct-pointer-types -Wno-initializer-overrides -Wno-incompatible-pointer-types-discards-qualifiers -Wno-for-loop-analysis -Xclang -flto-visibility-public-std -D_USE_MATH_DEFINES -Dstrdup=_strdup -Dgnu_printf=printf"
 if [ "$host_os" = "Darwin" ]; then
   clang_common="$clang_common -x objective-c"
@@ -201,35 +207,6 @@ out.append("};\n")
 open(os.path.join(gen, "effects_embed.h"), "w").write("".join(out))
 print("  [effects_embed.h: %s]" % ", ".join(names))
 PYEOF
-fi
-
-# --- Generate Wayland Protocol Code -------------------------------------------
-# The Wayland window manager's protocol marshalling, from wayland-scanner and
-# the system's protocol XML (wayland, wayland-protocols). Generated outputs are
-# committed, so a build needs neither: `native/build.sh wayland_protocols`
-if [ -n "${wayland_protocols+x}" ]
-then
-  echo "[generating wayland protocol code]"
-  command -v wayland-scanner >/dev/null || { echo "wayland-scanner not found; install wayland (or libwayland-bin)"; exit 1; }
-  wl_core=$(pkg-config --variable=pkgdatadir wayland-scanner 2>/dev/null || echo /usr/share/wayland)
-  wl_protocols=$(pkg-config --variable=pkgdatadir wayland-protocols 2>/dev/null || echo /usr/share/wayland-protocols)
-  gen=native/src/linux/window_manager/wayland/generated
-  mkdir -p "$gen"
-  # tablet-v2 only provides the interface cursor-shape's get_tablet_tool_v2 names.
-  for xml in "$wl_core/wayland.xml" \
-             "$wl_protocols/stable/xdg-shell/xdg-shell.xml" \
-             "$wl_protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml" \
-             "$wl_protocols/staging/cursor-shape/cursor-shape-v1.xml" \
-             "$wl_protocols/stable/tablet/tablet-v2.xml"; do
-    name=$(basename "$xml" .xml)
-    wayland-scanner --include-core-only client-header "$xml" "$gen/$name-protocol.h"
-    wayland-scanner private-code "$xml" "$gen/$name-protocol.c"
-    # The client headers come from third_party, not the system.
-    sed -i.bak 's|#include "wayland-client-core.h"|#include "third_party/wayland/wayland-client-core.h"|; s|#include "wayland-util.h"|#include "third_party/wayland/wayland-util.h"|' "$gen/$name-protocol.h" "$gen/$name-protocol.c"
-    rm -f "$gen/$name-protocol.h.bak" "$gen/$name-protocol.c.bak"
-    echo "  [$name]"
-  done
-  didbuild=1
 fi
 
 # --- Build Everything (@build_targets) ---------------------------------------

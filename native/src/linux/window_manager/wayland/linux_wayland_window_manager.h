@@ -8,7 +8,8 @@
 //~ libwayland-client, loaded at run time
 
 // libwayland-client is loaded with dlopen, so a system without it still runs
-// the X11 window manager (ADR 0015). Its functions are pointers, filled in by
+// the X11 window manager (ADR 0015). It needs libwayland 1.20 or later, for
+// wl_proxy_marshal_flags. Its functions are pointers, filled in by
 // way_wm_load: each name below turns the header's declaration of the function
 // into a declaration of the pointer, and every call into a call through it.
 #define wl_proxy_marshal_flags      (*way_wl_proxy_marshal_flags)
@@ -49,12 +50,12 @@ X(wl_display_get_error)
 // wl_registry_listener has a field named `global`, which base_core.h defines as `static`.
 #pragma push_macro("global")
 #undef global
-#include "third_party/wayland/wayland-client-core.h"
-#include "linux/window_manager/wayland/generated/wayland-protocol.h"
-#include "linux/window_manager/wayland/generated/xdg-shell-protocol.h"
-#include "linux/window_manager/wayland/generated/xdg-decoration-unstable-v1-protocol.h"
-#include "linux/window_manager/wayland/generated/tablet-v2-protocol.h"
-#include "linux/window_manager/wayland/generated/cursor-shape-v1-protocol.h"
+#include <wayland-client-core.h>
+#include "wayland_protocols/wayland-protocol.h"
+#include "wayland_protocols/xdg-shell-protocol.h"
+#include "wayland_protocols/xdg-decoration-unstable-v1-protocol.h"
+#include "wayland_protocols/tablet-v2-protocol.h"
+#include "wayland_protocols/cursor-shape-v1-protocol.h"
 #pragma pop_macro("global")
 #include <linux/input-event-codes.h>
 #include <sys/mman.h>
