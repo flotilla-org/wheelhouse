@@ -978,7 +978,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     U64 long_lines = 40;
     for(U64 i = 1; i <= long_lines; i += 1)
     {
-      str8_list_pushf(scratch.arena, &md, i == 35 ? "int osprey_%llu = %llu; /* a long line, wider than the column it sits in, so that it scrolls sideways rather than wrapping: tide, mooring, berth, hawser, capstan, ensign, tide, mooring, berth, hawser, capstan, ensign */\n" : "int berth_%llu = %llu;\n",
+      str8_list_pushf(scratch.arena, &md, i == 35 ? "/* \xE2\x9A\x93 */ int osprey_%llu = %llu; /* a long line, wider than the column it sits in, so that it scrolls sideways rather than wrapping: tide, mooring, berth, hawser, capstan, ensign, tide, mooring, berth, hawser, capstan, ensign */\n" : "int berth_%llu = %llu;\n",
                       (unsigned long long)i, (unsigned long long)i);
     }
     str8_list_pushf(scratch.arena, &md, "```\n\nAfter the code.\n");
@@ -1153,6 +1153,12 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       RichCheck(found && fb.draw && fb.draw->current_find_quads > 0, "document find reaches a match inside the code Block");
       RichCheck(lc->tv.mark.line == 35 && lc->tv.cursor.line == 35 && lc->lines_built.min < 35 && lc->lines_built.max >= 35 && lc->scroll.y > 0,
                 "and hands it to the code view, which selects it and scrolls to it");
+      // After a three-byte anchor: the code view counts columns in bytes.
+      s->focus_embed = longc->key;
+      String8 match = uishell_rt_diag_copy(d);
+      s->focus_embed = 0;
+      RichCheck(lc->tv.mark.column == 15 && lc->tv.cursor.column == 21 && str8_match(match, str8_lit("osprey"), 0),
+                "past a multibyte character, the match's columns are bytes, and Copy copies just it");
       s = uishell_rt_diag_cmd(d, str8_lit("search"), str8_zero());
 
       // Open in a new View: a click opens a tab with the same content; a
@@ -1269,6 +1275,34 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     for(U32 i = 0; empty && i < 400 && empty->lines_built.max != 1; i += 1) { s = uishell_rt_diag_frame(d, 0); sleep_ms(5); }
     RichCheck(empty && uishell_rt_code_lang(empty) == TXT_LangKind_Zig && empty->line_count == 1 && empty->lines_built.max == 1,
               "an empty fence is a one-line embed");
+    // Two Blocks with the same text, ending in a newline: removing one
+    // leaves the other its content.
+    generation = s->model.generation;
+    sleep_ms(1100);
+    write_data_to_file_path(stream_path, str8_lit("Twins.\n\n```c\nint tide;\n\n```\n\nBetween.\n\n```c\nint tide;\n\n```\n"));
+    for(U32 i = 0; i < 1000 && s->model.generation == generation; i += 1) { s = uishell_rt_diag_frame(d, 0); sleep_ms(5); }
+    s = uishell_rt_diag_frames(d, 3);
+    generation = s->model.generation;
+    sleep_ms(1100);
+    write_data_to_file_path(stream_path, str8_lit("Twins.\n\n```c\nint tide;\n\n```\n\nBetween.\n"));
+    for(U32 i = 0; i < 1000 && s->model.generation == generation; i += 1) { s = uishell_rt_diag_frame(d, 0); sleep_ms(5); }
+    s = uishell_rt_diag_frames(d, 3);
+    UIShell_RtNode *twin = uishell_rt_diag_block_with(s, str8_lit("int tide"));
+    UIShell_RtCode *tc = twin ? uishell_rt_code_of(s, twin->key) : 0;
+    TXT_TextInfo twin_info = {0};
+    for(U32 i = 0; tc && i < 400 && twin_info.lines_count == 0; i += 1)
+    {
+      s = uishell_rt_diag_frame(d, 0);
+      Access *access = access_open();
+      U128 hash = {0};
+      twin_info = txt_text_info_from_key_lang(access, tc->content, TXT_LangKind_C, &hash);
+      access_close(access);
+      if(twin_info.lines_count == 0) { sleep_ms(5); }
+    }
+    fprintf(stderr, "RICH_TEXT_CODE twin text=%llu line_count=%llu lexed=%llu built=%lld\n", twin ? (unsigned long long)twin->text.size : 0,
+            tc ? (unsigned long long)tc->line_count : 0, (unsigned long long)twin_info.lines_count, tc ? (long long)tc->lines_built.max : 0);
+    RichCheck(tc && twin_info.lines_count != 0 && twin_info.lines_count == tc->line_count && tc->lines_built.max == (S64)tc->line_count,
+              "a Block whose twin went keeps its text, and its line count is the lexer's, a trailing newline included");
     scratch_end(scratch);
   }
 

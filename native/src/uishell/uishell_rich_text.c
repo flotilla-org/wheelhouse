@@ -1891,7 +1891,9 @@ uishell_rt_code(UIShell_RichTextState *s, UIShell_RtNode *n)
     {
       if(s->code_root.u64[0] == 0) { s->code_root = c_root_alloc(); }
       if(c->content.root.u64[0] != 0) { c_close_key(c->content); }
-      c->content = c_key_make(s->code_root, c_id_make(hash.u64[0], hash.u64[1]));
+      // Per Block: Blocks with the same text don't share a key, which
+      // closing one would close for both.
+      c->content = c_key_make(s->code_root, c_id_make(n->key, hash.u64[0]));
       Arena *data_arena = arena_alloc();
       c->hash = c_submit_data(c->content, &data_arena, push_str8_copy(data_arena, n->text));
     }
@@ -1923,6 +1925,7 @@ uishell_rt_prune_codes(UIShell_RichTextState *s)
     {
       if((*at)->content.root.u64[0] != 0) { c_close_key((*at)->content); }
       if(s->focus_embed == (*at)->key) { s->focus_embed = 0; }
+      if(s->open_press == (*at)->key) { s->open_press = 0; }
       *at = (*at)->next;
     }
     else { at = &(*at)->next; }
@@ -1943,6 +1946,7 @@ uishell_rt_code_height(UIShell_RtCode *c, B32 *capped_out)
   return uishell_text_row_height()*(expanded ? lines : Min(lines, UISHELL_RT_CODE_INLINE_LINES));
 }
 
+// The text view's columns count bytes, from 1.
 internal TxtPt
 uishell_rt_pt_from_byte(String8 text, U64 byte)
 {
@@ -2004,7 +2008,8 @@ uishell_rt_embed_copy(Arena *arena, UIShell_RichTextState *s, U64 key, U32 forma
 
 // The code a creation drag carries to where it drops: drag_drop_commit
 // takes nothing of the drag's own. One drag at a time (rd_drag_begin starts
-// none while one is active), so one copy serves.
+// none while one is active), so one copy serves, its arena kept for the
+// process.
 global Arena *uishell_rt_code_drag_arena = 0;
 global String8 uishell_rt_code_drag_text = {0};
 global TXT_LangKind uishell_rt_code_drag_lang = TXT_LangKind_Null;
