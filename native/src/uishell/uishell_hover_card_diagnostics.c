@@ -92,7 +92,7 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
     ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
     ui_state->mouse = mouse; MemoryZeroArray(ui_state->hover_card_keys); ui_state->hover_card_extra = 0;
     UIShell_SidebarNode node = {0};
-    U64 index = uishell_sidebar_card_find(state, card->path[card->depth-1], &node);
+    U64 index = uishell_sidebar_card_find(state, card->subject, &node);
     if(index == WHEELHOUSE_NONE) { ui_end_build(); return 0; }
     UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
     UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
@@ -110,15 +110,6 @@ uishell_hover_card_test_click(RD_WindowState *ws, UIShell_SidebarState *state,
     ui_end_build();
     if(frame == 0)
     {
-      UIShell_SidebarNode source = {0};
-      if(card->depth > 1 && uishell_sidebar_card_find(state, card->path[0], &source) != WHEELHOUSE_NONE)
-      {
-        for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
-        {
-          if((box->flags & UI_BoxFlag_MouseClickable) &&
-             str8_match(ui_box_display_string(box), uishell_sidebar_string(source.label), 0)) { return 0; }
-        }
-      }
       for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
       {
         if((box->flags & UI_BoxFlag_MouseClickable) && str8_match(ui_box_display_string(box), label, 0))
@@ -211,13 +202,13 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   UIShell_HoverCard *card = &fixture.cards[0];
   test->mouse = v2f32(50, 115);
   uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1000000);
-  CardCheck(!card->open && !test->hover_card_focus, "first hover starts without focus");
+  CardCheck(!card->open, "first hover starts closed");
   uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1299999);
   CardCheck(!card->open, "first hover waits 300ms");
   uishell_sidebar_card_source_at(&fixture, a, hover, str8_zero(), 0, 1300000);
-  CardCheck(card->open && !card->engaged && !card->focused, "300ms opens an informational peek");
+  CardCheck(card->open && !card->engaged, "300ms opens an informational peek");
   uishell_sidebar_card_source_at(&fixture, b, hover, str8_zero(), 0, 1300001);
-  CardCheck(card->open && str8_match(uishell_sidebar_string(card->path[0].id), str8_lit("b"), 0) &&
+  CardCheck(card->open && str8_match(uishell_sidebar_string(card->subject.id), str8_lit("b"), 0) &&
             str8_match(uishell_sidebar_string(card->previous.id), str8_lit("a"), 0), "next source swaps immediately and retains outgoing content");
   card->rect = r2f32p(180, 90, 400, 300);
   card->departure = v2f32(90, 115); card->last_mouse = card->departure;
@@ -229,55 +220,29 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   CardCheck(!uishell_sidebar_card_corridor(card, v2f32(110, 145), 1400001), "moving away releases the corridor");
   CardCheck(!uishell_sidebar_card_corridor(card, v2f32(140, 155), 1800001), "corridor cannot hold another source indefinitely");
   uishell_sidebar_card_tick(card, v2f32(200, 150), 1500000);
-  CardCheck(card->engaged && !card->focused && !card->left_at, "entering engages without keyboard focus");
+  CardCheck(card->engaged && !card->left_at, "entering engages");
   WM_Event escape = {.kind = WM_EventKind_Press, .key = WM_Key_Esc};
-  CardCheck(!uishell_sidebar_card_wm_event(ws, &escape) && card->open, "unfocused card leaves Escape for the terminal");
+  CardCheck(!uishell_sidebar_card_wm_event(ws, &escape) && card->open, "an engaged card leaves Escape for the terminal");
   uishell_sidebar_card_tick(card, v2f32(500, 350), 1600000);
   uishell_sidebar_card_tick(card, v2f32(500, 350), 1999999);
   CardCheck(card->open, "engaged card survives 399ms outside");
   uishell_sidebar_card_tick(card, v2f32(500, 350), 2000000);
   CardCheck(!card->open, "engaged card closes after 400ms outside");
+  // A click gives a card no keyboard focus (#269): Escape stays the View's,
+  // and a hover card still closes once the pointer has left it.
   uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 2100000);
   card->rect = r2f32p(180, 90, 400, 300);
   WM_Event click = {.kind = WM_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = v2f32(200, 150)};
-  uishell_sidebar_card_wm_event(ws, &click);
-  CardCheck(card->focused && test->hover_card_focus, "click focuses the card");
+  CardCheck(!uishell_sidebar_card_wm_event(ws, &click), "a click on a card isn't the card's to take");
+  CardCheck(!uishell_sidebar_card_wm_event(ws, &escape) && card->open, "Escape after a click on a card reaches the View");
   uishell_sidebar_card_tick(card, v2f32(500, 350), 2200000);
-  uishell_sidebar_card_tick(card, v2f32(500, 350), 3200000);
-  CardCheck(card->open, "click-focused card stays open on mouse-out");
-  CardCheck(uishell_sidebar_card_wm_event(ws, &escape) && !card->open && !test->hover_card_focus, "focused Escape dismisses and restores View focus");
-  escape.kind = WM_EventKind_Release;
-  CardCheck(uishell_sidebar_card_wm_event(ws, &escape), "Escape release stays owned after dismissal");
-  escape.kind = WM_EventKind_Press;
-  CardCheck(!uishell_sidebar_card_wm_event(ws, &escape), "next Escape reaches the terminal");
-  uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3300000);
-  uishell_sidebar_card_navigate(card, uishell_sidebar_card_entity(b), 3300001);
-  CardCheck(card->depth == 2 && str8_match(uishell_sidebar_string(card->path[0].id), str8_lit("a"), 0) &&
-            str8_match(uishell_sidebar_string(card->path[1].id), str8_lit("b"), 0), "related navigation retains a back path");
-  card->rect = r2f32p(180, 90, 400, 300);
-  uishell_sidebar_card_wm_event(ws, &click);
-  click.pos = v2f32(500, 350); uishell_sidebar_card_wm_event(ws, &click);
-  CardCheck(!card->open && !test->hover_card_focus, "outside click dismisses a focused card");
-  // Informational cards own no keyboard focus and survive activation changes.
+  uishell_sidebar_card_tick(card, v2f32(500, 350), 2600000);
+  CardCheck(!card->open, "a clicked hover card closes once the pointer has left it");
+  // Peeks survive the window losing native focus.
   uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3350000);
   WM_Event deactivate = {.kind = WM_EventKind_WindowLoseFocus};
   uishell_sidebar_card_wm_event(ws, &deactivate);
-  CardCheck(card->open && !card->focused && !test->hover_card_focus, "native focus loss preserves a peek without claiming keyboard input");
-  // Losing native focus can drop a held Escape release.
-  uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3400000);
-  card->rect = r2f32p(180, 90, 400, 300); click.pos = v2f32(200, 150);
-  uishell_sidebar_card_wm_event(ws, &click);
-  escape.kind = WM_EventKind_Press; uishell_sidebar_card_wm_event(ws, &escape);
-  WM_Event lost = {.kind = WM_EventKind_WindowLoseFocus};
-  uishell_sidebar_card_wm_event(ws, &lost);
-  CardCheck(!fixture.card_escape_down && !test->hover_card_focus, "focus loss clears held Escape ownership");
-  escape.kind = WM_EventKind_Release;
-  CardCheck(!uishell_sidebar_card_wm_event(ws, &escape), "late Escape release after focus loss is not retained by the card");
-  escape.kind = WM_EventKind_Press;
-  CardCheck(!uishell_sidebar_card_wm_event(ws, &escape), "first Escape after focus loss reaches the View");
-  uishell_sidebar_card_set(card, a, source.key, str8_zero(), 0, 3500000);
-  for(U64 i = 0; i < 40; i++) { uishell_sidebar_card_navigate(card, uishell_sidebar_card_entity(b), 3500001+i); }
-  CardCheck(card->depth == 41, "long navigation paths grow instead of silently refusing a link");
+  CardCheck(card->open, "native focus loss preserves a peek");
   // Closing while crossing a protected corridor must not suppress future hovers.
   card->corridor_active = 1;
   uishell_sidebar_card_close(card);
@@ -308,7 +273,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
   UI_Box vessel_source = {.key = ui_key_make(720), .rect = r2f32p(340, 91, 359, 108)};
   UI_Signal vessel_hover = {.box = &vessel_source, .f = UI_SignalFlag_Hovering};
   uishell_sidebar_card_source_at(&fixture, a, vessel_hover, str8_zero(), 0, 4100001);
-  CardCheck(card->corridor_active && str8_match(uishell_sidebar_string(card->path[0].id), str8_lit("b"), 0),
+  CardCheck(card->corridor_active && str8_match(uishell_sidebar_string(card->subject.id), str8_lit("b"), 0),
             "diagonal northwest-card entry protects a southeast target crossed before the top edge");
   // Build two real overlapping buttons and send a click over the overlay.
   UI_IconInfo icons = saved_window_ui->icon_info;
@@ -437,13 +402,13 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
             "old output remains readable, and its card is no longer current");
   uishell_sidebar_refresh(&demand);
   CardCheck(demand.catalog_count == 0 &&
-            uishell_sidebar_card_find(&demand, demand.cards[0].path[0], &demand_node) != WHEELHOUSE_NONE &&
+            uishell_sidebar_card_find(&demand, demand.cards[0].subject, &demand_node) != WHEELHOUSE_NONE &&
             str8_match(uishell_sidebar_string(demand_node.label), str8_lit("After"), 0),
             "held exact identity demands current output after refresh");
   String8 demand_remove = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"issue\",\"id\":\"demand-only\"}},\"source_id\":\"demand\",\"unset\":[\"display.label\"]}");
   CardCheck(wheelhouse_apply_patch_json(demand.core, 2, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(demand_remove), 0), "held target is removed");
   uishell_sidebar_refresh(&demand);
-  CardCheck(uishell_sidebar_card_find(&demand, demand.cards[0].path[0], 0) == WHEELHOUSE_NONE &&
+  CardCheck(uishell_sidebar_card_find(&demand, demand.cards[0].subject, 0) == WHEELHOUSE_NONE &&
             demand.catalog_count == 0,
             "disappearing held identity is unavailable without eager details");
   uishell_sidebar_release(&demand);
@@ -601,20 +566,125 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       }
       UIShell_SidebarNode parent = {0}; uishell_sidebar_node(&fixture, live.parent, &parent);
       String8 parent_label = uishell_sidebar_string(parent.label);
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, 0) && card->depth == 2,
-                "clicking a related widget navigates within the card");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("← Back"), 0) && card->depth == 1 &&
-                str8_match(uishell_sidebar_string(card->path[0].id), uishell_sidebar_string(live.entity.id), 0), "Back widget restores the source target");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, WM_Modifier_Ctrl) && card->depth == 1 &&
-                fixture.cards[1].open && fixture.cards[1].focused &&
-                str8_match(uishell_sidebar_string(fixture.cards[1].path[0].id), uishell_sidebar_string(parent.entity.id), 0),
-                "modifier-click opens a separate focused card without changing the original path");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("×"), 0) && !card->open &&
-                fixture.cards[1].open && fixture.cards[1].focused, "closing the original leaves the separate card open and focused");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, &fixture.cards[1], str8_lit("×"), 0) &&
-                !fixture.cards[1].open, "the separate card closes through its own action");
-      // Hidden targets navigate by catalog identity, including cycles and
-      // modifier-open. No placement-edge fallback may invent a relation.
+      // Related items behave as chips on a row (#269). A click runs the
+      // item's primary action, and a hover card closes after it, as after
+      // any action; there is no in-card navigation, and no Back.
+      U64 parent_index = uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(parent), 0);
+      CardCheck(action_node_activate(&fixture, parent_index) != WHEELHOUSE_NONE, "the related parent has a primary action");
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, parent_label, 0) && fixture.card_has_action && !card->open &&
+                str8_match(uishell_sidebar_string(card->subject.id), uishell_sidebar_string(live.entity.id), 0),
+                "clicking a related item runs its primary action and closes the hover card, which keeps its subject");
+      CardCheck(card_taken(&fixture), "the related item's action resolves");
+      fixture.card_has_action = 0;
+      uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
+      CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("← Back"), 0), "a card has no Back");
+      // Hovering a related item shows its own card beside this one, after the
+      // hover delay; that card's related items show none (one level).
+      {
+        UI_Box related_box = {.key = ui_key_make(730), .rect = r2f32p(200, 200, 380, 220)};
+        UI_Signal related_hover = {.box = &related_box, .f = UI_SignalFlag_Hovering};
+        test->mouse = center_2f32(related_box.rect);
+        UIShell_HoverCard *beside = &fixture.cards[1];
+        uishell_sidebar_card_related_signal(&fixture, card, parent, related_hover);
+        CardCheck(!beside->open, "a related item's card waits for the hover delay");
+        beside->candidate_since -= UIShell_HoverCardOpenDelayUS;
+        uishell_sidebar_card_related_signal(&fixture, card, parent, related_hover);
+        CardCheck(beside->open && str8_match(uishell_sidebar_string(beside->subject.id), uishell_sidebar_string(parent.entity.id), 0) &&
+                  str8_match(uishell_sidebar_string(card->subject.id), uishell_sidebar_string(live.entity.id), 0),
+                  "hovering a related item shows its card beside, and this card keeps its subject");
+        uishell_sidebar_card_related_signal(&fixture, beside, live, related_hover);
+        beside->candidate_since -= UIShell_HoverCardOpenDelayUS;
+        uishell_sidebar_card_related_signal(&fixture, beside, live, related_hover);
+        CardCheck(str8_match(uishell_sidebar_string(beside->subject.id), uishell_sidebar_string(parent.entity.id), 0),
+                  "the card beside offers no card from its own related items");
+        uishell_sidebar_card_close(beside);
+      }
+      // Dragging a related item lifts that item's card, as dragging a chip
+      // lifts its row's; the hover card it came from closes.
+      {
+        uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
+        UIShell_HoverCard *beside = &fixture.cards[1];
+        Rng2F32 hit = {0};
+        for(U64 frame = 0; frame < 3; frame++)
+        {
+          Vec2F32 mouse = add_2f32(center_2f32(hit), v2f32(frame == 2 ? 40.f : 0, 0));
+          UI_EventList events = {0};
+          UI_Event event = {.kind = frame == 1 ? UI_EventKind_Press : UI_EventKind_MouseMove, .key = WM_Key_LeftMouseButton, .pos = mouse};
+          if(frame) { ui_event_list_push(ws->ui->arena, &events, &event); }
+          ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+          ui_state->mouse = mouse; MemoryZeroArray(ui_state->hover_card_keys); ui_state->hover_card_extra = 0;
+          UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+          UI_PrefWidth(ui_px(400, 1)) UI_PrefHeight(ui_em(1.6f, 1)) UI_ChildLayoutAxis(Axis2_Y)
+          {
+            UI_Box *body;
+            UI_Rect(r2f32p(0, 40, 400, 740)) { body = ui_build_box_from_key(0, ui_key_make(750)); }
+            UI_Parent(body) { uishell_sidebar_card_content(&fixture, ws, card, 0, live, index, 400, 1); }
+          }
+          ui_end_build();
+          if(frame == 0)
+          {
+            for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
+            {
+              if((box->flags & UI_BoxFlag_MouseClickable) && str8_match(ui_box_display_string(box), parent_label, 0))
+              { hit = box->rect; break; }
+            }
+          }
+        }
+        CardCheck(fixture.drag_card == beside && beside->open && beside->moving && rd_drag_is_active(),
+                  "dragging a related item lifts the card beside");
+        CardCheck(str8_match(uishell_sidebar_string(beside->subject.id), uishell_sidebar_string(parent.entity.id), 0) && !card->open,
+                  "the lifted card is the related item's, and the hover card closes");
+        // With the card it came from closed, nothing it was lifted from is
+        // built; the lifted card still follows the pointer.
+        F32 lifted_x = beside->rect.x0;
+        {
+          UI_EventList events = {0};
+          ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+          test->mouse = add_2f32(center_2f32(hit), v2f32(100.f, 0));
+          UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+          { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
+          ui_end_build();
+        }
+        CardCheck(beside->moving && fabsf(beside->rect.x0-(lifted_x+60.f)) < 0.5f, "a lifted related card follows the pointer");
+        WM_Event cancel = {.kind = WM_EventKind_Press, .key = WM_Key_Esc};
+        uishell_sidebar_card_wm_event(ws, &cancel);
+        cancel.kind = WM_EventKind_Release;
+        uishell_sidebar_card_wm_event(ws, &cancel);
+        CardCheck(!fixture.drag_card && !rd_drag_is_active(), "Escape cancels a related item's lift");
+        uishell_sidebar_card_close(beside);
+      }
+      // A click on what doesn't act on its own focuses the card's entity; a
+      // hover card closes after it, a docked one stays.
+      for(U64 docked = 0; docked < 2; docked++)
+      {
+        uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
+        card->placement = docked ? UIShell_CardPlacement_Pinned : UIShell_CardPlacement_Transient;
+        fixture.card_focus = (UIShell_SidebarIntent){0};
+        String8 identity = uishell_sidebar_card_role_text(&fixture, index, WHEELHOUSE_DETAIL_IDENTITY);
+        CardCheck(identity.size && uishell_hover_card_test_click(ws, &fixture, card, identity, 0) && card->title_clicked,
+                  "a click on a card's title, without a drag, is a click on its content");
+        UI_EventList events = {0};
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        UI_Box *body = ui_build_box_from_key(0, ui_key_make(740));
+        uishell_sidebar_card_body(&fixture, card, live, index, body);
+        ui_end_build();
+        // As a click on its row: a card found in the tree activates its placement.
+        UIShell_SidebarIntent row = uishell_sidebar_activate_intent(live);
+        CardCheck(fixture.card_focus.some && fixture.card_focus.kind == row.kind &&
+                  str8_match(fixture.card_focus.key, row.key, 0) &&
+                  str8_match(uishell_sidebar_string(fixture.card_focus.entity.id), uishell_sidebar_string(row.entity.id), 0) &&
+                  card->open == (B32)docked && !card->title_clicked,
+                  docked ? "a click on a docked card's content focuses its entity and leaves it docked" :
+                           "a click on a hover card's content focuses its entity and closes it");
+        WheelhouseCore *focus_core = fixture.core; fixture.core = 0;
+        uishell_sidebar_cards_dispatch(ws);
+        fixture.core = focus_core;
+        CardCheck(!fixture.card_focus.some, "the window-end dispatch takes the focus intent");
+        card->placement = UIShell_CardPlacement_Transient;
+      }
+      uishell_sidebar_card_close(card);
+      // A relation target without a tree placement is still a live related
+      // item, resolved by catalog identity; no placement edge may invent one.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       B32 hidden_in_tree = 0;
       for(U64 i = 0; i < uishell_sidebar_node_count(&fixture); i++)
@@ -623,22 +693,14 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         hidden_in_tree |= str8_match(uishell_sidebar_string(row.entity.id), str8_lit("hidden-detail"), 0);
       }
       CardCheck(!hidden_in_tree, "hidden relation target has no tree placement");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Hidden related issue"), WM_Modifier_Ctrl) &&
-                fixture.cards[1].open && card->depth == 1,
-                "modifier-open resolves a target without a tree placement");
-      uishell_sidebar_card_close(&fixture.cards[1]);
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Hidden related issue"), 0) && card->depth == 2,
-                "typed hidden relation navigates to catalog details");
+      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Hidden related issue"), 0),
+                "a related item without a tree placement is live");
+      uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
+      fixture.card_has_action = 0;
       CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("!281"), 0),
-                "typed relation back to the source is omitted from the path");
-      CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Hidden related issue"), 0),
-                "self relation is omitted");
-      CardCheck(uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Example project"), 0) && card->depth == 3,
-                "catalog navigation follows typed relations across kinds");
-      CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Hidden related issue"), 0),
-                "related mini-rows exclude every ancestor, not only the immediate parent");
+                "a card's relation to itself is omitted");
       CardCheck(!uishell_hover_card_test_click(ws, &fixture, card, str8_lit("Unavailable"), 0),
-                "unavailable relation targets do not expose a navigation button");
+                "an unavailable relation target isn't a live item");
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       CardCheck(!card->enriched && uishell_hover_card_test_click(ws, &fixture, card, str8_lit("ⓘ"), 0) && card->enriched,
                 "engaged Details button reveals labels and observation ages");
@@ -674,7 +736,6 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           uishell_sidebar_card_close(&fixture.cards[1]);
         }
         test->mouse = frame ? center_2f32(card->rect) : v2f32(50, 35);
-        card->focused = frame == 1; // Click-focus ownership is covered by the WM trace.
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         { uishell_sidebar_cards_ui_at(ws, now_time_us(), frame != 2, 1); }
         // Near places the card from the pointer where it opened, not the source box.
@@ -686,7 +747,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
                          UI_Box *outline = ui_box_from_key(ui_key_from_stringf(card_box->key, "outline"));
                          CardCheck(!(card_box->flags & UI_BoxFlag_DrawBorder) && !ui_box_is_nil(outline) && outline->parent == card_box &&
                                    outline == card_box->first, "a hover card's outline goes round it and its cap, over both"); }
-        if(frame == 2) { CardCheck(card->open && !card->focused, "hover remains informational when the window is not the keyboard target"); }
+        if(frame == 2) { CardCheck(card->open, "hover remains when the window is not the keyboard target"); }
         ui_end_build();
         UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
         UI_Box *root = ui_box_from_key(root_key);
@@ -735,12 +796,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           CardCheck(!ui_box_is_nil(outgoing) && abs_f32(outgoing->rect.x0-incoming->rect.x0) < 1 &&
                     abs_f32(outgoing->rect.y0-incoming->rect.y0) < 1, "cross-fade layers share the same content origin");
         }
-        CardCheck(test->hover_card_focus == (B32)(frame == 1), "full controller preserves peek/click focus distinction");
       }
       // Exercise leave timing through the full controller while deactivated.
       WM_Event deactivate = {.kind = WM_EventKind_WindowLoseFocus};
       uishell_sidebar_card_wm_event(ws, &deactivate);
-      CardCheck(card->open && !card->focused, "background leave trace starts with an informational card");
+      CardCheck(card->open, "background leave trace starts with an open card");
       U64 background_leave = now_time_us()+1000000;
       U64 background_offsets[] = {0, 399999, 400000};
       for(U64 frame = 0; frame < ArrayCount(background_offsets); frame++)
@@ -751,13 +811,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
         { uishell_sidebar_cards_ui_at(ws, background_leave+background_offsets[frame], 0, 1); }
         ui_end_build();
-        CardCheck(card->open == (B32)(frame < 2) && !test->hover_card_focus,
-                  "deactivated card survives 399ms outside and closes at 400ms without keyboard focus");
+        CardCheck(card->open == (B32)(frame < 2),
+                  "deactivated card survives 399ms outside and closes at 400ms");
       }
       uishell_sidebar_card_close(card); uishell_sidebar_card_close(&fixture.cards[1]);
-      UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-      uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); ui_end_build();
-      CardCheck(!test->hover_card_focus, "closing the last card clears focus before View event consumers");
       // Its slot opens the next card with the cap in, not sliding back from
       // where the last card left it.
       for(U64 frame = 0; frame < 3; frame++)
@@ -774,42 +831,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       }
       uishell_sidebar_card_close(card);
       rd_state->menu_animation_rate = 1.f;
-      // Follow the focused card's production default-navigation path.
-      uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
-      uishell_sidebar_card_navigate(card, uishell_sidebar_card_entity(parent), now_time_us());
-      card->previous = (WheelhouseEntity){0}; card->engaged = card->focused = 1;
-      B32 saw_related = 0, saw_back = 0, saw_close = 0;
-      for(U64 frame = 0; frame < 32 && card->open; frame++)
-      {
-        UI_EventList keys = {0};
-        UI_Event key = {.kind = UI_EventKind_Press, .key = saw_close ? WM_Key_Return : WM_Key_Tab,
-                        .slot = saw_close ? UI_EventActionSlot_Accept : UI_EventActionSlot_Null};
-        if(frame) { ui_event_list_push(test->arena, &keys, &key); }
-        ui_begin_build(ws->os, &keys, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-        test->mouse = center_2f32(card->rect);
-        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
-        { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
-        ui_end_build();
-        UI_Key root_key = ui_key_from_stringf(ui_key_zero(), "###sidebar_card_%I64u", (U64)0);
-        UI_Box *root = ui_box_from_key(root_key);
-        UI_Box *hot = ui_box_from_key(root->default_nav_focus_hot_key);
-        if(!ui_box_is_nil(hot))
-        {
-          CardCheck(!(hot->flags & (UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder)),
-                    "keyboard-focused child keeps its focus indication");
-          String8 text = ui_box_display_string(hot);
-          saw_back |= str8_match(text, str8_lit("← Back"), 0);
-          saw_close |= saw_back && saw_related && str8_match(text, str8_lit("×"), 0);
-          saw_related |= !saw_back && !saw_close && str8_find_needle(hot->string, 0, str8_lit("###related_"), 0) < hot->string.size;
-        }
-      }
-      CardCheck(saw_related && saw_back && saw_close && !card->open && !test->hover_card_focus,
-                "Tab reaches Related, Back and Close and Enter activates Close");
       // Hiding the sidebar also dismisses the independent source-less card,
       // before its controls can enqueue an action without a dispatcher.
       uishell_sidebar_card_set(card, live, ui_key_zero(), str8_zero(), 0, now_time_us());
       uishell_sidebar_card_set(&fixture.cards[1], parent, ui_key_zero(), str8_zero(), 0, now_time_us());
-      fixture.cards[1].focused = 1; fixture.card_escape_down = 1;
+      fixture.card_escape_down = 1;
       U64 hidden_index = uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(live), 0);
       uishell_sidebar_card_queue_action(&fixture, live, action_node_copy(&fixture, hidden_index));
       CardCheck(fixture.card_has_action && fixture.card_action_intent.size, "hidden sidebar trace starts with real queued intent");
@@ -817,7 +843,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       ui_begin_build(ws->os, &hidden_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
       uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 0); ui_end_build();
       uishell_sidebar_cards_dispatch(ws);
-      CardCheck(!card->open && !fixture.cards[1].open && !fixture.card_has_action && !test->hover_card_focus &&
+      CardCheck(!card->open && !fixture.cards[1].open && !fixture.card_has_action &&
                 !fixture.card_action_intent.size && !fixture.card_action_target.id.len && !fixture.card_escape_down,
                 "hidden sidebar abandons intent and held Escape before any dispatch");
       // Pinned/inline controls render after the overlay controller in the shell.
@@ -835,7 +861,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       // A reveal/observe refresh can replace the cards after one emits its
       // intent but before sidebar dispatch. Never retain the old index.
       UIShell_SidebarNode action_node = {0};
-      U64 action_index = uishell_sidebar_card_find(&fixture, card->path[0], &action_node);
+      U64 action_index = uishell_sidebar_card_find(&fixture, card->subject, &action_node);
       size_t copy_action = action_node_copy(&fixture, action_index);
       CardCheck(copy_action != WHEELHOUSE_NONE, "refresh trace starts with a Copy URL action");
       uishell_sidebar_card_queue_action(&fixture, action_node, copy_action);
@@ -977,7 +1003,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
         test->mouse = v2f32(50, 115);
         uishell_sidebar_card_source_at(&subscribed, row, hover, str8_zero(), 0, 1000000);
         uishell_sidebar_card_source_at(&subscribed, row, hover, str8_zero(), 0, 1000000+UIShell_HoverCardOpenDelayUS);
-        CardCheck(sub_card->open && uishell_sidebar_card_entity_match(sub_card->path[0], project),
+        CardCheck(sub_card->open && uishell_sidebar_card_entity_match(sub_card->subject, project),
                   "hovering a subscription entity's row opens its card, keyed by its provider");
         UIShell_SidebarNode node = {0};
         U64 index = uishell_sidebar_card_find(&subscribed, project, &node);
@@ -997,9 +1023,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           { title |= str8_match(ui_box_display_string(box), str8_lit("Subscribed project"), 0); }
         }
         CardCheck(title, "a subscription entity's card renders its details");
-        CardCheck(uishell_hover_card_test_click(ws, &subscribed, sub_card, str8_lit("Subscribed governor"), 0) && sub_card->depth == 2 &&
-                  uishell_sidebar_card_entity_match(sub_card->path[1], uishell_sidebar_entity(provider, str8_lit("role"), str8_lit("p/governor"))),
-                  "a subscription entity's relation navigates to the subscription's entity");
+        CardCheck(uishell_hover_card_test_click(ws, &subscribed, sub_card, str8_lit("Subscribed governor"), 0) && subscribed.card_has_action &&
+                  uishell_sidebar_card_entity_match(subscribed.card_action_target, uishell_sidebar_entity(provider, str8_lit("role"), str8_lit("p/governor"))),
+                  "a subscription entity's related item acts on the subscription's entity");
+        subscribed.card_has_action = 0;
         uishell_sidebar_card_close(sub_card);
       }
       uishell_sidebar_release(&subscribed);
@@ -1104,7 +1131,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     entity.key = uishell_sidebar_text(push_str8_copy(entity_arena, uishell_sidebar_string(entity.key)));
     UIShell_HoverCard *original = &fixture.cards[0];
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
-    original->rect = r2f32p(400, 100, 800, 400); original->engaged = original->focused = 1;
+    original->rect = r2f32p(400, 100, 800, 400); original->engaged = 1;
     fixture.rect = r2f32p(0, 0, 320, 700);
     CardCheck(uishell_sidebar_card_target_valid(ws, 0),
               "detached targets use the shared checker with zero minimum width");
@@ -1126,12 +1153,11 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(floating->cap_shown && contains_2f32(floating->mask.rect, center_2f32(floating->cap.rect)),
                 "a floating card always shows its cap, and its mask covers it");
     }
-    floating->focused = 0;
     uishell_sidebar_card_tick(floating, v2f32(-100, -100), 10000000);
     uishell_sidebar_card_tick(floating, v2f32(-100, -100), 11000000);
-    CardCheck(floating->open, "unfocused float survives mouse-out timeout");
+    CardCheck(floating->open, "a float survives mouse-out timeout");
     // Raw Escape is consumed by the card before the generic UI cancel slot.
-    floating->moving = floating->focused = 1; fixture.drag_card = floating;
+    floating->moving = 1; fixture.drag_card = floating;
     UIShell_RegsScope(.window = ws->cfg_id) { rd_drag_begin(UIShell_ContextRegSlot_View); }
     rd_state->drag_drop_creation_name = str8_lit("sidebar_section"); rd_state->drag_drop_commit = uishell_sidebar_drag_panel_drop;
     U64 placement_before = floating->pin_size;
@@ -1168,7 +1194,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     {
       B32 saved_outside = uishell_hover_cards_outside; uishell_hover_cards_outside = placement;
       UI_EventList events = {0}; ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-      test->mouse = v2f32(-100, -100); floating->focused = 1;
+      test->mouse = v2f32(-100, -100);
       UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
       { uishell_sidebar_cards_ui_at(ws, now_time_us(), 1, 1); }
       ui_end_build();
@@ -1176,13 +1202,10 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(!ui_box_is_nil(root) && (root->flags & UI_BoxFlag_DisableFocusOverlay) &&
                 (root->flags & UI_BoxFlag_DisableFocusBorder), "Near and Outside keep a clicked card surface neutral");
       WM_Event outside = {.kind = WM_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = v2f32(-100, -100)};
-      uishell_sidebar_card_wm_event(ws, &outside);
-      CardCheck(floating->open && !floating->focused && !test->hover_card_focus, "outside click blurs a float without closing it");
-      floating->focused = 1; test->hover_card_focus = 1;
+      CardCheck(!uishell_sidebar_card_wm_event(ws, &outside) && floating->open, "an outside click leaves a float open");
       WM_Event esc = {.kind = WM_EventKind_Press, .key = WM_Key_Esc};
-      CardCheck(uishell_sidebar_card_wm_event(ws, &esc) && floating->open && !floating->focused, "focused float owns Escape and retains its placement");
-      esc.kind = WM_EventKind_Release;
-      CardCheck(uishell_sidebar_card_wm_event(ws, &esc), "float consumes the Escape release");
+      CardCheck(!uishell_sidebar_card_wm_event(ws, &esc) && floating->open && floating->placement == UIShell_CardPlacement_Float,
+                "Escape reaches the View, and a float keeps its placement");
       uishell_hover_cards_outside = saved_outside;
     }
     uishell_sidebar_card_request(floating, UIShell_CardPlacement_Inline);
@@ -1299,7 +1322,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(ui_nil_box.view_off_target.y == nil_scroll_before,
                 "first-frame pin reveal never writes the shared nil box");
       if(frame == 0)
-      { CardCheck(fixture.pin_reveal == u64_hash_from_str8(saved_ghost) && pinned->focused, "new pin keeps its reveal pending until measured"); }
+      { CardCheck(fixture.pin_reveal == u64_hash_from_str8(saved_ghost), "new pin keeps its reveal pending until measured"); }
       // Published on the first frame, drawn and measured on the second.
       if(frame == 2)
       { CardCheck(!fixture.pin_reveal, "measured new pin completes its reveal once drawn"); }
@@ -1337,14 +1360,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     }
     uishell_sidebar_card_close(second_layout_card);
     uishell_sidebar_detached_finish(ws);
-    original->rect = pinned->rect; original->open = 1; original->focused = 0;
+    original->rect = pinned->rect; original->open = 1;
     WM_Event overlap = {.kind = WM_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = center_2f32(pinned->rect)};
-    uishell_sidebar_card_wm_event(ws, &overlap);
-    CardCheck(original->focused && !pinned->focused, "transient overlay owns clicks above a pinned section");
     UIShell_HoverCard *top = uishell_sidebar_detached_copy(ws, original);
     top->placement = UIShell_CardPlacement_Float; top->rect = pinned->rect;
-    uishell_sidebar_card_wm_event(ws, &overlap);
-    CardCheck(top->focused && !original->focused && !pinned->focused, "float owns clicks above transient and pinned cards");
+    CardCheck(!uishell_sidebar_card_wm_event(ws, &overlap) && top->open && original->open && pinned->open,
+              "a click over stacked cards is the UI's, and closes none of them");
     uishell_sidebar_card_close(top);
     UIShell_SidebarModel model = fixture.model; MemoryZeroStruct(&fixture.model);
     UI_EventList absent_events = {0}; ui_begin_build(ws->os, &absent_events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -1398,7 +1419,6 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     // Float paint order follows the mask and raw-WM priority. A closed card
     // still linked this build cannot be recycled through its mask.next link.
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
-    original->focused = 1;
     UIShell_HoverCard *lower_float = uishell_sidebar_detached_copy(ws, original);
     UIShell_HoverCard *upper_float = uishell_sidebar_detached_copy(ws, original);
     lower_float->placement = upper_float->placement = UIShell_CardPlacement_Float;
@@ -1431,7 +1451,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
     fprintf(stderr, "Hover card diagnostics: drag control\n");
     // Drive the real drag control through press, motion and release frames.
     uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
-    original->source_rect = r2f32p(20, 20, 120, 50); original->engaged = original->focused = 1;
+    original->source_rect = r2f32p(20, 20, 120, 50); original->engaged = 1;
     Vec2F32 drag_start = {0};
     for(U64 frame = 0; frame < 4; frame++)
     {
@@ -1541,7 +1561,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           if(settled && frame == 0 && str8_match(ui_box_display_string(b), str8_lit("↗"), 0)) { marker = 1; }
         }
         if(settled && frame == 9) { hover_offered = uishell_sidebar_card_entity_match(fixture.cards[0].candidate, uishell_sidebar_card_entity(entity)) ||
-          (fixture.cards[0].open && uishell_sidebar_card_entity_match(fixture.cards[0].path[0], uishell_sidebar_card_entity(entity))); }
+          (fixture.cards[0].open && uishell_sidebar_card_entity_match(fixture.cards[0].subject, uishell_sidebar_card_entity(entity))); }
       }
       uishell_sidebar_detached_finish(ws);
       CardCheck(row_seen && marker && !card_before, "a collapsed ghost shows its row and lives-elsewhere marker, not its card");
@@ -1567,7 +1587,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       UIShell_LocalPin *hold = uishell_sidebar_card_pin(ws, original, 0);
       String8 hold_pin = hold ? push_str8_copy(entity_arena, hold->ghost) : str8_zero();
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, t0);
-      original->source_rect = r2f32p(20, 20, 120, 50); original->engaged = original->focused = 1;
+      original->source_rect = r2f32p(20, 20, 120, 50); original->engaged = 1;
       U64 before = uishell_hover_card_test_pin_count(window);
       Vec2F32 pin_at = {0};
       B32 menu_open = 0, show_tip = 0;
@@ -2115,7 +2135,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       RD_PanelAddress destination_panel = rd_panel_address(sidebar_owner, destination);
       CFG_Node *existing = uishell_sidebar_local_new_view(destination_panel, existing_local->section->id);
       uishell_sidebar_card_set(original, entity, ui_key_zero(), str8_zero(), 0, now_time_us());
-      original->engaged = original->focused = original->moving = original->drag_released = 1;
+      original->engaged = original->moving = original->drag_released = 1;
       fixture.drag_card = original;
       UIShell_RegsScope(.window = window->id, .view = rd_nil_view_address, .panel = rd_nil_panel_address)
       { rd_drag_begin(UIShell_ContextRegSlot_View); }

@@ -1271,8 +1271,8 @@ entry_point(CmdLine *cmdline)
     uishell_sidebar_make(window, (UIShell_MakeAction){UIShell_Make_Workspace, str8_lit("New workspace"), group_id}, str8_lit("Build logs"));
     state_frame(ws);
     // Pin on the project's hover card.
-    WheelhouseEntity path[] = {uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("project"), str8_lit("p"))};
-    UIShell_HoverCard card = {.path = path, .depth = 1, .retained_label = str8_lit("Example project")};
+    UIShell_HoverCard card = {.subject = uishell_sidebar_entity(uishell_sidebar_host_provider, str8_lit("project"), str8_lit("p")),
+                              .retained_label = str8_lit("Example project")};
     UIShell_LocalPin *pin = uishell_sidebar_card_pin(ws, &card, 0);
     StateCheck(pin && str8_match(pin->group->id, group_id, 0));
     state_frame(ws);
@@ -2685,9 +2685,9 @@ entry_point(CmdLine *cmdline)
       UI_Signal hover = {.box = &source, .f = UI_SignalFlag_Hovering};
       uishell_sidebar_card_source_at(ws->sidebar, row, hover, str8_zero(), 0, 1000000);
       uishell_sidebar_card_source_at(ws->sidebar, row, hover, str8_zero(), 0, 1000000+UIShell_HoverCardOpenDelayUS);
-      StateCheck(card->open && card->depth == 1 && uishell_sidebar_card_entity_match(card->path[0], fleet_beta));
+      StateCheck(card->open && uishell_sidebar_card_entity_match(card->subject, fleet_beta));
       UIShell_SidebarNode found = {0};
-      U64 index = card->open ? uishell_sidebar_card_find(ws->sidebar, card->path[0], &found) : WHEELHOUSE_NONE;
+      U64 index = card->open ? uishell_sidebar_card_find(ws->sidebar, card->subject, &found) : WHEELHOUSE_NONE;
       WheelhouseCardInfo detail = {0};
       StateCheck(index != WHEELHOUSE_NONE && uishell_sidebar_card_info(ws->sidebar, index, &detail));
       StateCheck(uishell_sidebar_card_entity_match(detail.entity, fleet_beta) && detail.field_count > 0 &&
@@ -2729,8 +2729,8 @@ entry_point(CmdLine *cmdline)
       StateCheck(pin != 0);
       UIShell_HoverCard *pinned = pin ? uishell_sidebar_saved_card(ws, pin) : 0;
       UIShell_SidebarNode found = {0};
-      StateCheck(pinned && uishell_sidebar_card_entity_match(pinned->path[0], fleet_beta) &&
-                 uishell_sidebar_card_find(ws->sidebar, pinned->path[0], &found) != WHEELHOUSE_NONE &&
+      StateCheck(pinned && uishell_sidebar_card_entity_match(pinned->subject, fleet_beta) &&
+                 uishell_sidebar_card_find(ws->sidebar, pinned->subject, &found) != WHEELHOUSE_NONE &&
                  str8_match(uishell_sidebar_string(found.label), str8_lit("Fleet via beta"), 0));
       if(pinned) { uishell_sidebar_card_close(pinned); }
       state_frame(ws);

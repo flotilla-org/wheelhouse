@@ -173,17 +173,20 @@ struct UIShell_HoverCard
   Vec2F32 move_origin;
   String8 source_key, source_row, retained_label;
   Arena *arena, *label_arena;
-  WheelhouseEntity *path;
-  WheelhouseEntity previous, candidate;
+  // What the card shows; previous is what it showed before, while that
+  // fades out.
+  WheelhouseEntity subject, previous, candidate;
   String8 context;
-  U64 depth, capacity, candidate_since, changed_at, left_at;
+  U64 candidate_since, changed_at, left_at;
   UI_Key source, dismissed;
   Rng2F32 source_rect, rect;
   Vec2F32 departure, last_mouse, glide_from;
   // The pointer's x when the card opened for its subject: Near placement's
   // horizontal anchor.
   F32 anchor_x;
-  B32 open, engaged, focused, contains_current, source_seen, corridor_active, enriched;
+  B32 open, engaged, contains_current, source_seen, corridor_active, enriched;
+  // Its title was clicked, not dragged, this build (uishell_sidebar_card_body).
+  B32 title_clicked;
   F32 scroll, content_height;
   // The cap holding the card's controls (#269): its box and bounds when it
   // showed this build, which edge it joins, and whether the entity actions
@@ -365,6 +368,9 @@ struct UIShell_SidebarState
   WheelhouseEntity card_action_target;
   String8 card_action_intent;
   B32 card_has_action;
+  // A click on a card's plain content: focus its entity, after the Views
+  // build (uishell_sidebar_cards_dispatch).
+  UIShell_SidebarIntent card_focus;
   // Catalog cards asked for by entity (uishell_sidebar_card_find), each the
   // core's answer at the revision it was asked at. They all go when the
   // first, the oldest, is no longer current (uishell_sidebar_refresh).
@@ -3092,7 +3098,7 @@ uishell_sidebar_row_drag_from(UIShell_SidebarState *state, RD_WindowState *ws,
       state->row_drag_released = 0;
       uishell_sidebar_drag_begin(ws);
       UIShell_HoverCard *card = &state->cards[0];
-      if(card->open && card->placement == UIShell_CardPlacement_Transient && !card->focused)
+      if(card->open && card->placement == UIShell_CardPlacement_Transient)
       { uishell_sidebar_card_close(card); }
       rd_request_frame();
     }
@@ -4904,14 +4910,13 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             }
             // An expanded ghost draws its card in its row's place.
             UIShell_LocalPin *ghost = uishell_sidebar_tree_ghost(split->owner_cfg, node);
-            // A revealed pin scrolls into view; an expanded one takes focus,
-            // and the reveal completes once its card has been measured.
+            // A revealed pin scrolls into view; an expanded one's reveal
+            // completes once its card has been measured.
             if(ghost && state->pin_reveal && u64_hash_from_str8(ghost->ghost) == state->pin_reveal)
             {
               body->view_off_target.y = Clamp(0.f, row_y, (F32)axes[Axis2_Y].range.max);
               B32 expanded = uishell_sidebar_pin_expanded(ghost);
               UIShell_HoverCard *card = uishell_sidebar_saved_card(ws, ghost);
-              card->focused = expanded;
               if(!expanded || card->content_height > 0) { state->pin_reveal = 0; }
               rd_request_frame();
             }
@@ -5196,8 +5201,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     // Fixture-only controller state accompanies hit rectangles for diagnostics.
     UIShell_HoverCard *c = &state->cards[0];
     write_data_to_file_path(push_str8f(scratch.arena, "%S.cards", uishell_sidebar_subject_geometry_path),
-      push_str8f(scratch.arena, "{\"mouse\":[%g,%g],\"open\":%u,\"engaged\":%u,\"focused\":%u,\"candidate_since\":%I64u,\"now\":%I64u,\"source_seen\":%u,\"rect\":[%g,%g,%g,%g]}",
-        ui_state->mouse.x, ui_state->mouse.y, c->open, c->engaged, c->focused,
+      push_str8f(scratch.arena, "{\"mouse\":[%g,%g],\"open\":%u,\"engaged\":%u,\"candidate_since\":%I64u,\"now\":%I64u,\"source_seen\":%u,\"rect\":[%g,%g,%g,%g]}",
+        ui_state->mouse.x, ui_state->mouse.y, c->open, c->engaged,
         c->candidate_since, now_time_us(), c->source_seen, c->rect.x0, c->rect.y0, c->rect.x1, c->rect.y1));
     StringJoin join = {.pre = str8_lit("["), .sep = str8_lit(","), .post = str8_lit("]")};
     write_data_to_file_path(uishell_sidebar_subject_geometry_path,
