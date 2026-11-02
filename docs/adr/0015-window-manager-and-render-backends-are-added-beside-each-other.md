@@ -331,8 +331,17 @@ for both GLX and EGL. Each check was repeated with llvmpipe
   `wl_surface.frame` (`wm_window_frame_ready` and `wm_window_frame_pending`,
   forwarded by the GL backend). The EGL layer takes Wayland surfaces through
   `wl_egl_window`, from its own `dlopen` of libwayland-egl.
-- **Not built yet** (the rest of section 3): fractional scale with
-  viewporter, the clipboard and primary selection shared with other clients
+- **Fractional scale**, as section 3 decided. The window draws
+  `round(size × scale)` buffer pixels and `wp_viewporter` shows them at its
+  size. Without `wp_fractional_scale_v1` the scale is a whole number, from
+  `wl_surface.preferred_buffer_scale` or else the output's. The client rect,
+  the pointer and the custom border are all in buffer pixels, and
+  `wm_dpi_from_window` is `96 × scale`. As on Windows, a scale change while
+  running rescales the font size. A window opened at a scale other than 1
+  uses the font-size setting as it is, and the saved window size is in buffer
+  pixels.
+- **Not built yet** (the rest of section 3): the clipboard and primary
+  selection shared with other clients
   (copy and paste stay inside the process for now), `text-input-v3`,
   `xdg-activation`, and a themed-cursor fallback. Until those land, X11 stays
   first in the fallback order. Its CI smoke run in a headless compositor is
