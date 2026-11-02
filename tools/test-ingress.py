@@ -49,6 +49,43 @@ if WINDOWS:
     spec.loader.exec_module(module)
     PipeSocket = module.PipeSocket
 
+# A command line that keeps its terminal open, for the shell each platform
+# runs a terminal's command line in: `cmd.exe /D /C` on Windows.
+WAIT = 'pause >nul' if WINDOWS else 'read answer'
+# A directory a terminal can start in, other than the test's own.
+ELSEWHERE = tempfile.gettempdir() if WINDOWS else '/tmp'
+PIPES = '\\\\.\\pipe\\'
+
+
+def listening(address):
+    """Whether an endpoint is at `address`: a pipe name on Windows, listed
+    rather than opened (opening one would take its instance), else a path."""
+    if WINDOWS:
+        return address.lower().startswith(PIPES) and \
+            address[len(PIPES):].lower() in {name.lower() for name in os.listdir(PIPES)}
+    return os.path.exists(address)
+
+
+def quit(process):
+    """Asks a launched Wheelhouse to quit as Exit does: SIGTERM, or on
+    Windows, which has no SIGTERM, closing its windows."""
+    if not WINDOWS:
+        process.terminate()
+        return
+    user = C.WinDLL('user32')
+    found = C.WINFUNCTYPE(C.c_bool, C.c_void_p, C.c_void_p)
+    user.EnumWindows.argtypes = [found, C.c_void_p]
+    user.GetWindowThreadProcessId.argtypes = [C.c_void_p, C.POINTER(C.c_ulong)]
+    user.PostMessageW.argtypes = [C.c_void_p, C.c_uint, C.c_size_t, C.c_ssize_t]
+    user.IsWindowVisible.argtypes = [C.c_void_p]
+    def close(window, _):
+        pid = C.c_ulong()
+        user.GetWindowThreadProcessId(window, C.byref(pid))
+        if pid.value == process.pid and user.IsWindowVisible(window):
+            user.PostMessageW(window, 0x0010, 0, 0)  # WM_CLOSE
+        return True
+    user.EnumWindows(found(close), None)
+
 
 def wait_ready(path, timeout=10, process=None):
     """Health is the readiness contract, including after listener restart."""
@@ -531,7 +568,14 @@ class IngressTests(unittest.TestCase):
             return message + ': ' + log.read().decode(errors='replace')
 
         def stop():
-            process.terminate()
+            if process.poll() is not None:
+                return
+            if WINDOWS:
+                # The process tree: its terminals' programs too.
+                subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                process.terminate()
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -540,6 +584,13 @@ class IngressTests(unittest.TestCase):
         self.addCleanup(stop)
         return process, root, workspace, failure
 
+    def endpoint(self, name):
+        """An address to name on the command line: a pipe of its own on
+        Windows (ADR 0011), else a socket in the test's directory."""
+        if WINDOWS:
+            return PIPES + 'wheelhouse-test-%s-%s' % (name, uuid.uuid4().hex)
+        return os.path.join(self.dir.name, name + '.sock')
+
     def serve(self, path, process, failure):
         """Waits for the launched Wheelhouse to listen at `path`."""
         try:
@@ -547,17 +598,16 @@ class IngressTests(unittest.TestCase):
         except (OSError, TimeoutError, RuntimeError):
             self.fail(failure('native listener failed'))
 
-    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
     def test_native_process_applies_producer_patch(self):
-        path = os.path.join(self.dir.name, 'native.sock')
+        path = self.endpoint('native')
         # Windows are a Dashboard's Presentation State, kept beside an explicit
         # --user file; the workspace's tabs are its record's, in the Dashboard.
         process, root, _, failure = self.launch(
             'ingress', '--andamento_socket:' + path, '--andamento_config:' + str(ROOT / 'data/sidebar/fixture.kdl'),
             '--ingress_record', '--ingress_record_bytes:1048576', '--ingress_record_files:2',
-            specs=[workspace_seed.terminal('read answer', '/tmp'), workspace_seed.terminal('read answer', self.dir.name),
-                   workspace_seed.terminal('read answer')], label='Observed')
+            specs=[workspace_seed.terminal(WAIT, ELSEWHERE), workspace_seed.terminal(WAIT, self.dir.name),
+                   workspace_seed.terminal(WAIT)], label='Observed')
         self.serve(path, process, failure)
         connection = UnixHTTPConnection(path)
         try:
@@ -565,7 +615,7 @@ class IngressTests(unittest.TestCase):
             response = connection.getresponse()
             self.assertEqual(response.status, 200)
             rows = json.loads(response.read())['workdirs']
-            self.assertEqual({row['cwd'] for row in rows}, {'/tmp', self.dir.name})
+            self.assertEqual({row['cwd'] for row in rows}, {ELSEWHERE, self.dir.name})
             self.assertEqual(len(rows), 2)
             self.assertEqual(len({row['view_id'] for row in rows}), 2)
             self.assertEqual(len({row['workspace_id'] for row in rows}), 1)
@@ -621,9 +671,22 @@ class IngressTests(unittest.TestCase):
         --automation_socket_file and what the terminal saw, once it quits."""
         root = Path(self.dir.name, name)
         seen, address_file = root / 'seen', root / 'address'
+        if WINDOWS:
+            # A batch file, as the command line reaches cmd.exe with its
+            # quotes escaped (uishell_workspace_store.c); the test's
+            # directory has no spaces in it.
+            report = root / 'report.cmd'
+            root.mkdir(parents=True)
+            report.write_text('@echo off\n'
+                              'if defined WHEELHOUSE_SOCKET (<nul set /p "=%%WHEELHOUSE_SOCKET%%") > "%s.tmp"\n'
+                              'if not defined WHEELHOUSE_SOCKET (<nul set /p "=unset") > "%s.tmp"\n'
+                              'move /y "%s.tmp" "%s" >nul\n'
+                              'pause >nul\n' % (seen, seen, seen, seen))
+            command = str(report)
+        else:
+            command = 'printf %%s "${WHEELHOUSE_SOCKET-unset}" > %s.tmp && mv %s.tmp %s; read answer' % (seen, seen, seen)
         process, _, _, failure = self.launch(
-            name, '--automation_socket_file:%s' % address_file, *args,
-            specs=[workspace_seed.terminal('printf %%s "${WHEELHOUSE_SOCKET-unset}" > %s.tmp && mv %s.tmp %s; read answer' % (seen, seen, seen))],
+            name, '--automation_socket_file:%s' % address_file, *args, specs=[workspace_seed.terminal(command)],
             user='automation: "%s"\n' % automation if automation else '', env={'WHEELHOUSE_SOCKET': '/outer/wheelhouse'})
         deadline = time.monotonic() + 20
         while not (address_file.exists() and seen.exists()):
@@ -633,38 +696,43 @@ class IngressTests(unittest.TestCase):
         address = address_file.read_text()
         if address:
             wait_ready(address, timeout=5, process=process)
-        process.terminate()
+        quit(process)
         process.wait(timeout=10)
         self.assertFalse(address_file.exists(), 'the address file outlived Wheelhouse')
         if address:
-            self.assertFalse(os.path.exists(address), 'the endpoint outlived Wheelhouse')
+            self.assertFalse(listening(address), 'the endpoint outlived Wheelhouse')
         return address, seen.read_text()
 
-    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
     @unittest.skipIf(os.environ.get('WHEELHOUSE_CLEAT_FEATURES') == 'none', 'terminals run no program without a VT engine')
     def test_a_nested_instance_tells_its_terminals_its_own_endpoint(self):
         # By default each instance listens at its own address under the
         # runtime directory, and its terminals see that, not the outer one.
         address, seen = self.launch_nested('default')
-        runtime = os.environ.get('XDG_RUNTIME_DIR')
-        parent = Path(runtime, 'wheelhouse') if runtime and os.path.isabs(runtime) else \
-            Path(tempfile.gettempdir(), 'wheelhouse-%d' % os.geteuid())
-        self.assertEqual(Path(address).parent, parent)
-        uuid.UUID(Path(address).name)
-        self.assertEqual(os.stat(parent).st_mode & 0o777, 0o700)
+        if WINDOWS:
+            # A pipe of its own, whose DACL grants only SYSTEM and the user.
+            parent, name = address.rsplit('\\', 1)
+            self.assertEqual(parent, PIPES + 'wheelhouse')
+            uuid.UUID(name)
+        else:
+            runtime = os.environ.get('XDG_RUNTIME_DIR')
+            parent = Path(runtime, 'wheelhouse') if runtime and os.path.isabs(runtime) else \
+                Path(tempfile.gettempdir(), 'wheelhouse-%d' % os.geteuid())
+            self.assertEqual(Path(address).parent, parent)
+            uuid.UUID(Path(address).name)
+            self.assertEqual(os.stat(parent).st_mode & 0o777, 0o700)
         self.assertEqual(seen, address)
         # Another instance gets another address.
         self.assertNotEqual(self.launch_nested('second')[0], address)
         # A launcher may name it.
-        explicit = os.path.join(self.dir.name, 'explicit.sock')
+        explicit = self.endpoint('explicit')
         self.assertEqual(self.launch_nested('explicit', '--automation_socket:' + explicit), (explicit, explicit))
         # With automation off there is no default listener, and terminals are
         # told of none.
         self.assertEqual(self.launch_nested('off', automation='off'), ('', 'unset'))
         # An address the launcher names is still served, for metadata.
         # The setting is matched without case.
-        explicit = os.path.join(self.dir.name, 'off.sock')
+        explicit = self.endpoint('off')
         self.assertEqual(self.launch_nested('off-explicit', '--automation_socket:' + explicit, automation='Off'), (explicit, 'unset'))
         # A value it doesn't know is taken as off.
         self.assertEqual(self.launch_nested('unknown', automation='of'), ('', 'unset'))
@@ -673,11 +741,11 @@ class IngressTests(unittest.TestCase):
         """Wheelhouse with one workspace of a terminal and a View of a Cleat
         session, listening at its own socket; returns the socket's path, the
         Workspace ID and Wheelhouse's directory."""
-        path = os.path.join(self.dir.name, name + '.sock')
+        path = self.endpoint(name)
         session = {'content': {'Local': {'CleatSession': {'transport': 'local', 'host': 'nowhere', 'runtime_root': str(Path(self.dir.name, 'cleat')),
                                                            'daemon': 'none', 'session': 'agent-session'}}}, 'presentation': 'terminal'}
         process, root, workspace, failure = self.launch(name, '--automation_socket:' + path, *args, user=user, label='Automated',
-                                                        specs=[workspace_seed.terminal('read answer', '/tmp'), session])
+                                                        specs=[workspace_seed.terminal(WAIT, ELSEWHERE), session])
         self.serve(path, process, failure)
         return path, workspace, root
 
@@ -694,7 +762,6 @@ class IngressTests(unittest.TestCase):
         finally:
             connection.close()
 
-    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
     def test_automation_routes_serve_the_semantic_tree(self):
         path, workspace, root = self.start_automation('routes', '--ingress_record')
@@ -711,8 +778,8 @@ class IngressTests(unittest.TestCase):
         terminal, cleat = panel['children']
         self.assertEqual((terminal['id'], terminal['kind'], terminal['state']), (w + '/view/u:1', 'view', ['selected']))
         self.assertEqual(terminal['props']['content'], 'terminal')
-        self.assertEqual(terminal['props']['terminal']['cwd'], '/tmp')
-        self.assertEqual(terminal['props']['terminal']['process'], 'read answer')
+        self.assertEqual(terminal['props']['terminal']['cwd'], ELSEWHERE)
+        self.assertEqual(terminal['props']['terminal']['process'], WAIT)
         self.assertEqual(cleat['props']['terminal']['session'], 'agent-session')
         # A subtree, by its Automation ID.
         status, sub = self.get(path, '/v1/observed/semantic?root=' + w + '/view/u:2')
@@ -755,15 +822,22 @@ class IngressTests(unittest.TestCase):
         self.assertIn('/v1/observed/semantic', paths)
         self.assertIn('/v1/observed/events', paths)
 
-    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
     @unittest.skipIf(os.environ.get('WHEELHOUSE_CLEAT_FEATURES') == 'none', 'terminals run no program without a VT engine')
     def test_a_terminals_screen_is_read_only_when_allowed_and_asked(self):
         def launch(name, user):
             # Wide characters, then spaces the row ends with.
-            path = os.path.join(self.dir.name, name + '.sock')
+            path = self.endpoint(name)
+            if WINDOWS:
+                # cmd.exe decodes each line of a batch file in the code
+                # page current when it reaches it: UTF-8 after chcp 65001.
+                script = Path(self.dir.name, name + '.cmd')
+                script.write_bytes('@chcp 65001 >nul\r\n@echo 日本 x\r\n@pause >nul\r\n'.encode())
+                command = str(script)
+            else:
+                command = "printf '\\346\\227\\245\\346\\234\\254 x   \\n'; read answer"
             process, _, _, failure = self.launch(name, '--automation_socket:' + path, user=user, specs=[
-                workspace_seed.terminal("printf '\\346\\227\\245\\346\\234\\254 x   \\n'; read answer")])
+                workspace_seed.terminal(command)])
             self.serve(path, process, failure)
             return path
         def terminal(path, target):
@@ -783,7 +857,6 @@ class IngressTests(unittest.TestCase):
         path = launch('no-screen', '')
         self.assertNotIn('text', terminal(path, '/v1/observed/semantic?include=terminal_text'))
 
-    @unittest.skipIf(WINDOWS, 'native sidebar/producer fixture uses Unix terminals; pipe HTTP contract runs on Windows')
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
     def test_automation_off_serves_none_of_its_routes(self):
         # A value it doesn't know is off too.
