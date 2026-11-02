@@ -5,8 +5,8 @@
 
 #include "cleat_provider.h"
 
-#if CLEAT_PROVIDER_ABI_VERSION != 11u
-# error "Wheelhouse requires Cleat provider ABI 11 (packet protocol 12)"
+#if CLEAT_PROVIDER_ABI_VERSION != 12u
+# error "Wheelhouse requires Cleat provider ABI 12: build against the Cleat revision in ci/pins.toml"
 #endif
 
 // Views within an attachment (cleat#399, packet protocol 16): one attachment

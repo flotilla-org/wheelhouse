@@ -63,7 +63,7 @@ The executable is `build/wheelhouse` (`build/wheelhouse.exe` on Windows); the ma
 
 Internal source names and existing configuration storage still use `uishell`.
 
-The native-build CI workflow checks exact Cleat and Jackstay revisions, recorded in `ci/pins.toml` (see `ci/README.md`). It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. For terminal hosting changes, use a sibling Cleat checkout at the revision pinned in `ci/pins.toml` or a descendant. A new UI diagnostic goes in `ci/ui-diagnostics.toml`.
+The native-build CI workflow checks exact Cleat and Jackstay revisions, recorded in `ci/pins.toml` (see `ci/README.md`). It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. For terminal hosting changes, use a sibling Cleat checkout at the revision pinned in `ci/pins.toml`; a later Cleat builds only while its provider ABI matches the one `native/src/uishell/uishell_terminal_provider.h` requires. A new UI diagnostic goes in `ci/ui-diagnostics.toml`.
 
 ## Terminal hyperlinks
 
