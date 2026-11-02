@@ -1,12 +1,13 @@
 name: wheelhouse
-version: 1.0.0
+version: 1.1.0
 tier: project
-provides: [toolchain:clang, dev:x11-gl]
+provides: [toolchain:clang, dev:x11-gl, debug:gdb]
 requires: []
 pins: {}
 probe: |
   set -eu
   clang --version
+  gdb --version >/dev/null
   pkg-config --exists x11 xext gl egl freetype2
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT

@@ -5,6 +5,7 @@ RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         clang \
+        gdb \
         libegl-dev \
         libfreetype-dev \
         libgl-dev \
