@@ -66,7 +66,7 @@ def listening(address):
     return os.path.exists(address)
 
 
-def quit(process):
+def request_exit(process):
     """Asks a launched Wheelhouse to quit as Exit does: SIGTERM, or on
     Windows, which has no SIGTERM, closing its windows."""
     if not WINDOWS:
@@ -673,8 +673,9 @@ class IngressTests(unittest.TestCase):
         seen, address_file = root / 'seen', root / 'address'
         if WINDOWS:
             # A batch file, as the command line reaches cmd.exe with its
-            # quotes escaped (uishell_workspace_store.c); the test's
-            # directory has no spaces in it.
+            # quotes escaped (uishell_workspace_store.c), so its path must
+            # need no quoting.
+            self.assertFalse(set(' ()&^') & set(str(root)), 'the batch file\'s path needs quoting: %s' % root)
             report = root / 'report.cmd'
             root.mkdir(parents=True)
             report.write_text('@echo off\n'
@@ -696,7 +697,7 @@ class IngressTests(unittest.TestCase):
         address = address_file.read_text()
         if address:
             wait_ready(address, timeout=5, process=process)
-        quit(process)
+        request_exit(process)
         process.wait(timeout=10)
         self.assertFalse(address_file.exists(), 'the address file outlived Wheelhouse')
         if address:
@@ -832,6 +833,7 @@ class IngressTests(unittest.TestCase):
                 # cmd.exe decodes each line of a batch file in the code
                 # page current when it reaches it: UTF-8 after chcp 65001.
                 script = Path(self.dir.name, name + '.cmd')
+                self.assertFalse(set(' ()&^') & set(str(script)), 'the batch file\'s path needs quoting: %s' % script)
                 script.write_bytes('@chcp 65001 >nul\r\n@echo 日本 x\r\n@pause >nul\r\n'.encode())
                 command = str(script)
             else:
