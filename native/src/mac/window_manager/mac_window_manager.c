@@ -817,8 +817,8 @@ mac_wm_window_release(MAC_WM_Window *window)
 ////////////////////////////////
 //~ @os_hooks Main Initialization API (Implemented Per-OS)
 
-internal void
-wm_init(void)
+internal B32
+wm_init(CmdLine *cmdln)
 {
   Arena *arena = arena_alloc();
   mac_wm_state = push_array(arena, MAC_WM_State, 1);
@@ -849,6 +849,7 @@ wm_init(void)
                                                    forEventClass:kCoreEventClass
                                                       andEventID:kAEQuitApplication];
   mac_wm_apply_menu_mode(mac_wm_state->menu_mode);
+  return 1;
 }
 
 ////////////////////////////////

@@ -87,6 +87,12 @@ git_hash_full=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 
 # --- Compile/Link Line Definitions -------------------------------------------
 host_os=$(uname -s)
+# The Wayland window manager's protocol code, generated from the system's
+# protocol XML on every Linux build (tools/wayland-include.py).
+if [ "$host_os" = "Linux" ]; then
+  wayland_include=$(python3 "$repo_root/tools/wayland-include.py")
+  auto_compile_flags="$auto_compile_flags -I$wayland_include"
+fi
 clang_common="-I../native/src/ -I/usr/include/freetype2/ -I../local/ -D_GNU_SOURCE -g -DBUILD_GIT_HASH=\"$git_hash\" -DBUILD_GIT_HASH_FULL=\"$git_hash_full\" -Wno-unknown-warning-option -fdiagnostics-absolute-paths -Wall -Wno-missing-braces -Wno-unused-function -Wno-writable-strings -Wno-unused-value -Wno-unused-variable -Wno-unused-local-typedef -Wno-deprecated-register -Wno-deprecated-declarations -Wno-unused-but-set-variable -Wno-single-bit-bitfield-constant-conversion -Wno-compare-distinct-pointer-types -Wno-initializer-overrides -Wno-incompatible-pointer-types-discards-qualifiers -Wno-for-loop-analysis -Xclang -flto-visibility-public-std -D_USE_MATH_DEFINES -Dstrdup=_strdup -Dgnu_printf=printf"
 if [ "$host_os" = "Darwin" ]; then
   clang_common="$clang_common -x objective-c"

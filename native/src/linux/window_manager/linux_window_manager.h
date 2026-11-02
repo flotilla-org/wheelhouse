@@ -26,19 +26,6 @@
 #include <X11/keysymdef.h>
 
 ////////////////////////////////
-//~ rjf: EWMH _NET_WM_MOVERESIZE directions
-
-#define _NET_WM_MOVERESIZE_SIZE_TOPLEFT      0
-#define _NET_WM_MOVERESIZE_SIZE_TOP          1
-#define _NET_WM_MOVERESIZE_SIZE_TOPRIGHT     2
-#define _NET_WM_MOVERESIZE_SIZE_RIGHT        3
-#define _NET_WM_MOVERESIZE_SIZE_BOTTOMRIGHT  4
-#define _NET_WM_MOVERESIZE_SIZE_BOTTOM       5
-#define _NET_WM_MOVERESIZE_SIZE_BOTTOMLEFT   6
-#define _NET_WM_MOVERESIZE_SIZE_LEFT         7
-#define _NET_WM_MOVERESIZE_MOVE              8
-
-////////////////////////////////
 //~ rjf: Window State
 
 typedef struct LNX_WM_WindowClientArea LNX_WM_WindowClientArea;

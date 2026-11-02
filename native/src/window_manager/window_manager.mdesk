@@ -152,6 +152,75 @@ WM_KeyTable:
   {RightMouseButton     "Right Mouse Button"     "right_mouse"                         }
 }
 
+// The functions each window-manager backend implements. A build with one
+// backend calls its functions directly. With several (Linux: X11 and
+// Wayland), each backend's functions are renamed to wm_<backend>_<name> as
+// it is compiled, and wm_<name> calls the one wm_init chose (ADR 0015).
+// wm_init itself is not listed: it chooses the backend.
+@table(name, ret, params, args)
+WM_HookTable:
+{
+  {get_system_info                              `WM_SystemInfo *` `void` ` `}
+  {apply_clipboard_write                        `B32` `U32 destination, B32 clear, String8 text` `destination, clear, text`}
+  {set_clipboard_text_impl                      `void` `String8 string, String8 html` `string, html`}
+  {get_clipboard_text_impl                      `String8` `Arena *arena` `arena`}
+  {set_selection_text                           `void` `String8 string` `string`}
+  {get_selection_text                           `String8` `Arena *arena` `arena`}
+  {window_open                                  `WM_Window` `Rng2F32 rect, WM_WindowFlags flags, String8 title` `rect, flags, title`}
+  {window_close                                 `void` `WM_Window window` `window`}
+  {window_set_title                             `void` `WM_Window window, String8 title` `window, title`}
+  {set_application_icon                         `void` `Vec2S32 dim, U8 *rgba` `dim, rgba`}
+  {window_first_paint                           `void` `WM_Window window` `window`}
+  {window_focus                                 `void` `WM_Window window` `window`}
+  {window_is_focused                            `B32` `WM_Window window` `window`}
+  {window_is_fullscreen                         `B32` `WM_Window window` `window`}
+  {window_set_fullscreen                        `void` `WM_Window window, B32 fullscreen` `window, fullscreen`}
+  {window_is_maximized                          `B32` `WM_Window window` `window`}
+  {window_set_maximized                         `void` `WM_Window window, B32 maximized` `window, maximized`}
+  {window_is_minimized                          `B32` `WM_Window window` `window`}
+  {window_set_minimized                         `void` `WM_Window window, B32 minimized` `window, minimized`}
+  {window_bring_to_front                        `void` `WM_Window window` `window`}
+  {window_set_monitor                           `void` `WM_Window window, WM_Monitor monitor` `window, monitor`}
+  {window_clear_custom_border_data              `void` `WM_Window handle` `handle`}
+  {window_push_custom_title_bar                 `void` `WM_Window handle, F32 thickness` `handle, thickness`}
+  {window_push_custom_edges                     `void` `WM_Window handle, F32 thickness` `handle, thickness`}
+  {window_push_custom_title_bar_client_area     `void` `WM_Window handle, Rng2F32 rect` `handle, rect`}
+  {window_should_draw_custom_title_bar_controls `B32` `WM_Window window` `window`}
+  {window_native_title_bar_left_padding         `F32` `WM_Window window` `window`}
+  {rect_from_window                             `Rng2F32` `WM_Window window` `window`}
+  {client_rect_from_window                      `Rng2F32` `WM_Window window` `window`}
+  {dpi_from_window                              `F32` `WM_Window window` `window`}
+  {layout_scale_from_window                     `F32` `WM_Window window` `window`}
+  {backing_scale_from_window                    `F32` `WM_Window window` `window`}
+  {native_surface                               `WM_NativeSurface` `WM_Window window` `window`}
+  {window_presented                             `void` `WM_Window window` `window`}
+  {window_frame_ready                           `B32` `WM_Window window` `window`}
+  {window_frame_pending                         `B32` `WM_Window window` `window`}
+  {focused_external_window                      `WM_ExtWindow` `void` ` `}
+  {focus_external_window                        `void` `WM_ExtWindow ext_window` `ext_window`}
+  {push_monitors_array                          `WM_MonitorArray` `Arena *arena` `arena`}
+  {primary_monitor                              `WM_Monitor` `void` ` `}
+  {monitor_from_window                          `WM_Monitor` `WM_Window window` `window`}
+  {name_from_monitor                            `String8` `Arena *arena, WM_Monitor monitor` `arena, monitor`}
+  {dim_from_monitor                             `Vec2F32` `WM_Monitor monitor` `monitor`}
+  {dpi_from_monitor                             `F32` `WM_Monitor monitor` `monitor`}
+  {send_wakeup_event                            `void` `void` ` `}
+  {get_events                                   `WM_EventList` `Arena *arena, B32 wait` `arena, wait`}
+  {get_modifiers                                `WM_Modifiers` `void` ` `}
+  {key_is_down                                  `B32` `WM_Key key` `key`}
+  {mouse_from_window                            `Vec2F32` `WM_Window window` `window`}
+  {set_main_menu                                `void` `WM_MenuArray menu_array` `menu_array`}
+  {application_menu_bar_is_native               `B32` `void` ` `}
+  {set_preferred_window_decorations             `void` `B32 enabled` `enabled`}
+  {set_preferred_native_menu_bar                `void` `B32 enabled` `enabled`}
+  {set_cursor                                   `void` `WM_Cursor cursor` `cursor`}
+  {graphical_message                            `void` `B32 error, String8 title, String8 message` `error, title, message`}
+  {graphical_pick_file                          `String8` `Arena *arena, String8 initial_path` `arena, initial_path`}
+  {show_in_filesystem_ui                        `void` `String8 path` `path`}
+  {open_in_browser                              `void` `String8 url` `url`}
+  {reduce_motion                                `B32` `void` ` `}
+}
+
 ////////////////////////////////
 //~ rjf: Generators
 
@@ -169,4 +238,30 @@ WM_KeyTable:
 @data(String8) wm_key_cfg_name_table:
 {
   @expand(WM_KeyTable a) `str8_lit_comp("$(a.cfg_string)")`;
+}
+
+@gen
+{
+  `#if WM_BACKEND_MULTI`;
+  `#define WM_HOOK_NAME(name) wm_##name`;
+  `#define wm_init WM_HOOK_NAME(init)`;
+  @expand(WM_HookTable a) `#define wm_$(a.name) WM_HOOK_NAME($(a.name))`;
+  `#define WM_HookDecls \\`;
+  `internal B32 wm_init(CmdLine *cmdln);\\`;
+  @expand(WM_HookTable a) `internal $(a.ret) wm_$(a.name)($(a.params));\\`;
+  `/* WM_HookDecls */`;
+  `#define WM_HookFields \\`;
+  @expand(WM_HookTable a) `$(a.ret) (*$(a.name))($(a.params));\\`;
+  `/* WM_HookFields */`;
+  `#define WM_HookTableInit(prefix) \\`;
+  @expand(WM_HookTable a) `wm_##prefix##_$(a.name),\\`;
+  `/* WM_HookTableInit */`;
+  `#endif`;
+}
+
+@gen @c_file
+{
+  `#if WM_BACKEND_MULTI`;
+  @expand(WM_HookTable a) `internal $(a.ret) wm_$(a.name)($(a.params)) { return wm_backend->$(a.name)($(a.args)); }`;
+  `#endif`;
 }

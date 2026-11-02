@@ -215,7 +215,7 @@ internal void
 entry_point(CmdLine *cmdline)
 {
   U32 failures = 0;
-  wm_init(); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
+  wm_init(cmdline); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
   rd_state->headless_views = 1;
   e_select_cache(rd_state->eval_cache);
   E_BaseCtx base_ctx = {.address_arch = Arch_CURRENT, .space_gen = rd_eval_space_gen,

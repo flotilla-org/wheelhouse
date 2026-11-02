@@ -472,13 +472,13 @@ r_window_request_frame(WM_Window window, R_Handle window_equip, B32 requested)
 r_hook B32
 r_window_frame_ready(WM_Window window, R_Handle window_equip)
 {
-  return 1;
+  return r_ogl_os_window_frame_ready(window);
 }
 
 r_hook B32
 r_window_frame_pending(WM_Window window, R_Handle window_equip)
 {
-  return 0;
+  return r_ogl_os_window_frame_pending(window);
 }
 
 r_hook void
@@ -498,6 +498,14 @@ r_end_frame(void)
   r_ogl_state->first_buffer_to_flush = r_ogl_state->last_buffer_to_flush = 0;
 }
 
+internal Vec2S32
+r_ogl_pixel_size_from_window(WM_Window os)
+{
+  Vec2F32 dim = dim_2f32(wm_client_rect_from_window(os));
+  F32 scale = wm_backing_scale_from_window(os);
+  return v2s32(Max((S32)round_f32(dim.x*scale), 1), Max((S32)round_f32(dim.y*scale), 1));
+}
+
 r_hook void
 r_window_begin_frame(WM_Window os, R_Handle r)
 {
@@ -507,11 +515,14 @@ r_window_begin_frame(WM_Window os, R_Handle r)
   //- rjf: unpack window viewport info
   Rng2F32 client_rect = wm_client_rect_from_window(os);
   Vec2F32 client_rect_dim = dim_2f32(client_rect);
+  Vec2S32 pixel_dim = r_ogl_pixel_size_from_window(os);
+  window->last_client_rect_dim = client_rect_dim;
+  window->last_backing_scale = wm_backing_scale_from_window(os);
   
   //- rjf: set up targets if needed
-  if(client_rect_dim.x != window->last_client_rect_dim.x || client_rect_dim.y != window->last_client_rect_dim.y)
+  if(pixel_dim.x != window->last_pixel_dim.x || pixel_dim.y != window->last_pixel_dim.y)
   {
-    window->last_client_rect_dim = client_rect_dim;
+    window->last_pixel_dim = pixel_dim;
     R_OGL_RenderTarget *targets[] =
     {
       &window->stage_target,
@@ -529,7 +540,7 @@ r_window_begin_frame(WM_Window os, R_Handle r)
       glBindFramebufferScope(GL_FRAMEBUFFER, targets[idx]->fbo)
         glBindTextureScope(GL_TEXTURE_2D, targets[idx]->color_texture)
       {
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (S32)client_rect_dim.x, (S32)client_rect_dim.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, pixel_dim.x, pixel_dim.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, targets[idx]->color_texture, 0);  
       }
     }
@@ -552,7 +563,7 @@ r_window_begin_frame(WM_Window os, R_Handle r)
       }
     }
   }
-  glViewport(0, 0, (S32)client_rect_dim.x, (S32)client_rect_dim.y);
+  glViewport(0, 0, pixel_dim.x, pixel_dim.y);
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
@@ -565,8 +576,8 @@ r_window_end_frame(WM_Window os, R_Handle r)
   //- rjf: blit window's main staging frame buffer to window frame buffer
   glBindFramebufferScope(GL_READ_FRAMEBUFFER, window->stage_target.fbo) glBindFramebufferScope(GL_DRAW_FRAMEBUFFER, 0)
   {
-    glBlitFramebuffer(0, 0, (S32)window->last_client_rect_dim.x, (S32)window->last_client_rect_dim.y,
-                      0, 0, (S32)window->last_client_rect_dim.x, (S32)window->last_client_rect_dim.y,
+    glBlitFramebuffer(0, 0, window->last_pixel_dim.x, window->last_pixel_dim.y,
+                      0, 0, window->last_pixel_dim.x, window->last_pixel_dim.y,
                       GL_COLOR_BUFFER_BIT,
                       GL_NEAREST);
   }
@@ -581,8 +592,10 @@ r_hook void
 r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
 {
   R_OGL_Window *w = (R_OGL_Window *)window_equip.u64[0];
-  Rng2F32 viewport_rect = wm_client_rect_from_window(window);
-  Vec2F32 viewport_dim = dim_2f32(viewport_rect);
+  // Passes are in points; the window's targets are in pixels.
+  Vec2F32 viewport_dim = w->last_client_rect_dim;
+  Vec2S32 pixel_dim = w->last_pixel_dim;
+  F32 backing_scale = w->last_backing_scale > 0 ? w->last_backing_scale : 1.f;
   // NOTE: a surface target's first pass this submit clears it; later passes
   // (e.g. a parent surface resuming after a nested child's bracket) load
   GLuint touched_targets[64];
@@ -613,9 +626,9 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
           break;
         }
         Vec2F32 pass_viewport_dim = viewport_dim;
-        Vec2S32 pass_attachment_size = v2s32((S32)viewport_dim.x, (S32)viewport_dim.y);
+        Vec2S32 pass_attachment_size = pixel_dim;
         Vec2F32 target_origin = v2f32(0, 0);
-        F32 pass_scale = 1.f;
+        F32 pass_scale = backing_scale;
         if(to_surface)
         {
           pass_viewport_dim = dim_2f32(params->target_rect);
@@ -794,7 +807,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
         }
         if(to_surface)
         {
-          glViewport(0, 0, (S32)viewport_dim.x, (S32)viewport_dim.y);
+          glViewport(0, 0, pixel_dim.x, pixel_dim.y);
           glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         }
       }break;
@@ -847,7 +860,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
             glBindTexture(GL_TEXTURE_2D, 0);
           }
           glEnable(GL_BLEND);
-          glViewport(0, 0, (S32)viewport_dim.x, (S32)viewport_dim.y);
+          glViewport(0, 0, pixel_dim.x, pixel_dim.y);
         }
       }break;
 
@@ -869,7 +882,8 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
             // TODO(rjf): adopted from martins' d3d11 impl, should dedup in common render helpers
             //
             F32 weights[ArrayCount(kernel)*2] = {0};
-            F32 blur_size = Min(params->blur_size, ArrayCount(weights));
+            // The kernel steps in texels, pixels of the window's targets.
+            F32 blur_size = Min(params->blur_size*backing_scale, ArrayCount(weights));
             blur_count = (U64)round_f32(blur_size);
             F32 stdev = (blur_size-1.f)/2.f;
             F32 one_over_root_2pi_stdev2 = 1/sqrt_f32(2*pi32*stdev*stdev);
@@ -925,8 +939,8 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
              params->clip.y0 != 0 ||
              params->clip.y1 != 0)
           {
-            Rng2F32 clip = params->clip;
-            glScissor(clip.x0, viewport_dim.y - clip.y1, (clip.x1-clip.x0) + 1, (clip.y1-clip.y0)+1);
+            Rng2F32 clip = r2f32p(params->clip.x0*backing_scale, params->clip.y0*backing_scale, params->clip.x1*backing_scale, params->clip.y1*backing_scale);
+            glScissor(clip.x0, pixel_dim.y - clip.y1, (clip.x1-clip.x0) + 1, (clip.y1-clip.y0)+1);
             glEnable(GL_SCISSOR_TEST);
           }
           
@@ -936,7 +950,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
           {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glUniform2f(glGetUniformLocation(shader, "direction"), 1.f/viewport_dim.x, 0);
+            glUniform2f(glGetUniformLocation(shader, "direction"), 1.f/pixel_dim.x, 0);
             glUniform1i(glGetUniformLocation(shader, "tex"), 0);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
           }
@@ -947,7 +961,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
           {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glUniform2f(glGetUniformLocation(shader, "direction"), 0, 1.f/viewport_dim.y);
+            glUniform2f(glGetUniformLocation(shader, "direction"), 0, 1.f/pixel_dim.y);
             glUniform1i(glGetUniformLocation(shader, "tex"), 0);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
           }

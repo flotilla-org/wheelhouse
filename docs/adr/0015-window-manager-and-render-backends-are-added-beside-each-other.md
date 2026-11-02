@@ -1,8 +1,9 @@
 # Window-Manager and Render Backends Are Added Beside Each Other and Chosen Per Run
 
-**Status:** proposed 2026-11-01. The first enabling step, the OpenGL
-backend's Linux part on EGL behind `wm_native_surface` (X11 only), lands with
-this record.
+**Status:** accepted 2026-11-01. The first enabling step, the OpenGL
+backend's Linux part on EGL behind `wm_native_surface` (X11 only), landed
+with this record (#642). The window manager's generated dispatch and a first
+native Wayland window manager followed; see "Built so far".
 
 ## Context
 
@@ -81,6 +82,17 @@ a look only if its features become needed anyway.
   libwayland-egl, libvulkan) loads them with `dlopen` in its init. A missing
   library is then an init failure that falls back, not a binary that won't
   start.
+- *Built for the window manager.* The hooks are listed in `WM_HookTable` in
+  `window_manager.mdesk`. They are still declared, with their comments, in
+  `window_manager.h`, and the compiler checks the two against each other in
+  every build with several backends. Rather than renaming functions by hand,
+  each backend's source is compiled with `WM_HOOK_NAME` set to its prefix, so
+  its `wm_window_open` becomes `wm_x11_window_open`; a single-backend build
+  defines none of this. `wm_init(CmdLine *)` returns whether the window
+  manager started, and on Linux it does the choosing (`--window_manager:` or
+  `WHEELHOUSE_WINDOW_MANAGER`, then X11 and Wayland in that order). There is
+  no setting yet. The render layer gets the same treatment when it gains a
+  second backend in one build.
 
 ### 2. The seams every backend shares
 
@@ -155,14 +167,29 @@ behaviour.
   draws no second title bar, just as #608 removed the doubled one on X11.
   Maximized, fullscreen, activated and tiled come from the `xdg_toplevel`
   configure states, not from properties.
-- **Fractional scale.** `wp_fractional_scale_v1` gives the preferred scale in
-  120ths. The window draws a buffer of `round(logical × scale)` and sets
-  `wp_viewporter`'s destination to the logical size. This follows the Win32
-  model: the client rect is in buffer pixels, `wm_dpi_from_window` is
-  `96 × scale`, `wm_backing_scale_from_window` is 1, and pointer positions
-  are scaled from surface-local coordinates. Without the protocol, the
-  window uses `wl_surface.preferred_buffer_scale` (wl_compositor v6), or
-  else `wl_output.scale`, with `wl_surface.set_buffer_scale`.
+- **Scale: the macOS model, at a whole-number backing scale.** Wayland's
+  surface coordinates are logical, like macOS points, and its preferred
+  buffer scale plays the part of `backingScaleFactor`. So the window is laid
+  out in points: the client rect, the pointer and the custom border are in
+  surface coordinates, `wm_layout_scale_from_window` is 1, and
+  `wm_backing_scale_from_window` is the buffer scale. The scale comes from
+  `wl_surface.preferred_buffer_scale` (wl_compositor v6), or else from the
+  output's `wl_output.scale`, and is set with `wl_surface.set_buffer_scale`.
+  The render backend draws `points × backing scale` pixels, as Metal does.
+  On a fractional output (1.5×) the compositor asks for 2 and scales the
+  buffer down, which is what macOS does with its scaled modes. A font size
+  means the same size on every output, and moving between outputs rewrites
+  no setting.
+  - *Considered and set aside for now: Windows' model with true fractional
+    drawing* (`wp_fractional_scale_v1`, a buffer of `round(logical × scale)`,
+    `wp_viewporter`, the client rect in buffer pixels). It was built first.
+    It draws fewer pixels and is sharper at 1.5×, but it ties a font size to
+    physical pixels: a scale change rescales and saves the font size, and a
+    window opened at 1.5× looks smaller than at 1×. Drawing in points at a
+    fractional backing scale instead puts whole-point edges between pixels,
+    which needs device-pixel snapping in the shell. True fractional drawing
+    can come back as a measured improvement on this model.
+  - D3D11 on Windows keeps the Win32 model, which is that platform's own.
 - **Clipboard and primary selection.** `wl_data_device` serves CLIPBOARD and
   `zwp_primary_selection_device_v1` serves PRIMARY, with the same
   text-and-HTML model the X11 code keeps (`clipboard_text`,
@@ -300,3 +327,34 @@ for both GLX and EGL. Each check was repeated with llvmpipe
 - `ci/run-ui-diagnostics.py --os linux` passes all 15 diagnostics on the EGL
   build, with an `xvfb-run` stand-in that execs its arguments, on llvmpipe
   and on the NVIDIA GPU.
+
+## Built so far
+
+- **#642:** the spike above.
+- **Window-manager dispatch** (section 1). Linux builds X11 and Wayland in
+  one binary; Windows, macOS and the stub stay single-backend, with direct
+  calls.
+- **A first Wayland window manager** (`linux/window_manager/wayland`),
+  chosen with `--window_manager:wayland`. It loads libwayland-client and
+  libxkbcommon with `dlopen`, so the binary still starts without them. Its
+  protocol code is generated by `wayland-scanner` on every Linux build
+  (`tools/wayland-include.py`), against the system's libwayland headers, so a
+  Linux build needs the `wayland` and `wayland-protocols` packages. It has `xdg-shell` windows with `xdg-decoration`, the custom border's
+  move, resize, window menu and double-click maximize, keyboard input through
+  xkbcommon with client-side key repeat, wheel and touchpad scrolling,
+  `wp_cursor_shape_v1`, outputs as monitors, and frame pacing by
+  `wl_surface.frame` (`wm_window_frame_ready` and `wm_window_frame_pending`,
+  forwarded by the GL backend). The EGL layer takes Wayland surfaces through
+  `wl_egl_window`, from its own `dlopen` of libwayland-egl.
+- **Scale**, as section 3 decided: points at a whole-number backing scale.
+  The GL backend now sizes a window's targets, viewport, scissors and blur
+  in pixels (`points × wm_backing_scale_from_window`). That scale is 1 on
+  X11 and Windows, so nothing changes there.
+- **Not built yet** (the rest of section 3): the clipboard and primary
+  selection shared with other clients
+  (copy and paste stay inside the process for now), `text-input-v3`,
+  `xdg-activation`, and a themed-cursor fallback. Until those land, X11 stays
+  first in the fallback order. Its CI smoke run in a headless compositor is
+  also still to come. Two shared-UI checks drive X11 directly, so they run
+  only under X11.
+

@@ -896,7 +896,7 @@ entry_point(CmdLine *cmdline)
   if(!dir.size) { fprintf(stderr, "state behaviour needs --state_dir:DIR --user:FILE --dashboard:DIR\n"); abort_self(2); }
   // As --sidebar_subject_fixture: the daily-driver sidebar with fixture facts.
   uishell_sidebar_fixture = uishell_sidebar_subject_fixture = 1;
-  wm_init(); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
+  wm_init(cmdline); fp_init(); r_init(cmdline); fnt_init(); rd_init(cmdline);
   // Every registered Renderer except visualizers renders, and so do docked
   // sections when the sidebar is drawn (state_sidebar_draw).
   rd_state->headless_views = 1;

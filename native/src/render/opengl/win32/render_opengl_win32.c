@@ -181,3 +181,16 @@ r_ogl_os_window_swap(WM_Window os, R_Handle r)
     SwapBuffers(dc);
   }
 }
+
+// The swap paces frames.
+internal B32
+r_ogl_os_window_frame_ready(WM_Window os)
+{
+  return 1;
+}
+
+internal B32
+r_ogl_os_window_frame_pending(WM_Window os)
+{
+  return 0;
+}

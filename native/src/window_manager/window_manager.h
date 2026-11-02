@@ -253,7 +253,10 @@ internal WM_Event *wm_event_list_push_new(Arena *arena, WM_EventList *evts, WM_E
 ////////////////////////////////
 //~ rjf: @os_hooks Main Initialization API (Implemented Per-OS)
 
-internal void wm_init(void);
+// Returns 0 if this window manager cannot start here (no display, no
+// compositor). Where several are built in, it chooses one: see
+// window_manager_inc.c.
+internal B32 wm_init(CmdLine *cmdln);
 
 ////////////////////////////////
 //~ rjf: @os_hooks Graphics System Info (Implemented Per-OS)
@@ -330,6 +333,12 @@ internal WM_NativeSurface wm_native_surface(WM_Window window);
 // the window: the window manager may now tell the compositor the frame for
 // its last configure exists (X11: the _NET_WM_SYNC_REQUEST counter).
 internal void           wm_window_presented(WM_Window window);
+// Frame admission for render backends whose display opportunities come from
+// the surface rather than the swap chain (Wayland's frame callbacks), with
+// r_window_frame_ready's and r_window_frame_pending's meanings. Window
+// managers without such a signal are always ready and never pending.
+internal B32            wm_window_frame_ready(WM_Window window);
+internal B32            wm_window_frame_pending(WM_Window window);
 
 ////////////////////////////////
 //~ rjf: @os_hooks External Windows (Implemented Per-OS)
