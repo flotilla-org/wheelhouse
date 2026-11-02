@@ -2,7 +2,9 @@
 
 **Status:** accepted, and implemented in part: workspace and sidebar
 arrangements are committed to the core as documents, and since #516 their
-edit and docking rules are the core's (see "The rules are the core's"). The
+edit and docking rules are the core's (see "The rules are the core's").
+Since #631 a workspace's kept status and its Workspace Home are the core's
+too, with the rules that open, close, keep and home it. The
 rest of the migration is tracked in `docs/roadmap.md`, "State model
 migration". Revised 2026-10-10 after an adversarial review (see "Revision"
 below), and narrowed 2026-10-29 for #441. Decided on
@@ -114,4 +116,14 @@ and gestures change an arrangement by named intent (`select-tab`,
 `drop-tab`, `resize-panel`, ...), which the Automation Endpoint (ADR 0014)
 can invoke. A gesture still previews on a copy each frame, with the core's
 pure rule, and sends one intent when it ends.
+
+#631 (step 2a of #441) does the same for a workspace's lifecycle and home.
+The core's record of a workspace now holds whether it is kept (a Kept
+Workspace) and its Workspace Home, and `lifecycle.rs` holds the rules: the
+default name, which workspace shows after a close, whether a close keeps or
+destroys, what a row's close control offers, and how a drop re-homes a local
+workspace. Wheelhouse's commands and gestures send `new-workspace`,
+`close-workspace` and `set-workspace-home`, and carry out the effects on the
+config tree; it still makes the Workspace ID, and selection and order stay
+its Presentation State.
 

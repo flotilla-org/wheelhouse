@@ -194,9 +194,9 @@ A section's name can therefore come from you, from its single group, or from a n
 
 - **Scope.** Arrangements are saved per window, alongside existing pins and section positions in the window's docking tree in the user config. Multi-window behaviour is still RAD-inherited and unexplored. Sharing an arrangement across windows can come later as an explicit action.
 - **Entity ghosts and order lists** are keyed by core entity `(kind, id)`. Order lists are also keyed by the group's identity: a project's entity key, or a local group's id.
-- **The "lives with project X" annotation** is stored on the local workspace's own config node. If the project disappears, the workspace falls back to the default group, keeps the annotation, and returns when the project reappears. This is the same "unobserved is not ended" rule that retained rows follow.
+- **The "lives with project X" annotation** is part of the local workspace's Workspace Home, which the core keeps in its record (since #631; before, the `lives_with` field on its config node). If the project disappears, the workspace falls back to the default group, keeps the annotation, and returns when the project reappears. This is the same "unobserved is not ended" rule that retained rows follow.
   - *How it is placed* (settled 2026-10-08, #249 and andamento#139): each local workspace is a core **host entity**, kind `wheelhouse.workspace` (to become `.workspace`, above), with an id saved on the workspace: its Workspace ID (`workspace_id`; before #306 a GUID of its own, `local_entity`).
-    - Wheelhouse publishes its label and, when homed, `flotilla.project` (`lives_with`), and tags its tab with `host.entity.*`.
+    - Wheelhouse publishes its label and, when homed with a project, `flotilla.project` (its home, read from the core), and tags its tab with `host.entity.*`.
     - A KDL rule in the project template (`match "flotilla.project" of="project"`) places it in the project's group as a row. Chips stay for workspaces about the project, such as its overview and roles (#254).
     - Its rows are live for its tab, but it is not the tab's subject, so closing it destroys it and retracts the entity.
     - Being an entity also gives it details, so it has a hover card (#252).

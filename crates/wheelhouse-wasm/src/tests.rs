@@ -272,3 +272,54 @@ fn edit_json(edit: &wheelhouse_core::arrangement::Edit<String>) -> serde_json::V
         Edit::Readdress { from, to } => json!({"edit": "readdress", "from": from, "to": to}),
     }
 }
+
+/// Lifecycle intents as a page sends them (JSON through the tsify types)
+/// give the core's receipts and effects: new-workspace opens a workspace,
+/// and close-workspace closes it, showing the one shown before.
+#[test]
+fn lifecycle_intents_through_the_binding_are_the_cores() {
+    use wheelhouse_core::{
+        lifecycle::Home,
+        sidebar::{Intent as CoreIntent, Workspace},
+    };
+    let mut sidebar = Sidebar::new(CONFIG).unwrap();
+    let mut twin = Sidebar::new(CONFIG).unwrap();
+    let (first, second) = (wheelhouse_core::tab_workspace_id(1), wheelhouse_core::tab_workspace_id(2));
+    for core in [&mut sidebar, &mut twin] {
+        core.register_workspace(first);
+        core.observe(vec![Workspace { id: first, position: 0, name: "First".into(), selected: true }], vec![]);
+    }
+    let page = |json: serde_json::Value| -> Intent { serde_json::from_value(json).unwrap() };
+    let intent = page(serde_json::json!({
+        "intent": "new-workspace", "workspaceId": second.to_string(), "name": null, "home": {"group": "g", "project": null}
+    }));
+    let core = CoreIntent::NewWorkspace { workspace: second, name: None, home: Home { group: Some("g".into()), project: None } };
+    assert_eq!(intent.read().unwrap(), core);
+    let receipt = Receipt::from(sidebar.apply_intent(intent.read().unwrap()));
+    assert_eq!(receipt, Receipt::from(twin.apply_intent(core)));
+    let Receipt::Accepted { effects, .. } = &receipt else { panic!("{receipt:?}") };
+    let opened = serde_json::to_value(effects).unwrap();
+    assert_eq!(opened, serde_json::json!([{"effect": "open-workspace", "workspaceId": second.to_string(), "name": "Workspace 1"}]));
+    let window = vec![
+        Workspace { id: first, position: 0, name: "First".into(), selected: false },
+        Workspace { id: second, position: 1, name: "Workspace 1".into(), selected: true },
+    ];
+    for core in [&mut sidebar, &mut twin] {
+        core.observe(window.clone(), vec![]);
+    }
+    let intent = page(serde_json::json!({"intent": "close-workspace", "workspaceId": second.to_string(), "keep": true}));
+    let receipt = Receipt::from(sidebar.apply_intent(intent.read().unwrap()));
+    assert_eq!(receipt, Receipt::from(twin.apply_intent(CoreIntent::CloseWorkspace { workspace: second, keep: true })));
+    let Receipt::Accepted { effects, .. } = &receipt else { panic!("{receipt:?}") };
+    assert_eq!(
+        serde_json::to_value(effects).unwrap(),
+        serde_json::json!([
+            {"effect": "close-workspace", "workspaceId": second.to_string(), "kept": false},
+            {"effect": "show-workspace", "workspaceId": first.to_string()},
+        ]),
+        "a subjectless workspace is destroyed even when kept is asked for"
+    );
+    assert!(!sidebar.registered_workspaces().contains(&second));
+    let bad = page(serde_json::json!({"intent": "close-workspace", "workspaceId": "not-an-id", "keep": false}));
+    assert!(bad.read().is_err());
+}

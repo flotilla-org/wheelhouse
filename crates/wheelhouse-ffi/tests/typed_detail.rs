@@ -54,7 +54,19 @@ unsafe fn action(card: *const WheelhouseCard, index: usize) -> CardActionView {
 }
 // Applies a card's action as the intent it is.
 unsafe fn apply(h: *mut WheelhouseCore, a: &CardActionView) -> u32 {
-    let intent = IntentView { kind: a.kind, key: text(""), entity: a.entity, name: text(""), has_value: 0, value: text("") };
+    let intent = IntentView {
+        kind: a.kind,
+        key: text(""),
+        entity: a.entity,
+        name: text(""),
+        has_value: 0,
+        value: text(""),
+        workspace_id: WorkspaceIdView { bytes: [0; 16] },
+        keep: 0,
+        has_group: 0,
+        group: text(""),
+        project: text(""),
+    };
     wheelhouse_apply_intent(h, &intent, ptr::null_mut(), ptr::null_mut())
 }
 // Whether the card of worktree `w` says its workspace is opening, and has one.
@@ -85,7 +97,7 @@ fn six_kind_native_detail_contract() {
     unsafe {
         let h = wheelhouse_create(ptr::null(), 0, ptr::null_mut());
         assert!(!h.is_null());
-        assert_eq!(wheelhouse_abi_version(), 20);
+        assert_eq!(wheelhouse_abi_version(), 21);
         for line in include_str!("../../../fixtures/typed-detail.jsonl").lines() {
             assert_eq!(wheelhouse_apply_patch_json(h, 42, text(PROVIDER), text(line), ptr::null_mut()), 1);
         }

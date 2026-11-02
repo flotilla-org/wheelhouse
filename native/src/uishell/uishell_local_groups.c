@@ -88,7 +88,8 @@ uishell_sidebar_local_add_group(CFG_Node *window, String8 section_id, String8 la
   return group;
 }
 
-// Visits the window's workspaces, open or detached, living in group `id`.
+// Visits the window's workspaces, open or kept, living in group `id`, as
+// the core has their homes.
 #define UIShell_LocalHomedEach(window, id, w) \
   for(CFG_Node *w = (window)->first; w != &cfg_nil_node; w = w->next) \
     if((str8_match(w->string, str8_lit("workspace"), 0) || str8_match(w->string, str8_lit("detached_workspace"), 0)) && \
@@ -164,9 +165,9 @@ uishell_sidebar_local_forget_section(CFG_Node *window, String8 id)
   uishell_sidebar_local_settle(state, before);
 }
 
-// Deletes a group: its workspaces move to the default group and its ghosts
-// go with it. A section left without groups goes too. The default group
-// can't be deleted.
+// Deletes a group: its workspaces move to the default group (the core
+// moves them as it removes the group) and its ghosts go with it. A section
+// left without groups goes too. The default group can't be deleted.
 internal void
 uishell_sidebar_local_delete_group(CFG_Node *window, String8 id)
 {
@@ -174,7 +175,6 @@ uishell_sidebar_local_delete_group(CFG_Node *window, String8 id)
   UIShell_Locals *before = uishell_sidebar_locals(state);
   UIShell_LocalGroup *group = uishell_sidebar_local_group(window, id);
   if(!group || group->is_default) { return; }
-  UIShell_LocalHomedEach(window, group->id, w) { cfg_node_release(rd_state->cfg, cfg_node_child_from_string(w, str8_lit("lives_in"))); }
   uishell_sidebar_local_drop_group(window, group);
   uishell_sidebar_local_settle(state, before);
 }
@@ -308,14 +308,12 @@ uishell_sidebar_section_drag_group(CFG_Node *window)
   return uishell_sidebar_local_only_group(uishell_sidebar_section_drag_section(window));
 }
 
-// Opens a new workspace living in `group`.
+// Opens a new workspace living in `group` (the core gives one in the
+// default group no group of its own).
 internal CFG_Node *
 uishell_sidebar_local_new_workspace(CFG_Node *window, UIShell_LocalGroup *group)
 {
-  CFG_Node *workspace = uishell_new_workspace(window);
-  if(!group->is_default)
-  { cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("lives_in")), group->id); }
-  return workspace;
+  return uishell_new_workspace_in(window, str8_zero(), group->id, str8_zero());
 }
 
 //- Renaming in place. Double-clicking a title, or Rename… in its menu,
@@ -445,19 +443,12 @@ uishell_sidebar_make(CFG_Node *window, UIShell_MakeAction action, String8 name)
     uishell_sidebar_local_add_group(window, action.target, name.size ? name : str8_lit("New group"));
     return;
   }
-  CFG_Node *workspace = &cfg_nil_node;
   if(action.kind == UIShell_Make_Workspace)
   {
     UIShell_LocalGroup *group = uishell_sidebar_local_group(window, action.target);
-    workspace = group ? uishell_sidebar_local_new_workspace(window, group) : uishell_new_workspace(window);
+    uishell_new_workspace_in(window, name, group ? group->id : str8_zero(), str8_zero());
   }
-  if(action.kind == UIShell_Make_ProjectWorkspace)
-  {
-    workspace = uishell_new_workspace(window);
-    cfg_node_new(rd_state->cfg, cfg_node_new(rd_state->cfg, workspace, str8_lit("lives_with")), action.project);
-  }
-  if(workspace != &cfg_nil_node && name.size)
-  { cfg_node_new_replace(rd_state->cfg, cfg_node_child_from_string_or_alloc(rd_state->cfg, workspace, str8_lit("label")), name); }
+  if(action.kind == UIShell_Make_ProjectWorkspace) { uishell_new_workspace_in(window, name, str8_zero(), action.project); }
 }
 
 // The footer keyed `key`, open while `engaged` or naming; returns the height

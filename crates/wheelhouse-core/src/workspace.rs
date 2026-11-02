@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    lifecycle::Life,
     managed::{DesiredContent, ManagedContent, SlotSource},
     records,
     records::SubjectRecord,
@@ -57,13 +58,17 @@ pub struct WorkspaceRecord {
     pub resolutions: Versioned<SavedResolutions>,
     #[serde(default)]
     pub layouts: Versioned<LayoutChoice>,
+    /// Whether it is kept, and its Workspace Home (lifecycle.rs). A record
+    /// written before this part existed reads with `kept: None`.
+    #[serde(default)]
+    pub life: Versioned<Life>,
 }
 
 impl WorkspaceRecord {
     /// The record's generation: it changes whenever any part does, and is
     /// never reused.
     pub fn generation(&self) -> u64 {
-        self.subject.generation().max(self.content_generation())
+        self.subject.generation().max(self.content_generation()).max(self.life.generation())
     }
 
     /// The generation of what a host reads as workspace content: slots,
@@ -108,6 +113,7 @@ impl WorkspaceRecord {
         }
         workspace.subject.restamp(clock);
         workspace.slots.restamp(clock);
+        workspace.life.restamp(clock);
         let stamp = clock.next();
         if !workspace.resolutions.follow(clock, |r| r.restamp(stamp)) {
             workspace.resolutions.restamp(clock);

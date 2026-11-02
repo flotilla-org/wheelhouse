@@ -73,7 +73,7 @@ class Control(C.Structure):
 
 
 class Effect(C.Structure):
-    _fields_ = [('kind', U32), ('request_id', U64), ('workspace', WorkspaceId), ('entity', Entity)] + [
+    _fields_ = [('kind', U32), ('request_id', U64), ('workspace', WorkspaceId), ('kept', U32), ('entity', Entity)] + [
         (x, Text) for x in ['name', 'recipe']] + [('has_cwd', U32), ('cwd', Text),
         ('has_primary_target', U32), ('primary_target', Text)]
     workspace_id = property(lambda self: workspace_number(self.workspace))
@@ -122,7 +122,7 @@ def load(path):
     for name, (result, args) in signatures.items():
         fn = getattr(lib, 'wheelhouse_' + name)
         fn.restype, fn.argtypes = result, args
-    assert lib.wheelhouse_abi_version() == 20
+    assert lib.wheelhouse_abi_version() == 21
     # The tests' own forms: patches from PROVIDER, workspaces by number.
     apply_patch_json, complete = lib.wheelhouse_apply_patch_json, lib.wheelhouse_complete
     lib.wheelhouse_apply_patch_json = lambda core, now, json, error: apply_patch_json(core, now, PROVIDER, json, error)

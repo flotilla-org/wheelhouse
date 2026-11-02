@@ -1,0 +1,97 @@
+// uishell 0.1.0 user file
+
+keybindings:
+{
+  { open o ctrl }
+  { new_project n ctrl shift }
+  { open_project o ctrl shift }
+  { save_project s ctrl shift }
+  { goto_line g ctrl }
+  { goto_address g alt }
+  { search f ctrl }
+  { search_backwards r ctrl }
+  { find_next f3 }
+  { find_prev f3 ctrl }
+  { edit f2 }
+  { accept return }
+  { accept space }
+  { cancel esc }
+  { focus_menu d alt }
+  { move_left left }
+  { move_right right }
+  { move_up up }
+  { move_down down }
+  { move_left_select left shift }
+  { move_right_select right shift }
+  { move_up_select up shift }
+  { move_down_select down shift }
+  { move_left_chunk left ctrl }
+  { move_right_chunk right ctrl }
+  { move_up_chunk up ctrl }
+  { move_down_chunk down ctrl }
+  { move_up_page page_up }
+  { move_down_page page_down }
+  { move_up_whole home ctrl }
+  { move_down_whole end ctrl }
+  { move_left_chunk_select left ctrl shift }
+  { move_right_chunk_select right ctrl shift }
+  { move_up_chunk_select up ctrl shift }
+  { move_down_chunk_select down ctrl shift }
+  { move_up_page_select page_up shift }
+  { move_down_page_select page_down shift }
+  { move_up_whole_select home ctrl shift }
+  { move_down_whole_select end ctrl shift }
+  { move_up_reorder up alt }
+  { move_down_reorder down alt }
+  { move_home home }
+  { move_end end }
+  { move_home_select home shift }
+  { move_end_select end shift }
+  { select_all a ctrl }
+  { delete_single delete }
+  { delete_chunk delete ctrl }
+  { backspace_single backspace }
+  { backspace_chunk backspace ctrl }
+  { copy c ctrl }
+  { copy c ctrl shift }
+  { paste v ctrl shift }
+  { select_all a ctrl shift }
+  { copy insert ctrl }
+  { cut x ctrl }
+  { paste v ctrl }
+  { paste insert shift }
+  { insert_text null }
+  { move_next tab }
+  { move_prev tab shift }
+  { toggle_fullscreen return ctrl }
+  { toggle_dev_menu tick ctrl shift }
+  { new_panel_right p ctrl }
+  { new_panel_down minus ctrl }
+  { rotate_panel_columns 2 ctrl }
+  { next_panel comma ctrl }
+  { prev_panel comma ctrl shift }
+  { focus_panel_right right ctrl alt }
+  { focus_panel_left left ctrl alt }
+  { focus_panel_up up ctrl alt }
+  { focus_panel_down down ctrl alt }
+  { close_panel p ctrl shift alt }
+  { next_tab page_down ctrl }
+  { prev_tab page_up ctrl }
+  { next_tab tab ctrl }
+  { prev_tab tab ctrl shift }
+  { move_tab_right page_down ctrl shift }
+  { move_tab_left page_up ctrl shift }
+  { close_tab w ctrl }
+  { tab_bar_top up ctrl shift alt }
+  { tab_bar_bottom down ctrl shift alt }
+  { open_tab t ctrl }
+  { tab_settings t ctrl alt }
+  { undo z ctrl }
+  { redo y ctrl }
+  { go_back left alt }
+  { go_forward right alt }
+  { open_palette f1 }
+  { open_palette p ctrl shift }
+  { inc_window_font_size equal alt }
+  { dec_window_font_size minus alt }
+}

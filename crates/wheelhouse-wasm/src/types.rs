@@ -7,12 +7,64 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use tsify::Tsify;
 use wheelhouse_core::{
+    lifecycle::{CloseKind as CoreCloseKind, Home as CoreHome, HomeEdit as CoreHomeEdit},
     presentation::{Content, PresentationState, Presented as CorePresented},
     sidebar::{HostEffect, Intent as CoreIntent, IntentReceipt},
     stream::{ListOp as CoreListOp, NodeContent, Parent, SectionContent, SidebarDelta, SidebarOp, StreamView},
     template_config::{TemplateConfigFieldClass, TemplateControlKind},
-    DisplayVariableValue, EntityRef, PlacementKey,
+    DisplayVariableValue, EntityRef, PlacementKey, WorkspaceId,
 };
+
+/// What a row's close control offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Tsify)]
+#[serde(rename_all = "kebab-case")]
+pub enum CloseKind {
+    Detach,
+    Destroy,
+    RemovePin,
+}
+
+impl From<CoreCloseKind> for CloseKind {
+    fn from(kind: CoreCloseKind) -> Self {
+        match kind {
+            CoreCloseKind::Detach => Self::Detach,
+            CoreCloseKind::Destroy => Self::Destroy,
+            CoreCloseKind::RemovePin => Self::RemovePin,
+        }
+    }
+}
+
+/// Where a local workspace lives: a local group's ID, and a project, which
+/// wins over it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Tsify)]
+pub struct Home {
+    pub group: Option<String>,
+    pub project: Option<String>,
+}
+
+impl From<Home> for CoreHome {
+    fn from(home: Home) -> Self {
+        Self { group: home.group, project: home.project }
+    }
+}
+
+/// A home edit: onto a group (clearing the project), or setting or clearing
+/// the project (keeping the group).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Tsify)]
+#[serde(tag = "home", content = "id", rename_all = "kebab-case")]
+pub enum HomeEdit {
+    Group(String),
+    Project(Option<String>),
+}
+
+impl From<HomeEdit> for CoreHomeEdit {
+    fn from(edit: HomeEdit) -> Self {
+        match edit {
+            HomeEdit::Group(group) => Self::Group(group),
+            HomeEdit::Project(project) => Self::Project(project),
+        }
+    }
+}
 
 /// An entity: its provider (the subscription its facts come from), kind
 /// and ID.
@@ -205,6 +257,9 @@ pub struct Node {
     pub stale: bool,
     /// Its subject has a URL: copy-subject-url of its entity copies it.
     pub has_url: bool,
+    /// What its close control offers: close-workspace with `keep` for
+    /// detach, without it for destroy; a pin's removes the pin.
+    pub close: Option<CloseKind>,
 }
 
 impl From<&NodeContent> for Node {
@@ -222,6 +277,7 @@ impl From<&NodeContent> for Node {
             collapsed: n.collapsed,
             stale: n.stale,
             has_url: n.has_url,
+            close: n.close.map(Into::into),
         }
     }
 }
@@ -270,6 +326,9 @@ pub struct ActivationError {
 }
 
 /// An operation of a delta, applied in order.
+// It lives only on its way to a page as a plain object, so a node's size
+// in the enum costs nothing worth a box.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Tsify)]
 #[serde(tag = "op", rename_all = "kebab-case")]
 pub enum Op {
@@ -431,17 +490,52 @@ impl From<&StreamView> for View {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Tsify)]
 #[serde(tag = "intent", rename_all = "kebab-case")]
 pub enum Intent {
-    CopySubjectUrl { entity: Entity },
-    ActivatePlacement { key: String },
-    Activate { entity: Entity },
-    TogglePlacement { key: String },
-    SetVariable { key: String, name: String, value: Option<String> },
-    ToggleDisplayVariable { name: String },
+    CopySubjectUrl {
+        entity: Entity,
+    },
+    ActivatePlacement {
+        key: String,
+    },
+    Activate {
+        entity: Entity,
+    },
+    TogglePlacement {
+        key: String,
+    },
+    SetVariable {
+        key: String,
+        name: String,
+        value: Option<String>,
+    },
+    ToggleDisplayVariable {
+        name: String,
+    },
+    /// A new subjectless workspace with the ID the page made.
+    NewWorkspace {
+        #[serde(rename = "workspaceId")]
+        workspace_id: String,
+        name: Option<String>,
+        #[serde(default)]
+        home: Home,
+    },
+    /// Close an open workspace, keeping it when `keep` allows.
+    CloseWorkspace {
+        #[serde(rename = "workspaceId")]
+        workspace_id: String,
+        keep: bool,
+    },
+    /// Re-home a local workspace.
+    SetWorkspaceHome {
+        #[serde(rename = "workspaceId")]
+        workspace_id: String,
+        edit: HomeEdit,
+    },
 }
 
 impl Intent {
     pub fn read(&self) -> Result<CoreIntent, String> {
         let key = |key: &str| PlacementKey::decode(key).ok_or_else(|| format!("malformed placement key {key:?}"));
+        let workspace = |id: &str| id.parse::<WorkspaceId>().map_err(|e| e.to_string());
         Ok(match self {
             Self::CopySubjectUrl { entity } => CoreIntent::CopySubjectUrl { entity: entity.into() },
             Self::ActivatePlacement { key: k } => CoreIntent::ActivatePlacement { key: key(k)? },
@@ -449,6 +543,13 @@ impl Intent {
             Self::TogglePlacement { key: k } => CoreIntent::TogglePlacement { key: key(k)? },
             Self::SetVariable { key: k, name, value } => CoreIntent::SetVariable { key: key(k)?, name: name.clone(), value: value.clone() },
             Self::ToggleDisplayVariable { name } => CoreIntent::ToggleDisplayVariable { name: name.clone() },
+            Self::NewWorkspace { workspace_id, name, home } => {
+                CoreIntent::NewWorkspace { workspace: workspace(workspace_id)?, name: name.clone(), home: home.clone().into() }
+            }
+            Self::CloseWorkspace { workspace_id, keep } => CoreIntent::CloseWorkspace { workspace: workspace(workspace_id)?, keep: *keep },
+            Self::SetWorkspaceHome { workspace_id, edit } => {
+                CoreIntent::SetWorkspaceHome { workspace: workspace(workspace_id)?, edit: edit.clone().into() }
+            }
         })
     }
 }
@@ -470,6 +571,26 @@ pub enum Effect {
         name: String,
         recipe: Option<String>,
         cwd: Option<String>,
+        /// The subject's Kept Workspace: reopen it, and complete with its ID.
+        #[serde(rename = "keptWorkspaceId")]
+        kept_workspace_id: Option<String>,
+    },
+    /// Make a workspace with this ID and name, and show it.
+    OpenWorkspace {
+        #[serde(rename = "workspaceId")]
+        workspace_id: String,
+        name: String,
+    },
+    /// Close the workspace, keeping its layout when `kept`.
+    CloseWorkspace {
+        #[serde(rename = "workspaceId")]
+        workspace_id: String,
+        kept: bool,
+    },
+    /// Show the workspace, after a close.
+    ShowWorkspace {
+        #[serde(rename = "workspaceId")]
+        workspace_id: String,
     },
     /// Show the entity's inspector.
     Inspect {
@@ -487,13 +608,19 @@ impl From<&HostEffect> for Effect {
     fn from(effect: &HostEffect) -> Self {
         match effect {
             HostEffect::Focus { request_id, workspace_id } => Self::Focus { request: *request_id, workspace_id: workspace_id.to_string() },
-            HostEffect::Materialize { request_id, entity, name, recipe, cwd, .. } => Self::Materialize {
+            HostEffect::Materialize { request_id, entity, name, recipe, cwd, kept, .. } => Self::Materialize {
                 request: *request_id,
                 entity: entity.into(),
                 name: name.clone(),
                 recipe: recipe.clone(),
                 cwd: cwd.clone(),
+                kept_workspace_id: kept.map(|id| id.to_string()),
             },
+            HostEffect::OpenWorkspace { workspace, name } => {
+                Self::OpenWorkspace { workspace_id: workspace.to_string(), name: name.clone() }
+            }
+            HostEffect::CloseWorkspace { workspace, kept } => Self::CloseWorkspace { workspace_id: workspace.to_string(), kept: *kept },
+            HostEffect::ShowWorkspace { workspace } => Self::ShowWorkspace { workspace_id: workspace.to_string() },
             HostEffect::Inspect { entity } => Self::Inspect { entity: entity.into() },
             HostEffect::OpenUrl { url } => Self::OpenUrl { url: url.clone() },
             HostEffect::CopyUrl { url } => Self::CopyUrl { url: url.clone() },

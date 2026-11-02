@@ -71,7 +71,7 @@ static int same(WheelhouseWorkspaceId a, WheelhouseWorkspaceId b) {
 
 /* Facts, topology, the snapshot, dispatch, effects and completion. */
 static void check_sidebar(const char *config_path, const char *patches_path) {
-    assert(wheelhouse_abi_version() == 20);
+    assert(wheelhouse_abi_version() == 21);
     char *config = read_file(config_path);
     WheelhouseCore *h = create(config);
     ok(wheelhouse_configure(h, text(config), &error));
@@ -155,7 +155,7 @@ found:
     assert(wheelhouse_card_field(card, 0, &detail_field));
     WheelhouseEntity other = {T("sub-2"), T("vessel"), T("v")};
     assert(!wheelhouse_card_acquire(h, other, &error) && !error);
-    WheelhouseIntent activate = {action.kind, T(""), action.entity, T(""), 0, T("")};
+    WheelhouseIntent activate = {.kind = action.kind, .key = T(""), .entity = action.entity, .name = T(""), .value = T(""), .group = T(""), .project = T("")};
     assert(wheelhouse_apply_intent(h, &activate, NULL, &error) == WHEELHOUSE_INTENT_ACCEPTED && !error);
     wheelhouse_card_release(card);
     effects = wheelhouse_effects_take(h, &error);
@@ -483,7 +483,7 @@ static void check_stream(const char *config_path, const char *patches_path) {
         if (!key.len) key = op.key;
     }
     assert(key.len);
-    WheelhouseIntent intent = {WHEELHOUSE_INTENT_TOGGLE_PLACEMENT, key, {T(""), T(""), T("")}, T(""), 0, T("")};
+    WheelhouseIntent intent = {.kind = WHEELHOUSE_INTENT_TOGGLE_PLACEMENT, .key = key, .entity = {T(""), T(""), T("")}, .name = T(""), .value = T(""), .group = T(""), .project = T("")};
     uint64_t request = 0;
     assert(wheelhouse_apply_intent(h, &intent, &request, &error) == WHEELHOUSE_INTENT_ACCEPTED && !error && request);
     wheelhouse_delta_release(d); /* the key was borrowed from it until now */

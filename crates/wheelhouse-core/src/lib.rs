@@ -21,6 +21,7 @@ pub mod detail;
 pub mod dock;
 mod facts;
 pub mod host;
+pub mod lifecycle;
 pub mod managed;
 mod metadata;
 pub mod overview;
