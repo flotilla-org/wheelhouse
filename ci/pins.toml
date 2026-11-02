@@ -6,15 +6,17 @@ format = 1
 [cleat]
 env = "CLEAT_REV"
 repo = "flotilla-org/cleat"
-rev = "32c255eacb708feccd5a104925ca1517e4c23e54"
+rev = "ac43c3757c53c311c33d90429b5f996910dac9e0"
 track = "manual"
 # Views within an attachment (cleat#399, cleat#400): one attachment per
-# session shared by every View of it (#417), additive on provider ABI 11;
-# packet protocol 16, which only a client asking for views gets. Attaching
-# with no default view fails against an older daemon: coordinate the Cleat
-# fleet and daily-driver rollout (#97). Remote hosts need this Cleat for
-# `cleat proxy` (#104). An exited session keeps its screen through resizes
-# and reports how its program exited (cleat#406), shown in the View's pill.
+# session shared by every View of it (#417); packet protocol 16, which only a
+# client asking for views gets. Attaching with no default view fails against
+# an older daemon: coordinate the Cleat fleet and daily-driver rollout (#97).
+# Remote hosts need this Cleat for `cleat proxy` (#104). An exited session
+# keeps its screen through resizes and reports how its program exited
+# (cleat#406), shown in the View's pill. Provider ABI 12 (cleat#407) adds
+# cleat_session_desc.argv/argc to run a program without a shell; Wheelhouse
+# leaves them zero. The packet protocol is unchanged, so no new rollout.
 
 [jackstay]
 env = "JACKSTAY_REV"
