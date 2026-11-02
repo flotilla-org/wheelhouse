@@ -129,7 +129,7 @@ def classify(text, record, origin, brief=False):
     tag = leading_tag(text)
     if record.get('isCompactSummary'):
         return 'compaction'
-    if text.startswith(INTERRUPT_MARKERS):
+    if text.lstrip().startswith(INTERRUPT_MARKERS):
         return 'interrupt'
     if kind == 'task-notification' or tag == 'task-notification':
         return 'notification'
@@ -236,7 +236,7 @@ class Thread:
         self.content(blocks, record, origin)
 
     def queued(self, record, attachment):
-        # Typed (or delivered) while a turn ran, and folded into that turn.
+        # Typed (or delivered) while a turn ran, and folded into that turn: it never opens one.
         prompt = attachment.get('prompt')
         content = [{'type': 'text', 'text': prompt}] if isinstance(prompt, str) else prompt
         if not isinstance(content, list):
@@ -253,7 +253,8 @@ class Thread:
                 blocks.append((classify(block['text'], record, origin, brief=not self.briefed), block))
             elif image_of(block):
                 blocks.append(('image', block))
-        if any(c != 'image' for c, _ in blocks):
+        # A reminder can come before the brief; only the brief itself ends the wait for it.
+        if any(c == 'brief' for c, _ in blocks):
             self.briefed = True
         return blocks
 

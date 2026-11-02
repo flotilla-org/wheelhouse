@@ -190,6 +190,23 @@ class GoldenTests(unittest.TestCase):
         starts = [e for e in events(self.translate_records(records)) if e['type'] == 'TextMessageStart']
         self.assertEqual([e['origin'] for e in starts], [{'kind': 'task-notification'}, origin])
 
+    def test_an_interrupt_marker_after_whitespace_still_interrupts_the_run(self):
+        records = [{'type': 'user', 'uuid': 'p', 'message': {'role': 'user', 'content': 'go'}},
+                   {'type': 'user', 'uuid': 'i', 'message': {'role': 'user', 'content': [
+                       {'type': 'text', 'text': '\n[Request interrupted by user]'}]}}]
+        finished = [e for e in events(self.translate_records(records)) if e['type'] == 'RunFinished']
+        self.assertEqual([e['outcome'] for e in finished], ['interrupted'])
+
+    def test_a_subagent_brief_after_a_reminder_is_still_the_brief(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'agent-x.jsonl'
+            path.write_text('', encoding='utf-8')
+            thread = translator.Thread(translator.Translator(path, io.StringIO()), 'agent-x', path,
+                                       {'threadId': 'main', 'toolCallId': 'c'})
+            for text in ('<system-reminder>\nBe brief.\n</system-reminder>', 'List the crates.', 'And the tools.'):
+                thread.record({'type': 'user', 'uuid': text, 'message': {'role': 'user', 'content': text}})
+        self.assertEqual(dict(thread.counts), {'notice': 1, 'brief': 1, 'prompt': 1})
+
     def test_a_compaction_boundary_or_summary_alone_is_still_emitted(self):
         boundary = {'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'b',
                     'compactMetadata': {'trigger': 'manual', 'preTokens': 9}}
