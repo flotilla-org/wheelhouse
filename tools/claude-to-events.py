@@ -5,6 +5,7 @@ Interim and throwaway: Flotilla's normaliser (flotilla-org/flotilla#4206)
 replaces it. The wire format is the one fixed on #615 and decided on #548.
 """
 import argparse
+import collections
 import json
 from pathlib import Path
 import re
@@ -13,6 +14,8 @@ import time
 
 CONTRACT = 1
 OUTPUT_CAP = 64 * 1024
+# Base64 can't be cut and still decode, so an image is whole or replaced by a marker.
+IMAGE_CAP = 4 * 1024 * 1024
 TITLE_CAP = 120
 POLL_SECONDS = 0.2
 
@@ -30,6 +33,13 @@ INTERRUPT_MARKERS = ('[Request interrupted', '[Tool call interrupted')
 PERSISTED = re.compile(r'<persisted-output>\s*Output too large \(([\d.]+)\s*(B|KB|MB)\)\. '
                        r'Full output saved to: (\S+)', re.S)
 UNITS = {'B': 1, 'KB': 1024, 'MB': 1024 * 1024}
+LEADING_TAG = re.compile(r'\s*<([a-z][\w-]*)>')
+COMMAND_TAGS = {'command-name', 'command-message'}
+NOTICE_TAGS = {'system-reminder', 'ci-monitor-event', 'side-sessions-event', 'local-command-caveat',
+               'local-command-stdout', 'local-command-stderr', 'cross-session-message', 'agent-message'}
+SKILL_BASE = 'Base directory for this skill:'
+# The classes that start a turn when they arrive on their own (no tool results).
+OPENERS = {'prompt', 'sdk', 'notification', 'peer', 'command'}
 
 
 def kind_of(name):
@@ -44,8 +54,10 @@ def shorten(text):
 
 
 def title_of(name, args):
-    if name == 'Bash' and isinstance(args.get('command'), str):
-        return shorten(args['command'])
+    # A Bash call's model-written description reads better than its command (#667).
+    for key in ('description', 'command') if name == 'Bash' else ():
+        if isinstance(args.get(key), str) and args[key].strip():
+            return shorten(args[key])
     for table in (PATH_TITLES, SUMMARY_TITLES):
         if isinstance(args.get(table.get(name)), str):
             return shorten(args[table[name]])
@@ -80,13 +92,60 @@ def result_text(content):
     return ''
 
 
-def sole_image(content):
-    if isinstance(content, list) and len(content) == 1 and isinstance(content[0], dict) \
-            and content[0].get('type') == 'image':
-        source = content[0].get('source') or {}
-        if source.get('type') == 'base64' and isinstance(source.get('data'), str):
-            return source.get('media_type', 'image/png'), source['data']
+def image_of(block):
+    source = block.get('source') or {}
+    if block.get('type') == 'image' and source.get('type') == 'base64' and isinstance(source.get('data'), str):
+        return source.get('media_type', 'image/png'), source['data']
     return None
+
+
+def images_of(content):
+    blocks = content if isinstance(content, list) else []
+    return [image for image in (image_of(b) for b in blocks if isinstance(b, dict)) if image]
+
+
+def image_cap(data, ref):
+    if len(data) <= IMAGE_CAP:
+        return data, None
+    return '', {'totalBytes': len(data), 'ref': ref}
+
+
+def tag_value(text, tag):
+    match = re.search(rf'<{tag}>(.*?)</{tag}>', text, re.S)
+    return match.group(1).strip() if match else None
+
+
+def classify(text, record, origin, brief=False):
+    """The class of one user-role text block: origin first, then isMeta, then the leading tag.
+
+    A typed prompt can share a record with a reminder, so this is per block.
+    """
+    kind = origin.get('kind')
+    tag = (LEADING_TAG.match(text) or [None, None])[1]
+    if record.get('isCompactSummary'):
+        return 'compaction'
+    if text.startswith(INTERRUPT_MARKERS):
+        return 'interrupt'
+    if kind == 'task-notification' or tag == 'task-notification':
+        return 'notification'
+    if kind and kind != 'human':
+        return 'peer'
+    if tag in COMMAND_TAGS:
+        return 'command'
+    if record.get('isMeta'):
+        return 'expansion' if text.startswith(SKILL_BASE) else 'notice'
+    if tag in NOTICE_TAGS:
+        return 'notice'
+    # Flotilla's one-shot probes run through the SDK and stamp no origin.
+    if not kind and record.get('entrypoint') == 'sdk-cli':
+        return 'sdk'
+    return 'brief' if brief else 'prompt'
+
+
+def attribution(origin, **extra):
+    # The peer origin repeats the message as `body`; the message carries it once.
+    fields = {k: v for k, v in origin.items() if k != 'body' and isinstance(v, (str, int, float, bool))}
+    return {**fields, **{k: v for k, v in extra.items() if v is not None}}
 
 
 class Thread:
@@ -100,10 +159,16 @@ class Thread:
         self.calls = {}  # open toolCallId -> name
         self.blocks = {}  # (message.id, kind) -> blocks of that kind seen so far
         self.line = 0
+        self.at = {'log': str(source)}  # the source back-reference of the record being read
+        self.briefed = parent is None
+        # A compaction boundary waits for the summary record written right after it.
+        self.compaction = None
+        self.counts = collections.Counter()
 
     def emit(self, event_type, **fields):
         self.seq += 1
-        self.translator.write({'type': event_type, 'threadId': self.id, 'seq': self.seq, **fields})
+        self.translator.write({'type': event_type, 'threadId': self.id, 'seq': self.seq, **fields,
+                               'source': self.at})
 
     def start_run(self, run_id):
         self.finish_run()
@@ -120,47 +185,110 @@ class Thread:
         if self.run is None:
             self.start_run(record.get('uuid') or f'{self.id}-run{self.seq + 1}')
 
-    def message(self, role, message_id, text):
-        self.emit('TextMessageStart', messageId=message_id, role=role)
+    def message(self, role, message_id, text, origin=None):
+        extra = {'origin': origin} if origin else {}
+        self.emit('TextMessageStart', messageId=message_id, role=role, **extra)
         self.emit('TextMessageContent', messageId=message_id, delta=text)
         self.emit('TextMessageEnd', messageId=message_id)
 
     def record(self, record):
         kind = record.get('type')
+        if self.compaction and not (kind == 'user' and record.get('isCompactSummary')):
+            self.flush_compaction()
+        uuid = {'record': record['uuid']} if isinstance(record.get('uuid'), str) else {}
+        self.at = {'log': str(self.source), **uuid, 'line': self.line}
         if kind == 'user':
             self.user(record)
         elif kind == 'assistant':
             self.assistant(record)
+        elif kind == 'attachment' and (record.get('attachment') or {}).get('type') == 'queued_command':
+            self.queued(record, record['attachment'])
         elif kind == 'system' and record.get('subtype') == 'compact_boundary':
             meta = record.get('compactMetadata') or {}
-            value = {k: meta[k] for k in ('trigger', 'preTokens') if k in meta}
-            self.ensure_run(record)
-            self.emit('Custom', name='compaction', value=value)
+            self.compaction = ({k: meta[k] for k in ('trigger', 'preTokens') if k in meta}, record, self.at)
+
+    def flush_compaction(self, summary=None):
+        value, record, at = self.compaction
+        self.compaction, here, self.at = None, self.at, at
+        self.ensure_run(record)
+        self.emit('Custom', name='compaction', value={**value, **({'summary': summary} if summary else {})})
+        self.at = here
 
     def user(self, record):
-        # isMeta lines are injected by the harness and the compact summary
-        # stands in for the history before a compaction boundary.
-        if record.get('isMeta') or record.get('isCompactSummary'):
-            return
         content = (record.get('message') or {}).get('content')
         if isinstance(content, str):
             content = [{'type': 'text', 'text': content}]
         if not isinstance(content, list):
             return
         results = [b for b in content if isinstance(b, dict) and b.get('type') == 'tool_result']
-        text = '\n'.join(b.get('text', '') for b in content
-                         if isinstance(b, dict) and b.get('type') == 'text').strip()
         for block in results:
             self.result(record, block)
-        if not text:
+        origin = record.get('origin') if isinstance(record.get('origin'), dict) else {}
+        blocks = self.classified(content, record, origin)
+        if not results and not record.get('isMeta') and any(c in OPENERS for c, _ in blocks):
+            self.finish_run()
+        self.content(blocks, record, origin)
+
+    def queued(self, record, attachment):
+        # Typed (or delivered) while a turn ran, and folded into that turn.
+        prompt = attachment.get('prompt')
+        content = [{'type': 'text', 'text': prompt}] if isinstance(prompt, str) else prompt
+        if not isinstance(content, list):
             return
-        if text.startswith(INTERRUPT_MARKERS):
-            self.run_interrupted = True
-            return
-        if not results:
-            self.finish_run()  # a typed prompt opens a new turn
-        self.ensure_run(record)
-        self.message('user', record.get('uuid') or f'{self.id}-m{self.seq + 1}', text)
+        origin = attachment.get('origin') if isinstance(attachment.get('origin'), dict) else {}
+        self.content(self.classified(content, record, origin), record, origin)
+
+    def classified(self, content, record, origin):
+        blocks = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get('type') == 'text' and block.get('text', '').strip():
+                blocks.append((classify(block['text'], record, origin, brief=not self.briefed), block))
+            elif image_of(block):
+                blocks.append(('image', block))
+        if any(c != 'image' for c, _ in blocks):
+            self.briefed = True
+        return blocks
+
+    def content(self, blocks, record, origin):
+        uuid = record.get('uuid') or f'{self.id}-m{self.seq + 1}'
+        for kind, block in blocks:
+            self.counts[kind] += 1
+            if kind == 'compaction' and self.compaction:
+                self.flush_compaction(block['text'])
+                continue
+            self.ensure_run(record)
+            if kind == 'image':
+                media_type, data = image_of(block)
+                data, truncated = image_cap(data, f'{self.source.name}:{self.line}')
+                self.emit('Custom', name='image', value={'messageId': uuid, 'mediaType': media_type, 'data': data,
+                                                         'truncated': truncated})
+                continue
+            text, message_id = block['text'], self.block_id(uuid, '')
+            if kind in ('prompt', 'brief'):
+                self.message('user', message_id, text)
+            elif kind == 'sdk':
+                self.message('system', message_id, text, {'kind': 'sdk', 'name': 'Flotilla'})
+            elif kind == 'notification':
+                origin = origin if origin.get('kind') == 'task-notification' else {'kind': 'task-notification'}
+                self.message('system', message_id, text, attribution(origin, toolCallId=tag_value(text, 'tool-use-id')))
+            elif kind == 'peer':
+                self.message('system', message_id, text, attribution(origin))
+            elif kind in ('notice', 'interrupt'):
+                tag = 'interrupt' if kind == 'interrupt' else (LEADING_TAG.match(text) or [None, None])[1]
+                self.message('system', message_id, text, attribution({'kind': 'harness'}, tag=tag))
+                self.run_interrupted |= kind == 'interrupt'
+            elif kind == 'command':
+                name = tag_value(text, 'command-name') or tag_value(text, 'command-message') or ''
+                args = tag_value(text, 'command-args')
+                self.emit('Custom', name='command', value={'name': name.lstrip('/'), 'args': args, 'body': text})
+            elif kind == 'expansion':
+                path = text[len(SKILL_BASE):].split('\n', 1)[0].strip()
+                call = {'toolCallId': record['sourceToolUseID']} if record.get('sourceToolUseID') else {}
+                self.emit('Custom', name='command', value={'name': Path(path).name, **call, 'body': text})
+            elif kind == 'compaction':  # a summary with no boundary before it
+                self.emit('Custom', name='compaction', value={'summary': text})
 
     def assistant(self, record):
         message = record.get('message') or {}
@@ -219,8 +347,12 @@ class Thread:
             status = 'interrupted'
             self.run_interrupted = True
         fields = {'mediaType': 'text/plain'}
-        image = sole_image(content)
-        if name == 'Bash':
+        images = images_of(content)
+        image = images[0] if len(images) == 1 and not text else None
+        ref = f'{self.source.name}:{self.line}'
+        if image:
+            fields['mediaType'], text = image
+        elif name == 'Bash':
             fields['mediaType'] = 'text/x-ansi'
         elif side.get('structuredPatch'):
             path = side.get('filePath', '')
@@ -229,11 +361,14 @@ class Thread:
             # The hunks repeat the diff, so they go only when it fits under the cap.
             if len(text.encode('utf-8')) <= OUTPUT_CAP:
                 fields['structured'] = {'filePath': path, 'hunks': side['structuredPatch']}
-        elif image:
-            fields['mediaType'], text = image
-        text, truncated = self.spilled(text) or cap(text, f'{self.source.name}:{self.line}')
+        text, truncated = image_cap(text, ref) if image else self.spilled(text) or cap(text, ref)
         self.emit('ToolCallResult', toolCallId=call_id, messageId=f'{call_id}-result', status=status,
                   **fields, content=text, truncated=truncated)
+        # A result that mixes text and images keeps the text as its content.
+        for media_type, data in images if not image else []:
+            data, truncated = image_cap(data, ref)
+            self.emit('Custom', name='image', value={'toolCallId': call_id, 'mediaType': media_type, 'data': data,
+                                                     'truncated': truncated})
 
     def spilled(self, text):
         match = PERSISTED.search(text)
@@ -249,6 +384,9 @@ class Thread:
         return text, {'totalBytes': int(float(match.group(1)) * UNITS[match.group(2)]), 'ref': ref}
 
     def close(self):
+        if self.compaction:
+            self.flush_compaction()
+        self.at = {'log': str(self.source)}
         for call_id in list(self.calls):
             self.calls.pop(call_id)
             self.run_interrupted = True
@@ -347,11 +485,18 @@ def main(argv=None):
     parser.add_argument('transcript', type=Path, help='Claude Code session .jsonl')
     parser.add_argument('-o', '--output', type=Path, help='write events here instead of stdout')
     parser.add_argument('--follow', action='store_true', help='keep tailing the transcript and append new events')
+    parser.add_argument('--counts', action='store_true',
+                        help='print how many user-role blocks fell in each class, as JSON on stderr')
     args = parser.parse_args(argv)
     out = args.output.open('w', encoding='utf-8', newline='\n') if args.output else sys.stdout
     translator = Translator(args.transcript, out)
     if not args.follow:
         translator.finish()
+        if args.counts:
+            counts = {'main': collections.Counter(), 'subagents': collections.Counter()}
+            for source in translator.sources:
+                counts['main' if source.thread is translator.main else 'subagents'].update(source.thread.counts)
+            print(json.dumps(counts, sort_keys=True), file=sys.stderr)
         return 0
     # Following never ends the session itself, so open calls stay pending.
     try:

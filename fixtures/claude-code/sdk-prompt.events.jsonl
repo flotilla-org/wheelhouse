@@ -1,0 +1,9 @@
+{"type":"Hello","contract":1}
+{"type":"RunStarted","threadId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","seq":1,"runId":"u0001-dddddddd","source":{"log":"sdk-prompt/dddddddd-dddd-4ddd-8ddd-dddddddddddd.jsonl","record":"u0001-dddddddd","line":1}}
+{"type":"TextMessageStart","threadId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","seq":2,"messageId":"u0001-dddddddd","role":"system","origin":{"kind":"sdk","name":"Flotilla"},"source":{"log":"sdk-prompt/dddddddd-dddd-4ddd-8ddd-dddddddddddd.jsonl","record":"u0001-dddddddd","line":1}}
+{"type":"TextMessageContent","threadId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","seq":3,"messageId":"u0001-dddddddd","delta":"Reply with the single word ready.","source":{"log":"sdk-prompt/dddddddd-dddd-4ddd-8ddd-dddddddddddd.jsonl","record":"u0001-dddddddd","line":1}}
+{"type":"TextMessageEnd","threadId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","seq":4,"messageId":"u0001-dddddddd","source":{"log":"sdk-prompt/dddddddd-dddd-4ddd-8ddd-dddddddddddd.jsonl","record":"u0001-dddddddd","line":1}}
+{"type":"TextMessageStart","threadId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","seq":5,"messageId":"msg_sdk_a","role":"assistant","source":{"log":"sdk-prompt/dddddddd-dddd-4ddd-8ddd-dddddddddddd.jsonl","record":"u0002-dddddddd","line":2}}
+{"type":"TextMessageContent","threadId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","seq":6,"messageId":"msg_sdk_a","delta":"ready","source":{"log":"sdk-prompt/dddddddd-dddd-4ddd-8ddd-dddddddddddd.jsonl","record":"u0002-dddddddd","line":2}}
+{"type":"TextMessageEnd","threadId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","seq":7,"messageId":"msg_sdk_a","source":{"log":"sdk-prompt/dddddddd-dddd-4ddd-8ddd-dddddddddddd.jsonl","record":"u0002-dddddddd","line":2}}
+{"type":"RunFinished","threadId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","seq":8,"runId":"u0001-dddddddd","outcome":"completed","source":{"log":"sdk-prompt/dddddddd-dddd-4ddd-8ddd-dddddddddddd.jsonl"}}
