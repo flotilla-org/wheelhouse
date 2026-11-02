@@ -1742,6 +1742,12 @@ wh_view_ui_direct(WH_Renderer *renderer, RD_ViewAddress view, Rng2F32 rect)
   Temp scratch = scratch_begin(0, 0);
   RD_ViewState *vs = rd_view_state_from_view(view, 0);
   WH_ViewContext ctx = wh_view_context_from_view(scratch.arena, view, renderer, rd_view_user_data(vs, renderer->state_size), rect);
+  // As the panel's View container does: a legacy-eval Renderer reads its
+  // content from its expression's evaluation.
+  if(wh_renderer_has_trait(renderer, RD_ViewTrait_LegacyEval))
+  {
+    ctx.legacy_eval = e_eval_from_string(rd_expr_from_cfg(rd_cfg_from_view(view)));
+  }
   wh_slot_host_ui(renderer, &ctx, vs);
   scratch_end(scratch);
 }
@@ -4205,7 +4211,7 @@ read_only global String8 rd_view_logical_settings[] =
   // Identity, and the arrangement's mark.
   str8_lit_comp("slot"), str8_lit_comp("previous_of"), str8_lit_comp("section"), str8_lit_comp("resource_id"), str8_lit_comp("selected"),
   // The View Spec (uishell_workspace_store.c, "View Specs").
-  str8_lit_comp("expression"), str8_lit_comp("cwd"), str8_lit_comp("content"), str8_lit_comp("url"),
+  str8_lit_comp("expression"), str8_lit_comp("cwd"), str8_lit_comp("content"), str8_lit_comp("url"), str8_lit_comp("text"),
   str8_lit_comp("source_endpoint"), str8_lit_comp("source_socket"), str8_lit_comp("input_endpoint"), str8_lit_comp("input_socket"),
   str8_lit_comp("media_endpoint"), str8_lit_comp("media_socket"), str8_lit_comp("d3d11_endpoint"), str8_lit_comp("porthole_endpoint"),
   // The portable Target Resolutions, and the daemon hosting a terminal.
