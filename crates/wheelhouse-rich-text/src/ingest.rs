@@ -1,5 +1,6 @@
 //! pulldown-cmark's events straight into staging arrays, which a reload
 //! reconciles into the tree (#540).
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ops::Range;
 
@@ -560,6 +561,16 @@ fn marker(src: &str, at: usize) -> String {
         spaces = spaces.min(1);
     }
     rest[..end + spaces].to_owned()
+}
+
+/// `markdown` with its CRLF and lone CR line endings made LF (#645), so no
+/// Block's text holds a CR. Every source offset is into this text, not the
+/// host's, which is why Copy as Markdown gives LF whatever the file has.
+pub(crate) fn lf_line_endings(markdown: &str) -> Cow<'_, str> {
+    if !markdown.contains('\r') {
+        return Cow::Borrowed(markdown);
+    }
+    Cow::Owned(markdown.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
 pub(crate) fn parse(source: &str) -> Staged {

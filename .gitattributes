@@ -3,3 +3,5 @@
 native/src/uishell/generated/sidebar_fixture.h text eol=lf
 # Goldens and spill files are compared byte for byte by tools/test-claude-to-events.py
 fixtures/claude-code/** text eol=lf
+# Read byte for byte by include_str! in Rich Text's tests (#645)
+crates/wheelhouse-rich-text/src/fixtures/** text eol=lf
