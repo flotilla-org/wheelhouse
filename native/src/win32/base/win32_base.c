@@ -1272,6 +1272,9 @@ make_directory(String8 path)
 internal void
 abort_self(S32 exit_code)
 {
+  // ExitProcess skips the CRT's teardown, which is what flushes stdio. Flush
+  // it here so a diagnostic's redirected stdout survives the exit (#646).
+  fflush(0);
   ExitProcess(exit_code);
 }
 
