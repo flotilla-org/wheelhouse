@@ -144,7 +144,9 @@ struct WAY_WM_Window
   F32 custom_edge_thickness;
   Rng2F32 client_areas[WAY_WM_MAX_CLIENT_AREAS];
   U32 client_area_count;
+  B32 has_title_bar_press;
   U32 last_title_bar_press_time;
+  Vec2F32 last_title_bar_press_pos;
 
   // Frame callbacks: frame_next was requested after the last frame was
   // presented and goes out with the next one; frame_wait went out with the

@@ -56,8 +56,8 @@ wm_init(CmdLine *cmdln)
     fprintf(stderr, "The %.*s window manager could not start.\n", str8_varg(backend->name));
   }
   wm_backend = 0;
-  if(!known) { fprintf(stderr, "No window manager is called \"%.*s\".\n", str8_varg(wanted)); }
-  fprintf(stderr, "No window manager could start.\n");
+  if(known) { fprintf(stderr, "No window manager could start.\n"); }
+  else      { fprintf(stderr, "No window manager is called \"%.*s\".\n", str8_varg(wanted)); }
   exit(1);
   return 0;
 }

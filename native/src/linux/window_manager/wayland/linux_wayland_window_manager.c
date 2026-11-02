@@ -16,6 +16,14 @@
 // window gets none), as Metal's does without a display link.
 #define WAY_WM_FRAME_WAIT_LIMIT_US 100000
 
+// Continuous scrolling (touchpads) comes in surface units, about 15 to a
+// wheel notch; this turns them into the 120ths of a notch wheels report.
+#define WAY_WM_SCROLL_120THS_PER_UNIT 8.f
+
+// Two title bar presses make a double click within the double-click time and
+// this many points of each other.
+#define WAY_WM_DOUBLE_CLICK_DISTANCE 4.f
+
 ////////////////////////////////
 //~ Helpers
 
@@ -262,6 +270,9 @@ read_only global struct zxdg_toplevel_decoration_v1_listener way_wm_decoration_l
 ////////////////////////////////
 //~ Listeners: pointer
 
+// Every surface that can take pointer or keyboard focus is a window's, made
+// in wm_window_open. One destroyed since the compositor sent the event comes
+// as null: libwayland drops arguments that name destroyed objects.
 internal void
 way_wm_pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y)
 {
@@ -272,10 +283,28 @@ way_wm_pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial, st
   way_wm_apply_cursor(1);
 }
 
+// The pointer leaves with a button held only when the compositor takes the
+// grab (a move it started, say), and the release then never reaches us.
 internal void
 way_wm_pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface)
 {
-  way_wm_state->pointer_window = 0;
+  WAY_WM_State *s = way_wm_state;
+  WAY_WM_Window *w = surface ? (WAY_WM_Window *)wl_surface_get_user_data(surface) : 0;
+  WM_Key buttons[] = {WM_Key_LeftMouseButton, WM_Key_MiddleMouseButton, WM_Key_RightMouseButton};
+  for EachElement(idx, buttons)
+  {
+    if(!wm_key_is_down(buttons[idx])) { continue; }
+    way_wm_set_key_down(buttons[idx], 0);
+    WM_Event *e = way_wm_push_event(WM_EventKind_Release, w);
+    if(e != 0)
+    {
+      e->key = buttons[idx];
+      e->pos = s->pointer_pos;
+    }
+  }
+  s->scroll_value = s->scroll_value120 = v2f32(0, 0);
+  s->scroll_has_value120 = 0;
+  s->pointer_window = 0;
 }
 
 internal void
@@ -312,14 +341,19 @@ way_wm_pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial, u
     }
     if(button == BTN_LEFT && code == _NET_WM_MOVERESIZE_MOVE)
     {
-      if(time - w->last_title_bar_press_time < (U32)(s->gfx_info.double_click_time*1000))
+      Vec2F32 apart = sub_2f32(s->pointer_pos, w->last_title_bar_press_pos);
+      if(w->has_title_bar_press &&
+         time - w->last_title_bar_press_time < (U32)(s->gfx_info.double_click_time*1000) &&
+         abs_f32(apart.x) <= WAY_WM_DOUBLE_CLICK_DISTANCE && abs_f32(apart.y) <= WAY_WM_DOUBLE_CLICK_DISTANCE)
       {
-        w->last_title_bar_press_time = 0;
+        w->has_title_bar_press = 0;
         if(w->maximized) { xdg_toplevel_unset_maximized(w->toplevel); }
         else             { xdg_toplevel_set_maximized(w->toplevel); }
         return;
       }
+      w->has_title_bar_press = 1;
       w->last_title_bar_press_time = time;
+      w->last_title_bar_press_pos = s->pointer_pos;
       xdg_toplevel_move(w->toplevel, s->seat, serial);
       return;
     }
@@ -349,8 +383,7 @@ way_wm_pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial, u
 }
 
 // A frame's axis events add up to one scroll. Wheels report notches in
-// 120ths, as WM_MOUSEWHEEL does; continuous scrolling (touchpads) in surface
-// units, about 15 to a notch.
+// 120ths, as WM_MOUSEWHEEL does; touchpads, in surface units.
 internal void
 way_wm_pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value)
 {
@@ -364,7 +397,7 @@ internal void
 way_wm_pointer_frame(void *data, struct wl_pointer *pointer)
 {
   WAY_WM_State *s = way_wm_state;
-  Vec2F32 delta = s->scroll_has_value120 ? s->scroll_value120 : scale_2f32(s->scroll_value, 8.f);
+  Vec2F32 delta = s->scroll_has_value120 ? s->scroll_value120 : scale_2f32(s->scroll_value, WAY_WM_SCROLL_120THS_PER_UNIT);
   if(delta.x != 0 || delta.y != 0)
   {
     WM_Event *e = way_wm_push_event(WM_EventKind_Scroll, s->pointer_window);
@@ -442,12 +475,19 @@ way_wm_keyboard_keymap(void *data, struct wl_keyboard *keyboard, uint32_t format
     {
       struct xkb_keymap *keymap = way_xkb_keymap_new_from_string(s->xkb_context, text, WAY_XKB_KEYMAP_FORMAT_TEXT_V1, WAY_XKB_KEYMAP_COMPILE_NO_FLAGS);
       munmap(text, size);
-      if(keymap != 0)
+      struct xkb_state *state = keymap != 0 ? way_xkb_state_new(keymap) : 0;
+      // A keymap that fails leaves the last one in place.
+      if(state != 0)
       {
         if(s->xkb_state != 0)  { way_xkb_state_unref(s->xkb_state); }
         if(s->xkb_keymap != 0) { way_xkb_keymap_unref(s->xkb_keymap); }
         s->xkb_keymap = keymap;
-        s->xkb_state = way_xkb_state_new(keymap);
+        s->xkb_state = state;
+        s->repeat_keycode = 0;
+      }
+      else if(keymap != 0)
+      {
+        way_xkb_keymap_unref(keymap);
       }
     }
   }
@@ -489,7 +529,7 @@ way_wm_key_event(U32 keycode, B32 pressed, B32 repeat)
     e->is_repeat = repeat;
   }
   U32 codepoint = pressed ? way_xkb_state_key_get_utf32(s->xkb_state, keycode) : 0;
-  if(codepoint >= 32 && codepoint != 127 || codepoint == '\t')
+  if((codepoint >= 32 && codepoint != 127) || codepoint == '\t')
   {
     WM_Event *t = way_wm_push_event(WM_EventKind_Text, s->keyboard_window);
     if(t != 0)
@@ -687,6 +727,8 @@ way_wm_registry_global_remove(void *data, struct wl_registry *registry, uint32_t
     {
       if(w->output == o) { w->output = 0; }
     }
+    // The node stays in the arena, never reused, so a WM_Monitor the app
+    // still holds reads its last name and size rather than another output's.
     if(prev != 0) { prev->next = o->next; } else { s->first_output = o->next; }
     if(s->last_output == o) { s->last_output = prev; }
     wl_output_destroy(o->output);
@@ -744,22 +786,34 @@ wm_init(CmdLine *cmdln)
   }
   if(ok)
   {
-    s->xkb_context = way_xkb_context_new(WAY_XKB_CONTEXT_NO_FLAGS);
     s->registry = wl_display_get_registry(s->display);
     wl_registry_add_listener(s->registry, &way_wm_registry_listener, 0);
     // The first roundtrip announces the globals; the second, what they say on binding.
-    wl_display_roundtrip(s->display);
-    wl_display_roundtrip(s->display);
-    if(s->compositor == 0 || s->wm_base == 0 || s->xkb_context == 0)
+    if(wl_display_roundtrip(s->display) < 0 || wl_display_roundtrip(s->display) < 0)
     {
-      fprintf(stderr, "The Wayland compositor has no xdg-shell.\n");
+      fprintf(stderr, "The Wayland compositor closed the connection.\n");
       ok = 0;
     }
+    else if(s->compositor == 0) { fprintf(stderr, "The Wayland compositor has no wl_compositor.\n"); ok = 0; }
+    else if(s->wm_base == 0)    { fprintf(stderr, "The Wayland compositor has no xdg-shell.\n"); ok = 0; }
+  }
+  if(ok)
+  {
+    s->xkb_context = way_xkb_context_new(WAY_XKB_CONTEXT_NO_FLAGS);
+    if(s->xkb_context == 0) { fprintf(stderr, "Could not create an xkbcommon context.\n"); ok = 0; }
   }
   if(ok && pipe2(s->wake_pipe, O_NONBLOCK|O_CLOEXEC) != 0) { perror("window wake pipe"); ok = 0; }
   if(!ok)
   {
-    if(s->display != 0)         { wl_display_disconnect(s->display); }
+    // Another window manager may start next, so nothing this one made stays.
+    if(s->display != 0)
+    {
+      void *proxies[] = {s->cursor_shape_device, s->cursor_shape_manager, s->decoration_manager, s->pointer,
+                         s->keyboard, s->seat, s->wm_base, s->compositor, s->registry};
+      for EachElement(idx, proxies) { if(proxies[idx] != 0) { wl_proxy_destroy((struct wl_proxy *)proxies[idx]); } }
+      for(WAY_WM_Output *o = s->first_output; o != 0; o = o->next) { wl_output_destroy(o->output); }
+      wl_display_disconnect(s->display);
+    }
     if(s->wayland_library != 0) { dlclose(s->wayland_library); }
     if(s->xkb_library != 0)     { dlclose(s->xkb_library); }
     arena_release(arena);
@@ -1243,8 +1297,16 @@ wm_get_events(Arena *arena, B32 wait)
     struct pollfd fds[] = {{wl_display_get_fd(s->display), POLLIN, 0}, {s->wake_pipe[0], POLLIN, 0}};
     int result;
     do { result = poll(fds, 2, timeout_ms); } while(result < 0 && errno == EINTR);
-    if(result > 0 && (fds[0].revents & POLLIN)) { wl_display_read_events(s->display); }
-    else                                        { wl_display_cancel_read(s->display); }
+    // A hangup or error goes to read_events too, which then sets the
+    // display's error rather than leaving the poll to spin.
+    if(result > 0 && (fds[0].revents & (POLLIN|POLLHUP|POLLERR)))
+    {
+      if(wl_display_read_events(s->display) < 0) { break; }
+    }
+    else
+    {
+      wl_display_cancel_read(s->display);
+    }
     if(result > 0 && (fds[1].revents & POLLIN))
     {
       char bytes[128];

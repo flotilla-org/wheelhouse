@@ -169,7 +169,8 @@ r_ogl_os_window_equip(WM_Window window)
   {
     w->wl_size = r_ogl_pixel_size_from_window(window);
     w->wl_window = r_ogl_lnx_wl_egl_window_create(native.wayland.surface, w->wl_size.x, w->wl_size.y);
-    w->surface = eglCreatePlatformWindowSurface(r_ogl_lnx_state->display, r_ogl_lnx_state->config, w->wl_window, 0);
+    w->surface = w->wl_window == 0 ? EGL_NO_SURFACE :
+                 eglCreatePlatformWindowSurface(r_ogl_lnx_state->display, r_ogl_lnx_state->config, w->wl_window, 0);
   }
   else
   {
