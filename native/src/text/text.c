@@ -2906,6 +2906,8 @@ txt_artifact_create(String8 key, B32 *cancel_signal, B32 *retry_out, U64 *gen_ou
     {
       // Zeroed: a scope without a parent or children leaves its links unset.
       shared->info.scope_pts.v = push_array(shared->arena, TXT_ScopePt, shared->info.scope_pts.count);
+      // Every opener counted gets a node, so the nodes' count stands; points
+      // are counted again as they're written, without stray closers.
       shared->info.scope_nodes.v = push_array(shared->arena, TXT_ScopeNode, shared->info.scope_nodes.count);
       {
         typedef struct ScopeTask ScopeTask;
