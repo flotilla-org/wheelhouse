@@ -1277,6 +1277,8 @@ internal WH_Renderer *wh_renderer_from_name(String8 name);
 // The first Renderer showing any of `content`, or &wh_nil_renderer.
 internal WH_Renderer *wh_renderer_from_content(WH_ContentKinds content);
 internal WH_Handler *wh_handler_from_url(String8 url);
+// A conversation's contract JSON Lines (wheelhouse#548): `*.events.jsonl`.
+#define WH_CONVERSATION_MEDIA_TYPE "application/vnd.wheelhouse.conversation+jsonl"
 internal String8 wh_media_type_from_path(String8 path);
 internal WH_Handler *wh_handler_from_media_type(WH_ContentKinds content, String8 media_type);
 internal String8 wh_url_from_address(Arena *arena, String8 address);

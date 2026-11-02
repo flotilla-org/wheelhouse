@@ -377,7 +377,12 @@ static void drive_view(const char *markdown) {
         if (lookup(&model, root->children[i])->kind == WHEELHOUSE_RICH_KIND_LIST) list = root->children[i];
     clear(&model);
     assert(list);
+    uint32_t collapsed = 2;
+    ok(wheelhouse_rich_text_collapsed(h, sub, list, &collapsed, &error));
+    assert(collapsed == 0);
     ok(wheelhouse_rich_text_set_collapsed(h, sub, list, 1, &error));
+    ok(wheelhouse_rich_text_collapsed(h, sub, list, &collapsed, &error));
+    assert(collapsed == 1);
     WheelhouseRichMatch moved;
     assert(wheelhouse_rich_text_find_next(h, sub, 1, &moved, &error));
     assert(moved.key == match.key && moved.start == match.start);
@@ -386,6 +391,9 @@ static void drive_view(const char *markdown) {
     assert(wheelhouse_rich_text_anchor(h, sub, &anchor, &error));
     assert(anchor.key == match.key && anchor.viewport_offset > 33.0 && anchor.viewport_offset < 34.0);
     ok(wheelhouse_rich_text_reveal(h, sub, first.key, 0, &error));
+    /* Find's reveal expanded the list round the match. */
+    ok(wheelhouse_rich_text_collapsed(h, sub, list, &collapsed, &error));
+    assert(collapsed == 0);
     ok(wheelhouse_rich_text_find_end(h, sub, &error));
     fails(wheelhouse_rich_text_find_step(h, sub, 1, &status, &error));
     fails(wheelhouse_rich_text_find(h, sub, text("("), WHEELHOUSE_RICH_FIND_REGEX, &error));
@@ -434,6 +442,43 @@ static void drive_conversation(const char *jsonl) {
     uint64_t absent = 12345;
     while (lookup(&m, absent)) ++absent;
     fails(wheelhouse_rich_text_container(h, absent, &c, &error));
+    /* Hover actions copy a Turn's message and a tool call's output; Copy
+     * All the transcript. A subagent's thread opens on its own. */
+    size_t messages = 0, outputs = 0, threads = 0;
+    for (size_t i = 0; i < m.count; ++i) {
+        Node *n = &m.nodes[i];
+        uint32_t actions = 0;
+        ok(wheelhouse_rich_text_copy_actions(h, n->key, &actions, &error));
+        WheelhouseBytes copied = {0};
+        if (actions & WHEELHOUSE_RICH_ACTION_MESSAGE) {
+            ok(wheelhouse_rich_text_copy_action(h, n->key, WHEELHOUSE_RICH_ACTION_MESSAGE, &copied, &error));
+            messages += n->kind == WHEELHOUSE_RICH_KIND_TURN;
+            wheelhouse_bytes_free(copied);
+        }
+        if (actions & WHEELHOUSE_RICH_ACTION_TOOL_OUTPUT) {
+            ok(wheelhouse_rich_text_copy_action(h, n->key, WHEELHOUSE_RICH_ACTION_TOOL_OUTPUT, &copied, &error));
+            outputs += n->section == WHEELHOUSE_RICH_SECTION_TOOL;
+            wheelhouse_bytes_free(copied);
+        }
+        if (!(actions & WHEELHOUSE_RICH_ACTION_COMMAND)) fails(wheelhouse_rich_text_copy_action(h, n->key, WHEELHOUSE_RICH_ACTION_COMMAND, &copied, &error));
+        if (n->section == WHEELHOUSE_RICH_SECTION_SUBAGENT) {
+            ok(wheelhouse_rich_text_container(h, n->key, &c, &error));
+            WheelhouseRichText *thread = wheelhouse_rich_text_open_thread(bytes(jsonl, len), c.title, &error);
+            assert(thread && !error);
+            uint64_t thread_sub;
+            ok(wheelhouse_rich_text_subscribe(thread, &thread_sub, &error));
+            Model t = {0};
+            follow(thread, thread_sub, &t);
+            threads += t.count > 1;
+            clear(&t);
+            wheelhouse_rich_text_free(thread);
+        }
+    }
+    assert(messages > 0 && outputs > 0 && threads > 0);
+    WheelhouseBytes all = {0};
+    ok(wheelhouse_rich_text_copy_all(h, &all, &error));
+    assert(all.len > 0);
+    wheelhouse_bytes_free(all);
     clear(&m);
     m.generation = 0;
     wheelhouse_rich_text_free(h);
@@ -464,6 +509,8 @@ static void drive_conversation(const char *jsonl) {
     fails(wheelhouse_rich_text_append(h, text("{}\n"), NULL, &error));
     ok(wheelhouse_rich_text_backfill(h, 0, &left, &error));
     assert(left == 0);
+    WheelhouseBytes none = {0};
+    fails(wheelhouse_rich_text_copy_all(h, &none, &error));
     wheelhouse_rich_text_free(h);
 }
 

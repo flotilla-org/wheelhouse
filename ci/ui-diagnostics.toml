@@ -124,8 +124,9 @@ flag = "table"
 prefix = "table"
 os = ["linux", "macos"]
 
-# The Rich Text View over synthetic markdown it writes beside its user file
-# (#561), and the 10k-line timing test.
+# The Rich Text View over synthetic markdown and a conversation it writes
+# beside its user file (#561, #616), and the 35 MB transcript and 10k-line
+# timing tests.
 [[diagnostic]]
 flag = "rich_text"
 prefix = "rich-text"

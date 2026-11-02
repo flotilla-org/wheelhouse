@@ -448,6 +448,7 @@ uishell_dispatch_file_command(String8 name)
 }
 
 internal void uishell_rt_toggle_source(RD_ViewAddress view);
+internal void uishell_rt_open_thread(RD_ViewAddress view, String8 thread);
 
 internal B32
 uishell_dispatch_viewer_command(String8 name)
@@ -512,6 +513,10 @@ uishell_dispatch_viewer_command(String8 name)
   else if(str8_match(name, str8_lit("toggle_markdown_source"), 0))
   {
     uishell_rt_toggle_source(uishell_regs()->view);
+  }
+  else if(str8_match(name, str8_lit("open_conversation_thread"), 0))
+  {
+    uishell_rt_open_thread(uishell_regs()->view, uishell_regs()->string);
   }
   else if(str8_match(name, str8_lit("scroll_region_fixture"), 0))
   {

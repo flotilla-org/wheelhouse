@@ -1,6 +1,8 @@
-// Rich Text View checks (#561), headless: synthetic markdown opened in the
-// View and driven by the UI events and commands the window sends, asserting
-// on boxes and the core's state, never on pixels. Then the timing test:
+// Rich Text View checks (#561), headless: synthetic markdown, and a
+// synthetic conversation as chat (#616), opened in the View and driven by the
+// UI events and commands the window sends, asserting on boxes and the core's
+// state, never on pixels. Then the timing tests: the generated 35 MB
+// transcript to its first painted tail (RICH_TEXT_CONVERSATION_BENCH), and
 // the 10k-line generated document scrolled through a frame at a time, its
 // layout cost per frame printed as RICH_TEXT_BENCH lines.
 
@@ -276,6 +278,33 @@ uishell_rt_diag_click_opens(UIShell_RtDiag *d, UIShell_RichTextState *s, U64 key
   return opened;
 }
 
+// One frame with `event`, and the string of the `name` command it queued;
+// empty for none.
+internal String8
+uishell_rt_diag_event_cmd(UIShell_RtDiag *d, UI_Event event, String8 name, Arena *arena)
+{
+  d->now_us += 20000;
+  event.timestamp_us = d->now_us;
+  UI_EventNode node = {.v = event};
+  UI_EventList events = {&node, &node, 1};
+  UI_AnimationInfo animation = {0};
+  ui_begin_build(d->ws->os, &events, &d->ws->ui->icon_info, d->ws->theme, &animation, 1.f/60, 1.f/60);
+  ui_state->mouse = d->mouse;
+  UIShell_RegsScope(.window = d->ws->cfg_id, .panel = d->panel, .tab = d->address, .view = d->address)
+  UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
+  {
+    wh_view_ui_direct(wh_renderer_from_name(str8_lit("rich_text")), d->address, d->rect);
+  }
+  ui_end_build();
+  String8 result = str8_zero();
+  for(UIShell_CmdNode *n = rd_state->cmds[0].first; n; n = n->next)
+  {
+    if(str8_match(n->cmd.name, name, 0)) { result = push_str8_copy(arena, n->cmd.regs->string); }
+  }
+  MemoryZeroStruct(&rd_state->cmds[0]);
+  return result;
+}
+
 // A label this frame built whose text has `needle`.
 internal B32
 uishell_rt_diag_label_with(String8 needle)
@@ -299,6 +328,95 @@ internal B32
 uishell_rt_diag_contains(String8 haystack, String8 needle)
 {
   return str8_find_needle(haystack, 0, needle, 0) < haystack.size;
+}
+
+//- Conversations (#616).
+
+// A Container in the model by its kind, its Turn role or Section kind, and
+// a prefix of its first Block's text or its name.
+internal UIShell_RtNode *
+uishell_rt_diag_container(UIShell_RichTextState *s, U32 kind, U32 role_or_section, String8 prefix)
+{
+  for(U64 i = 0; i < s->model.slots_count; i += 1)
+  {
+    for(UIShell_RtNode *n = s->model.slots[i]; n != 0; n = n->hash_next)
+    {
+      if(n->kind != kind || (kind == WHEELHOUSE_RICH_KIND_TURN ? n->role : n->section) != role_or_section) { continue; }
+      UIShell_RtNode *first = n->child_count ? uishell_rt_node(&s->model, n->children[0]) : 0;
+      if(str8_match(str8_prefix(n->name, prefix.size), prefix, 0) || (first && str8_match(str8_prefix(first->text, prefix.size), prefix, 0))) { return n; }
+    }
+  }
+  return 0;
+}
+
+internal UI_Box *
+uishell_rt_diag_drawn(UI_BoxCustomDrawFunctionType *draw, U64 key)
+{
+  for(UI_Box *b = ui_state->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_state->root).next)
+  {
+    if(b->custom_draw == draw && *(U64 *)b->custom_draw_user_data == key) { return b; }
+  }
+  return &ui_nil_box;
+}
+
+internal UI_Box *
+uishell_rt_diag_named(UI_Box *root, String8 needle)
+{
+  for(UI_Box *b = root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, root).next)
+  {
+    if(str8_find_needle(b->string, 0, needle, 0) < b->string.size) { return b; }
+  }
+  return &ui_nil_box;
+}
+
+internal String8
+uishell_rt_diag_status_mark(UI_Box *header)
+{
+  UI_Box *mark = uishell_rt_diag_named(header, str8_lit("###rt_status"));
+  return ui_box_is_nil(mark) ? str8_zero() : str8_prefix(mark->string, str8_find_needle(mark->string, 0, str8_lit("###"), 0));
+}
+
+internal String8
+uishell_rt_diag_conversation(Arena *arena)
+{
+  String8 lines[] =
+  {
+    str8_lit("{\"type\":\"Hello\",\"contract\":1}"),
+    str8_lit("{\"type\":\"RunStarted\",\"threadId\":\"t1\",\"seq\":1,\"runId\":\"r1\"}"),
+    str8_lit("{\"type\":\"TextMessageStart\",\"threadId\":\"t1\",\"seq\":2,\"messageId\":\"m1\",\"role\":\"user\"}"),
+    str8_lit("{\"type\":\"TextMessageContent\",\"threadId\":\"t1\",\"seq\":3,\"messageId\":\"m1\",\"delta\":\"Please run the *harbour* tests.\"}"),
+    str8_lit("{\"type\":\"TextMessageEnd\",\"threadId\":\"t1\",\"seq\":4,\"messageId\":\"m1\"}"),
+    str8_lit("{\"type\":\"ReasoningMessageStart\",\"threadId\":\"t1\",\"seq\":5,\"messageId\":\"rs1\"}"),
+    str8_lit("{\"type\":\"ReasoningMessageContent\",\"threadId\":\"t1\",\"seq\":6,\"messageId\":\"rs1\",\"delta\":\"Consider the moorings first.\"}"),
+    str8_lit("{\"type\":\"ReasoningMessageEnd\",\"threadId\":\"t1\",\"seq\":7,\"messageId\":\"rs1\"}"),
+    str8_lit("{\"type\":\"TextMessageStart\",\"threadId\":\"t1\",\"seq\":8,\"messageId\":\"m2\",\"role\":\"assistant\"}"),
+    str8_lit("{\"type\":\"TextMessageContent\",\"threadId\":\"t1\",\"seq\":9,\"messageId\":\"m2\",\"delta\":\"Running them now: the tide tables, the berth allocations, the pilot rosters and the cargo manifests each have a suite, and the slowest is the capstan.\"}"),
+    str8_lit("{\"type\":\"TextMessageEnd\",\"threadId\":\"t1\",\"seq\":10,\"messageId\":\"m2\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":11,\"toolCallId\":\"c1\",\"toolCallName\":\"Bash\",\"title\":\"cargo test harbour\",\"kind\":\"shell\"}"),
+    str8_lit("{\"type\":\"ToolCallArgs\",\"threadId\":\"t1\",\"seq\":12,\"toolCallId\":\"c1\",\"delta\":\"{\\\"command\\\":\\\"cargo test harbour\\\"}\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":13,\"toolCallId\":\"c1\",\"messageId\":\"r1\",\"status\":\"failed\",\"mediaType\":\"text/x-ansi\",\"content\":\"\\u001b[31merror\\u001b[0m: berth 4\\nkestrel ok\\n\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":14,\"toolCallId\":\"c2\",\"toolCallName\":\"Read\",\"title\":\"tides.md\",\"kind\":\"read\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":15,\"toolCallId\":\"c3\",\"toolCallName\":\"Edit\",\"title\":\"berths.rs\",\"kind\":\"edit\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":16,\"toolCallId\":\"c3\",\"messageId\":\"r3\",\"status\":\"ok\",\"mediaType\":\"text/plain\",\"content\":\"edited\\n\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":17,\"toolCallId\":\"c4\",\"toolCallName\":\"Grep\",\"title\":\"pilot\",\"kind\":\"search\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":18,\"toolCallId\":\"c4\",\"messageId\":\"r4\",\"status\":\"interrupted\",\"content\":\"\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":19,\"toolCallId\":\"c5\",\"toolCallName\":\"Fetch\",\"title\":\"example.com\",\"kind\":\"web\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":20,\"toolCallId\":\"c5\",\"messageId\":\"r5\",\"status\":\"awaiting_approval\",\"content\":\"\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":21,\"toolCallId\":\"c9\",\"toolCallName\":\"Task\",\"title\":\"Find the berth\",\"kind\":\"agent\"}"),
+    str8_lit("{\"type\":\"RunStarted\",\"threadId\":\"t2\",\"seq\":1,\"runId\":\"r2\",\"parent\":{\"threadId\":\"t1\",\"toolCallId\":\"c9\"}}"),
+    str8_lit("{\"type\":\"TextMessageStart\",\"threadId\":\"t2\",\"seq\":2,\"messageId\":\"s1\",\"role\":\"user\"}"),
+    str8_lit("{\"type\":\"TextMessageContent\",\"threadId\":\"t2\",\"seq\":3,\"messageId\":\"s1\",\"delta\":\"Find the free berth.\"}"),
+    str8_lit("{\"type\":\"TextMessageEnd\",\"threadId\":\"t2\",\"seq\":4,\"messageId\":\"s1\"}"),
+    str8_lit("{\"type\":\"RunFinished\",\"threadId\":\"t2\",\"seq\":5,\"runId\":\"r2\",\"outcome\":\"completed\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":22,\"toolCallId\":\"c9\",\"messageId\":\"r9\",\"status\":\"ok\",\"mediaType\":\"text/markdown\",\"content\":\"Berth 7.\"}"),
+    str8_lit("{\"type\":\"Custom\",\"threadId\":\"t1\",\"seq\":23,\"name\":\"compaction\",\"value\":{}}"),
+    str8_lit("{\"type\":\"TextMessageStart\",\"threadId\":\"t1\",\"seq\":24,\"messageId\":\"m3\",\"role\":\"assistant\"}"),
+    str8_lit("{\"type\":\"TextMessageContent\",\"threadId\":\"t1\",\"seq\":25,\"messageId\":\"m3\",\"delta\":\"Done.\"}"),
+    str8_lit("{\"type\":\"TextMessageEnd\",\"threadId\":\"t1\",\"seq\":26,\"messageId\":\"m3\"}"),
+  };
+  String8List out = {0};
+  for EachElement(i, lines) { str8_list_pushf(arena, &out, "%S\n", lines[i]); }
+  return str8_list_join(arena, &out, 0);
 }
 
 //- The fixture: synthetic, so the repo stays public-safe.
@@ -403,6 +521,22 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     fprintf(stderr, "RICH_TEXT_BOXES boxes=%llu visible=%llu matched=%llu\n", (unsigned long long)box_count, (unsigned long long)visible, (unsigned long long)matched);
     RichCheck(visible > 3 && box_count == visible && matched == visible, "opening a fixture creates one box per visible Block, where the core places it");
     RichCheck(measured == visible, "every visible Block's height is measured");
+    // The "document" style set has no rules: markdown is as it was, every
+    // Block across the reading column and no Container with rows of its own.
+    U64 full = 0, rows = 0, empty_rows = 0;
+    for(U64 b = 0; b < box_count; b += 1)
+    {
+      Rng2F32 r = boxes[b].box->rect;
+      full += abs_f32(r.x0 - (content.x0 + s->content_x)) < 0.5f && abs_f32(r.x1 - (content.x0 + s->content_x + s->width)) < 0.5f;
+    }
+    for(U64 i = 0; i < w.entry_count; i += 1)
+    {
+      if(w.entries[i].part == WHEELHOUSE_RICH_PART_BLOCK) { continue; }
+      rows += 1;
+      empty_rows += w.entries[i].measured && w.entries[i].height == 0;
+    }
+    RichCheck(s->styles == uishell_rt_style_set_from_name(str8_lit("document")) && s->styles->rule_count == 0 && full == box_count &&
+              rows > 0 && empty_rows == rows, "the document style set leaves markdown as it was");
     UIShell_RtNode *front = 0;
     for(U64 i = 0; i < s->model.block_count && !front; i += 1)
     {
@@ -843,6 +977,267 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       }
     }
     scratch_end(scratch);
+  }
+
+  //- A conversation (#616): its contract file through the Handlers to the
+  // same Renderer, presented as chat.
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    String8 chat = push_str8f(arena, "%S/harbour.events.jsonl", dir);
+    write_data_to_file_path(chat, uishell_rt_diag_conversation(scratch.arena));
+    RichCheck(str8_match(wh_handler_from_media_type(WH_Content_File, wh_media_type_from_path(chat))->renderer, str8_lit("rich_text"), 0) &&
+              str8_match(wh_handler_from_media_type(WH_Content_File, str8_lit("application/vnd.wheelhouse.conversation+jsonl"))->renderer,
+                         str8_lit("rich_text"), 0),
+              "a conversation's file and media type resolve to the Rich Text Renderer");
+    RichCheck(wh_media_type_from_path(str8_lit("/tmp/plain.jsonl")).size == 0 && wh_media_type_from_path(str8_lit("/tmp/.events.jsonl")).size == 0,
+              "other JSON Lines, and a file named only .events.jsonl, resolve to no Handler");
+    d->rect = r2f32p(0, 0, 900, 900);
+    s = uishell_rt_diag_open(d, chat);
+    RichCheck(s && s->doc && s->conversation && s->styles == uishell_rt_style_set_from_name(str8_lit("chat")),
+              "a conversation opens with the chat style set");
+    UIShell_RtNode *user = s ? uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_TURN, WHEELHOUSE_RICH_ROLE_USER, str8_lit("Please run")) : 0;
+    UIShell_RtNode *assistant = s ? uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_TURN, WHEELHOUSE_RICH_ROLE_ASSISTANT, str8_lit("Running them")) : 0;
+    UIShell_RtNode *bash = s ? uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_SECTION, WHEELHOUSE_RICH_SECTION_TOOL, str8_lit("Bash")) : 0;
+    UIShell_RtNode *reasoning = s ? uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_SECTION, WHEELHOUSE_RICH_SECTION_REASONING, str8_zero()) : 0;
+    UIShell_RtNode *subagent = s ? uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_SECTION, WHEELHOUSE_RICH_SECTION_SUBAGENT, str8_zero()) : 0;
+    RichCheck(user && assistant && bash && reasoning && subagent, "the conversation's Turns and Sections are in the model");
+    if(user && assistant && bash && reasoning && subagent)
+    {
+      WheelhouseRichWindow w = {0};
+      wheelhouse_rich_text_window(s->doc, s->sub, &w, &error);
+      RichCheck(w.at_end, "a conversation opens at its newest");
+      // To the top, where the Turns are.
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .delta_unit = UI_EventDeltaUnit_Whole, .delta_2s32 = v2s32(0, -1)});
+      s = uishell_rt_diag_frames(d, 3);
+      Rng2F32 content = uishell_rt_diag_content(d);
+      F32 column_x0 = content.x0 + s->content_x, column_x1 = column_x0 + s->width;
+
+      //- A user Turn is a bubble: end-aligned, at most 75% wide, with a
+      // background; an assistant Turn is page content across the column.
+      UI_Box *bubble = uishell_rt_diag_drawn(uishell_rt_chrome_draw, user->key);
+      UIShell_RtDiagBox user_text = uishell_rt_diag_box(scratch.arena, user->children[0]);
+      fprintf(stderr, "RICH_TEXT_CHAT bubble=%.1f..%.1f column=%.1f..%.1f view=%.1f\n", bubble->rect.x0, bubble->rect.x1, column_x0, column_x1, dim_2f32(d->rect).x);
+      RichCheck(!ui_box_is_nil(bubble) && abs_f32(bubble->rect.x1 - column_x1) < 0.5f && dim_2f32(bubble->rect).x <= 0.75f*s->width + 0.5f &&
+                dim_2f32(bubble->rect).x < dim_2f32(d->rect).x && user_text.draw && user_text.box->rect.x0 > bubble->rect.x0 &&
+                user_text.box->rect.x1 < bubble->rect.x1 && user_text.box->rect.y0 >= bubble->rect.y0 && user_text.box->rect.y1 <= bubble->rect.y1,
+                "a user Turn is a bubble, end-aligned and narrower than the View, around its text");
+      UIShell_RtDiagBox assistant_text = uishell_rt_diag_box(scratch.arena, assistant->children[0]);
+      RichCheck(assistant_text.draw && abs_f32(assistant_text.box->rect.x0 - column_x0) < 0.5f && abs_f32(assistant_text.box->rect.x1 - column_x1) < 0.5f &&
+                ui_box_is_nil(uishell_rt_diag_drawn(uishell_rt_chrome_draw, assistant->key)), "an assistant Turn spans the column, without chrome");
+
+      //- Tool calls and reasoning are collapsed by default; a click, Enter
+      // or Space toggles them.
+      UI_Box *header = uishell_rt_diag_drawn(uishell_rt_header_draw, bash->key);
+      U64 output = bash->child_count ? bash->children[0] : 0;
+      RichCheck(!ui_box_is_nil(header) && uishell_rt_collapsed(s, bash->key) && uishell_rt_collapsed(s, reasoning->key) &&
+                ui_box_is_nil(uishell_rt_diag_box(scratch.arena, output).box) && ((UIShell_RtHeaderDraw *)header->custom_draw_user_data)->collapsed,
+                "a tool Section and reasoning are collapsed by default, showing their headers");
+      RichCheck(uishell_rt_diag_contains(uishell_rt_diag_named(header, str8_lit("###rt_name"))->string, str8_lit("Bash")) &&
+                uishell_rt_diag_contains(uishell_rt_diag_named(header, str8_lit("###rt_title"))->string, str8_lit("cargo test harbour")) &&
+                !ui_box_is_nil(uishell_rt_diag_named(header, str8_lit("###rt_icon"))), "a tool Section's header has its icon, name and title");
+      d->now_us += 2000000;
+      s = uishell_rt_diag_click(d, center_2f32(header->rect), 0, 1);
+      UIShell_RtDiagBox log = uishell_rt_diag_box(scratch.arena, output);
+      RichCheck(!uishell_rt_collapsed(s, bash->key) && log.draw && log.draw->kind == WHEELHOUSE_RICH_KIND_LOG, "a click on the header expands it");
+      if(log.draw)
+      {
+        // Its output is monospace, with ANSI's red through the palette.
+        UIShell_RtNode *n = uishell_rt_node(&s->model, output);
+        UIShell_RtLayoutEntry *e = 0;
+        uishell_rt_block_height(s, n, dim_2f32(log.box->rect).x, &e);
+        B32 red = 0;
+        for(U64 i = 0; e && i < e->layout->style_count; i += 1)
+        {
+          UIShell_RtStyleInk *ink = &e->layout->inks[i];
+          Vec4F32 c = uishell_rt_ink_color(&s->theme, ink);
+          red |= (ink->ink & UIShell_RtInk_Literal) && abs_f32(c.x - ((s->theme.palette[1]>>16)&0xff)/255.f) < 0.01f &&
+                 abs_f32(c.y - ((s->theme.palette[1]>>8)&0xff)/255.f) < 0.01f;
+        }
+        RichCheck(uishell_rt_base_style(&s->theme, n).family == WH_TEXT_FAMILY_CODE && red, "a log Block is monospace, its colours mapped through the theme's palette");
+      }
+      for(U32 key = 0; key < 2; key += 1)
+      {
+        // Tab to the header, then Space and Enter.
+        B32 reached = 0;
+        for(U32 i = 0; i < 24 && !reached; i += 1)
+        {
+          s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .flags = UI_EventFlag_Secondary, .delta_unit = UI_EventDeltaUnit_Char, .delta_2s32 = v2s32(0, 1)});
+          reached = s->focus_stop >= 0 && s->focus_stop_value.kind == UIShell_RtStop_Toggle && s->focus_stop_value.key == bash->key;
+        }
+        B32 before = uishell_rt_collapsed(s, bash->key);
+        s = uishell_rt_diag_event(d, key ? (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Return, .slot = UI_EventActionSlot_Accept}
+                                         : (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Space});
+        RichCheck(reached && uishell_rt_collapsed(s, bash->key) == !before, key ? "Enter on a focused header toggles its Section" : "Space on a focused header toggles its Section");
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Esc, .slot = UI_EventActionSlot_Cancel});
+      }
+
+      //- The status mark follows the status: a distinct mark for each.
+      {
+        String8 names[] = {str8_lit("Bash"), str8_lit("Read"), str8_lit("Edit"), str8_lit("Grep"), str8_lit("Fetch")};
+        U32 wanted[] = {WHEELHOUSE_RICH_STATUS_FAILED, WHEELHOUSE_RICH_STATUS_PENDING, WHEELHOUSE_RICH_STATUS_OK, WHEELHOUSE_RICH_STATUS_INTERRUPTED,
+                        WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL};
+        String8 marks[ArrayCount(names)] = {0};
+        B32 follows = 1;
+        s = uishell_rt_diag_frames(d, 2);
+        for EachElement(i, names)
+        {
+          UIShell_RtNode *tool = uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_SECTION, WHEELHOUSE_RICH_SECTION_TOOL, names[i]);
+          UI_Box *h = tool ? uishell_rt_diag_drawn(uishell_rt_header_draw, tool->key) : &ui_nil_box;
+          marks[i] = uishell_rt_diag_status_mark(h);
+          follows &= tool && tool->status == wanted[i] && ((UIShell_RtHeaderDraw *)h->custom_draw_user_data)->status == wanted[i] &&
+                     str8_match(marks[i], rd_icon_kind_text_table[uishell_rt_status_icon(wanted[i])], 0);
+          for(U64 j = 0; j < i; j += 1) { follows &= !str8_match(marks[i], marks[j], 0); }
+        }
+        RichCheck(follows, "each tool Section's status mark follows its status: pending, ok, failed, interrupted, awaiting approval");
+      }
+
+      //- Hover actions copy the message, the tool's output and command;
+      // Copy All copies the transcript.
+      {
+        s = uishell_rt_diag_frames(d, 1);
+        UIShell_RtDiagBox text = uishell_rt_diag_box(scratch.arena, user->children[0]);
+        d->mouse = center_2f32(text.box->rect);
+        s = uishell_rt_diag_frames(d, 2);
+        UI_Box *copy = uishell_rt_diag_named(ui_state->root, push_str8f(scratch.arena, "###rt_action_%u", WHEELHOUSE_RICH_ACTION_MESSAGE));
+        RichCheck(s->hover_key == user->key && !ui_box_is_nil(copy), "hovering a Turn shows its copy action");
+        if(!ui_box_is_nil(copy))
+        {
+          d->now_us += 2000000;
+          s = uishell_rt_diag_click(d, center_2f32(copy->rect), 0, 1);
+          RichCheck(str8_match(d->clip.text, str8_lit("Please run the *harbour* tests."), 0), "copy message copies the Turn's markdown as plain text");
+        }
+        header = uishell_rt_diag_drawn(uishell_rt_header_draw, bash->key);
+        d->mouse = v2f32(header->rect.x0 + 10, center_2f32(header->rect).y);
+        s = uishell_rt_diag_frames(d, 2);
+        U32 tool_actions[] = {WHEELHOUSE_RICH_ACTION_TOOL_OUTPUT, WHEELHOUSE_RICH_ACTION_COMMAND};
+        String8 tool_copies[] = {str8_lit("error: berth 4\nkestrel ok"), str8_lit("cargo test harbour")};
+        for EachElement(i, tool_actions)
+        {
+          UI_Box *button = uishell_rt_diag_named(ui_state->root, push_str8f(scratch.arena, "###rt_action_%u", tool_actions[i]));
+          U64 writes = d->clip.writes;
+          if(!ui_box_is_nil(button))
+          {
+            d->now_us += 2000000;
+            Vec2F32 at = center_2f32(button->rect);
+            s = uishell_rt_diag_click(d, at, 0, 1);
+            d->mouse = v2f32(header->rect.x0 + 10, center_2f32(header->rect).y);
+            s = uishell_rt_diag_frames(d, 1);
+          }
+          fprintf(stderr, "RICH_TEXT_CHAT action=%u copied=\"%.*s\"\n", tool_actions[i], str8_varg(d->clip.text));
+          RichCheck(d->clip.writes == writes+1 && str8_match(d->clip.text, tool_copies[i], 0),
+                    i == 0 ? "copy tool output copies its output without escapes" : "copy command copies the tool call's command");
+        }
+        UI_Box *all = uishell_rt_diag_named(ui_state->root, str8_lit("###rich_text_copy_all"));
+        RichCheck(!ui_box_is_nil(all), "a conversation's bar has Copy All");
+        if(!ui_box_is_nil(all))
+        {
+          // Backfilled first, a step a frame; then copied.
+          d->now_us += 2000000;
+          U64 writes = d->clip.writes;
+          s = uishell_rt_diag_click(d, center_2f32(all->rect), 0, 1);
+          for(U32 i = 0; i < 1000 && d->clip.writes == writes; i += 1) { s = uishell_rt_diag_frame(d, 0); }
+          String8 text = d->clip.text;
+          RichCheck(str8_match(str8_prefix(text, 9), str8_lit("## User\n\n"), 0) && uishell_rt_diag_contains(text, str8_lit("Please run the *harbour* tests.")) &&
+                    uishell_rt_diag_contains(text, str8_lit("```sh\ncargo test harbour\n```")) && uishell_rt_diag_contains(text, str8_lit("Find the free berth.")) &&
+                    uishell_rt_diag_contains(text, str8_lit("Done.")) && !uishell_rt_diag_contains(text, str8_lit("moorings")),
+                    "Copy All copies the whole transcript, without reasoning");
+        }
+      }
+
+      //- A Divider marks the compaction.
+      {
+        B32 divider = 0;
+        for(U64 i = 0; i < s->model.block_count; i += 1)
+        {
+          UIShell_RtNode *n = uishell_rt_node(&s->model, s->model.block_keys[i]);
+          divider |= n && n->kind == WHEELHOUSE_RICH_KIND_DIVIDER && str8_match(n->text, str8_lit("compaction"), 0);
+        }
+        RichCheck(divider, "a Divider marks the compaction");
+      }
+
+      //- A subagent's header, inside the call that started it, is a link
+      // that opens its thread as its own View.
+      {
+        UIShell_RtNode *task = uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_SECTION, WHEELHOUSE_RICH_SECTION_TOOL, str8_lit("Task"));
+        if(task && uishell_rt_collapsed(s, task->key)) { uishell_rt_toggle(s, task->key); }
+        s = uishell_rt_diag_frames(d, 2);
+        UI_Box *link = &ui_nil_box;
+        for(U32 i = 0; i < 20 && ui_box_is_nil(link); i += 1)
+        {
+          link = uishell_rt_diag_drawn(uishell_rt_header_draw, subagent->key);
+          if(ui_box_is_nil(link)) { s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(content), .delta_2f32 = v2f32(0, 1)}); }
+        }
+        String8 asked = str8_zero();
+        if(!ui_box_is_nil(link))
+        {
+          d->now_us += 2000000;
+          d->mouse = center_2f32(link->rect);
+          asked = uishell_rt_diag_event_cmd(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = d->mouse},
+                                            str8_lit("open_conversation_thread"), scratch.arena);
+          s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = d->mouse});
+        }
+        RichCheck(str8_match(asked, subagent->title, 0) && uishell_rt_collapsed(s, subagent->key), "a click on a subagent's header asks for its thread, not a toggle");
+        RD_PanelOwner owner = d->panel.owner;
+        U64 before = rd_fixture_count(owner, str8_lit("rich_text"));
+        uishell_rt_open_thread(d->address, asked);
+        CFG_Node *opened = &cfg_nil_node;
+        for(CFG_Node *n = d->view->parent->first; n != &cfg_nil_node; n = n->next)
+        {
+          if(str8_match(cfg_node_child_from_string(n, str8_lit("thread"))->first->string, asked, 0)) { opened = n; }
+        }
+        RichCheck(rd_fixture_count(owner, str8_lit("rich_text")) == before + 1 && opened != &cfg_nil_node, "opening the thread adds a View of it beside this one");
+        if(opened != &cfg_nil_node)
+        {
+          d->view = opened;
+          d->address = rd_view_address_from_cfg(opened);
+          s = uishell_rt_diag_frames(d, 1);
+          for(U32 i = 0; i < 1000 && !(s && s->doc && s->model.block_count); i += 1) { s = uishell_rt_diag_frame(d, 0); sleep_ms(5); }
+          s = uishell_rt_diag_frames(d, 3);
+          B32 own = uishell_rt_diag_block_with(s, str8_lit("Find the free berth.")) != 0;
+          B32 other = uishell_rt_diag_block_with(s, str8_lit("Please run")) != 0;
+          RichCheck(s->conversation && own && !other, "the thread's View shows its thread alone");
+        }
+      }
+    }
+    d->rect = r2f32p(0, 0, 900, 600);
+    scratch_end(scratch);
+  }
+
+  //- Timing: the generated 35 MB transcript, to its first painted tail.
+  {
+    WheelhouseBytes bytes = {0};
+    String8 large = push_str8f(arena, "%S/rich-text-large.events.jsonl", dir);
+    if(wheelhouse_rich_text_generate_conversation(7, 35u << 20, &bytes, &error))
+    {
+      write_data_to_file_path(large, str8(bytes.data, bytes.len));
+      wheelhouse_bytes_free(bytes);
+    }
+    d->rect = r2f32p(0, 0, 1200, 900);
+    U64 begin = now_time_us();
+    CFG_Node *window = cfg_node_from_id(d->ws->cfg_id);
+    CFG_Node *host = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+    d->panel = rd_fixture_leaf(rd_fixture_owner(host));
+    d->view = rd_fixture_view(d->panel, str8_lit("rich_text"), rd_eval_string_from_file_path(d->arena, large), 1);
+    d->address = rd_view_address_from_cfg(d->view);
+    U64 frames = 0;
+    for(; frames < 4000; frames += 1)
+    {
+      s = uishell_rt_diag_frame(d, 0);
+      if(s && s->first_tail_us) { break; }
+      if(!(s && s->doc)) { sleep_ms(1); }
+    }
+    B32 painted = s && s->first_tail_us != 0;
+    // Backfill steps a frame at a time behind the tail.
+    U64 backfill_frames = painted ? 60 : 0;
+    s = painted ? uishell_rt_diag_frames(d, (U32)backfill_frames) : s;
+    WheelhouseRichWindow w = {0};
+    if(painted) { wheelhouse_rich_text_window(s->doc, s->sub, &w, &error); }
+    printf("RICH_TEXT_CONVERSATION_BENCH build=%s transcript_bytes=%llu first_tail_ms=%.1f open_to_tail_ms=%.1f frames=%llu backfill_frames=%llu blocks=%llu\n",
+           BUILD_DEBUG ? "debug" : "release", (unsigned long long)properties_from_file_path(large).size,
+           painted ? (s->first_tail_us - begin)/1000.0 : -1.0, painted ? (s->first_tail_us - s->opened_us)/1000.0 : -1.0,
+           (unsigned long long)frames, (unsigned long long)backfill_frames, painted ? (unsigned long long)s->model.block_count : 0ull);
+    RichCheck(painted && w.at_end, "the 35 MB transcript paints its tail, and stays there as backfill runs");
+    d->rect = r2f32p(0, 0, 900, 600);
   }
 
   //- Timing: the 10k-line generated document, scrolled through a frame at a time.
