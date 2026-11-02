@@ -10,7 +10,9 @@ that bumping a pin or adding a diagnostic needs no workflow edit.
 | `ui-diagnostics.toml` | The UI diagnostics each OS runs, in order. |
 | `run-ui-diagnostics.py` | Runs the Linux or macOS list; prints the Windows names. |
 | `check-ui-diagnostics-migration.py` | One-off check that the list matches the workflow lines it replaced (#236). |
-| `test_pins.py`, `test_run_ui_diagnostics.py` | Tests for the above (`python3 ci/test_pins.py`). |
+| `windows-checks.toml` | The checks the Windows jobs in `build.yml` run, in order. |
+| `run-windows-checks.py` | Runs them, keeping going after a failure; `native\check_windows.bat` calls it. |
+| `test_pins.py`, `test_run_ui_diagnostics.py`, `test_run_windows_checks.py` | Tests for the above (`python3 ci/test_pins.py`). |
 
 The scripts use only the Python standard library and need Python 3.11 or
 later, for `tomllib`.
@@ -83,3 +85,40 @@ must be one `native/src/uishell/uishell_main.c` accepts;
 Diagnostics that run without `--user`/`--project` and outside the display
 steps (Jackstay viewport geometry, terminal clipboard effects on Linux and
 macOS) stay as their own steps in `build.yml`.
+
+## Windows checks
+
+`windows-checks.toml` lists what the Windows jobs run, once, and both CI and
+local runs read it, so the two cannot drift apart:
+
+```bat
+native\check_windows                                 :: everything, locally
+python ci/run-windows-checks.py --group unit         :: the daily-driver job's Windows leg
+call native\check_windows.bat --group native         :: the native job's Windows leg
+```
+
+The "native" group builds with `native\build.bat wheelhouse meta`, then runs
+generated sources, the UI diagnostics (`native\run_tests.bat`), ConPTY
+packaging, Jackstay, ingress and the other Windows harnesses. The "unit"
+group runs the Python unit checks, which need no build. The runner keeps
+going after a failure, skips a check whose `needs` failed, prints a summary
+and exits 1 if anything failed. In GitHub Actions it folds each check's
+output into a log group and annotates failures. `--skip`, `--only` and
+`--list` choose and print checks.
+
+To add a Windows check, add an entry where it should run:
+
+```toml
+[[check]]
+name = "table-startup"
+group = "native"
+run = ["python", "tools/test-table-startup.py"]
+env = { WHEELHOUSE_TEST_BINARY = "build/wheelhouse" }
+needs = ["build"]
+```
+
+`requires = ["symlinks"]` skips a check, with the reason, when the user
+cannot create symbolic links (Developer Mode off, not elevated). See the
+header of `windows-checks.toml` for the rest. `test_run_windows_checks.py`
+checks that `build.yml` runs each group on Windows and that no other
+`build.yml` step runs a listed script there.

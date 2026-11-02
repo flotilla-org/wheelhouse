@@ -49,6 +49,15 @@ terminal-glyph diagnostic fails, naming the missing family, on a host without it
 After `native\build wheelhouse meta`, `python tools/check-generated.py` fails if committed
 metagen output is stale.
 
+To run what Windows CI runs, use `native\check_windows`. It builds with `native\build
+wheelhouse meta`, then runs the checks listed in `ci/windows-checks.toml` in order. It keeps
+going after a failure, prints a pass/fail summary at the end, and exits non-zero if anything
+failed. It sets up the Visual Studio C++ environment itself if `cl.exe` is not on `PATH`.
+`--skip build` reruns the checks against an existing build, `--group unit` runs only the
+Python unit checks, and `--list` prints the checks without running them. A check that needs to
+create symbolic links is skipped, with the reason, unless Developer Mode is on or the shell is
+elevated. CI runs the same list (see `ci/README.md`).
+
 Terminal panes on Windows need Cleat's bundled ConPTY: the inbox ConPTY drops Kitty
 graphics. `native/build.bat` runs the Cleat checkout's `tools\prepare-conpty.ps1`, which fetches
 and verifies the package pinned in Cleat's `tools\conpty.toml` on first use. It then copies
@@ -63,7 +72,7 @@ The executable is `build/wheelhouse` (`build/wheelhouse.exe` on Windows); the ma
 
 Internal source names and existing configuration storage still use `uishell`.
 
-The native-build CI workflow checks exact Cleat and Jackstay revisions, recorded in `ci/pins.toml` (see `ci/README.md`). It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. For terminal hosting changes, use a sibling Cleat checkout at the revision pinned in `ci/pins.toml`; a later Cleat builds only while its provider ABI matches the one `native/src/uishell/uishell_terminal_provider.h` requires. A new UI diagnostic goes in `ci/ui-diagnostics.toml`.
+The native-build CI workflow checks exact Cleat and Jackstay revisions, recorded in `ci/pins.toml` (see `ci/README.md`). It builds on macOS and Windows with Ghostty and on Linux with Cleat’s no-VT variant, runs the UI diagnostics and the Jackstay session acceptance on all three, and on Windows checks that committed metagen output is current and that an in-process pane runs under the bundled ConPTY. The Core workflow runs `cargo test --workspace` on Linux, macOS and Windows. On Windows, the tests with known Windows failures are ignored, and each ignore names its issue. Ghostty on Linux is not covered by these jobs. Local builds continue to use the configured sibling checkouts. For terminal hosting changes, use a sibling Cleat checkout at the revision pinned in `ci/pins.toml`; a later Cleat builds only while its provider ABI matches the one `native/src/uishell/uishell_terminal_provider.h` requires. A new UI diagnostic goes in `ci/ui-diagnostics.toml`.
 
 ## Terminal hyperlinks
 
