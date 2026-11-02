@@ -27,14 +27,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python tools/test-daily-driver.py
-      - run: python tools/test-daily-driver-windows.py
+      # Windows runs the "unit" group of ci/windows-checks.toml, which
+      # native\check_windows.bat runs locally too.
+      - name: Windows unit checks
+        if: runner.os == 'Windows'
+        run: python ci/run-windows-checks.py --group unit
+      - run: python3 tools/test-daily-driver.py
+        if: runner.os != 'Windows'
+      - run: python3 tools/test-daily-driver-windows.py
+        if: runner.os != 'Windows'
       - run: python3 tools/test-build-failures.py
         if: runner.os != 'Windows'
-      - run: python tools/test-windows-terminal-input-readiness.py
-      - run: python tools/test-embed-sidebar-fixture.py
-      - run: python ci/test_pins.py
+      - run: python3 tools/test-windows-terminal-input-readiness.py
+        if: runner.os != 'Windows'
+      - run: python3 tools/test-embed-sidebar-fixture.py
+        if: runner.os != 'Windows'
+      - run: python3 ci/test_pins.py
+        if: runner.os != 'Windows'
       - run: python3 ci/test_run_ui_diagnostics.py
+        if: runner.os != 'Windows'
+      - run: python3 ci/test_run_windows_checks.py
         if: runner.os != 'Windows'
       - run: bash -n scripts/run-daily-driver.sh
         if: runner.os != 'Windows'
@@ -104,11 +116,14 @@ jobs:
         if: matrix.vt == 'ghostty-vt' && runner.os == 'Windows'
         shell: pwsh
         run: ../cleat/tools/prepare-ghostty-vt.ps1
-      - name: Build on Windows
+      - name: Windows build and checks
         if: runner.os == 'Windows'
         shell: cmd
-        # `meta` rebuilds metagen so the generated-sources check covers its output.
-        run: call native\build.bat wheelhouse meta
+        # The "native" group of ci/windows-checks.toml: `native\build.bat
+        # wheelhouse meta`, then generated sources, the UI diagnostics, ConPTY
+        # packaging, Jackstay, ingress and the other harnesses, keeping going
+        # after a failure. The same script runs them locally.
+        run: call native\check_windows.bat --group native
       - name: Build on Linux
         if: runner.os == 'Linux'
         # With CI set, native/build.sh also runs the headless harnesses against the
@@ -122,36 +137,21 @@ jobs:
           bash native/build.sh bundle
           codesign --verify --deep --strict build/Wheelhouse.app
       - name: Verify generated sources
+        if: runner.os != 'Windows'
         run: python tools/check-generated.py
       - name: Headless Jackstay viewport geometry
-        run: python -c "import subprocess; subprocess.run(['./build/wheelhouse', '--jackstay_geometry_diagnostics'], check=True)"
+        if: runner.os != 'Windows'
+        run: ./build/wheelhouse --jackstay_geometry_diagnostics
       - name: Headless terminal clipboard effects
         if: runner.os != 'Windows'
         run: ./build/wheelhouse --terminal_clipboard_diagnostics
-      - name: Windows UI diagnostics
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          call native\run_tests.bat
-          if errorlevel 1 exit /b 1
-          call native\run_tests.bat -Diagnostics preview -NoPreviewBudget
-      - name: Windows ConPTY packaging
-        if: runner.os == 'Windows'
-        shell: pwsh
-        # An in-process pane must run under the bundled OpenConsole.exe beside
-        # wheelhouse.exe; the inbox run shows the check tells the two apart.
-        run: |
-          ./tools/check-windows-conpty.ps1 -Expect bundled
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./tools/check-windows-conpty.ps1 -Expect inbox
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Linux UI diagnostics
         if: runner.os == 'Linux'
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: python3 ci/run-ui-diagnostics.py --os linux
       - name: Terminal launch environment
-        shell: bash
+        if: runner.os != 'Windows'
         run: python tools/test-terminal-environment.py
       - name: macOS text positions
         if: runner.os == 'macOS'
@@ -166,34 +166,27 @@ jobs:
         if: runner.os == 'macOS'
         run: python3 ci/run-ui-diagnostics.py --os macos
       - name: Headless section placement lifecycle
+        if: runner.os != 'Windows'
         run: python tools/test-section-placement.py
-      - name: Windows terminal input regression
-        if: runner.os == 'Windows'
-        run: python tools/test-windows-terminal-input.py
       - name: Jackstay media and input acceptance
-        # Local Endpoints: named pipes on Windows, Unix sockets elsewhere.
-        shell: bash
+        if: runner.os != 'Windows'
+        # Local Endpoints: Unix sockets here, named pipes on Windows.
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             xvfb-run -a python3 tools/test-jackstay.py --ui-binary build/wheelhouse
-          elif [ "$RUNNER_OS" = Windows ]; then
-            python tools/test-jackstay.py --ui-binary build/wheelhouse.exe
           else
             python3 tools/test-jackstay.py --ui-binary build/wheelhouse
           fi
       - name: HTTP ingress and native producer checks
-        shell: bash
+        if: runner.os != 'Windows'
         env:
           WHEELHOUSE_TEST_BINARY: build/wheelhouse
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
           host=$(rustc -vV | sed -n 's/^host: //p')
-          if [ "$RUNNER_OS" = Windows ]; then
-            python tools/test-ingress.py "target/$host/debug"
-            python tools/test-table-startup.py
-          elif [ "$RUNNER_OS" = Linux ]; then
+          if [ "$RUNNER_OS" = Linux ]; then
             python3 tools/test-native-sidebar.py "target/$host/debug/libwheelhouse_ffi.so"
             xvfb-run -a python3 tools/test-ingress.py "target/$host/debug"
             xvfb-run -a python3 tools/test-table-startup.py

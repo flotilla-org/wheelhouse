@@ -1,0 +1,143 @@
+# The checks the Windows CI jobs in build.yml run, in order, and what
+# native\check_windows.bat runs locally (ci/run-windows-checks.py). The
+# "unit" group is the Windows leg of the daily-driver job, which needs no
+# build; the "native" group is the Windows leg of the native job. Adding a
+# Windows check touches only this file; see ci/README.md.
+#
+#   name      unique; what the summary, --only, --skip and needs use.
+#   group     "unit" or "native".
+#   run       the command, run from the repository root. "python" is the
+#             Python running the runner; a .ps1 runs under pwsh (or Windows
+#             PowerShell when pwsh is missing); a first word with a / is a
+#             path from the root. {host} is rustc's host triple.
+#   env       variables set for that one check.
+#   needs     checks that must pass first; if one fails, this is skipped.
+#             A check left out with --skip or --only counts as passed, so
+#             `--skip build` runs the rest against an existing build.
+format = 1
+
+# --- unit: the daily-driver job ----------------------------------------------
+
+[[check]]
+name = "daily-driver"
+group = "unit"
+run = ["python", "tools/test-daily-driver.py"]
+
+[[check]]
+name = "daily-driver-windows"
+group = "unit"
+run = ["python", "tools/test-daily-driver-windows.py"]
+
+# Not tools/test-build-failures.py: it checks native/build.sh against a fake
+# POSIX toolchain (symlinks to a #! script), which does not run on Windows
+# even where symlinks can be made, so the job runs it on Linux only.
+
+[[check]]
+name = "terminal-input-readiness"
+group = "unit"
+run = ["python", "tools/test-windows-terminal-input-readiness.py"]
+
+[[check]]
+name = "embed-sidebar-fixture"
+group = "unit"
+run = ["python", "tools/test-embed-sidebar-fixture.py"]
+
+[[check]]
+name = "pins"
+group = "unit"
+run = ["python", "ci/test_pins.py"]
+
+[[check]]
+name = "ui-diagnostics-list"
+group = "unit"
+run = ["python", "ci/test_run_ui_diagnostics.py"]
+
+[[check]]
+name = "windows-checks-list"
+group = "unit"
+run = ["python", "ci/test_run_windows_checks.py"]
+
+# --- native: the native job ---------------------------------------------------
+
+# `meta` rebuilds metagen so the generated-sources check covers its output.
+[[check]]
+name = "build"
+group = "native"
+run = ["native/build.bat", "wheelhouse", "meta"]
+
+[[check]]
+name = "generated-sources"
+group = "native"
+run = ["python", "tools/check-generated.py"]
+needs = ["build"]
+
+[[check]]
+name = "jackstay-geometry"
+group = "native"
+run = ["build/wheelhouse.exe", "--jackstay_geometry_diagnostics"]
+needs = ["build"]
+
+[[check]]
+name = "ui-diagnostics"
+group = "native"
+run = ["native/run_tests.bat"]
+needs = ["build"]
+
+[[check]]
+name = "ui-diagnostics-preview"
+group = "native"
+run = ["native/run_tests.bat", "-Diagnostics", "preview", "-NoPreviewBudget"]
+needs = ["build"]
+
+# An in-process pane must run under the bundled OpenConsole.exe beside
+# wheelhouse.exe; the inbox run shows the check tells the two apart.
+[[check]]
+name = "conpty-bundled"
+group = "native"
+run = ["tools/check-windows-conpty.ps1", "-Expect", "bundled"]
+needs = ["build"]
+
+[[check]]
+name = "conpty-inbox"
+group = "native"
+run = ["tools/check-windows-conpty.ps1", "-Expect", "inbox"]
+needs = ["build"]
+
+# Compiles its own C test with cl; needs the MSVC environment, not the build.
+[[check]]
+name = "terminal-environment"
+group = "native"
+run = ["python", "tools/test-terminal-environment.py"]
+
+[[check]]
+name = "section-placement"
+group = "native"
+run = ["python", "tools/test-section-placement.py"]
+needs = ["build"]
+
+[[check]]
+name = "windows-terminal-input"
+group = "native"
+run = ["python", "tools/test-windows-terminal-input.py"]
+needs = ["build"]
+
+# Local Endpoints are named pipes on Windows.
+[[check]]
+name = "jackstay"
+group = "native"
+run = ["python", "tools/test-jackstay.py", "--ui-binary", "build/wheelhouse.exe"]
+needs = ["build"]
+
+[[check]]
+name = "ingress"
+group = "native"
+run = ["python", "tools/test-ingress.py", "target/{host}/debug"]
+env = { WHEELHOUSE_TEST_BINARY = "build/wheelhouse" }
+needs = ["build"]
+
+[[check]]
+name = "table-startup"
+group = "native"
+run = ["python", "tools/test-table-startup.py"]
+env = { WHEELHOUSE_TEST_BINARY = "build/wheelhouse" }
+needs = ["build"]

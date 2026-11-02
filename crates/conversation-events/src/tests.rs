@@ -73,6 +73,7 @@ fn lines_of(pieces: &[&[u8]]) -> Vec<(u64, Vec<u8>)> {
 }
 
 #[hegel::test(test_cases = 500)]
+#[cfg_attr(windows, ignore = "#654: the wire fixture checks out with CRLF under core.autocrlf=true")]
 fn lines_are_the_same_however_the_bytes_are_split(tc: TestCase) {
     let mut bytes = WIRE.to_vec();
     if tc.draw(gs::booleans()) {

@@ -53,6 +53,7 @@ fn init(path: &Path) {
     git(path, &["commit", "--allow-empty", "-m", "initial"]).unwrap();
 }
 #[test]
+#[cfg_attr(windows, ignore = "#467: worktree paths come back as \\\\?\\ canonical paths on Windows")]
 fn discovers_linked_worktrees_and_refreshes_git_state() {
     let temp = Temp::new();
     let root = temp.0.join("scan/repo");
@@ -84,6 +85,7 @@ fn discovers_linked_worktrees_and_refreshes_git_state() {
     assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), linked.to_str().unwrap());
 }
 #[test]
+#[cfg_attr(windows, ignore = "#467: worktree paths come back as \\\\?\\ canonical paths on Windows")]
 fn remote_less_worktrees_share_parent_and_upstream_is_cleared() {
     let temp = Temp::new();
     let root = temp.0.join("repo");
