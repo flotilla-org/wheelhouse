@@ -20,6 +20,7 @@ enum Record {
         method: String,
         body: Option<axum::body::Bytes>,
         status: u16,
+        pid: Option<i32>,
     },
     #[cfg(test)]
     Value(serde_json::Value),
@@ -29,14 +30,14 @@ impl Record {
         match self {
             #[cfg(test)]
             Self::Value(value) => value,
-            Self::Request { recording_id, sequence, received_ms, timestamp_ms, path, method, body, status } => {
+            Self::Request { recording_id, sequence, received_ms, timestamp_ms, path, method, body, status, pid } => {
                 let text = body.as_ref().and_then(|b| std::str::from_utf8(b).ok());
                 let decoded = text.and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
                 let producer = decoded.as_ref().and_then(|v| v.get("source_id")).cloned();
                 serde_json::json!({"recording_id": recording_id, "sequence": sequence,
                     "received_ms": received_ms, "timestamp_ms": timestamp_ms,
                     "producer": producer, "path": path, "method": method,
-                    "body": decoded, "body_utf8": text, "status": status})
+                    "body": decoded, "body_utf8": text, "status": status, "pid": pid})
             }
         }
     }
@@ -230,6 +231,7 @@ pub async fn capture(
     use axum::{extract::FromRequest, response::IntoResponse};
     let path = request.uri().path().to_owned();
     let method = request.method().to_string();
+    let pid = crate::transport::caller_pid(request.extensions());
     let (parts, body) = request.into_parts();
     if method != "POST" || (path != "/v1/metadata/patch" && path != "/v1/metadata/snapshot") {
         let (received_ms, timestamp_ms) = received_time();
@@ -244,6 +246,7 @@ pub async fn capture(
             method,
             body: None,
             status: response.status().as_u16(),
+            pid,
         });
         return response;
     }
@@ -268,6 +271,7 @@ pub async fn capture(
         method,
         body,
         status: response.status().as_u16(),
+        pid,
     });
     response
 }
