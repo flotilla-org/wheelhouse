@@ -236,6 +236,10 @@ pub struct Stepped {
 
 /// A Table Source that keeps what its last find step found, which
 /// [`pump`] answers the Grid with but does not hand on.
+///
+/// It forwards every `PumpSource` method by hand. A method binnacle adds
+/// with a default body would answer with that default instead of the
+/// wrapped source's: add it here when the pin moves.
 struct Recording<'a, S: ?Sized> {
     source: &'a mut S,
     step: &'a std::cell::Cell<Option<FindStep>>,
