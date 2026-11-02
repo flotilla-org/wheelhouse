@@ -29,7 +29,9 @@ limited on some platforms, or covered by CI on only some:
 | [Jackstay views](#jackstay-views) | yes | yes | yes |
 
 "Not covered by CI": the code has no platform guard, but the checks run on
-macOS only, because the Linux job builds Cleat without a VT engine.
+macOS only, because the Linux job builds Cleat without a VT engine. Which
+diagnostics run on which OS is set in `ci/ui-diagnostics.toml`; check this table
+against it when it changes.
 
 ## Build
 
