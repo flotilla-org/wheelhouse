@@ -39,7 +39,7 @@ NOTICE_TAGS = {'system-reminder', 'ci-monitor-event', 'side-sessions-event', 'lo
                'local-command-stdout', 'local-command-stderr', 'cross-session-message', 'agent-message'}
 SKILL_BASE = 'Base directory for this skill:'
 # The classes that start a turn when they arrive on their own (no tool results).
-OPENERS = {'prompt', 'sdk', 'notification', 'peer', 'command'}
+OPENERS = {'prompt', 'sdk', 'notification', 'peer', 'command', 'image'}
 
 
 def kind_of(name):
@@ -110,6 +110,11 @@ def image_cap(data, ref):
     return '', {'totalBytes': len(data), 'ref': ref}
 
 
+def leading_tag(text):
+    match = LEADING_TAG.match(text)
+    return match.group(1) if match else None
+
+
 def tag_value(text, tag):
     match = re.search(rf'<{tag}>(.*?)</{tag}>', text, re.S)
     return match.group(1).strip() if match else None
@@ -121,13 +126,14 @@ def classify(text, record, origin, brief=False):
     A typed prompt can share a record with a reminder, so this is per block.
     """
     kind = origin.get('kind')
-    tag = (LEADING_TAG.match(text) or [None, None])[1]
+    tag = leading_tag(text)
     if record.get('isCompactSummary'):
         return 'compaction'
     if text.startswith(INTERRUPT_MARKERS):
         return 'interrupt'
     if kind == 'task-notification' or tag == 'task-notification':
         return 'notification'
+    # A non-human sender outranks the tags: its text is attributed to it whatever it holds.
     if kind and kind != 'human':
         return 'peer'
     if tag in COMMAND_TAGS:
@@ -271,12 +277,12 @@ class Thread:
             elif kind == 'sdk':
                 self.message('system', message_id, text, {'kind': 'sdk', 'name': 'Flotilla'})
             elif kind == 'notification':
-                origin = origin if origin.get('kind') == 'task-notification' else {'kind': 'task-notification'}
-                self.message('system', message_id, text, attribution(origin, toolCallId=tag_value(text, 'tool-use-id')))
+                note = origin if origin.get('kind') == 'task-notification' else {'kind': 'task-notification'}
+                self.message('system', message_id, text, attribution(note, toolCallId=tag_value(text, 'tool-use-id')))
             elif kind == 'peer':
                 self.message('system', message_id, text, attribution(origin))
             elif kind in ('notice', 'interrupt'):
-                tag = 'interrupt' if kind == 'interrupt' else (LEADING_TAG.match(text) or [None, None])[1]
+                tag = 'interrupt' if kind == 'interrupt' else leading_tag(text)
                 self.message('system', message_id, text, attribution({'kind': 'harness'}, tag=tag))
                 self.run_interrupted |= kind == 'interrupt'
             elif kind == 'command':

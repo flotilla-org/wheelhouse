@@ -182,6 +182,37 @@ class GoldenTests(unittest.TestCase):
         self.assertEqual(results['over']['content'], '')
         self.assertEqual(results['over']['truncated'], {'totalBytes': len(data), 'ref': 'session.jsonl:5'})
 
+    def test_each_block_of_a_record_keeps_the_record_origin(self):
+        origin = {'kind': 'peer', 'name': 'reviewer'}
+        records = [{'type': 'user', 'uuid': 'p', 'isMeta': True, 'origin': origin, 'message': {'role': 'user', 'content': [
+            {'type': 'text', 'text': '<task-notification>\n<status>completed</status>\n</task-notification>'},
+            {'type': 'text', 'text': 'Please look at the parser.'}]}}]
+        starts = [e for e in events(self.translate_records(records)) if e['type'] == 'TextMessageStart']
+        self.assertEqual([e['origin'] for e in starts], [{'kind': 'task-notification'}, origin])
+
+    def test_a_compaction_boundary_or_summary_alone_is_still_emitted(self):
+        boundary = {'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'b',
+                    'compactMetadata': {'trigger': 'manual', 'preTokens': 9}}
+        summary = {'type': 'user', 'uuid': 's', 'isCompactSummary': True,
+                   'message': {'role': 'user', 'content': 'Summary: synthetic.'}}
+        prompt = {'type': 'user', 'uuid': 'p', 'message': {'role': 'user', 'content': 'go on'}}
+        cases = {
+            'boundary at the end': ([prompt, boundary], {'trigger': 'manual', 'preTokens': 9}, 'b'),
+            'boundary then a prompt': ([boundary, prompt], {'trigger': 'manual', 'preTokens': 9}, 'b'),
+            'summary alone': ([prompt, summary], {'summary': 'Summary: synthetic.'}, 's'),
+        }
+        for name, (records, value, record) in cases.items():
+            with self.subTest(name):
+                compactions = [e for e in events(self.translate_records(records))
+                               if e['type'] == 'Custom' and e['name'] == 'compaction']
+                self.assertEqual([(e['value'], e['source']['record']) for e in compactions], [(value, record)])
+
+    def translate_records(self, records):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session.jsonl'
+            path.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
+            return translate(path)
+
     def test_an_edit_too_large_for_the_cap_drops_its_hunks(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'session.jsonl'
