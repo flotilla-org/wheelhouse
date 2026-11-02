@@ -19,8 +19,8 @@ limited on some platforms, or covered by CI on only some:
 | Feature | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | [Web views](#web-views) | yes | no page: Luchs renders on macOS only | no page: Luchs renders on macOS only |
-| [Rich Text View](#rich-text-view) | yes | yes | yes; CRLF files keep `\r` in display math (#645) |
-| [Table View](#table-view) | yes | yes | yes; its diagnostic is not in Windows CI (#646) |
+| [Rich Text View](#rich-text-view) | yes | yes | yes |
+| [Table View](#table-view) | yes | yes | yes |
 | [Overview](#overview) | yes | yes | yes |
 | [Subject workspaces and the tool strip](#subject-workspaces-and-the-tool-strip) | yes | yes | yes |
 | [Remote crew terminals](#remote-crew-terminals) | yes | yes, not covered by CI | no: Cleat's command transport is Unix only |
@@ -123,10 +123,11 @@ says why it couldn't show the page, with Open in browser. See
 A markdown file opens in the Rich Text View (#561): styled, read-only, virtualized,
 with selection, Copy (plain text and HTML), find, and tables as embedded Table
 Views. **Toggle Markdown Source** switches between it and the file's text. On
-Linux a selection is also the PRIMARY selection. It works on macOS, Linux and
-Windows; on Windows a CRLF file keeps carriage returns in display math (#645).
-Conversations stream into the core's Rich Text through the C ABI (#614); the View
-that shows them is #616. The design and remaining work are on the
+Linux a selection is also the PRIMARY selection. CRLF and lone CR line endings
+read as LF (#653). A conversation's contract file (`*.events.jsonl`) opens in the
+same View, presented as chat through Container Styles (#616); following a growing
+one is #617. It works on macOS, Linux and Windows. The design and remaining work
+are on the
 [Rich Text map #537](https://github.com/flotilla-org/wheelhouse/issues/537).
 
 ## Table View
@@ -136,8 +137,7 @@ that shows them is #616. The design and remaining work are on the
 binnacle described table by its link
 (`http://host:port/tables/<table>?namespace=<ns>`), live as rows change (#529).
 It sorts, selects, finds and scrolls with either scroll bar style (#506, #551,
-#585). CI runs `--table_diagnostics` on macOS and Linux; Windows CI only checks
-that a table given at startup opens (#646). Viewing Flotilla's tables is
+#585). CI runs `--table_diagnostics` on all three platforms (#650). Viewing Flotilla's tables is
 [#577](https://github.com/flotilla-org/wheelhouse/issues/577).
 
 ## Overview

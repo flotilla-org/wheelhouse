@@ -30,7 +30,7 @@ these works.
 
 ## Landed since the previous roadmap
 
-Merged from 6 October to 1 November 2026:
+Merged from 6 October to 2 November 2026:
 
 - **State model:** the migration below landed in the State model A–E PRs (#319,
   #328, #337, #342, #354), then panels by arrangement ID, Views by View Address and
@@ -61,13 +61,16 @@ Merged from 6 October to 1 November 2026:
   the native text stack (`wheelhouse-text` over parley and fontique, #567, #580;
   the glyph cache, #587, #588), the core's model (#558), the Rich Text View for
   markdown files (#561, #598, #599), and conversation events streamed into it
-  through the C ABI (#614, #625–#627, with an interim Claude Code translator, #620).
+  through the C ABI (#614, #625–#627, with an interim Claude Code translator, #620),
+  shown as chat from a file (#616, #639).
 - **Table View:** binnacle tables over canned data (#508), described tables by
   their link (#529, #530), keyboard navigation (#551) and scroll bars (#585).
 - **Automation Endpoint** ([protocol](protocol/automation-endpoint.md), map #343,
   [ADR 0014](adr/0014-automation-endpoint-invokes-named-commands.md)): every
   instance has its own endpoint (#565) serving the Semantic Tree, Caller Context
   and an event stream (#569, #618).
+- **Windows:** Cleat provider ABI 12 (#651), CRLF in Rich Text (#653), and stdout
+  kept on a diagnostic's exit, with the table diagnostic in Windows CI (#650).
 - **Linux:** idle CPU, NVIDIA and glyph fixes (#606), live resize and one title
   bar (#608), paste from other apps, key releases and wheel units (#610).
   [ADR 0015](adr/0015-window-manager-and-render-backends-are-added-beside-each-other.md)
@@ -84,16 +87,17 @@ caching after the snapshot work (#179), the overview brainstorm (#190), nested
 Controlled Splits (#164) and notices (#110, #108). No new order has been set since;
 the open threads below are grouped by area, not ranked.
 
-- **Windows gaps** from a run on Beaufort on 1 November, where the Windows native
-  CI checks all pass locally: Cleat provider ABI 12 (#644), CRLF markdown in Rich
-  Text (#645), diagnostics losing stdout on exit and the table diagnostic in Windows
-  CI (#646), and the git watcher over a named pipe (#467). The
+- **Windows:** a run on Beaufort on 1 November passed the Windows native CI
+  checks locally and found four gaps. Three have since been fixed on 2 November:
+  Cleat provider ABI 12 (#651), CRLF markdown in Rich Text (#653) and diagnostic
+  stdout on exit, with the table diagnostic now in Windows CI (#650). Still open:
+  the git watcher over a named pipe (#467), and the CRLF follow-ups in
+  conversations (#654, #655). The
   [Windows map #53](https://github.com/flotilla-org/wheelhouse/issues/53) tracks the
   wider Windows work.
 - **The core's boundary:** the remaining [#441](https://github.com/flotilla-org/wheelhouse/issues/441)
   steps, starting with workspace lifecycle and homing (#631).
-- **Rich Text:** conversations from a file (#616), then following a growing one
-  (#617); code Blocks embed the code view (#622), after the highlighter decision
+- **Rich Text:** following a growing conversation file (#617); code Blocks embed the code view (#622), after the highlighter decision
   (#621); inline images (#609).
 - **Tables:** parity with binnacle's web host (#535), viewing Flotilla's tables
   (#577), and the rest of the canned-data pilot (#506).
@@ -129,8 +133,8 @@ Other open defects and CI work remain on the
 
 - [Cleat #240](https://github.com/flotilla-org/cleat/issues/240) owned OSC 52 effect
   transport (Cleat PR #304); Wheelhouse #71 delivered pin adoption and desktop
-  integration across provider ABI 11 and packet protocol 12. Cleat's provider ABI
-  12 (cleat#407) is not adopted yet (#644).
+  integration across provider ABI 11 and packet protocol 12. Provider ABI 12
+  (cleat#407) is adopted and pinned, with the packet protocol unchanged (#651).
 - [Cleat #241](https://github.com/flotilla-org/cleat/issues/241) owns nested
   attachment scrollback semantics; Wheelhouse #70 delivered the outer native
   override. That does not expose all inner Cleat history. Direct remote views
