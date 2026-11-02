@@ -6,6 +6,31 @@ The [roadmap](docs/roadmap.md) records the current feature order, cross-repo
 dependencies, and open reliability work. [Map issue #17](https://github.com/flotilla-org/wheelhouse/issues/17)
 holds the broader destination.
 
+The core (`crates/wheelhouse-core` and its C ABI), formerly the separate Andamento
+repository, lives in this repo (#440, #454). The
+[platform direction](docs/design/platform-direction.md) puts web and TUI frontends
+over it beside this native app.
+
+## Features by platform
+
+The native app builds and runs on macOS, Linux and Windows. These features are
+limited on some platforms, or covered by CI on only some:
+
+| Feature | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| [Web views](#web-views) | yes | no page: Luchs renders on macOS only | no page: Luchs renders on macOS only |
+| [Rich Text View](#rich-text-view) | yes | yes | yes; CRLF files keep `\r` in display math (#645) |
+| [Table View](#table-view) | yes | yes | yes; its diagnostic is not in Windows CI (#646) |
+| [Overview](#overview) | yes | yes | yes |
+| [Subject workspaces and the tool strip](#subject-workspaces-and-the-tool-strip) | yes | yes | yes |
+| [Remote crew terminals](#remote-crew-terminals) | yes | yes, not covered by CI | no: Cleat's command transport is Unix only |
+| [Shared terminal attachments](#remote-crew-terminals) | yes | yes, not covered by CI | yes, not covered by CI |
+| [Automation Endpoint](#automation-endpoint) | yes | yes | yes, on a named pipe; its route tests run on macOS and Linux only |
+| [Jackstay views](#jackstay-views) | yes | yes | yes |
+
+"Not covered by CI": the code has no platform guard, but the checks run on
+macOS only, because the Linux job builds Cleat without a VT engine.
+
 ## Build
 
 The C application lives in `native/` (`native/src` and its build scripts); the Rust
@@ -91,6 +116,67 @@ the page each tab reached. Luchs renders pages on macOS only; elsewhere a tab
 says why it couldn't show the page, with Open in browser. See
 [Web views](docs/design/web-views.md).
 
+## Rich Text View
+
+A markdown file opens in the Rich Text View (#561): styled, read-only, virtualized,
+with selection, Copy (plain text and HTML), find, and tables as embedded Table
+Views. **Toggle Markdown Source** switches between it and the file's text. On
+Linux a selection is also the PRIMARY selection. It works on macOS, Linux and
+Windows; on Windows a CRLF file keeps carriage returns in display math (#645).
+Conversations stream into the core's Rich Text through the C ABI (#614); the View
+that shows them is #616. The design and remaining work are on the
+[Rich Text map #537](https://github.com/flotilla-org/wheelhouse/issues/537).
+
+## Table View
+
+**Open Table** opens a Table View over a canned table (`records`, `huge` or
+`live`), and `--table:<name>` opens one at startup. `--table:<link>` opens a
+binnacle described table by its link
+(`http://host:port/tables/<table>?namespace=<ns>`), live as rows change (#529).
+It sorts, selects, finds and scrolls with either scroll bar style (#506, #551,
+#585). CI runs `--table_diagnostics` on macOS and Linux; Windows CI only checks
+that a table given at startup opens (#646). Viewing Flotilla's tables is
+[#577](https://github.com/flotilla-org/wheelhouse/issues/577).
+
+## Overview
+
+The overview shows every open workspace as one scene, in rows or a grid
+(`overview_view_mode`), and every switch of workspace is a camera flight through
+it (#450). Rows and the grid drag and glide; a grid zooms by pinch on macOS, or
+Cmd+scroll (Ctrl+scroll on Linux and Windows). Flights follow the system's
+reduce-motion setting on all three platforms. See
+[the overview scene](docs/design/overview-scene.md).
+
+## Subject workspaces and the tool strip
+
+A subject's workspace (a vessel, convoy or project) always opens, without an
+opening recipe. Its Slots are drawn through a Slot Host, which shows a placeholder
+for each kind of content until it resolves, and arranged by a Workspace Layout
+(#416). The Tool Strip, at the Workspace Region's left edge, shows the subject, its
+layouts, its views, related workspaces and linked items (#122; **Toggle Tool
+Strip** hides it). Nothing here is platform-specific; subjects come from a
+provider such as Flotilla. See [subject workspaces](docs/design/subject-workspaces.md).
+
+## Remote crew terminals
+
+A crew session on another host opens as an ordinary Terminal View on its Cleat
+session over ssh (`cleat proxy`), with no nested `flotilla attach` terminal
+(#104). Turn off **Direct Cleat Attach** to use the attach command instead.
+Views of one session share one Cleat attachment, and sessions on one daemon share
+one connection (#417). Remote Views need Cleat's command transport, which is Unix
+only: on Windows they show its unsupported error. CI runs these checks on macOS
+only. See [remote terminals](docs/design/remote-terminals.md).
+
+## Automation Endpoint
+
+Every instance listens at its own Automation Endpoint, a Unix socket under the
+runtime directory or a named pipe on Windows, and gives its terminals the address
+as `WHEELHOUSE_SOCKET` (#565). It serves the Semantic Tree, Caller Context and an
+event stream, read-only (#569). Invoking commands is
+[#643](https://github.com/flotilla-org/wheelhouse/issues/643) and the Placement
+Tree is [#564](https://github.com/flotilla-org/wheelhouse/issues/564). See the
+[protocol](docs/protocol/automation-endpoint.md).
+
 ## Workspace previews
 
 Overview bounds background terminal starts, snapshot fetches and surface redraws,
@@ -133,7 +219,7 @@ uses a single terminal. Each entry creates or focuses its own workspace. Close i
 with the toolbar control to make the example available again. The facts and
 status in this fixture are examples, not live git or Flotilla information.
 
-The sidebar core (`crates/wheelhouse-core`), its C ABI (`crates/wheelhouse-ffi`, C ABI 14) and the ingress (`crates/wheelhouse-ingress`) are members of this repo's Cargo workspace, with the lockfile at the root. Their Cargo output goes to `target/` unless `CARGO_TARGET_DIR` (or `WHEELHOUSE_ANDAMENTO_TARGET_DIR`) says otherwise. The build explicitly selects the native Rust target rather than the core's WASM default. The browser binding (`crates/wheelhouse-wasm`) is a member too; the page that uses it is in `web/` (`pnpm install`, then `pnpm dev` to run it or `pnpm test` for its browser test). The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
+The sidebar core (`crates/wheelhouse-core`), its C ABI (`crates/wheelhouse-ffi`, C ABI 20) and the ingress (`crates/wheelhouse-ingress`) are members of this repo's Cargo workspace, with the lockfile at the root. Their Cargo output goes to `target/` unless `CARGO_TARGET_DIR` (or `WHEELHOUSE_ANDAMENTO_TARGET_DIR`) says otherwise. The build explicitly selects the native Rust target rather than the core's WASM default. The browser binding (`crates/wheelhouse-wasm`) is a member too; the page that uses it is in `web/` (`pnpm install`, then `pnpm dev` to run it or `pnpm test` for its browser test). The multi-terminal resource list lives in `data/sidebar/resources.json`, with the primary first. This is host-side fixture data; dynamic terminal resource discovery and updates are not implemented yet. Fixture inputs live in `data/sidebar/`; the build embeds them into the executable.
 
 On macOS (or Linux with a display), run the native workspace bridge checks with:
 
@@ -310,7 +396,7 @@ across launches; remote daemons remain running.
 
 Windows currently publishes the Flotilla catalog only. Local git discovery is
 disabled by default, and `--repo` / `--git-only` are refused until
-[andamento#123](https://github.com/flotilla-org/andamento/issues/123) provides the
+[#467](https://github.com/flotilla-org/wheelhouse/issues/467) provides the
 watcher's named-pipe sink. Clickable Windows recipes and remote terminal
 attachment remain [flotilla#2470](https://github.com/flotilla-org/flotilla/issues/2470).
 Permanent connector-error classification remains flotilla#2589; the launcher
@@ -433,8 +519,8 @@ daily-driver validation with the paired watcher remains pending; automated diagn
 are isolated.
 
 The build now also produces `wheelhouse_ingress`, a Wheelhouse-owned Rust HTTP adapter
-with a small C boundary. The core remains transport-independent. Ingress is
-opt-in; Windows builds retain the fixture sidebar but reject the Unix listener option.
+with a small C boundary. The core remains transport-independent. The live sidebar
+is opt-in (`--andamento_socket`); on Windows its endpoint is a named pipe (ADR 0011).
 Clean application shutdown removes its socket. After a crash, remove the stale socket
 before restarting with the same path.
 
