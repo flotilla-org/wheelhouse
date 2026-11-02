@@ -167,8 +167,7 @@ r_ogl_os_window_equip(WM_Window window)
   MemoryZeroStruct(w);
   if(native.kind == WM_NativeSurfaceKind_Wayland)
   {
-    Rng2F32 rect = wm_client_rect_from_window(window);
-    w->wl_size = v2s32(Max((S32)dim_2f32(rect).x, 1), Max((S32)dim_2f32(rect).y, 1));
+    w->wl_size = r_ogl_pixel_size_from_window(window);
     w->wl_window = r_ogl_lnx_wl_egl_window_create(native.wayland.surface, w->wl_size.x, w->wl_size.y);
     w->surface = eglCreatePlatformWindowSurface(r_ogl_lnx_state->display, r_ogl_lnx_state->config, w->wl_window, 0);
   }
@@ -209,11 +208,10 @@ internal void
 r_ogl_os_select_window(WM_Window os, R_Handle r)
 {
   R_OGL_LNX_Window *w = (R_OGL_LNX_Window *)r.u64[0];
-  // A Wayland surface's buffers take the size the frame is drawn at.
+  // A Wayland surface's buffers take the size the frame is drawn at, in pixels.
   if(w->wl_window != 0)
   {
-    Rng2F32 rect = wm_client_rect_from_window(os);
-    Vec2S32 size = v2s32(Max((S32)dim_2f32(rect).x, 1), Max((S32)dim_2f32(rect).y, 1));
+    Vec2S32 size = r_ogl_pixel_size_from_window(os);
     if(size.x != w->wl_size.x || size.y != w->wl_size.y)
     {
       w->wl_size = size;

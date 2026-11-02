@@ -220,8 +220,6 @@ then
              "$wl_protocols/stable/xdg-shell/xdg-shell.xml" \
              "$wl_protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml" \
              "$wl_protocols/staging/cursor-shape/cursor-shape-v1.xml" \
-             "$wl_protocols/staging/fractional-scale/fractional-scale-v1.xml" \
-             "$wl_protocols/stable/viewporter/viewporter.xml" \
              "$wl_protocols/stable/tablet/tablet-v2.xml"; do
     name=$(basename "$xml" .xml)
     wayland-scanner --include-core-only client-header "$xml" "$gen/$name-protocol.h"

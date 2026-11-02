@@ -271,7 +271,11 @@ struct R_OGL_Window
 {
   R_OGL_Window *next;
   R_Handle os;
+  // The window's size in points, and its targets' in pixels: points times
+  // the backing scale, which is 1 except on Wayland's high-density outputs.
   Vec2F32 last_client_rect_dim;
+  Vec2S32 last_pixel_dim;
+  F32 last_backing_scale;
   R_OGL_RenderTarget stage_target;
   R_OGL_RenderTarget stage_scratch_target;
 };
@@ -323,6 +327,7 @@ internal void r_ogl_os_window_unequip(WM_Window os, R_Handle r);
 internal void r_ogl_os_select_window(WM_Window os, R_Handle r);
 internal void r_ogl_os_window_swap(WM_Window os, R_Handle r);
 internal B32 r_ogl_os_window_frame_ready(WM_Window os);
+internal Vec2S32 r_ogl_pixel_size_from_window(WM_Window os);
 internal B32 r_ogl_os_window_frame_pending(WM_Window os);
 
 #endif // RENDER_OPENGL_H

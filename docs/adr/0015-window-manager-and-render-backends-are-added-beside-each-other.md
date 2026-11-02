@@ -167,14 +167,29 @@ behaviour.
   draws no second title bar, just as #608 removed the doubled one on X11.
   Maximized, fullscreen, activated and tiled come from the `xdg_toplevel`
   configure states, not from properties.
-- **Fractional scale.** `wp_fractional_scale_v1` gives the preferred scale in
-  120ths. The window draws a buffer of `round(logical × scale)` and sets
-  `wp_viewporter`'s destination to the logical size. This follows the Win32
-  model: the client rect is in buffer pixels, `wm_dpi_from_window` is
-  `96 × scale`, `wm_backing_scale_from_window` is 1, and pointer positions
-  are scaled from surface-local coordinates. Without the protocol, the
-  window uses `wl_surface.preferred_buffer_scale` (wl_compositor v6), or
-  else `wl_output.scale`, with `wl_surface.set_buffer_scale`.
+- **Scale: the macOS model, at a whole-number backing scale.** Wayland's
+  surface coordinates are logical, like macOS points, and its preferred
+  buffer scale plays the part of `backingScaleFactor`. So the window is laid
+  out in points: the client rect, the pointer and the custom border are in
+  surface coordinates, `wm_layout_scale_from_window` is 1, and
+  `wm_backing_scale_from_window` is the buffer scale. The scale comes from
+  `wl_surface.preferred_buffer_scale` (wl_compositor v6), or else from the
+  output's `wl_output.scale`, and is set with `wl_surface.set_buffer_scale`.
+  The render backend draws `points × backing scale` pixels, as Metal does.
+  On a fractional output (1.5×) the compositor asks for 2 and scales the
+  buffer down, which is what macOS does with its scaled modes. A font size
+  means the same size on every output, and moving between outputs rewrites
+  no setting.
+  - *Considered and set aside for now: Windows' model with true fractional
+    drawing* (`wp_fractional_scale_v1`, a buffer of `round(logical × scale)`,
+    `wp_viewporter`, the client rect in buffer pixels). It was built first.
+    It draws fewer pixels and is sharper at 1.5×, but it ties a font size to
+    physical pixels: a scale change rescales and saves the font size, and a
+    window opened at 1.5× looks smaller than at 1×. Drawing in points at a
+    fractional backing scale instead puts whole-point edges between pixels,
+    which needs device-pixel snapping in the shell. True fractional drawing
+    can come back as a measured improvement on this model.
+  - D3D11 on Windows keeps the Win32 model, which is that platform's own.
 - **Clipboard and primary selection.** `wl_data_device` serves CLIPBOARD and
   `zwp_primary_selection_device_v1` serves PRIMARY, with the same
   text-and-HTML model the X11 code keeps (`clipboard_text`,
@@ -331,15 +346,10 @@ for both GLX and EGL. Each check was repeated with llvmpipe
   `wl_surface.frame` (`wm_window_frame_ready` and `wm_window_frame_pending`,
   forwarded by the GL backend). The EGL layer takes Wayland surfaces through
   `wl_egl_window`, from its own `dlopen` of libwayland-egl.
-- **Fractional scale**, as section 3 decided. The window draws
-  `round(size × scale)` buffer pixels and `wp_viewporter` shows them at its
-  size. Without `wp_fractional_scale_v1` the scale is a whole number, from
-  `wl_surface.preferred_buffer_scale` or else the output's. The client rect,
-  the pointer and the custom border are all in buffer pixels, and
-  `wm_dpi_from_window` is `96 × scale`. As on Windows, a scale change while
-  running rescales the font size. A window opened at a scale other than 1
-  uses the font-size setting as it is, and the saved window size is in buffer
-  pixels.
+- **Scale**, as section 3 decided: points at a whole-number backing scale.
+  The GL backend now sizes a window's targets, viewport, scissors and blur
+  in pixels (`points × wm_backing_scale_from_window`). That scale is 1 on
+  X11 and Windows, so nothing changes there.
 - **Not built yet** (the rest of section 3): the clipboard and primary
   selection shared with other clients
   (copy and paste stay inside the process for now), `text-input-v3`,

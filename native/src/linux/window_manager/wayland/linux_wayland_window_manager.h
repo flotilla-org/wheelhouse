@@ -55,8 +55,6 @@ X(wl_display_get_error)
 #include "linux/window_manager/wayland/generated/xdg-decoration-unstable-v1-protocol.h"
 #include "linux/window_manager/wayland/generated/tablet-v2-protocol.h"
 #include "linux/window_manager/wayland/generated/cursor-shape-v1-protocol.h"
-#include "linux/window_manager/wayland/generated/fractional-scale-v1-protocol.h"
-#include "linux/window_manager/wayland/generated/viewporter-protocol.h"
 #pragma pop_macro("global")
 #include <linux/input-event-codes.h>
 #include <sys/mman.h>
@@ -118,20 +116,16 @@ struct WAY_WM_Window
   struct xdg_surface *xdg_surface;
   struct xdg_toplevel *toplevel;
   struct zxdg_toplevel_decoration_v1 *decoration;
-  struct wp_fractional_scale_v1 *fractional_scale;
-  struct wp_viewport *viewport;
   WAY_WM_Output *output;
 
-  // The window draws buffer pixels: its client rect, the pointer and the
-  // custom border are size*scale. With fractional scale the viewport shows
-  // the buffer at size; otherwise the scale is a whole number, set as the
-  // surface's buffer scale.
-  F32 scale;
-  U32 preferred_scale_120;
+  // As on macOS, the window is laid out in points (surface coordinates) and
+  // drawn at a whole-number backing scale, set as the surface's buffer
+  // scale. A compositor at a fractional scale shows the buffer scaled down,
+  // as macOS does.
+  S32 scale;
   S32 preferred_buffer_scale;
-  Vec2S32 viewport_size;
 
-  // Size in surface coordinates (logical pixels).
+  // Size in points.
   Vec2S32 size;
   Vec2S32 requested_size;
   Vec2S32 configure_size;
@@ -178,8 +172,6 @@ struct WAY_WM_State
   struct zxdg_decoration_manager_v1 *decoration_manager;
   struct wp_cursor_shape_manager_v1 *cursor_shape_manager;
   struct wp_cursor_shape_device_v1 *cursor_shape_device;
-  struct wp_fractional_scale_manager_v1 *fractional_scale_manager;
-  struct wp_viewporter *viewporter;
   int wake_pipe[2];
   WM_SystemInfo gfx_info;
 

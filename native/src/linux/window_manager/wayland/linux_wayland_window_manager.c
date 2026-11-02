@@ -11,8 +11,6 @@
 #include "linux/window_manager/wayland/generated/xdg-decoration-unstable-v1-protocol.c"
 #include "linux/window_manager/wayland/generated/tablet-v2-protocol.c"
 #include "linux/window_manager/wayland/generated/cursor-shape-v1-protocol.c"
-#include "linux/window_manager/wayland/generated/fractional-scale-v1-protocol.c"
-#include "linux/window_manager/wayland/generated/viewporter-protocol.c"
 
 // The display wait ends after this long without a frame callback (a hidden
 // window gets none), as Metal's does without a display link.
@@ -86,35 +84,19 @@ way_wm_resize_edge_from_moveresize_code(int code)
   return XDG_TOPLEVEL_RESIZE_EDGE_NONE;
 }
 
-internal Vec2S32
-way_wm_buffer_size_from_window(WAY_WM_Window *w)
-{
-  return v2s32((S32)round_f32(w->size.x*w->scale), (S32)round_f32(w->size.y*w->scale));
-}
-
-// A viewport's destination, like a buffer, takes effect at the next commit:
-// the swap of the first frame drawn at the new size.
-internal void
-way_wm_window_update_viewport(WAY_WM_Window *w)
-{
-  if(w->viewport == 0 || (w->viewport_size.x == w->size.x && w->viewport_size.y == w->size.y)) { return; }
-  w->viewport_size = w->size;
-  wp_viewport_set_destination(w->viewport, w->size.x, w->size.y);
-}
-
-// The compositor's preferred scale: fractional (wp_fractional_scale_v1) where
-// it has the protocol; otherwise a whole number, from
-// wl_surface.preferred_buffer_scale or else the output the window is on.
+// The compositor's preferred buffer scale (wl_compositor v6), or else the
+// scale of the output the window is on.
 internal void
 way_wm_window_update_scale(WAY_WM_Window *w)
 {
-  F32 scale = 1.f;
-  if(w->fractional_scale != 0)           { scale = w->preferred_scale_120 != 0 ? w->preferred_scale_120/120.f : 1.f; }
-  else if(w->preferred_buffer_scale > 0) { scale = (F32)w->preferred_buffer_scale; }
-  else if(w->output != 0)                { scale = (F32)Max(w->output->scale, 1); }
+  S32 scale = 1;
+  if(w->preferred_buffer_scale > 0) { scale = w->preferred_buffer_scale; }
+  else if(w->output != 0)           { scale = Max(w->output->scale, 1); }
   if(scale == w->scale) { return; }
+  // Like a buffer, the scale takes effect at the next commit: the swap of
+  // the first frame drawn at it.
   w->scale = scale;
-  if(w->fractional_scale == 0) { wl_surface_set_buffer_scale(w->surface, (S32)scale); }
+  wl_surface_set_buffer_scale(w->surface, scale);
   way_wm_push_event(WM_EventKind_Wakeup, w);
 }
 
@@ -188,16 +170,6 @@ way_wm_surface_preferred_buffer_transform(void *data, struct wl_surface *surface
 {
 }
 
-internal void
-way_wm_fractional_preferred_scale(void *data, struct wp_fractional_scale_v1 *fractional_scale, uint32_t scale)
-{
-  WAY_WM_Window *w = (WAY_WM_Window *)data;
-  w->preferred_scale_120 = scale;
-  way_wm_window_update_scale(w);
-}
-
-read_only global struct wp_fractional_scale_v1_listener way_wm_fractional_listener = {way_wm_fractional_preferred_scale};
-
 read_only global struct wl_surface_listener way_wm_surface_listener =
 {
   way_wm_surface_enter,
@@ -220,13 +192,8 @@ internal void
 way_wm_xdg_surface_configure(void *data, struct xdg_surface *xdg_surface, uint32_t serial)
 {
   WAY_WM_Window *w = (WAY_WM_Window *)data;
-  // The shell asks for a size in buffer pixels.
   if(w->configure_size.x > 0 && w->configure_size.y > 0) { w->size = w->configure_size; }
-  else if(!w->configured)
-  {
-    w->size = v2s32(Max((S32)round_f32(w->requested_size.x/w->scale), 1), Max((S32)round_f32(w->requested_size.y/w->scale), 1));
-  }
-  way_wm_window_update_viewport(w);
+  else if(!w->configured)                                 { w->size = w->requested_size; }
   w->maximized = w->configure_maximized;
   w->fullscreen = w->configure_fullscreen;
   w->activated = w->configure_activated;
@@ -301,8 +268,7 @@ way_wm_pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial, st
   WAY_WM_State *s = way_wm_state;
   s->pointer_window = surface ? (WAY_WM_Window *)wl_surface_get_user_data(surface) : 0;
   s->pointer_enter_serial = serial;
-  F32 scale = s->pointer_window ? s->pointer_window->scale : 1.f;
-  s->pointer_pos = v2f32((F32)wl_fixed_to_double(x)*scale, (F32)wl_fixed_to_double(y)*scale);
+  s->pointer_pos = v2f32((F32)wl_fixed_to_double(x), (F32)wl_fixed_to_double(y));
   way_wm_apply_cursor(1);
 }
 
@@ -316,9 +282,8 @@ internal void
 way_wm_pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
   WAY_WM_State *s = way_wm_state;
+  s->pointer_pos = v2f32((F32)wl_fixed_to_double(x), (F32)wl_fixed_to_double(y));
   WAY_WM_Window *w = s->pointer_window;
-  F32 scale = w ? w->scale : 1.f;
-  s->pointer_pos = v2f32((F32)wl_fixed_to_double(x)*scale, (F32)wl_fixed_to_double(y)*scale);
   WM_Event *e = way_wm_push_event(WM_EventKind_MouseMove, w);
   if(e != 0) { e->pos = s->pointer_pos; }
   if(w != 0)
@@ -342,7 +307,7 @@ way_wm_pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial, u
     int code = way_wm_moveresize_code_from_pos(w, s->pointer_pos);
     if(button == BTN_RIGHT && code == _NET_WM_MOVERESIZE_MOVE)
     {
-      xdg_toplevel_show_window_menu(w->toplevel, s->seat, serial, (S32)(s->pointer_pos.x/w->scale), (S32)(s->pointer_pos.y/w->scale));
+      xdg_toplevel_show_window_menu(w->toplevel, s->seat, serial, (S32)s->pointer_pos.x, (S32)s->pointer_pos.y);
       return;
     }
     if(button == BTN_LEFT && code == _NET_WM_MOVERESIZE_MOVE)
@@ -704,14 +669,6 @@ way_wm_registry_global(void *data, struct wl_registry *registry, uint32_t name, 
   {
     s->decoration_manager = (struct zxdg_decoration_manager_v1 *)wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1);
   }
-  else if(str8_match(iface, str8_cstring((char *)wp_fractional_scale_manager_v1_interface.name), 0))
-  {
-    s->fractional_scale_manager = (struct wp_fractional_scale_manager_v1 *)wl_registry_bind(registry, name, &wp_fractional_scale_manager_v1_interface, 1);
-  }
-  else if(str8_match(iface, str8_cstring((char *)wp_viewporter_interface.name), 0))
-  {
-    s->viewporter = (struct wp_viewporter *)wl_registry_bind(registry, name, &wp_viewporter_interface, 1);
-  }
   else if(str8_match(iface, str8_cstring((char *)wp_cursor_shape_manager_v1_interface.name), 0))
   {
     s->cursor_shape_manager = (struct wp_cursor_shape_manager_v1 *)wl_registry_bind(registry, name, &wp_cursor_shape_manager_v1_interface, 1);
@@ -887,16 +844,9 @@ wm_window_open(Rng2F32 rect, WM_WindowFlags flags, String8 title)
   w->requested_size = v2s32(Max((S32)dim.x, 1), Max((S32)dim.y, 1));
   w->size = w->requested_size;
   w->custom_border = !!(flags & WM_WindowFlag_CustomBorder);
-  w->scale = 1.f;
+  w->scale = 1;
   w->surface = wl_compositor_create_surface(s->compositor);
   wl_surface_add_listener(w->surface, &way_wm_surface_listener, w);
-  // A fractional scale needs the viewport to show the buffer at its size.
-  if(s->fractional_scale_manager != 0 && s->viewporter != 0)
-  {
-    w->viewport = wp_viewporter_get_viewport(s->viewporter, w->surface);
-    w->fractional_scale = wp_fractional_scale_manager_v1_get_fractional_scale(s->fractional_scale_manager, w->surface);
-    wp_fractional_scale_v1_add_listener(w->fractional_scale, &way_wm_fractional_listener, w);
-  }
   w->xdg_surface = xdg_wm_base_get_xdg_surface(s->wm_base, w->surface);
   xdg_surface_add_listener(w->xdg_surface, &way_wm_xdg_surface_listener, w);
   w->toplevel = xdg_surface_get_toplevel(w->xdg_surface);
@@ -929,8 +879,6 @@ wm_window_close(WM_Window handle)
   if(w->frame_next != 0) { wl_callback_destroy(w->frame_next); }
   if(w->frame_wait != 0) { wl_callback_destroy(w->frame_wait); }
   if(w->decoration != 0) { zxdg_toplevel_decoration_v1_destroy(w->decoration); }
-  if(w->fractional_scale != 0) { wp_fractional_scale_v1_destroy(w->fractional_scale); }
-  if(w->viewport != 0) { wp_viewport_destroy(w->viewport); }
   xdg_toplevel_destroy(w->toplevel);
   xdg_surface_destroy(w->xdg_surface);
   wl_surface_destroy(w->surface);
@@ -1092,29 +1040,28 @@ internal Rng2F32
 wm_client_rect_from_window(WM_Window handle)
 {
   if(wm_window_match(handle, wm_window_zero())) {return r2f32p(0, 0, 0, 0);}
-  Vec2S32 size = way_wm_buffer_size_from_window(way_wm_window_from_handle(handle));
-  return r2f32p(0, 0, (F32)size.x, (F32)size.y);
+  WAY_WM_Window *w = way_wm_window_from_handle(handle);
+  return r2f32p(0, 0, (F32)w->size.x, (F32)w->size.y);
 }
 
 internal F32
 wm_dpi_from_window(WM_Window handle)
 {
-  if(wm_window_match(handle, wm_window_zero())) {return 96.f;}
-  return 96.f*way_wm_window_from_handle(handle)->scale;
+  return 96.f*wm_backing_scale_from_window(handle);
 }
 
+// Layout is in points, as on macOS; the backing scale turns them into pixels.
 internal F32
 wm_layout_scale_from_window(WM_Window handle)
 {
-  F32 result = wm_dpi_from_window(handle)/96.f;
-  result = ClampBot(1.f/16.f, result);
-  return result;
+  return 1.f;
 }
 
 internal F32
 wm_backing_scale_from_window(WM_Window handle)
 {
-  return 1.f;
+  if(wm_window_match(handle, wm_window_zero())) {return 1.f;}
+  return (F32)way_wm_window_from_handle(handle)->scale;
 }
 
 internal WM_NativeSurface
