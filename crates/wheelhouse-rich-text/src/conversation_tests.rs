@@ -232,7 +232,7 @@ fn repair_closes_what_is_open_and_leaves_bare_markers() {
 #[test]
 fn backfill_inserts_at_the_front_and_the_view_stays_still() {
     let bytes = generate::conversation::jsonl(&generate::conversation::events(&mut generate::Seeded(9), 120));
-    let tuning = Tuning { tail_items: 10, tail_bytes: usize::MAX, step: Some(2_000) };
+    let tuning = Tuning { tail_items: 20, tail_bytes: usize::MAX, step: Some(2_000) };
     let mut rich = RichText::tuned_conversation(&bytes, RING_CAPACITY, tuning);
     let tail_len = rich.doc().children(rich.doc().root().unwrap()).count();
     assert!(rich.backfill_remaining() > 0);
@@ -390,4 +390,274 @@ fn copy_all_quotes_a_notice_whole_and_keeps_a_divider_out_of_headings() {
     let compaction = line(r#"{"type":"Custom","threadId":"t","seq":2,"name":"compaction","value":{}}"#);
     let all = RichText::open_conversation(&[line(HELLO), error, compaction].concat()).copy_all().unwrap();
     assert_eq!(all, "> first line\n> second line\n\n*— compaction —*");
+}
+
+/// What a Tool Run must be, wherever it is: two or more calls, its summary
+/// counting them, and maximal, so no call or run sits beside another.
+fn assert_tool_runs(doc: &Tree) {
+    let call = |id: NodeId| matches!(doc.detail(id), Detail::Section { section: SectionKind::Tool, .. });
+    for parent in doc.preorder() {
+        let children: Vec<NodeId> = doc.children(parent).collect();
+        if doc.kind(parent) != Kind::ToolRun {
+            for pair in children.windows(2) {
+                let grouped = |id| call(id) || doc.kind(id) == Kind::ToolRun;
+                assert!(!(grouped(pair[0]) && grouped(pair[1])), "{:?} and {:?} are one run", doc.key(pair[0]), doc.key(pair[1]));
+            }
+            continue;
+        }
+        assert!(children.len() >= 2 && children.iter().all(|&c| call(c)), "{:?} holds only calls, two or more", doc.key(parent));
+        let calls: Vec<(ToolKind, ToolStatus)> = children
+            .iter()
+            .map(|&c| match doc.detail(c) {
+                Detail::Section { tool, status, .. } => (*tool, *status),
+                _ => unreachable!(),
+            })
+            .collect();
+        let count = |f: &dyn Fn(ToolKind, ToolStatus) -> bool| calls.iter().filter(|&&(k, s)| f(k, s)).count() as u32;
+        let Detail::ToolRun(summary) = doc.detail(parent) else { panic!("a Tool Run's detail") };
+        assert_eq!(
+            [summary.commands, summary.edits, summary.reads, summary.searches, summary.others, summary.failed],
+            [
+                count(&|k, _| k == ToolKind::Shell),
+                count(&|k, _| k == ToolKind::Edit),
+                count(&|k, _| k == ToolKind::Read),
+                count(&|k, _| k == ToolKind::Search),
+                count(&|k, _| matches!(k, ToolKind::Agent | ToolKind::Web | ToolKind::Mcp | ToolKind::Other)),
+                count(&|_, s| matches!(s, ToolStatus::Failed | ToolStatus::Interrupted)),
+            ]
+        );
+        assert_eq!(summary.failed > 0, (summary.failed_at as usize) < summary.text.len());
+    }
+}
+
+#[hegel::test(test_cases = 300)]
+fn tool_runs_are_the_maximal_runs_of_calls_streamed_or_whole(tc: TestCase) {
+    let mut c = Draws(&tc);
+    let items = 1 + c.below(12);
+    let events = generate::conversation::events(&mut c, items);
+    let bytes = generate::conversation::jsonl(&events);
+    let reference = whole(&bytes);
+    assert_tool_runs(reference.doc());
+    // Every call is still there, in a run or not.
+    for event in &events {
+        let calls: Vec<(&str, &str)> = match event {
+            conversation_events::Event::ToolCallStart(e) => vec![(&e.thread_id, &e.tool_call_id)],
+            conversation_events::Event::MessagesSnapshot(e) => {
+                e.messages.iter().flat_map(|m| &m.tool_calls).map(|call| (e.thread_id.as_str(), call.id.as_str())).collect()
+            }
+            _ => vec![],
+        };
+        for (thread, id) in calls {
+            assert!(reference.doc().get(Key::named(&[thread, "tool", id])).is_some(), "{thread} {id} is in the tree");
+        }
+    }
+    // Event by event, as a live conversation streams.
+    let mut rich = RichText::open_conversation(&bytes[..0]);
+    let mut at = 0;
+    for event in &events {
+        let line = generate::conversation::jsonl(std::slice::from_ref(event));
+        rich.append(&bytes[at..at + line.len()]);
+        at += line.len();
+        rich.doc().assert_rows();
+        assert_tool_runs(rich.doc());
+    }
+    assert_eq!(canon(rich.doc()), canon(reference.doc()));
+}
+
+#[test]
+fn a_tool_run_counts_its_calls_by_kind_then_failures() {
+    use ToolKind::*;
+    use ToolStatus::*;
+    let summary = |calls: &[(ToolKind, ToolStatus)]| RunSummary::new(calls.iter().copied()).text;
+    let calls = [(Shell, Ok), (Read, Ok), (Edit, Failed), (Shell, Interrupted), (Edit, Ok), (Shell, Pending)];
+    assert_eq!(summary(&calls), "Ran 3 commands · edited 2 files · read 1 file · 2 failed");
+    let s = RunSummary::new(calls);
+    assert_eq!(&s.text[s.failed_at as usize..], "2 failed");
+    assert_eq!(summary(&[(Search, Ok), (Agent, Ok), (Web, AwaitingApproval), (Mcp, Ok)]), "Ran 1 search · called 3 other tools");
+    assert_eq!(summary(&[(Read, Ok), (Read, Ok)]), "Read 2 files");
+    let s = RunSummary::new([(Read, Ok), (Read, Ok)]);
+    assert_eq!(s.failed_at as usize, s.text.len());
+}
+
+#[test]
+fn a_calls_duration_is_from_its_start_to_its_result() {
+    let call = line(
+        r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","kind":"shell","timestamp":1800000000000}"#,
+    );
+    let timed = line(r#"{"type":"ToolCallResult","threadId":"t","seq":2,"toolCallId":"c","content":"","timestamp":1800000002500}"#);
+    let untimed = line(r#"{"type":"ToolCallResult","threadId":"t","seq":2,"toolCallId":"c","content":""}"#);
+    let duration = |events: &[&[u8]]| {
+        let rich = RichText::open_conversation(&[&line(HELLO)[..]].iter().chain(events).copied().collect::<Vec<_>>().concat());
+        match rich.doc().detail(rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap()) {
+            Detail::Section { duration_ms, .. } => *duration_ms,
+            _ => unreachable!(),
+        }
+    };
+    assert_eq!(duration(&[&call, &timed]), Some(2500));
+    // A result stamped before its start, by clock skew: no duration.
+    let early = line(r#"{"type":"ToolCallResult","threadId":"t","seq":2,"toolCallId":"c","content":"","timestamp":1799999999000}"#);
+    assert_eq!(duration(&[&call, &early]), None);
+    assert_eq!(duration(&[&call, &untimed]), None);
+    assert_eq!(duration(&[&call]), None);
+}
+
+#[test]
+fn a_calls_title_and_input_follow_its_kind() {
+    // The title a header shows, and the call's input Block, if it has one.
+    let shown = |name: &str, title: &str, kind: &str, args: &str| {
+        let start = format!(
+            r#"{{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"{name}","title":"{title}","kind":"{kind}"}}"#
+        );
+        let args = serde_json::to_string(args).unwrap();
+        let args = format!(r#"{{"type":"ToolCallArgs","threadId":"t","seq":2,"toolCallId":"c","delta":{args}}}"#);
+        let rich = RichText::open_conversation(&[line(HELLO), line(&start), line(&args)].concat());
+        let doc = rich.doc();
+        let call = doc.get(Key::named(&["t", "tool", "c"])).unwrap();
+        let Detail::Section { title, .. } = doc.detail(call) else { unreachable!() };
+        let input = doc.children(call).next().filter(|&c| doc.kind(c) == Kind::Input).map(|c| doc.text(c).to_owned());
+        (title.clone(), input)
+    };
+    let s = |text: &str| Some(text.to_owned());
+    // A described command keeps its description; an undescribed one shows
+    // its first line. Its input is the whole command.
+    assert_eq!(shown("Bash", "Run the tests", "shell", r#"{"command":"cargo test\necho done"}"#).0, "Run the tests");
+    assert_eq!(shown("Bash", "", "shell", r#"{"command":"cargo test\necho done"}"#), ("cargo test".into(), s("cargo test\necho done")));
+    // An edit or a read shows its path, a search its pattern.
+    assert_eq!(shown("Edit", "Fix it", "edit", r#"{"file_path":"src/lib.rs","old_string":"a"}"#).0, "src/lib.rs");
+    assert_eq!(shown("Read", "", "read", r#"{"file_path":"notes.md"}"#), ("notes.md".into(), s(r#"{"file_path":"notes.md"}"#)));
+    assert_eq!(shown("Grep", "", "search", r#"{"pattern":"ka.*lo","path":"src"}"#).0, "ka.*lo");
+    // Anything else without a title: its name and its first argument.
+    assert_eq!(shown("Fetch", "", "web", r#"{"url":"https://example.com"}"#).0, "Fetch https://example.com");
+    // Input is compact JSON, long strings folded; none for no arguments.
+    let long = "x".repeat(100);
+    let (_, input) = shown("Write", "", "edit", &format!(r#"{{"file_path":"a.rs","content":"{long}"}}"#));
+    assert_eq!(input, s(&format!(r#"{{"content":"{}…","file_path":"a.rs"}}"#, "x".repeat(60))));
+    assert_eq!(shown("Todo", "", "other", "{}"), (String::new(), None));
+    assert_eq!(shown("Todo", "", "other", ""), (String::new(), None));
+}
+
+// A call's input is restaged with each change to the call, but the Tree
+// keeps a node whose key and content match, so only a changed input reaches
+// a View: a result leaves it alone, and more arguments update it in place.
+#[test]
+fn a_calls_input_changes_only_when_its_arguments_do() {
+    let start = line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","kind":"shell"}"#);
+    let args = |seq: u32, delta: &str| {
+        let delta = serde_json::to_string(delta).unwrap();
+        line(&format!(r#"{{"type":"ToolCallArgs","threadId":"t","seq":{seq},"toolCallId":"c","delta":{delta}}}"#))
+    };
+    let mut rich = RichText::open_conversation(&[line(HELLO), start, args(2, r#"{"command":"ls"#)].concat());
+    let id = rich.subscribe();
+    rich.poll(id).unwrap();
+    let call = Key::named(&["t", "tool", "c"]);
+    let first = rich.doc().children(rich.doc().get(call).unwrap()).next().unwrap();
+    // Arguments still streaming in aren't JSON yet: shown as they are.
+    assert_eq!((rich.doc().kind(first), rich.doc().text(first)), (Kind::Input, r#"{"command":"ls"#));
+    let input = rich.doc().key(first);
+    let touches = |delta: Option<Delta>| {
+        delta.into_iter().flat_map(|d| d.ops).any(|op| match op {
+            Op::Upsert(c) => c.key == input,
+            Op::Remove(key) => key == input,
+            Op::Children { parent, ops } => parent == input || ops.iter().any(|o| matches!(o, ListOp::Insert { key, .. } if *key == input)),
+        })
+    };
+    rich.append(&args(3, r#" -l"}"#));
+    let delta = rich.poll(id).unwrap();
+    assert!(delta.as_ref().is_some_and(|d| d.ops.iter().any(|op| matches!(op, Op::Upsert(c) if c.key == input && c.text == "ls -l"))));
+    assert!(!delta.unwrap().ops.iter().any(|op| matches!(op, Op::Remove(key) if *key == input)), "updated in place");
+    rich.append(&line(r#"{"type":"ToolCallResult","threadId":"t","seq":4,"toolCallId":"c","content":"a\nb\n"}"#));
+    assert!(!touches(rich.poll(id).unwrap()), "a result leaves the input alone");
+}
+
+#[test]
+fn a_search_matchs_location_is_its_path_and_line() {
+    use super::conversation::location;
+    fn at(line: &str) -> &str {
+        &line[..location(line)]
+    }
+    assert_eq!(at("src/a.rs:3: flaky"), "src/a.rs:3");
+    assert_eq!(at("a:1"), "a:1");
+    assert_eq!(at("a:1:2"), "a:1");
+    assert_eq!(at("a:1-context"), "a:1");
+    assert_eq!(at(r"C:\x:3: y"), r"C:\x:3");
+    // A path alone, a line that isn't one, and a colon first.
+    assert_eq!(at("src/a.rs"), "");
+    assert_eq!(at("note: 12 apples"), "");
+    assert_eq!(at("foo: 12-bar"), "");
+    assert_eq!(at(":3"), "");
+}
+
+#[test]
+fn a_reads_language_comes_from_a_path_only() {
+    let language = |title: &str, args: &str| {
+        let start = format!(
+            r#"{{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Read","title":"{title}","kind":"read"}}"#
+        );
+        let args = serde_json::to_string(args).unwrap();
+        let args = format!(r#"{{"type":"ToolCallArgs","threadId":"t","seq":2,"toolCallId":"c","delta":{args}}}"#);
+        let result = line(r#"{"type":"ToolCallResult","threadId":"t","seq":3,"toolCallId":"c","content":"x\n"}"#);
+        let rich = RichText::open_conversation(&[line(HELLO), line(&start), line(&args), result].concat());
+        let call = rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap();
+        let code = rich.doc().children(call).find(|&c| rich.doc().kind(c) == Kind::Code).unwrap();
+        match rich.doc().detail(code) {
+            Detail::Code { language } => language.clone(),
+            _ => unreachable!(),
+        }
+    };
+    assert_eq!(language("Read config", r#"{"file_path":"src/lib.rs"}"#), "rs");
+    assert_eq!(language("src/tides.md", ""), "md");
+    assert_eq!(language("Read v1.2", ""), "");
+    assert_eq!(language("notes", r#"{"file_path":"v1.2"}"#), "");
+}
+
+// A later snapshot can leave a call with no arguments: its input Block goes,
+// and its output stays where it was.
+#[test]
+fn a_call_whose_arguments_go_loses_its_input() {
+    let start = line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","kind":"shell"}"#);
+    let args = line(r#"{"type":"ToolCallArgs","threadId":"t","seq":2,"toolCallId":"c","delta":"{\"command\":\"ls\"}"}"#);
+    let result = line(r#"{"type":"ToolCallResult","threadId":"t","seq":3,"toolCallId":"c","content":"a\n"}"#);
+    let snapshot = line(
+        r#"{"type":"MessagesSnapshot","threadId":"t","seq":4,"messages":[{"id":"m","role":"assistant","toolCalls":[{"id":"c","type":"function","function":{"name":"Bash","arguments":""},"kind":"shell"}]}]}"#,
+    );
+    let mut rich = RichText::open_conversation(&[line(HELLO), start, args, result].concat());
+    let kinds = |rich: &RichText| {
+        let call = rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap();
+        rich.doc().children(call).map(|c| rich.doc().kind(c)).collect::<Vec<_>>()
+    };
+    assert_eq!(kinds(&rich), [Kind::Input, Kind::Log]);
+    rich.append(&snapshot);
+    rich.doc().assert_rows();
+    assert_eq!(kinds(&rich), [Kind::Log]);
+}
+
+#[test]
+fn arguments_close_only_when_their_value_does_outside_strings() {
+    use super::conversation::Nesting;
+    let closed = |pieces: &[&str]| {
+        let mut nesting = Nesting::default();
+        pieces.iter().for_each(|p| nesting.feed(p));
+        nesting.closed()
+    };
+    let cases: &[(&[&str], bool)] = &[
+        (&[r#"{"a":1}"#], true),
+        (&[r#"{"a":"#, "1", "}"], true),
+        (&[r#"{"a":[{"b":2}"#], false),
+        (&[r#"[1,[2]]"#], true),
+        // Braces and brackets inside a string don't count.
+        (&[r#"{"a":"}]"#], false),
+        (&[r#"{"a":"}]"}"#], true),
+        // An escaped quote doesn't end a string; an escaped backslash
+        // before one does, even split across deltas.
+        (&[r#"{"a":"\"}"#], false),
+        (&[r#"{"a":"\\"}"#], true),
+        (&[r#"{"a":"\"#, r#"\"}"#], true),
+        (&[r#"{"a":"\"#, r#""}"#], false),
+        // Nothing opened yet, or a bare scalar.
+        (&[""], false),
+        (&["42"], false),
+    ];
+    for (pieces, want) in cases {
+        assert_eq!(closed(pieces), *want, "{pieces:?}");
+    }
 }

@@ -441,6 +441,10 @@ typedef struct BinnacleGrid BinnacleGrid;
 // `name`, `title`, `tool` and `status` give its header.
 #define WHEELHOUSE_RICH_KIND_SECTION 6
 
+// Two or more tool calls in a row, with no text between them: the node's
+// `summary` and `failed` give its header.
+#define WHEELHOUSE_RICH_KIND_TOOL_RUN 7
+
 #define WHEELHOUSE_RICH_KIND_PARAGRAPH 16
 
 #define WHEELHOUSE_RICH_KIND_HEADING 17
@@ -462,6 +466,11 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 // A note standing in for content, such as output that was cut.
 #define WHEELHOUSE_RICH_KIND_NOTICE 23
+
+// A tool call's input, first in its Section: its command, or its arguments
+// as compact JSON with long strings folded. Its `language` is `sh`, `json`,
+// or empty for arguments that aren't JSON yet.
+#define WHEELHOUSE_RICH_KIND_INPUT 24
 
 #define WHEELHOUSE_RICH_ATTR_EMPHASIS 0
 
@@ -562,6 +571,10 @@ typedef struct BinnacleGrid BinnacleGrid;
 #define WHEELHOUSE_RICH_STATUS_INTERRUPTED 4
 
 #define WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL 5
+
+// A Section's `duration_ms` when its call's start or end time isn't known:
+// compare against it before showing a duration.
+#define WHEELHOUSE_RICH_NO_DURATION UINT64_MAX
 
 #define WHEELHOUSE_RICH_TASK_NONE 0
 
@@ -1534,7 +1547,8 @@ typedef struct {
   uint32_t fits_all;
 } WheelhouseOverviewFrame;
 
-// A node's Container role, kind and status, as a delta's node has them.
+// A node's Container role, kind and status, and a Tool Run's summary, as a
+// delta's node has them.
 typedef struct {
   // WHEELHOUSE_RICH_KIND_*.
   uint32_t kind;
@@ -1544,6 +1558,10 @@ typedef struct {
   uint32_t status;
   WheelhouseText name;
   WheelhouseText title;
+  uint64_t duration_ms;
+  WheelhouseText summary;
+  uint32_t failed;
+  uint32_t failed_at;
 } WheelhouseRichContainer;
 
 // As ListOpView, with a Rich Text key: INSERT reads `at` and `key`, REMOVE
@@ -1644,6 +1662,16 @@ typedef struct {
   WheelhouseText name;
   // A tool Section's input summary; a subagent's thread id.
   WheelhouseText title;
+  // A tool Section's, from its start to its result, or
+  // WHEELHOUSE_RICH_NO_DURATION.
+  uint64_t duration_ms;
+  // A Tool Run's calls by kind, such as "Ran 3 commands · edited 2 files ·
+  // 1 failed".
+  WheelhouseText summary;
+  // How many of a Tool Run's calls failed or were interrupted.
+  uint32_t failed;
+  // Where in `summary` its failures start: its length if none failed.
+  uint32_t failed_at;
 } WheelhouseRichNode;
 
 // Scrolling is worked out from the Scroll Anchor, so heights changing above

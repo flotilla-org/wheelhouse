@@ -396,6 +396,51 @@ uishell_rt_diag_named(UI_Box *root, String8 needle)
   return &ui_nil_box;
 }
 
+// A tool call's Section by its title, as the header shows it.
+internal UIShell_RtNode *
+uishell_rt_diag_tool(UIShell_RichTextState *s, String8 title)
+{
+  for(U64 i = 0; i < s->model.slots_count; i += 1)
+  {
+    for(UIShell_RtNode *n = s->model.slots[i]; n != 0; n = n->hash_next)
+    {
+      if(n->kind == WHEELHOUSE_RICH_KIND_SECTION && n->section == WHEELHOUSE_RICH_SECTION_TOOL && str8_match(n->title, title, 0)) { return n; }
+    }
+  }
+  return 0;
+}
+
+// What a box draws: its string before its key.
+internal String8
+uishell_rt_diag_text(UI_Box *b)
+{
+  return ui_box_is_nil(b) ? str8_zero() : str8_prefix(b->string, str8_find_needle(b->string, 0, str8_lit("###"), 0));
+}
+
+internal B32
+uishell_rt_diag_color_near(Vec4F32 a, Vec4F32 b)
+{
+  return abs_f32(a.x - b.x) < 0.01f && abs_f32(a.y - b.y) < 0.01f && abs_f32(a.z - b.z) < 0.01f;
+}
+
+// Whether a layout draws some text in the theme's palette colour `index`.
+internal B32
+uishell_rt_diag_inks_palette(UIShell_RichTextState *s, UIShell_RtLayoutEntry *e, U32 index)
+{
+  U32 rgb = s->theme.palette[index];
+  Vec4F32 want = v4f32(((rgb>>16)&0xff)/255.f, ((rgb>>8)&0xff)/255.f, (rgb&0xff)/255.f, 1);
+  for(U64 i = 0; e && i < e->layout->style_count; i += 1)
+  {
+    UIShell_RtStyleInk *ink = &e->layout->inks[i];
+    if(!(ink->ink & UIShell_RtInk_Literal)) { continue; }
+    for(U64 r = 0; r < e->layout->text.run_count; r += 1)
+    {
+      if(e->layout->text.runs[r].style == i && uishell_rt_diag_color_near(uishell_rt_ink_color(&s->theme, ink), want)) { return 1; }
+    }
+  }
+  return 0;
+}
+
 internal String8
 uishell_rt_diag_status_mark(UI_Box *header)
 {
@@ -440,6 +485,21 @@ uishell_rt_diag_conversation(Arena *arena)
     str8_lit("{\"type\":\"TextMessageStart\",\"threadId\":\"t1\",\"seq\":24,\"messageId\":\"m3\",\"role\":\"assistant\"}"),
     str8_lit("{\"type\":\"TextMessageContent\",\"threadId\":\"t1\",\"seq\":25,\"messageId\":\"m3\",\"delta\":\"Done.\"}"),
     str8_lit("{\"type\":\"TextMessageEnd\",\"threadId\":\"t1\",\"seq\":26,\"messageId\":\"m3\"}"),
+    str8_lit("{\"type\":\"TextMessageStart\",\"threadId\":\"t1\",\"seq\":27,\"messageId\":\"m4\",\"role\":\"user\"}"),
+    str8_lit("{\"type\":\"TextMessageContent\",\"threadId\":\"t1\",\"seq\":28,\"messageId\":\"m4\",\"delta\":\"Now build it and look around.\"}"),
+    str8_lit("{\"type\":\"TextMessageEnd\",\"threadId\":\"t1\",\"seq\":29,\"messageId\":\"m4\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":30,\"toolCallId\":\"c6\",\"toolCallName\":\"Bash\",\"title\":\"Build the harbour\",\"kind\":\"shell\",\"timestamp\":1800000000000}"),
+    str8_lit("{\"type\":\"ToolCallArgs\",\"threadId\":\"t1\",\"seq\":31,\"toolCallId\":\"c6\",\"delta\":\"{\\\"command\\\": \\\"cargo build --release --workspace\\\"}\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":32,\"toolCallId\":\"c6\",\"messageId\":\"r6\",\"status\":\"ok\",\"mediaType\":\"text/x-ansi\",\"content\":\"Compiling quay-00 v0.1.0\\nCompiling quay-01 v0.1.0\\nCompiling quay-02 v0.1.0\\nCompiling quay-03 v0.1.0\\nCompiling quay-04 v0.1.0\\nCompiling quay-05 v0.1.0\\nCompiling quay-06 v0.1.0\\nCompiling quay-07 v0.1.0\\nCompiling quay-08 v0.1.0\\nCompiling quay-09 v0.1.0\\nCompiling quay-10 v0.1.0\\nCompiling quay-11 v0.1.0\\nCompiling quay-12 v0.1.0\\nCompiling quay-13 v0.1.0\\nCompiling quay-14 v0.1.0\\nCompiling quay-15 v0.1.0\\nCompiling quay-16 v0.1.0\\nCompiling quay-17 v0.1.0\\nCompiling quay-18 v0.1.0\\nCompiling quay-19 v0.1.0\\nCompiling quay-20 v0.1.0\\nCompiling quay-21 v0.1.0\\nCompiling quay-22 v0.1.0\\nCompiling quay-23 v0.1.0\\nCompiling quay-24 v0.1.0\\nCompiling quay-25 v0.1.0\\nCompiling quay-26 v0.1.0\\nCompiling quay-27 v0.1.0\\nCompiling quay-28 v0.1.0\\nCompiling quay-29 v0.1.0\\nCompiling quay-30 v0.1.0\\nCompiling quay-31 v0.1.0\\nCompiling quay-32 v0.1.0\\nCompiling quay-33 v0.1.0\\nCompiling quay-34 v0.1.0\\nCompiling quay-35 v0.1.0\\nCompiling quay-36 v0.1.0\\nCompiling quay-37 v0.1.0\\nCompiling quay-38 v0.1.0\\nCompiling quay-39 v0.1.0\\n\",\"timestamp\":1800000065000}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":33,\"toolCallId\":\"c7\",\"toolCallName\":\"Read\",\"title\":\"src/tides.rs\",\"kind\":\"read\"}"),
+    str8_lit("{\"type\":\"ToolCallArgs\",\"threadId\":\"t1\",\"seq\":34,\"toolCallId\":\"c7\",\"delta\":\"{\\\"file_path\\\": \\\"src/tides.rs\\\"}\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":35,\"toolCallId\":\"c7\",\"messageId\":\"r7\",\"status\":\"ok\",\"mediaType\":\"text/plain\",\"content\":\"fn ebb() {}\\nfn flow() {}\\n\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":36,\"toolCallId\":\"c8\",\"toolCallName\":\"Grep\",\"title\":\"berth\",\"kind\":\"search\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":37,\"toolCallId\":\"c8\",\"messageId\":\"r8\",\"status\":\"ok\",\"mediaType\":\"text/plain\",\"content\":\"src/a.rs:3: berth\\nsrc/b.rs:12: berths\\n\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":38,\"toolCallId\":\"c10\",\"toolCallName\":\"Edit\",\"title\":\"src/berths.rs\",\"kind\":\"edit\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":39,\"toolCallId\":\"c10\",\"messageId\":\"r10\",\"status\":\"ok\",\"mediaType\":\"text/x-diff\",\"content\":\"--- a/src/berths.rs\\n+++ b/src/berths.rs\\n@@ -1,2 +1 @@\\n-old berth\\n--- a note\\n+new berth\\n\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":40,\"toolCallId\":\"c11\",\"toolCallName\":\"Screenshot\",\"kind\":\"other\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":41,\"toolCallId\":\"c11\",\"messageId\":\"r11\",\"status\":\"ok\",\"mediaType\":\"text/plain\",\"content\":\"captured\\n\"}"),
   };
   String8List out = {0};
   for EachElement(i, lines) { str8_list_pushf(arena, &out, "%S\n", lines[i]); }
@@ -1481,7 +1541,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
               "a conversation opens with the chat style set");
     UIShell_RtNode *user = s ? uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_TURN, WHEELHOUSE_RICH_ROLE_USER, str8_lit("Please run")) : 0;
     UIShell_RtNode *assistant = s ? uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_TURN, WHEELHOUSE_RICH_ROLE_ASSISTANT, str8_lit("Running them")) : 0;
-    UIShell_RtNode *bash = s ? uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_SECTION, WHEELHOUSE_RICH_SECTION_TOOL, str8_lit("Bash")) : 0;
+    UIShell_RtNode *bash = s ? uishell_rt_diag_tool(s, str8_lit("cargo test harbour")) : 0;
     UIShell_RtNode *reasoning = s ? uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_SECTION, WHEELHOUSE_RICH_SECTION_REASONING, str8_zero()) : 0;
     UIShell_RtNode *subagent = s ? uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_SECTION, WHEELHOUSE_RICH_SECTION_SUBAGENT, str8_zero()) : 0;
     RichCheck(user && assistant && bash && reasoning && subagent, "the conversation's Turns and Sections are in the model");
@@ -1516,35 +1576,80 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       RichCheck(assistant_text.draw && abs_f32(assistant_text.box->rect.x0 - column_x0) < 0.5f && abs_f32(assistant_text.box->rect.x1 - column_x1) < 0.5f &&
                 ui_box_is_nil(uishell_rt_diag_drawn(uishell_rt_chrome_draw, assistant->key)), "an assistant Turn spans the column, without chrome");
 
-      //- Tool calls and reasoning are collapsed by default; a click, Enter
-      // or Space toggles them.
+      //- Tool calls, Tool Runs and reasoning start collapsed; a click,
+      // Enter or Space toggles them.
+      UIShell_RtNode *run = uishell_rt_node(&s->model, bash->parent);
+      UI_Box *run_header = run ? uishell_rt_diag_drawn(uishell_rt_header_draw, run->key) : &ui_nil_box;
+      RichCheck(run && run->kind == WHEELHOUSE_RICH_KIND_TOOL_RUN && !ui_box_is_nil(run_header) && uishell_rt_collapsed(s, run->key) &&
+                uishell_rt_collapsed(s, reasoning->key) && ui_box_is_nil(uishell_rt_diag_drawn(uishell_rt_header_draw, bash->key)),
+                "a Tool Run and reasoning are collapsed by default, showing their headers");
+      //- A Tool Run's header is its summary, its failures in red; it opens
+      // to its calls, each collapsed.
+      if(run)
+      {
+        String8 label = uishell_rt_diag_text(uishell_rt_diag_named(run_header, str8_lit("###rt_label")));
+        UI_Box *failed = uishell_rt_diag_named(run_header, str8_lit("###rt_failed"));
+        fprintf(stderr, "RICH_TEXT_CHAT run=\"%.*s\" label=\"%.*s\"\n", str8_varg(run->summary), str8_varg(label));
+        RichCheck(str8_match(run->summary, str8_lit("Ran 1 command \xC2\xB7 edited 1 file \xC2\xB7 read 1 file \xC2\xB7 ran 1 search \xC2\xB7 called 2 other tools \xC2\xB7 2 failed"), 0) &&
+                  run->failed == 2 && str8_match(str8_prefix(label, 13), str8_lit("Ran 1 command"), 0) &&
+                  str8_match(uishell_rt_diag_text(failed), str8_lit("2 failed"), 0) && uishell_rt_diag_color_near(failed->text_color, s->theme.bad) &&
+                  ui_box_is_nil(uishell_rt_diag_named(run_header, str8_lit("###rt_status"))),
+                  "a Tool Run's header shows its summary, its failure count in red");
+        d->now_us += 2000000;
+        s = uishell_rt_diag_click(d, center_2f32(run_header->rect), 0, 1);
+        s = uishell_rt_diag_frames(d, 2);
+        B32 calls_collapsed = run->child_count >= 2;
+        for(U64 i = 0; i < run->child_count; i += 1) { calls_collapsed &= uishell_rt_collapsed(s, run->children[i]); }
+        RichCheck(!uishell_rt_collapsed(s, run->key) && calls_collapsed && !ui_box_is_nil(uishell_rt_diag_drawn(uishell_rt_header_draw, bash->key)),
+                  "a Tool Run expands to its calls, each collapsed");
+      }
       UI_Box *header = uishell_rt_diag_drawn(uishell_rt_header_draw, bash->key);
-      U64 output = bash->child_count ? bash->children[0] : 0;
-      RichCheck(!ui_box_is_nil(header) && uishell_rt_collapsed(s, bash->key) && uishell_rt_collapsed(s, reasoning->key) &&
-                ui_box_is_nil(uishell_rt_diag_box(scratch.arena, output).box) && ((UIShell_RtHeaderDraw *)header->custom_draw_user_data)->collapsed,
-                "a tool Section and reasoning are collapsed by default, showing their headers");
-      RichCheck(uishell_rt_diag_contains(uishell_rt_diag_named(header, str8_lit("###rt_name"))->string, str8_lit("Bash")) &&
-                uishell_rt_diag_contains(uishell_rt_diag_named(header, str8_lit("###rt_title"))->string, str8_lit("cargo test harbour")) &&
-                !ui_box_is_nil(uishell_rt_diag_named(header, str8_lit("###rt_icon"))), "a tool Section's header has its icon, name and title");
+      U64 input = bash->child_count ? bash->children[0] : 0, output = bash->child_count > 1 ? bash->children[1] : 0;
+      RichCheck(!ui_box_is_nil(header) && uishell_rt_collapsed(s, bash->key) && ui_box_is_nil(uishell_rt_diag_box(scratch.arena, output).box) &&
+                ((UIShell_RtHeaderDraw *)header->custom_draw_user_data)->collapsed, "a tool Section is collapsed by default, showing its header");
+      //- The title, and the name only when there is none; never a caret
+      // after the chevron.
+      {
+        UI_Box *icon = uishell_rt_diag_named(header, str8_lit("###rt_icon"));
+        FNT_Tag code_font = rd_font_from_slot(RD_FontSlot_Code);
+        B32 named = 0;
+        for(UI_Box *b = header; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, header).next) { named |= uishell_rt_diag_contains(b->string, str8_lit("Bash")); }
+        RichCheck(str8_match(uishell_rt_diag_text(uishell_rt_diag_named(header, str8_lit("###rt_label"))), str8_lit("cargo test harbour"), 0) && !named &&
+                  str8_match(uishell_rt_diag_text(icon), str8_lit(">_"), 0) && MemoryMatchStruct(&icon->font, &code_font),
+                  "a call's header shows its title, not its name, and a shell call's icon is a prompt");
+        UIShell_RtNode node = {0};
+        String8 caret = rd_icon_kind_text_table[RD_IconKind_RightCaret], open_caret = rd_icon_kind_text_table[RD_IconKind_DownCaret];
+        B32 no_caret = 1;
+        for(U32 kind = WHEELHOUSE_RICH_KIND_SECTION; kind <= WHEELHOUSE_RICH_KIND_TOOL_RUN; kind += 1)
+          for(U32 section = 0; section <= WHEELHOUSE_RICH_SECTION_SUBAGENT; section += 1)
+            for(U32 tool = 0; tool <= WHEELHOUSE_RICH_TOOL_MCP; tool += 1)
+            {
+              node.kind = kind, node.section = section, node.tool = tool;
+              RD_FontSlot slot = RD_FontSlot_Icons;
+              String8 glyph = uishell_rt_tool_icon(&node, &slot);
+              no_caret &= glyph.size && !(slot == RD_FontSlot_Icons && (str8_match(glyph, caret, 0) || str8_match(glyph, open_caret, 0)));
+            }
+        RichCheck(no_caret, "no header's icon is a caret, for any kind of Section or tool");
+      }
       d->now_us += 2000000;
       s = uishell_rt_diag_click(d, center_2f32(header->rect), 0, 1);
       UIShell_RtDiagBox log = uishell_rt_diag_box(scratch.arena, output);
+      UIShell_RtDiagBox command = uishell_rt_diag_box(scratch.arena, input);
       RichCheck(!uishell_rt_collapsed(s, bash->key) && log.draw && log.draw->kind == WHEELHOUSE_RICH_KIND_LOG, "a click on the header expands it");
+      {
+        UIShell_RtNode *n = uishell_rt_node(&s->model, input);
+        RichCheck(n && n->kind == WHEELHOUSE_RICH_KIND_INPUT && str8_match(n->text, str8_lit("cargo test harbour"), 0) && command.draw &&
+                  uishell_rt_base_style(&s->theme, n).family == WH_TEXT_FAMILY_CODE && log.draw && command.box->rect.y1 <= log.box->rect.y0 + 0.5f,
+                  "a shell call's input, its command on a monospace line, comes before its output");
+      }
       if(log.draw)
       {
         // Its output is monospace, with ANSI's red through the palette.
         UIShell_RtNode *n = uishell_rt_node(&s->model, output);
         UIShell_RtLayoutEntry *e = 0;
         uishell_rt_block_height(s, n, dim_2f32(log.box->rect).x, &e);
-        B32 red = 0;
-        for(U64 i = 0; e && i < e->layout->style_count; i += 1)
-        {
-          UIShell_RtStyleInk *ink = &e->layout->inks[i];
-          Vec4F32 c = uishell_rt_ink_color(&s->theme, ink);
-          red |= (ink->ink & UIShell_RtInk_Literal) && abs_f32(c.x - ((s->theme.palette[1]>>16)&0xff)/255.f) < 0.01f &&
-                 abs_f32(c.y - ((s->theme.palette[1]>>8)&0xff)/255.f) < 0.01f;
-        }
-        RichCheck(uishell_rt_base_style(&s->theme, n).family == WH_TEXT_FAMILY_CODE && red, "a log Block is monospace, its colours mapped through the theme's palette");
+        RichCheck(uishell_rt_base_style(&s->theme, n).family == WH_TEXT_FAMILY_CODE && uishell_rt_diag_inks_palette(s, e, 1),
+                  "a log Block is monospace, its colours mapped through the theme's palette");
       }
       for(U32 key = 0; key < 2; key += 1)
       {
@@ -1562,24 +1667,38 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
         s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Esc, .slot = UI_EventActionSlot_Cancel});
       }
 
-      //- The status mark follows the status: a distinct mark for each.
+      //- The status: a spinner while pending, nothing for ok, a red cross
+      // for failed or interrupted.
       {
-        String8 names[] = {str8_lit("Bash"), str8_lit("Read"), str8_lit("Edit"), str8_lit("Grep"), str8_lit("Fetch")};
+        String8 titles[] = {str8_lit("cargo test harbour"), str8_lit("tides.md"), str8_lit("berths.rs"), str8_lit("pilot"), str8_lit("example.com")};
         U32 wanted[] = {WHEELHOUSE_RICH_STATUS_FAILED, WHEELHOUSE_RICH_STATUS_PENDING, WHEELHOUSE_RICH_STATUS_OK, WHEELHOUSE_RICH_STATUS_INTERRUPTED,
                         WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL};
-        String8 marks[ArrayCount(names)] = {0};
-        B32 follows = 1;
+        String8 cross = rd_icon_kind_text_table[RD_IconKind_X];
+        B32 follows = 1, ok_empty = 0, failed_cross = 1;
         s = uishell_rt_diag_frames(d, 2);
-        for EachElement(i, names)
+        for EachElement(i, titles)
         {
-          UIShell_RtNode *tool = uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_SECTION, WHEELHOUSE_RICH_SECTION_TOOL, names[i]);
+          UIShell_RtNode *tool = uishell_rt_diag_tool(s, titles[i]);
           UI_Box *h = tool ? uishell_rt_diag_drawn(uishell_rt_header_draw, tool->key) : &ui_nil_box;
-          marks[i] = uishell_rt_diag_status_mark(h);
-          follows &= tool && tool->status == wanted[i] && ((UIShell_RtHeaderDraw *)h->custom_draw_user_data)->status == wanted[i] &&
-                     str8_match(marks[i], rd_icon_kind_text_table[uishell_rt_status_icon(wanted[i])], 0);
-          for(U64 j = 0; j < i; j += 1) { follows &= !str8_match(marks[i], marks[j], 0); }
+          UI_Box *mark = uishell_rt_diag_named(h, str8_lit("###rt_status"));
+          B32 spinner = 0;
+          for(UI_Box *b = h; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, h).next) { spinner |= b->custom_draw == uishell_rt_spinner_draw; }
+          follows &= tool && !ui_box_is_nil(h) && tool->status == wanted[i] && ((UIShell_RtHeaderDraw *)h->custom_draw_user_data)->status == wanted[i];
+          switch(wanted[i])
+          {
+            case WHEELHOUSE_RICH_STATUS_PENDING: { follows &= spinner && ui_box_is_nil(mark); } break;
+            case WHEELHOUSE_RICH_STATUS_OK: { ok_empty = !ui_box_is_nil(h) && !spinner && ui_box_is_nil(mark); } break;
+            case WHEELHOUSE_RICH_STATUS_FAILED:
+            case WHEELHOUSE_RICH_STATUS_INTERRUPTED:
+            {
+              failed_cross &= str8_match(uishell_rt_diag_text(mark), cross, 0) && uishell_rt_diag_color_near(mark->text_color, s->theme.bad);
+            } break;
+            default: { follows &= str8_match(uishell_rt_diag_text(mark), rd_icon_kind_text_table[RD_IconKind_QuestionMark], 0); } break;
+          }
         }
-        RichCheck(follows, "each tool Section's status mark follows its status: pending, ok, failed, interrupted, awaiting approval");
+        RichCheck(follows, "a pending call shows a spinner, one awaiting approval a question mark");
+        RichCheck(failed_cross, "a failed or interrupted call shows a red cross");
+        RichCheck(ok_empty, "an ok call shows no status mark");
       }
 
       //- Hover actions copy the message, the tool's output and command;
@@ -1633,6 +1752,104 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
                     uishell_rt_diag_contains(text, str8_lit("Done.")) && !uishell_rt_diag_contains(text, str8_lit("moorings")),
                     "Copy All copies the whole transcript, without reasoning");
         }
+      }
+
+      //- Each kind's output in its own Block (#667): a shell call's as a
+      // terminal capped at 15 lines, an edit's diff coloured by line, a
+      // read's file as a code Embed, a search's matches as a list.
+      {
+        UIShell_RtNode *build = uishell_rt_diag_tool(s, str8_lit("Build the harbour"));
+        UIShell_RtNode *read = uishell_rt_diag_tool(s, str8_lit("src/tides.rs"));
+        UIShell_RtNode *grep = uishell_rt_diag_tool(s, str8_lit("berth"));
+        UIShell_RtNode *edit = uishell_rt_diag_tool(s, str8_lit("src/berths.rs"));
+        UIShell_RtNode *shot = uishell_rt_diag_container(s, WHEELHOUSE_RICH_KIND_SECTION, WHEELHOUSE_RICH_SECTION_TOOL, str8_lit("Screenshot"));
+        B32 found = build && read && grep && edit && shot && build->child_count > 1 && read->child_count > 1 && grep->child_count && edit->child_count;
+        RichCheck(found, "the second Tool Run's calls are in the model");
+        if(found)
+        {
+          //- A shell call's output: a terminal, capped, with "Expand".
+          U64 out = build->children[1];
+          wheelhouse_rich_text_reveal(s->doc, s->sub, out, 0, &error);
+          uishell_rt_error(&error);
+          s = uishell_rt_diag_frames(d, 3);
+          UIShell_RtNode *n = uishell_rt_node(&s->model, out);
+          UIShell_RtDiagBox b = uishell_rt_diag_box(scratch.arena, out);
+          UIShell_RtFrame f = n ? uishell_rt_frame(scratch.arena, &s->model, &s->theme, n) : (UIShell_RtFrame){0};
+          UIShell_RtLayoutEntry *e = 0;
+          if(n && b.draw) { uishell_rt_block_height(s, n, dim_2f32(b.box->rect).x, &e); }
+          UI_Box *expand = b.draw ? uishell_rt_diag_named(b.box, str8_lit("###rt_expand")) : &ui_nil_box;
+          UI_Box *build_header = uishell_rt_diag_drawn(uishell_rt_header_draw, build->key);
+          String8 took = uishell_rt_diag_text(uishell_rt_diag_named(build_header, str8_lit("###rt_duration")));
+          fprintf(stderr, "RICH_TEXT_CHAT terminal lines=%llu duration=\"%.*s\"\n", (unsigned long long)(e ? e->layout->text.line_count : 0), str8_varg(took));
+          RichCheck(n && n->kind == WHEELHOUSE_RICH_KIND_LOG && f.terminal && e && e->layout->text.line_count == UISHELL_RT_TERMINAL_INLINE_LINES &&
+                    str8_match(uishell_rt_diag_text(expand), str8_lit("Expand"), 0),
+                    "a shell call's output is a terminal-styled log, capped at 15 lines, with Expand");
+          RichCheck(str8_match(took, str8_lit("1m 05s"), 0) && build->duration_ms == 65000 && bash->duration_ms == WHEELHOUSE_RICH_NO_DURATION,
+                    "a call's header shows its duration when its start and end are known, and none otherwise");
+          if(!ui_box_is_nil(expand))
+          {
+            d->now_us += 2000000;
+            s = uishell_rt_diag_click(d, center_2f32(expand->rect), 0, 1);
+            s = uishell_rt_diag_frames(d, 2);
+            b = uishell_rt_diag_box(scratch.arena, out);
+            e = 0;
+            if(b.draw) { uishell_rt_block_height(s, n, dim_2f32(b.box->rect).x, &e); }
+            expand = b.draw ? uishell_rt_diag_named(b.box, str8_lit("###rt_expand")) : &ui_nil_box;
+            RichCheck(e && e->layout->text.line_count == 40 && str8_match(uishell_rt_diag_text(expand), str8_lit("Collapse"), 0),
+                      "Expand shows a shell call's whole output, then offers Collapse");
+          }
+
+          //- A read's file: a code Embed in its path's language.
+          U64 file = read->children[1];
+          wheelhouse_rich_text_reveal(s->doc, s->sub, file, 0, &error);
+          uishell_rt_error(&error);
+          s = uishell_rt_diag_frames(d, 3);
+          n = uishell_rt_node(&s->model, file);
+          b = uishell_rt_diag_box(scratch.arena, file);
+          RichCheck(n && b.draw && uishell_rt_code_embedded(n) && uishell_rt_code(s, n)->fence_lang == TXT_LangKind_Rust,
+                    "a read's output is a code Embed, its language from the path's extension");
+
+          //- An edit's diff: laid out here, + lines green and - lines red.
+          U64 diff = edit->children[0];
+          wheelhouse_rich_text_reveal(s->doc, s->sub, diff, 0, &error);
+          uishell_rt_error(&error);
+          s = uishell_rt_diag_frames(d, 3);
+          n = uishell_rt_node(&s->model, diff);
+          b = uishell_rt_diag_box(scratch.arena, diff);
+          e = 0;
+          if(n && b.draw) { uishell_rt_block_height(s, n, dim_2f32(b.box->rect).x, &e); }
+          RichCheck(n && b.draw && uishell_rt_is_diff(n) && !uishell_rt_code_embedded(n) && uishell_rt_diag_inks_palette(s, e, 2) &&
+                    uishell_rt_diag_inks_palette(s, e, 1), "an edit's output is a diff, its added and removed lines coloured");
+          // A removed line reading "-- a note" shows as "--- a note": red,
+          // not a file's header.
+          U64 note = n ? str8_find_needle(n->text, 0, str8_lit("--- a note"), 0) : 0;
+          B32 note_red = 0;
+          UIShell_RtStyled styled = n ? uishell_rt_styled(scratch.arena, &s->theme, n) : (UIShell_RtStyled){0};
+          for(U64 r = 0; r < styled.run_count; r += 1)
+          {
+            WhTextStyleRun *run = &styled.runs[r];
+            UIShell_RtStyleInk *ink = &styled.inks[run->style];
+            note_red |= run->start <= note && note < run->start + run->len && (ink->ink & UIShell_RtInk_Literal) && ink->color == (UISHELL_RT_PALETTE_BIT | 1);
+          }
+          RichCheck(note_red, "a removed line that starts with -- is red, not taken for a file's header");
+
+          //- A search's matches: a list of path:line entries.
+          U64 matches = grep->children[0];
+          UIShell_RtNode *list = uishell_rt_node(&s->model, matches);
+          UIShell_RtNode *item = list && list->child_count ? uishell_rt_node(&s->model, list->children[0]) : 0;
+          UIShell_RtNode *entry = item && item->child_count ? uishell_rt_node(&s->model, item->children[0]) : 0;
+          RichCheck(list && list->kind == WHEELHOUSE_RICH_KIND_LIST && list->child_count == 2 && entry &&
+                    str8_match(entry->text, str8_lit("src/a.rs:3: berth"), 0), "a search's output is a list of its matches");
+
+          //- A call with no title shows its name.
+          s = uishell_rt_diag_frames(d, 2);
+          UI_Box *shot_header = uishell_rt_diag_drawn(uishell_rt_header_draw, shot->key);
+          RichCheck(shot->title.size == 0 && str8_match(uishell_rt_diag_text(uishell_rt_diag_named(shot_header, str8_lit("###rt_label"))), str8_lit("Screenshot"), 0),
+                    "a call's header shows its name when it has no title");
+        }
+        // Back to the top, for what follows.
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .delta_unit = UI_EventDeltaUnit_Whole, .delta_2s32 = v2s32(0, -1)});
+        s = uishell_rt_diag_frames(d, 3);
       }
 
       //- A Divider marks the compaction.

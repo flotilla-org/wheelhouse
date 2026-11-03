@@ -36,6 +36,9 @@ pub const WHEELHOUSE_RICH_KIND_TURN: u32 = 5;
 /// A tool call, reasoning, or a subagent's thread: the node's `section`,
 /// `name`, `title`, `tool` and `status` give its header.
 pub const WHEELHOUSE_RICH_KIND_SECTION: u32 = 6;
+/// Two or more tool calls in a row, with no text between them: the node's
+/// `summary` and `failed` give its header.
+pub const WHEELHOUSE_RICH_KIND_TOOL_RUN: u32 = 7;
 pub const WHEELHOUSE_RICH_KIND_PARAGRAPH: u32 = 16;
 pub const WHEELHOUSE_RICH_KIND_HEADING: u32 = 17;
 /// Front matter is a hidden Code Block.
@@ -50,6 +53,10 @@ pub const WHEELHOUSE_RICH_KIND_LOG: u32 = 21;
 pub const WHEELHOUSE_RICH_KIND_DIVIDER: u32 = 22;
 /// A note standing in for content, such as output that was cut.
 pub const WHEELHOUSE_RICH_KIND_NOTICE: u32 = 23;
+/// A tool call's input, first in its Section: its command, or its arguments
+/// as compact JSON with long strings folded. Its `language` is `sh`, `json`,
+/// or empty for arguments that aren't JSON yet.
+pub const WHEELHOUSE_RICH_KIND_INPUT: u32 = 24;
 
 pub const WHEELHOUSE_RICH_ATTR_EMPHASIS: u32 = 0;
 pub const WHEELHOUSE_RICH_ATTR_STRONG: u32 = 1;
@@ -116,6 +123,10 @@ pub const WHEELHOUSE_RICH_STATUS_OK: u32 = 2;
 pub const WHEELHOUSE_RICH_STATUS_FAILED: u32 = 3;
 pub const WHEELHOUSE_RICH_STATUS_INTERRUPTED: u32 = 4;
 pub const WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL: u32 = 5;
+
+/// A Section's `duration_ms` when its call's start or end time isn't known:
+/// compare against it before showing a duration.
+pub const WHEELHOUSE_RICH_NO_DURATION: u64 = u64::MAX;
 
 pub const WHEELHOUSE_RICH_TASK_NONE: u32 = 0;
 pub const WHEELHOUSE_RICH_TASK_OPEN: u32 = 1;
@@ -250,6 +261,16 @@ pub struct WheelhouseRichNode {
     pub name: Text,
     /// A tool Section's input summary; a subagent's thread id.
     pub title: Text,
+    /// A tool Section's, from its start to its result, or
+    /// WHEELHOUSE_RICH_NO_DURATION.
+    pub duration_ms: u64,
+    /// A Tool Run's calls by kind, such as "Ran 3 commands · edited 2 files ·
+    /// 1 failed".
+    pub summary: Text,
+    /// How many of a Tool Run's calls failed or were interrupted.
+    pub failed: u32,
+    /// Where in `summary` its failures start: its length if none failed.
+    pub failed_at: u32,
 }
 
 /// As ListOpView, with a Rich Text key: INSERT reads `at` and `key`, REMOVE
@@ -322,6 +343,10 @@ struct Header<'a> {
     status: u32,
     name: &'a str,
     title: &'a str,
+    duration_ms: u64,
+    summary: &'a str,
+    failed: u32,
+    failed_at: u32,
 }
 
 fn header(detail: &Detail) -> Header<'_> {
@@ -332,6 +357,10 @@ fn header(detail: &Detail) -> Header<'_> {
         status: WHEELHOUSE_RICH_STATUS_NONE,
         name: "",
         title: "",
+        duration_ms: WHEELHOUSE_RICH_NO_DURATION,
+        summary: "",
+        failed: 0,
+        failed_at: 0,
     };
     match detail {
         Detail::Turn { role } => {
@@ -341,7 +370,7 @@ fn header(detail: &Detail) -> Header<'_> {
                 Role::System => WHEELHOUSE_RICH_ROLE_SYSTEM,
             }
         }
-        Detail::Section { section, name, title, tool, status } => {
+        Detail::Section { section, name, title, tool, status, duration_ms } => {
             out.section = match section {
                 SectionKind::Tool => WHEELHOUSE_RICH_SECTION_TOOL,
                 SectionKind::Reasoning => WHEELHOUSE_RICH_SECTION_REASONING,
@@ -365,7 +394,9 @@ fn header(detail: &Detail) -> Header<'_> {
                 ToolStatus::AwaitingApproval => WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL,
             };
             (out.name, out.title) = (name, title);
+            out.duration_ms = duration_ms.unwrap_or(WHEELHOUSE_RICH_NO_DURATION);
         }
+        Detail::ToolRun(summary) => (out.summary, out.failed, out.failed_at) = (&summary.text, summary.failed, summary.failed_at),
         _ => {}
     }
     out
@@ -513,6 +544,10 @@ impl Buffers {
             status: head.status,
             name: Text::borrowed(head.name),
             title: Text::borrowed(head.title),
+            duration_ms: head.duration_ms,
+            summary: Text::borrowed(head.summary),
+            failed: head.failed,
+            failed_at: head.failed_at,
         }
     }
 }
@@ -733,7 +768,8 @@ pub unsafe extern "C" fn wheelhouse_rich_text_backfill(
     .is_some() as u32
 }
 
-/// A node's Container role, kind and status, as a delta's node has them.
+/// A node's Container role, kind and status, and a Tool Run's summary, as a
+/// delta's node has them.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WheelhouseRichContainer {
@@ -745,6 +781,10 @@ pub struct WheelhouseRichContainer {
     pub status: u32,
     pub name: Text,
     pub title: Text,
+    pub duration_ms: u64,
+    pub summary: Text,
+    pub failed: u32,
+    pub failed_at: u32,
 }
 
 /// The node `key`'s Container fields, borrowed from the handle until the
@@ -769,6 +809,10 @@ pub unsafe extern "C" fn wheelhouse_rich_text_container(
             status: head.status,
             name: Text::borrowed(head.name),
             title: Text::borrowed(head.title),
+            duration_ms: head.duration_ms,
+            summary: Text::borrowed(head.summary),
+            failed: head.failed,
+            failed_at: head.failed_at,
         };
         Ok(())
     })
