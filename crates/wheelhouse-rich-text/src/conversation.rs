@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use conversation_events::{
     parse_line, Event, Lines, Message, Parent, Role as EventRole, ToolCallResult, ToolKind as EventToolKind, ToolStatus as EventToolStatus,
-    Truncated, COMPACTION, COMPLETED, CONTRACT, DIFF, MARKDOWN,
+    Truncated, ANSI, COMPACTION, COMPLETED, CONTRACT, DIFF, MARKDOWN,
 };
 use serde_json::Value;
 
@@ -198,7 +198,7 @@ struct ToolResult {
 enum Body {
     Text { role: Role, md: Markdown },
     Reasoning { md: Markdown },
-    Tool { name: String, title: String, kind: ToolKind, args: String, result: Option<ToolResult>, started: Option<u64> },
+    Tool { name: String, title: String, kind: ToolKind, args: String, result: Option<ToolResult>, started: Option<u64>, shown: Shown },
     Subagent { status: ToolStatus },
     Divider { text: String },
     Notice { text: String },
@@ -230,10 +230,10 @@ impl Item {
         match &self.body {
             Body::Text { role, .. } => (Kind::Turn, "", Detail::Turn { role: *role }),
             Body::Reasoning { md } => (Kind::Section, "", section(SectionKind::Reasoning, "", "", ToolKind::Other, streaming(md), None)),
-            Body::Tool { name, title, kind, args, result, started } => {
+            Body::Tool { name, kind, result, started, shown, .. } => {
                 let status = result.as_ref().map_or(ToolStatus::Pending, |r| r.status);
                 let duration = started.zip(result.as_ref().and_then(|r| r.ended)).and_then(|(start, end)| end.checked_sub(start));
-                (Kind::Section, "", section(SectionKind::Tool, name, &shown_title(name, title, *kind, args), *kind, status, duration))
+                (Kind::Section, "", section(SectionKind::Tool, name, &shown.title, *kind, status, duration))
             }
             Body::Subagent { status } => {
                 (Kind::Section, "", section(SectionKind::Subagent, "", &self.thread, ToolKind::Agent, *status, None))
@@ -374,9 +374,8 @@ fn first_line(text: &str) -> &str {
 /// What a call's header shows as its title (#667): the path an edit or a
 /// read names and the pattern a search names, else the producer's title;
 /// without one, a command, or the tool's name and its first argument.
-fn shown_title(name: &str, title: &str, kind: ToolKind, args: &str) -> String {
-    let value: Option<Value> = serde_json::from_str(args).ok();
-    let arg = |keys: &[&str]| value.as_ref().and_then(|v| keys.iter().find_map(|k| v.get(*k)?.as_str())).filter(|s| !s.trim().is_empty());
+fn shown_title(name: &str, title: &str, kind: ToolKind, value: Option<&Value>) -> String {
+    let arg = |keys: &[&str]| value.and_then(|v| keys.iter().find_map(|k| v.get(*k)?.as_str())).filter(|s| !s.trim().is_empty());
     let named = match kind {
         ToolKind::Edit | ToolKind::Read => arg(&["file_path", "notebook_path", "path"]),
         ToolKind::Search => arg(&["pattern", "query"]),
@@ -391,8 +390,7 @@ fn shown_title(name: &str, title: &str, kind: ToolKind, args: &str) -> String {
     if kind == ToolKind::Shell {
         return arg(&["command"]).map_or_else(String::new, |c| first_line(c).to_owned());
     }
-    let summary =
-        value.as_ref().and_then(Value::as_object).and_then(|o| o.values().find_map(|v| v.as_str().filter(|s| !s.trim().is_empty())));
+    let summary = value.and_then(Value::as_object).and_then(|o| o.values().find_map(|v| v.as_str().filter(|s| !s.trim().is_empty())));
     summary.map_or_else(String::new, |s| format!("{name} {}", folded(first_line(s), FOLD)))
 }
 
@@ -405,25 +403,44 @@ fn fold_strings(value: &mut Value) {
     }
 }
 
-/// A call's input Block under `parent`, if it has input: a shell call's
-/// command whole, or else its arguments as compact JSON, long strings
-/// folded.
-fn stage_input(call: Key, kind: ToolKind, args: &str, staged: &mut Staged, parent: u32) -> Option<u32> {
-    let args = args.trim();
-    let (text, language) = match serde_json::from_str::<Value>(args) {
-        _ if args.is_empty() => return None,
-        Ok(value) if value.as_object().is_some_and(|o| o.is_empty()) => return None,
-        Ok(value) if kind == ToolKind::Shell && value.get("command").and_then(Value::as_str).is_some() => {
-            (value["command"].as_str().unwrap_or_default().to_owned(), "sh")
-        }
-        Ok(mut value) => {
-            fold_strings(&mut value);
-            (value.to_string(), "json")
-        }
-        // Still streaming in, or not JSON.
-        Err(_) => (folded(args, 2 * FOLD), ""),
-    };
-    Some(staged.push(parent, Kind::Input, Some(input_key(call)), &text, vec![], Detail::Code { language: language.into() }))
+/// What a call's header and input Block show, worked out from its
+/// arguments when they change.
+#[derive(Debug, Clone, Default)]
+struct Shown {
+    title: String,
+    /// A shell call's command whole, or else its arguments as compact JSON,
+    /// long strings folded; and its language. None without arguments.
+    input: Option<(String, &'static str)>,
+}
+
+impl Shown {
+    fn of(name: &str, title: &str, kind: ToolKind, args: &str) -> Shown {
+        let args = args.trim();
+        // Arguments streaming in end a JSON value only when they're done,
+        // or nearly: the rest aren't parsed, so a delta costs what it adds.
+        let value = if args.ends_with(['}', ']']) { serde_json::from_str::<Value>(args).ok() } else { None };
+        let title = shown_title(name, title, kind, value.as_ref());
+        let input = match value {
+            _ if args.is_empty() => None,
+            Some(value) if value.as_object().is_some_and(|o| o.is_empty()) => None,
+            Some(value) if kind == ToolKind::Shell && value.get("command").and_then(Value::as_str).is_some() => {
+                Some((value["command"].as_str().unwrap_or_default().to_owned(), "sh"))
+            }
+            Some(mut value) => {
+                fold_strings(&mut value);
+                Some((value.to_string(), "json"))
+            }
+            // Still streaming in, or not JSON.
+            None => Some((folded(args, 2 * FOLD), "")),
+        };
+        Shown { title, input }
+    }
+}
+
+/// A call's input Block under `parent`, if it has input.
+fn stage_input(call: Key, shown: &Shown, staged: &mut Staged, parent: u32) -> Option<u32> {
+    let (text, language) = shown.input.as_ref()?;
+    Some(staged.push(parent, Kind::Input, Some(input_key(call)), text, vec![], Detail::Code { language: (*language).into() }))
 }
 
 /// How many of the call `key`'s first children are its input: 0 or 1.
@@ -463,7 +480,9 @@ fn stage_result(r: &ToolResult, kind: ToolKind, path: &str, staged: &mut Staged,
             && extension.chars().all(|c| c.is_ascii_alphanumeric())
             && extension.chars().any(|c| c.is_ascii_alphabetic());
         let language = if named { extension } else { "" };
-        let content = if media == MARKDOWN || media == DIFF { r.content.trim_end_matches('\n').to_owned() } else { text(&r.content) };
+        // A file's text is shown as it is: only terminal output has escapes
+        // and carriage returns to interpret.
+        let content = if media == ANSI { text(&r.content) } else { r.content.trim_end_matches('\n').to_owned() };
         staged.push(parent, Kind::Code, None, &content, vec![], Detail::Code { language: language.into() });
     } else if kind == ToolKind::Search && media != MARKDOWN && media != DIFF && !media.starts_with("image/") {
         let content = text(&r.content);
@@ -742,8 +761,11 @@ impl Conversation {
                 self.tool(at, order, &thread, &e.tool_call_id, (n, t, k, e.timestamp), None);
             }
             Event::ToolCallArgs(e) => {
-                if let Some(Body::Tool { args, .. }) = self.items.get_mut(&tool_key(&thread, &e.tool_call_id)).map(|i| &mut i.body) {
+                if let Some(Body::Tool { name, title, kind, args, shown, .. }) =
+                    self.items.get_mut(&tool_key(&thread, &e.tool_call_id)).map(|i| &mut i.body)
+                {
                     args.push_str(&e.delta);
+                    *shown = Shown::of(name, title, *kind, args);
                 }
             }
             Event::ToolCallResult(e) => {
@@ -793,14 +815,16 @@ impl Conversation {
     ) {
         let key = tool_key(thread, id);
         let (name, title, kind, started) = head;
-        let fresh = Body::Tool { name: name.clone(), title: title.clone(), kind, args: String::new(), result: None, started };
+        let shown = Shown::of(&name, &title, kind, "");
+        let fresh = Body::Tool { name: name.clone(), title: title.clone(), kind, args: String::new(), result: None, started, shown };
         if let Some(item) = self.create(key, order, thread, || fresh) {
-            if let Body::Tool { name: n, title: t, kind: k, args, started: s, .. } = &mut item.body {
+            if let Body::Tool { name: n, title: t, kind: k, args, started: s, shown, .. } = &mut item.body {
                 (*n, *t, *k, *s) = (name, title, kind, started);
                 if let Some(arguments) = snapshot {
                     *args = arguments.to_owned();
                     item.snapshot = Some(at);
                 }
+                *shown = Shown::of(n, t, *k, args);
             }
         }
         // Subagents it started now go inside it.
@@ -921,13 +945,13 @@ impl Conversation {
         let node = staged.push(parent, kind, Some(key), text, vec![], detail);
         match &mut item.body {
             Body::Text { md, .. } | Body::Reasoning { md } => md.stage(staged, node, doc),
-            Body::Tool { name, title, kind, args, result, .. } => {
+            Body::Tool { kind, result, shown, .. } => {
                 if let Some(r) = result {
-                    stage_result(r, *kind, &shown_title(name, title, *kind, args), staged, node);
+                    stage_result(r, *kind, &shown.title, staged, node);
                 }
                 // Staged after the result, so the result's ordinals are as
                 // an update stages them, then moved first.
-                if stage_input(key, *kind, args, staged, node).is_some() {
+                if stage_input(key, shown, staged, node).is_some() {
                     staged.nodes[node as usize].children.rotate_right(1);
                 }
             }
@@ -1171,14 +1195,14 @@ impl Conversation {
             sink.update(&head, 1);
             match &mut item.body {
                 Body::Text { md, .. } | Body::Reasoning { md } => md.stream(key, sink),
-                Body::Tool { name, title, kind, args, result, .. } => {
+                Body::Tool { kind, result, shown, .. } => {
                     let mut input = Staged::under(key, 0);
-                    stage_input(key, *kind, args, &mut input, 0);
+                    stage_input(key, shown, &mut input, 0);
                     let was = lead(sink.doc, key);
                     sink.splice(key, 0, Some(was), input);
                     let mut staged = Staged::under(key, 0);
                     if let Some(r) = result {
-                        stage_result(r, *kind, &shown_title(name, title, *kind, args), &mut staged, 0);
+                        stage_result(r, *kind, &shown.title, &mut staged, 0);
                     }
                     sink.splice(key, lead(sink.doc, key) + own, None, staged);
                 }

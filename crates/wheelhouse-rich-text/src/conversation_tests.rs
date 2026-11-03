@@ -605,3 +605,24 @@ fn a_reads_language_comes_from_a_path_only() {
     assert_eq!(language("Read v1.2", ""), "");
     assert_eq!(language("notes", r#"{"file_path":"v1.2"}"#), "");
 }
+
+// A later snapshot can leave a call with no arguments: its input Block goes,
+// and its output stays where it was.
+#[test]
+fn a_call_whose_arguments_go_loses_its_input() {
+    let start = line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","kind":"shell"}"#);
+    let args = line(r#"{"type":"ToolCallArgs","threadId":"t","seq":2,"toolCallId":"c","delta":"{\"command\":\"ls\"}"}"#);
+    let result = line(r#"{"type":"ToolCallResult","threadId":"t","seq":3,"toolCallId":"c","content":"a\n"}"#);
+    let snapshot = line(
+        r#"{"type":"MessagesSnapshot","threadId":"t","seq":4,"messages":[{"id":"m","role":"assistant","toolCalls":[{"id":"c","type":"function","function":{"name":"Bash","arguments":""},"kind":"shell"}]}]}"#,
+    );
+    let mut rich = RichText::open_conversation(&[line(HELLO), start, args, result].concat());
+    let kinds = |rich: &RichText| {
+        let call = rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap();
+        rich.doc().children(call).map(|c| rich.doc().kind(c)).collect::<Vec<_>>()
+    };
+    assert_eq!(kinds(&rich), [Kind::Input, Kind::Log]);
+    rich.append(&snapshot);
+    rich.doc().assert_rows();
+    assert_eq!(kinds(&rich), [Kind::Log]);
+}

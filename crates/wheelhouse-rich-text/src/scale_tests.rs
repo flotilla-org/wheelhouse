@@ -178,3 +178,37 @@ fn appending_to_a_long_conversation_costs_the_same_late_as_early() {
     eprintln!("{} lines, {items} top-level children: first fifth {first:?}, last fifth {last:?}", lines.len());
     assert!(last < first * 3, "late appends took {last:?}, early ones {first:?}");
 }
+
+/// A call whose arguments stream in as many small deltas, such as a Write
+/// of a large file: each delta costs what it adds, not what came before.
+#[test]
+fn streaming_a_large_calls_arguments_costs_what_each_delta_adds() {
+    let line = |event: String| format!("{event}\n").into_bytes();
+    let start = r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Write","kind":"edit"}"#;
+    let args = format!(r#"{{"file_path":"big.txt","content":"{}"}}"#, "abcdefgh".repeat(256 * 1024));
+    let deltas: Vec<Vec<u8>> = args
+        .as_bytes()
+        .chunks(1024)
+        .enumerate()
+        .map(|(i, piece)| {
+            let delta = serde_json::to_string(std::str::from_utf8(piece).unwrap()).unwrap();
+            line(format!(r#"{{"type":"ToolCallArgs","threadId":"t","seq":{},"toolCallId":"c","delta":{delta}}}"#, i + 2))
+        })
+        .collect();
+    let mut rich = RichText::open_conversation(&[line(r#"{"type":"Hello","contract":1}"#.into()), line(start.into())].concat());
+    let (half, mut first, mut last) = (deltas.len() / 2, Duration::ZERO, Duration::ZERO);
+    for (i, delta) in deltas.iter().enumerate() {
+        let started = Instant::now();
+        rich.append(delta);
+        if i < half {
+            first += started.elapsed();
+        } else {
+            last += started.elapsed();
+        }
+    }
+    eprintln!("{} deltas of {} bytes: first half {first:?}, second half {last:?}", deltas.len(), args.len());
+    assert!(last < first * 3, "late deltas took {last:?}, early ones {first:?}");
+    let call = rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap();
+    let input = rich.doc().children(call).next().unwrap();
+    assert!(rich.doc().text(input).starts_with(r#"{"content":"abcdefgh"#), "the input, its content folded");
+}

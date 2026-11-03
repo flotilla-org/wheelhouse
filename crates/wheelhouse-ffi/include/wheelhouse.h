@@ -572,7 +572,8 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 #define WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL 5
 
-// A Section's `duration_ms` when its call's start or end time isn't known.
+// A Section's `duration_ms` when its call's start or end time isn't known:
+// compare against it before showing a duration.
 #define WHEELHOUSE_RICH_NO_DURATION UINT64_MAX
 
 #define WHEELHOUSE_RICH_TASK_NONE 0

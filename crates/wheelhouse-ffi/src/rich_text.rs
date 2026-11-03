@@ -124,7 +124,8 @@ pub const WHEELHOUSE_RICH_STATUS_FAILED: u32 = 3;
 pub const WHEELHOUSE_RICH_STATUS_INTERRUPTED: u32 = 4;
 pub const WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL: u32 = 5;
 
-/// A Section's `duration_ms` when its call's start or end time isn't known.
+/// A Section's `duration_ms` when its call's start or end time isn't known:
+/// compare against it before showing a duration.
 pub const WHEELHOUSE_RICH_NO_DURATION: u64 = u64::MAX;
 
 pub const WHEELHOUSE_RICH_TASK_NONE: u32 = 0;
