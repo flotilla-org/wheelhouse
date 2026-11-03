@@ -276,13 +276,17 @@ struct UIShell_RtNode
   U64 child_cap;
   // A Block's place in document order, for comparing selection ends.
   U64 order;
-  // A Turn's role; a Section's kind, tool, status, name and title.
+  // A Turn's role; a Section's kind, tool, status, name, title and
+  // duration; a Tool Run's summary and failures.
   U32 role;
   U32 section;
   U32 tool;
   U32 status;
   String8 name;
   String8 title;
+  U64 duration_ms;
+  String8 summary;
+  U32 failed;
 };
 
 typedef struct UIShell_RtModel UIShell_RtModel;
@@ -369,7 +373,7 @@ uishell_rt_node_remove(UIShell_RtModel *m, U64 key)
 internal U64
 uishell_rt_node_bytes(UIShell_RtNode *n)
 {
-  return (n->text.size + n->language.size + n->label.size + n->media_type.size + n->name.size + n->title.size +
+  return (n->text.size + n->language.size + n->label.size + n->media_type.size + n->name.size + n->title.size + n->summary.size +
           n->span_count*sizeof(WheelhouseRichSpan) + n->string_count*sizeof(String8) +
           n->column_count*sizeof(U32) + n->column_count*n->row_count*sizeof(WheelhouseRichCell) +
           n->child_cap*sizeof(U64));
@@ -384,6 +388,7 @@ uishell_rt_node_copy_content(Arena *arena, UIShell_RtNode *n)
   n->media_type = push_str8_copy(arena, n->media_type);
   n->name = push_str8_copy(arena, n->name);
   n->title = push_str8_copy(arena, n->title);
+  n->summary = push_str8_copy(arena, n->summary);
   WheelhouseRichSpan *spans = push_array_no_zero(arena, WheelhouseRichSpan, n->span_count);
   MemoryCopy(spans, n->spans, sizeof(*spans)*n->span_count);
   n->spans = spans;
@@ -424,6 +429,9 @@ uishell_rt_node_set(UIShell_RtModel *m, UIShell_RtNode *n, WheelhouseRichNode *c
   n->status = c->status;
   n->name = uishell_rt_s8(c->name);
   n->title = uishell_rt_s8(c->title);
+  n->duration_ms = c->duration_ms;
+  n->summary = uishell_rt_s8(c->summary);
+  n->failed = c->failed;
   n->spans = (WheelhouseRichSpan *)c->spans;
   n->span_count = c->span_count;
   Temp scratch = scratch_begin(0, 0);
@@ -654,6 +662,11 @@ struct UIShell_RtTheme
   Vec4F32 find_current;
   Vec4F32 focus;
   Vec4F32 background;
+  // A shell call's output, darker than the page; a diff's added and removed
+  // lines; a failure's mark.
+  Vec4F32 terminal;
+  Vec4F32 good;
+  Vec4F32 bad;
   // ANSI's sixteen, which a log's palette colours map through (0xRRGGBB).
   U32 palette[16];
   U64 colors_hash;
@@ -680,6 +693,10 @@ uishell_rt_theme_sized(F32 font_size)
   t.find_current = t.link; t.find_current.w = 0.55f;
   t.focus = t.link;
   t.background = background;
+  t.terminal = mix_4f32(background, v4f32(0, 0, 0, 1), 0.22f);
+  String8 good[] = {str8_lit_comp("good"), str8_lit_comp("text")}, bad[] = {str8_lit_comp("bad"), str8_lit_comp("text")};
+  t.good = ui_color_from_tags_key_extras(ui_top_tags_key(), (String8Array){good, ArrayCount(good)});
+  t.bad = ui_color_from_tags_key_extras(ui_top_tags_key(), (String8Array){bad, ArrayCount(bad)});
   U32 palette[16] =
   {
     0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5,
@@ -795,6 +812,8 @@ global UIShell_RtContainerStyle uishell_rt_chat_rules[] =
   {WHEELHOUSE_RICH_KIND_TURN, WHEELHOUSE_RICH_ROLE_USER, 0, .inset_x = 0.8f, .inset_top = 0.5f, .inset_bottom = 0.5f, .max_width = 0.75f,
    .align = UIShell_RtAlign_End, .chrome = UIShell_RtChrome_Background, .radius = 0.9f, .actions = WHEELHOUSE_RICH_ACTION_MESSAGE, .gap = 0.3f},
   {WHEELHOUSE_RICH_KIND_TURN, 0, 0, .actions = WHEELHOUSE_RICH_ACTION_MESSAGE, .gap = 0.3f},
+  {WHEELHOUSE_RICH_KIND_TOOL_RUN, 0, 0, .inset_x = 1.2f, .inset_bottom = 0.3f,
+   .chrome = UIShell_RtChrome_Header|UIShell_RtChrome_Collapsed, .gap = 0.2f},
   {WHEELHOUSE_RICH_KIND_SECTION, 0, WHEELHOUSE_RICH_SECTION_TOOL, .inset_x = 1.2f, .inset_bottom = 0.3f,
    .chrome = UIShell_RtChrome_Header|UIShell_RtChrome_Collapsed,
    .actions = WHEELHOUSE_RICH_ACTION_TOOL_OUTPUT|WHEELHOUSE_RICH_ACTION_COMMAND, .gap = 0.2f},
@@ -862,6 +881,13 @@ struct UIShell_RtFrame
   // A break in a conversation: its text centred between two rules.
   B32 divider;
   B32 weak;
+  // A tool call's input line.
+  B32 input;
+  // A shell call's output, styled as a terminal: the first and last of its
+  // Log Blocks carry its box's top and bottom.
+  B32 terminal;
+  B32 terminal_first;
+  B32 terminal_last;
 };
 
 internal F32
@@ -880,11 +906,39 @@ uishell_rt_line_px(UIShell_RtTheme *t)
 // it, laid out as text otherwise.
 #define UISHELL_RT_CODE_MEDIA_TYPE "application/vnd.flotilla.code"
 
+// A diff is laid out here, its lines coloured by their first character
+// (#667): the code view has no lexer for one.
+internal B32
+uishell_rt_is_diff(UIShell_RtNode *n)
+{
+  return n->kind == WHEELHOUSE_RICH_KIND_CODE && str8_match(n->language, str8_lit("diff"), StringMatchFlag_CaseInsensitive);
+}
+
 internal B32
 uishell_rt_code_embedded(UIShell_RtNode *n)
 {
-  return n->kind == WHEELHOUSE_RICH_KIND_CODE &&
+  return n->kind == WHEELHOUSE_RICH_KIND_CODE && !uishell_rt_is_diff(n) &&
          wh_handler_from_media_type(WH_Content_Embed, str8_lit(UISHELL_RT_CODE_MEDIA_TYPE))->renderer.size != 0;
+}
+
+// A shell call's output Block, and where it is in its run of Log Blocks.
+internal B32
+uishell_rt_terminal(UIShell_RtModel *m, UIShell_RtNode *n, U64 *index_out, U64 *count_out)
+{
+  UIShell_RtNode *parent = uishell_rt_node(m, n->parent);
+  if(n->kind != WHEELHOUSE_RICH_KIND_LOG || parent == 0 || parent->section != WHEELHOUSE_RICH_SECTION_TOOL ||
+     parent->tool != WHEELHOUSE_RICH_TOOL_SHELL) { return 0; }
+  U64 index = 0, count = 0;
+  for(U64 i = 0; i < parent->child_count; i += 1)
+  {
+    UIShell_RtNode *c = uishell_rt_node(m, parent->children[i]);
+    if(c == 0 || c->kind != WHEELHOUSE_RICH_KIND_LOG) { continue; }
+    if(c == n) { index = count; }
+    count += 1;
+  }
+  if(index_out) { *index_out = index; }
+  if(count_out) { *count_out = count; }
+  return 1;
 }
 
 // Selected whole or not at all (#546; #607, decision 2).
@@ -999,7 +1053,26 @@ uishell_rt_frame(Arena *arena, UIShell_RtModel *m, UIShell_RtTheme *t, UIShell_R
       f.pad_bottom = floor_f32(px*0.75f);
     } break;
     // A log's chunks run on as one block of output.
-    case WHEELHOUSE_RICH_KIND_LOG: {} break;
+    case WHEELHOUSE_RICH_KIND_LOG:
+    {
+      U64 index = 0, count = 0;
+      if(uishell_rt_terminal(m, n, &index, &count))
+      {
+        f.terminal = 1;
+        f.terminal_first = index == 0;
+        f.terminal_last = index + 1 == count;
+        f.inset_x = floor_f32(px*0.7f);
+        f.pad_top = f.terminal_first ? floor_f32(px*0.45f) : 0;
+        f.pad_bottom = f.terminal_last ? floor_f32(px*0.45f) : 0;
+      }
+    } break;
+    case WHEELHOUSE_RICH_KIND_INPUT:
+    {
+      f.input = 1;
+      f.inset_x = floor_f32(px*0.7f);
+      f.inset_y = floor_f32(px*0.3f);
+      f.pad_bottom = floor_f32(px*0.4f);
+    } break;
     case WHEELHOUSE_RICH_KIND_DIVIDER:
     {
       f.divider = 1;
@@ -1072,7 +1145,7 @@ uishell_rt_base_style(UIShell_RtTheme *t, UIShell_RtNode *n)
     s.size = t->size*t->heading_scale[Clamp(1, n->level, 6)-1];
     s.weight = 700.f;
   }
-  else if(n->kind == WHEELHOUSE_RICH_KIND_CODE || n->kind == WHEELHOUSE_RICH_KIND_LOG)
+  else if(n->kind == WHEELHOUSE_RICH_KIND_CODE || n->kind == WHEELHOUSE_RICH_KIND_LOG || n->kind == WHEELHOUSE_RICH_KIND_INPUT)
   {
     s.family = WH_TEXT_FAMILY_CODE;
     s.size = t->size*t->code_scale;
@@ -1091,7 +1164,8 @@ internal UIShell_RtStyled
 uishell_rt_styled(Arena *arena, UIShell_RtTheme *t, UIShell_RtNode *n)
 {
   UIShell_RtStyled result = {0};
-  U64 cap = 1 + 2*n->span_count;
+  // A diff's three line styles, or a style per span's start and end.
+  U64 cap = 4 + 2*n->span_count;
   result.styles = push_array(arena, WhTextStyle, cap);
   result.inks = push_array(arena, UIShell_RtStyleInk, cap);
   UIShell_RtAttrs *style_attrs = push_array(arena, UIShell_RtAttrs, cap);
@@ -1101,6 +1175,34 @@ uishell_rt_styled(Arena *arena, UIShell_RtTheme *t, UIShell_RtNode *n)
   result.inks[0].ink = (n->kind == WHEELHOUSE_RICH_KIND_CODE ? UIShell_RtInk_Code :
                         n->kind == WHEELHOUSE_RICH_KIND_DIVIDER || n->kind == WHEELHOUSE_RICH_KIND_NOTICE ? UIShell_RtInk_Weak : 0);
   result.style_count = 1;
+  if(uishell_rt_is_diff(n))
+  {
+    // Added lines green, removed red, hunk headers weak: by the first
+    // character, the file headers left plain.
+    U64 lines = 1;
+    for(U64 i = 0; i < n->text.size; i += 1) { lines += n->text.str[i] == '\n'; }
+    result.runs = push_array(arena, WhTextStyleRun, lines);
+    U32 inks[] = {UIShell_RtInk_Literal, UIShell_RtInk_Literal, UIShell_RtInk_Weak};
+    U32 colors[] = {UISHELL_RT_PALETTE_BIT | 2, UISHELL_RT_PALETTE_BIT | 1, 0};
+    for(U32 i = 0; i < ArrayCount(inks); i += 1)
+    {
+      result.styles[1+i] = result.styles[0];
+      result.inks[1+i] = (UIShell_RtStyleInk){.ink = inks[i], .color = colors[i]};
+    }
+    result.style_count = 4;
+    for(U64 start = 0; start < n->text.size;)
+    {
+      U64 end = start;
+      while(end < n->text.size && n->text.str[end] != '\n') { end += 1; }
+      String8 line = str8_substr(n->text, r1u64(start, end));
+      B32 header = str8_match(str8_prefix(line, 4), str8_lit("+++ "), 0) || str8_match(str8_prefix(line, 4), str8_lit("--- "), 0);
+      U32 style = header ? 0 : line.size && line.str[0] == '+' ? 1 : line.size && line.str[0] == '-' ? 2 :
+                  str8_match(str8_prefix(line, 2), str8_lit("@@"), 0) ? 3 : 0;
+      if(style && end > start) { result.runs[result.run_count++] = (WhTextStyleRun){(U32)start, (U32)(end - start), style}; }
+      start = end + 1;
+    }
+    return result;
+  }
   if(n->span_count == 0) { return result; }
   U32 *bounds = push_array(arena, U32, 2*n->span_count);
   for(U64 i = 0; i < n->span_count; i += 1)
@@ -1614,6 +1716,11 @@ struct UIShell_RichTextState
   F32 content_x;
   UIShell_RtColumn *columns;
   U64 column_stamp;
+  // Capped Blocks opened to their whole: a shell call's output by its
+  // Section's key, a diff by its own.
+  U64 *opened;
+  U64 opened_count;
+  U64 opened_cap;
   // Containers already collapsed by default, so a later toggle holds.
   U64 *defaulted;
   U64 defaulted_cap;
@@ -2109,6 +2216,79 @@ uishell_rt_text_width(UIShell_RtFrame *f, F32 content_width)
   return Max(content_width - f->indent - 2*f->inset_x, 8.f);
 }
 
+// A shell call's output shows this many lines inline (#667), unless opened.
+#define UISHELL_RT_TERMINAL_INLINE_LINES 15
+
+internal B32
+uishell_rt_opened(UIShell_RichTextState *s, U64 key)
+{
+  for(U64 i = 0; i < s->opened_count; i += 1) { if(s->opened[i] == key) { return 1; } }
+  return 0;
+}
+
+internal void
+uishell_rt_toggle_opened(UIShell_RichTextState *s, U64 key)
+{
+  for(U64 i = 0; i < s->opened_count; i += 1)
+  {
+    if(s->opened[i] == key) { s->opened[i] = s->opened[--s->opened_count]; return; }
+  }
+  if(s->opened_count == s->opened_cap)
+  {
+    U64 cap = Max(16, s->opened_cap*2);
+    U64 *keys = push_array(s->arena, U64, cap);
+    MemoryCopy(keys, s->opened, sizeof(U64)*s->opened_count);
+    s->opened = keys;
+    s->opened_cap = cap;
+  }
+  s->opened[s->opened_count++] = key;
+}
+
+// What a capped Block opens with: its shell call's Section, or a diff
+// itself; 0 for a Block without a cap.
+internal U64
+uishell_rt_cap_owner(UIShell_RichTextState *s, UIShell_RtNode *n)
+{
+  if(uishell_rt_terminal(&s->model, n, 0, 0)) { return n->parent; }
+  if(uishell_rt_is_diff(n)) { return n->key; }
+  return 0;
+}
+
+typedef struct UIShell_RtCap UIShell_RtCap;
+struct UIShell_RtCap
+{
+  U64 owner;
+  B32 open;
+  // A shell output's later Log Block while its first is capped.
+  B32 hidden;
+  // Lines shown, or 0 for all of them.
+  U32 max_lines;
+  // "Expand" or "Collapse", on a row under its text.
+  B32 control;
+};
+
+internal UIShell_RtCap
+uishell_rt_cap(UIShell_RichTextState *s, UIShell_RtNode *n, UIShell_RtFrame *f, F32 content_width)
+{
+  UIShell_RtCap c = {0};
+  c.owner = uishell_rt_cap_owner(s, n);
+  if(c.owner == 0) { return c; }
+  U64 index = 0, count = 1;
+  U32 lines = f->terminal ? UISHELL_RT_TERMINAL_INLINE_LINES : UISHELL_RT_CODE_INLINE_LINES;
+  if(f->terminal) { uishell_rt_terminal(&s->model, n, &index, &count); }
+  c.open = uishell_rt_opened(s, c.owner);
+  B32 longer = count > 1;
+  if(!longer)
+  {
+    UIShell_RtLayoutEntry *full = uishell_rt_layout(&s->layouts, &s->theme, n, f, uishell_rt_text_width(f, content_width), 0);
+    longer = full && full->layout->text.line_count > lines;
+  }
+  c.hidden = !c.open && index > 0;
+  c.max_lines = !c.open && longer ? lines : 0;
+  c.control = longer && (c.open ? index + 1 == count : index == 0);
+  return c;
+}
+
 // A Block's height at content width `content_width`, laying it out if it
 // isn't already: what set_height reports.
 internal F32
@@ -2138,8 +2318,11 @@ uishell_rt_block_height(UIShell_RichTextState *s, UIShell_RtNode *n, F32 content
   }
   else
   {
-    UIShell_RtLayoutEntry *e = uishell_rt_layout(&s->layouts, &s->theme, n, &f, uishell_rt_text_width(&f, content_width), 0);
+    UIShell_RtCap cap = uishell_rt_cap(s, n, &f, content_width);
+    if(cap.hidden) { scratch_end(scratch); return 0; }
+    UIShell_RtLayoutEntry *e = uishell_rt_layout(&s->layouts, &s->theme, n, &f, uishell_rt_text_width(&f, content_width), cap.max_lines);
     if(e) { inner = e->layout->text.height; }
+    if(cap.control) { inner += uishell_rt_line_px(&s->theme); }
     if(layout_out) { *layout_out = e; }
   }
   F32 height = ceil_f32(f.pad_top + 2*f.inset_y + inner + f.pad_bottom);
@@ -2509,9 +2692,13 @@ uishell_rt_build_bucket(UIShell_RichTextState *s, UIShell_RtBucket *b, UIShell_R
       F32 y = floor_f32(f.pad_top + uishell_rt_px(t)/2);
       dr_rect(r2f32p(f.indent, y, width, y + 1.f), t->rule, 0, 0, 0);
     }
-    if(f.code)
+    if(f.code || f.input)
     {
       dr_rect(r2f32p(f.indent, f.pad_top, width, height - f.pad_bottom), t->code_block, 4.f, 0, 1.f);
+    }
+    if(f.terminal)
+    {
+      dr_rect(r2f32p(f.indent, 0, width, height), t->terminal, 0, 0, 1.f);
     }
     if(f.divider && e != 0 && e->layout->text.line_count != 0)
     {
@@ -2658,39 +2845,89 @@ internal UI_BOX_CUSTOM_DRAW(uishell_rt_header_draw)
   if(d->focused) { dr_rect(pad_2f32(box->rect, 1.f), d->focus_color, 3.f, 1.5f, 1.f); }
 }
 
-// A Section header's marks, from the icon font.
-internal RD_IconKind
-uishell_rt_tool_icon(UIShell_RtNode *n)
+// A header's mark for its kind, in the font it is drawn in. Never a caret,
+// which is the chevron's (#667). The icon font has no terminal, so a shell
+// call's is a prompt in the code font.
+internal String8
+uishell_rt_tool_icon(UIShell_RtNode *n, RD_FontSlot *slot_out)
 {
-  if(n->section == WHEELHOUSE_RICH_SECTION_REASONING) { return RD_IconKind_Glasses; }
-  if(n->section == WHEELHOUSE_RICH_SECTION_SUBAGENT) { return RD_IconKind_Thread; }
-  switch(n->tool)
+  RD_IconKind icon = RD_IconKind_Gear;
+  *slot_out = RD_FontSlot_Icons;
+  if(n->kind == WHEELHOUSE_RICH_KIND_TOOL_RUN) { icon = RD_IconKind_List; }
+  else if(n->section == WHEELHOUSE_RICH_SECTION_REASONING) { icon = RD_IconKind_Glasses; }
+  else if(n->section == WHEELHOUSE_RICH_SECTION_SUBAGENT) { icon = RD_IconKind_Thread; }
+  else switch(n->tool)
   {
     default:
-    case WHEELHOUSE_RICH_TOOL_OTHER: return RD_IconKind_Gear;
-    case WHEELHOUSE_RICH_TOOL_SHELL: return RD_IconKind_RightCaret;
-    case WHEELHOUSE_RICH_TOOL_EDIT: return RD_IconKind_Pencil;
-    case WHEELHOUSE_RICH_TOOL_READ: return RD_IconKind_FileOutline;
-    case WHEELHOUSE_RICH_TOOL_SEARCH: return RD_IconKind_Find;
-    case WHEELHOUSE_RICH_TOOL_AGENT: return RD_IconKind_Threads;
-    case WHEELHOUSE_RICH_TOOL_WEB: return RD_IconKind_Binoculars;
-    case WHEELHOUSE_RICH_TOOL_MCP: return RD_IconKind_Module;
+    case WHEELHOUSE_RICH_TOOL_OTHER: icon = RD_IconKind_Gear; break;
+    case WHEELHOUSE_RICH_TOOL_SHELL: { *slot_out = RD_FontSlot_Code; return str8_lit(">_"); }
+    case WHEELHOUSE_RICH_TOOL_EDIT: icon = RD_IconKind_Pencil; break;
+    case WHEELHOUSE_RICH_TOOL_READ: icon = RD_IconKind_FileOutline; break;
+    case WHEELHOUSE_RICH_TOOL_SEARCH: icon = RD_IconKind_Find; break;
+    case WHEELHOUSE_RICH_TOOL_AGENT: icon = RD_IconKind_Threads; break;
+    case WHEELHOUSE_RICH_TOOL_WEB: icon = RD_IconKind_Binoculars; break;
+    case WHEELHOUSE_RICH_TOOL_MCP: icon = RD_IconKind_Module; break;
   }
+  return rd_icon_kind_text_table[icon];
 }
 
+// Pending shows a spinner and ok shows nothing (#667); this is the mark for
+// the rest.
 internal RD_IconKind
 uishell_rt_status_icon(U32 status)
 {
   switch(status)
   {
     default: break;
-    case WHEELHOUSE_RICH_STATUS_PENDING: return RD_IconKind_Refresh;
-    case WHEELHOUSE_RICH_STATUS_OK: return RD_IconKind_Check;
-    case WHEELHOUSE_RICH_STATUS_FAILED: return RD_IconKind_X;
-    case WHEELHOUSE_RICH_STATUS_INTERRUPTED: return RD_IconKind_Stop;
+    case WHEELHOUSE_RICH_STATUS_FAILED:
+    case WHEELHOUSE_RICH_STATUS_INTERRUPTED: return RD_IconKind_X;
     case WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL: return RD_IconKind_QuestionMark;
   }
   return RD_IconKind_Null;
+}
+
+internal B32
+uishell_rt_status_bad(U32 status)
+{
+  return status == WHEELHOUSE_RICH_STATUS_FAILED || status == WHEELHOUSE_RICH_STATUS_INTERRUPTED;
+}
+
+// A call's duration as a header shows it.
+internal String8
+uishell_rt_duration(Arena *arena, U64 ms)
+{
+  unsigned long long v = ms;
+  if(v < 1000) { return push_str8f(arena, "%llums", v); }
+  if(v < 60000) { return push_str8f(arena, "%.1fs", v/1000.0); }
+  if(v < 3600000) { return push_str8f(arena, "%llum %02llus", v/60000, (v/1000)%60); }
+  return push_str8f(arena, "%lluh %02llum", v/3600000, (v/60000)%60);
+}
+
+// A pending call's spinner: dots round a circle, the brightest moving on.
+#define UISHELL_RT_SPINNER_DOTS 8
+#define UISHELL_RT_SPINNER_STEP_US 90000
+
+typedef struct UIShell_RtSpinnerDraw UIShell_RtSpinnerDraw;
+struct UIShell_RtSpinnerDraw
+{
+  Vec4F32 color;
+  U64 phase;
+};
+
+internal UI_BOX_CUSTOM_DRAW(uishell_rt_spinner_draw)
+{
+  UIShell_RtSpinnerDraw *d = (UIShell_RtSpinnerDraw *)user_data;
+  Vec2F32 c = center_2f32(box->rect);
+  F32 r = Min(dim_2f32(box->rect).x, dim_2f32(box->rect).y)*0.3f, dot = Max(1.5f, r*0.3f);
+  for(U64 i = 0; i < UISHELL_RT_SPINNER_DOTS; i += 1)
+  {
+    F32 a = (F32)i/UISHELL_RT_SPINNER_DOTS;
+    U64 behind = (d->phase + UISHELL_RT_SPINNER_DOTS - i) % UISHELL_RT_SPINNER_DOTS;
+    Vec4F32 color = d->color;
+    color.w *= 1.f - 0.8f*(F32)behind/UISHELL_RT_SPINNER_DOTS;
+    Vec2F32 p = v2f32(c.x + r*sin_f32(a), c.y - r*cos_f32(a));
+    dr_rect(r2f32p(p.x - dot, p.y - dot, p.x + dot, p.y + dot), color, dot, 0, 1.f);
+  }
 }
 
 ////////////////////////////////
@@ -2708,6 +2945,7 @@ struct UIShell_RtPlaced
   UIShell_RtNode *node;
   UIShell_RtLayoutEntry *layout;
   UIShell_RtFrame frame;
+  UIShell_RtCap cap;
   B32 visible;
   // A header or footer row's Container, and its style.
   UIShell_RtNode *container;
@@ -2751,6 +2989,14 @@ uishell_rt_control_rect(UIShell_RtPlaced *p, UIShell_RtTheme *t, U32 slot)
   F32 w = floor_f32(uishell_rt_px(t)*3.8f), h = uishell_rt_control_h(t), gap = uishell_rt_control_gap(t);
   F32 x1 = dim_2f32(p->rect).x - slot*(w + gap), y1 = p->frame.pad_top - gap;
   return r2f32p(x1 - w, y1 - h, x1, y1);
+}
+
+// A capped Block's "Expand" or "Collapse", under its text.
+internal Rng2F32
+uishell_rt_cap_rect(UIShell_RtPlaced *p, UIShell_RtTheme *t)
+{
+  F32 x0 = p->frame.indent + p->frame.inset_x, y0 = p->frame.pad_top + p->frame.inset_y + (p->layout ? p->layout->layout->text.height : 0);
+  return r2f32p(x0, y0, x0 + floor_f32(uishell_rt_px(t)*6.f), y0 + uishell_rt_line_px(t));
 }
 
 internal Vec2F32
@@ -3347,6 +3593,7 @@ uishell_rt_place(Arena *arena, UIShell_RichTextState *s, F32 content_x, F32 cont
     p->rect.x0 = x.min;
     p->rect.x1 = x.max;
     p->frame = uishell_rt_frame(arena, &s->model, &s->theme, p->node);
+    p->cap = uishell_rt_cap(s, p->node, &p->frame, dim_1f32(x));
     uishell_rt_block_height(s, p->node, dim_1f32(x), &p->layout);
   }
   // The anchor holds its line: after the anchored Block is laid out anew,
@@ -3423,6 +3670,7 @@ uishell_rt_stops(Arena *arena, UIShell_RichTextState *s, UIShell_RtPlacement *pl
       if(capped) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Expand, p->key, 1, 0}; }
     }
     else if(p->frame.code) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_CopyButton, p->key, 0, 0}; }
+    if(p->node && p->cap.control) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Expand, p->key, 1, 0}; }
     for(U64 sp = 0; p->node && sp < p->node->span_count && more_count < ArrayCount(more); sp += 1)
     {
       WheelhouseRichSpan *span = &p->node->spans[sp];
@@ -3465,8 +3713,11 @@ uishell_rt_activate_stop(UIShell_RichTextState *s, UIShell_RtStop *stop)
     {
       UIShell_RtTable *t = uishell_rt_table_of(s, stop->key);
       UIShell_RtCode *c = uishell_rt_code_of(s, stop->key);
+      UIShell_RtNode *n = uishell_rt_node(&s->model, stop->key);
+      U64 owner = n ? uishell_rt_cap_owner(s, n) : 0;
       if(t) { t->expanded = !t->expanded; }
       if(c) { c->expanded = !c->expanded; }
+      if(owner) { uishell_rt_toggle_opened(s, owner); }
     } break;
     case UIShell_RtStop_Open: { uishell_rt_code_open(s, stop->key); } break;
     case UIShell_RtStop_CopyButton:
@@ -3837,6 +4088,11 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
       if(table && (capped || table->expanded) && contains_2f32(uishell_rt_expand_rect(under, t, table_height), in_block))
       {
         table->expanded = !table->expanded;
+        continue;
+      }
+      if(under && under->cap.control && contains_2f32(uishell_rt_cap_rect(under, t), in_block))
+      {
+        uishell_rt_toggle_opened(s, under->cap.owner);
         continue;
       }
       if(in_table)
@@ -4698,8 +4954,10 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       }
     }
 
-    //- Section headers: an icon for the kind, the name, the title and a
-    // status mark.
+    //- Headers (#667): the chevron, an icon for the kind, the title, or the
+    // name when there is none, then the duration and a status mark. A Tool
+    // Run's is its summary, its failures in red.
+    B32 spinning = 0;
     for(U64 i = 0; i < pl.count; i += 1)
     {
       UIShell_RtPlaced *p = &pl.v[i];
@@ -4716,12 +4974,24 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
                    (s->focus_stop_value.kind == UIShell_RtStop_Toggle || s->focus_stop_value.kind == UIShell_RtStop_Thread);
       d->wash = mix_4f32(t->background, t->text, 0.06f);
       d->focus_color = t->focus;
-      String8 name = n->name;
-      if(n->section == WHEELHOUSE_RICH_SECTION_REASONING) { name = str8_lit("Thinking"); }
-      if(n->section == WHEELHOUSE_RICH_SECTION_SUBAGENT) { name = str8_lit("Subagent"); }
+      B32 run = n->kind == WHEELHOUSE_RICH_KIND_TOOL_RUN;
+      String8 label = n->title.size ? n->title : n->name, detail = str8_zero(), failed = str8_zero();
+      if(n->section == WHEELHOUSE_RICH_SECTION_REASONING) { label = str8_lit("Thinking"); }
+      if(n->section == WHEELHOUSE_RICH_SECTION_SUBAGENT) { label = str8_lit("Subagent"); detail = n->title; }
+      if(run)
+      {
+        // The failures are the summary's last part.
+        label = n->summary;
+        U64 cut = n->failed ? str8_find_needle_reverse(n->summary, 0, str8_lit(" \xC2\xB7 "), 0) : 0;
+        if(cut > 0) { label = str8_prefix(n->summary, cut); failed = str8_skip(n->summary, cut); }
+      }
+      String8 duration = n->duration_ms != WHEELHOUSE_RICH_NO_DURATION ? uishell_rt_duration(ui_build_arena(), n->duration_ms) : str8_zero();
       B32 thread = (p->style->chrome & UIShell_RtChrome_Thread) != 0;
       RD_IconKind chevron = thread ? RD_IconKind_RightArrow : d->collapsed ? RD_IconKind_RightCaret : RD_IconKind_DownCaret;
-      RD_IconKind status = uishell_rt_status_icon(n->status);
+      RD_IconKind status = run ? RD_IconKind_Null : uishell_rt_status_icon(n->status);
+      B32 pending = !run && n->status == WHEELHOUSE_RICH_STATUS_PENDING;
+      RD_FontSlot icon_slot = RD_FontSlot_Icons;
+      String8 icon = uishell_rt_tool_icon(n, &icon_slot);
       UI_Box *box = &ui_nil_box;
       UI_Rect(r2f32p(p->rect.x0, top, p->rect.x1, top + row)) UI_ChildLayoutAxis(Axis2_X)
       {
@@ -4730,21 +5000,48 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       ui_box_equip_custom_draw(box, uishell_rt_header_draw, d);
       UI_Parent(box) UI_PrefHeight(ui_px(row, 1)) UI_TextAlignment(UI_TextAlign_Left)
       {
+        // The text takes what the marks leave, as wide as it is and no
+        // wider; past that it is cut with an ellipsis.
+        F32 em = ui_top_font_size(), pad = floor_f32(em*0.6f);
+        FNT_Tag font = ui_top_font();
+        F32 duration_w = duration.size ? fnt_dim_from_tag_size_string(font, em, 0, 0, duration).x + pad : 0;
+        F32 failed_w = failed.size ? fnt_dim_from_tag_size_string(font, em, 0, 0, failed).x + pad : 0;
+        F32 detail_w = detail.size ? fnt_dim_from_tag_size_string(font, em, 0, 0, detail).x + pad : 0;
+        F32 room = dim_2f32(box->rect).x - em*(1.6f + 1.6f + 1.8f) - duration_w - failed_w;
+        F32 label_w = Clamp(0, fnt_dim_from_tag_size_string(font, em, 0, 0, label).x + pad, room);
+        detail_w = Clamp(0, detail_w, room - label_w);
         UI_PrefWidth(ui_em(1.6f, 1)) UI_TagF("weak") RD_Font(RD_FontSlot_Icons) UI_TextAlignment(UI_TextAlign_Center)
         {
           ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_chevron", rd_icon_kind_text_table[chevron]);
-          ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_icon", rd_icon_kind_text_table[uishell_rt_tool_icon(n)]);
         }
-        UI_PrefWidth(ui_text_dim(4, 0)) ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_name", name);
-        if(n->title.size) UI_PrefWidth(ui_text_dim(4, 0)) UI_TagF("weak") { ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_title", n->title); }
+        UI_PrefWidth(ui_em(1.6f, 1)) UI_TagF("weak") RD_Font(icon_slot) UI_TextAlignment(UI_TextAlign_Center)
+        {
+          ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_icon", icon);
+        }
+        UI_PrefWidth(ui_px(label_w, 1)) ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_label", label);
+        if(failed.size) UI_PrefWidth(ui_px(failed_w, 1)) UI_TagF("bad") { ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_failed", failed); }
+        if(detail.size) UI_PrefWidth(ui_px(detail_w, 1)) UI_TagF("weak") { ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_detail", detail); }
         ui_spacer(ui_pct(1, 0));
+        if(duration.size) UI_PrefWidth(ui_px(duration_w, 1)) UI_TagF("weak") UI_TextAlignment(UI_TextAlign_Right)
+        {
+          ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_duration", duration);
+        }
+        if(pending) UI_PrefWidth(ui_em(1.8f, 1))
+        {
+          UIShell_RtSpinnerDraw *spin = push_array(ui_build_arena(), UIShell_RtSpinnerDraw, 1);
+          spin->color = t->weak;
+          spin->phase = (now_time_us()/UISHELL_RT_SPINNER_STEP_US) % UISHELL_RT_SPINNER_DOTS;
+          ui_box_equip_custom_draw(ui_build_box_from_stringf(0, "###rt_spinner"), uishell_rt_spinner_draw, spin);
+          spinning = 1;
+        }
         if(status != RD_IconKind_Null) UI_PrefWidth(ui_em(1.8f, 1)) RD_Font(RD_FontSlot_Icons) UI_TextAlignment(UI_TextAlign_Center)
-          UI_TagF(n->status == WHEELHOUSE_RICH_STATUS_OK ? "weak" : "")
+          UI_TagF(uishell_rt_status_bad(n->status) ? "bad" : "weak")
         {
           ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_status", rd_icon_kind_text_table[status]);
         }
       }
     }
+    if(spinning) { rd_request_frame_at(now_time_us() + UISHELL_RT_SPINNER_STEP_US); }
 
     for(U64 i = 0; i < pl.count; i += 1)
     {
@@ -4916,6 +5213,15 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
         }
       }
       else if(stop_here && s->focus_stop_value.kind == UIShell_RtStop_Embed) { d->focused = 1; }
+      if(p->cap.control)
+      {
+        B32 toggle_stop = stop_here && s->focus_stop_value.kind == UIShell_RtStop_Expand;
+        UI_Parent(box) UI_Rect(uishell_rt_cap_rect(p, t)) UI_TagF(toggle_stop ? "hover" : "weak")
+        {
+          ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText|(toggle_stop ? UI_BoxFlag_DrawBorder : 0),
+                                    "%s###rt_expand", p->cap.open ? "Collapse" : "Expand");
+        }
+      }
     }
 
     //- The hovered Container's actions, over everything.
