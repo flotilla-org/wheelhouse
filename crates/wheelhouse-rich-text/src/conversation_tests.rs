@@ -494,6 +494,9 @@ fn a_calls_duration_is_from_its_start_to_its_result() {
         }
     };
     assert_eq!(duration(&[&call, &timed]), Some(2500));
+    // A result stamped before its start, by clock skew: no duration.
+    let early = line(r#"{"type":"ToolCallResult","threadId":"t","seq":2,"toolCallId":"c","content":"","timestamp":1799999999000}"#);
+    assert_eq!(duration(&[&call, &early]), None);
     assert_eq!(duration(&[&call, &untimed]), None);
     assert_eq!(duration(&[&call]), None);
 }
