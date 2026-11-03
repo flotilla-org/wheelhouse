@@ -1690,11 +1690,15 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
   {
     WheelhouseBytes bytes = {0};
     String8 generated = push_str8f(arena, "%S/rich-text-scroll-bar.events.jsonl", dir);
-    if(wheelhouse_rich_text_generate_conversation(3, 2u << 20, &bytes, &error))
+    B32 made = wheelhouse_rich_text_generate_conversation(3, 2u << 20, &bytes, &error);
+    if(made)
     {
       write_data_to_file_path(generated, str8(bytes.data, bytes.len));
       wheelhouse_bytes_free(bytes);
     }
+    else { fprintf(stderr, "generating the conversation failed: %s\n", error ? error : "(no error)"); }
+    RichCheck(made, "a conversation is generated for the scroll bar");
+    uishell_rt_error(&error);
     UI_ScrollBarStyle saved_style = ui_active_scroll_bar_style();
     // At a rate of 1, an overlay bar fades in within a frame.
     d->animation.scroll_animation_rate = d->animation.hot_animation_rate = 1.f;
