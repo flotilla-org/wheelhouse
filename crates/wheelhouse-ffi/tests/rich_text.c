@@ -46,7 +46,7 @@ static char *read_file(const char *path) {
 /* A node as a model keeps it: its content and its child list. */
 typedef struct {
     uint64_t key;
-    uint32_t kind, level, hidden, task, alert, ordered, tight, role, section, tool, status, failed;
+    uint32_t kind, level, hidden, task, alert, ordered, tight, role, section, tool, status, failed, failed_at;
     uint64_t version, start, duration_ms;
     char *text, *summary;
     size_t text_len, summary_len;
@@ -102,6 +102,7 @@ static void set_content(Node *n, const WheelhouseRichNode *c) {
     n->status = c->status;
     n->duration_ms = c->duration_ms;
     n->failed = c->failed;
+    n->failed_at = c->failed_at;
     assert(c->name.data && c->title.data && c->summary.data);
     n->summary = malloc(c->summary.len + 1);
     memcpy(n->summary, c->summary.data, c->summary.len);
@@ -187,7 +188,7 @@ static void same_node(const Node *a, const Node *b) {
     assert(a->level == b->level && a->hidden == b->hidden && a->task == b->task && a->alert == b->alert);
     assert(a->ordered == b->ordered && a->tight == b->tight && a->start == b->start);
     assert(a->role == b->role && a->section == b->section && a->tool == b->tool && a->status == b->status);
-    assert(a->duration_ms == b->duration_ms && a->failed == b->failed);
+    assert(a->duration_ms == b->duration_ms && a->failed == b->failed && a->failed_at == b->failed_at);
     assert(a->summary_len == b->summary_len && memcmp(a->summary, b->summary, a->summary_len) == 0);
     assert(a->text_len == b->text_len && memcmp(a->text, b->text, a->text_len) == 0);
     assert(a->span_count == b->span_count);
@@ -443,7 +444,7 @@ static void drive_conversation(const char *jsonl) {
         Node *n = &m.nodes[i];
         ok(wheelhouse_rich_text_container(h, n->key, &c, &error));
         assert(c.kind == n->kind && c.role == n->role && c.section == n->section && c.tool == n->tool && c.status == n->status);
-        assert(c.duration_ms == n->duration_ms && c.failed == n->failed && c.summary.len == n->summary_len &&
+        assert(c.duration_ms == n->duration_ms && c.failed == n->failed && c.failed_at == n->failed_at && c.summary.len == n->summary_len &&
                memcmp(c.summary.data, n->summary, n->summary_len) == 0);
         runs += n->kind == WHEELHOUSE_RICH_KIND_TOOL_RUN && n->summary_len > 0;
         timed += n->duration_ms != WHEELHOUSE_RICH_NO_DURATION;

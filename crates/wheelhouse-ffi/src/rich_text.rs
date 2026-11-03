@@ -264,10 +264,12 @@ pub struct WheelhouseRichNode {
     /// WHEELHOUSE_RICH_NO_DURATION.
     pub duration_ms: u64,
     /// A Tool Run's calls by kind, such as "Ran 3 commands · edited 2 files ·
-    /// 1 failed": its failures, when `failed` isn't 0, are its last part.
+    /// 1 failed".
     pub summary: Text,
     /// How many of a Tool Run's calls failed or were interrupted.
     pub failed: u32,
+    /// Where in `summary` its failures start: its length if none failed.
+    pub failed_at: u32,
 }
 
 /// As ListOpView, with a Rich Text key: INSERT reads `at` and `key`, REMOVE
@@ -343,6 +345,7 @@ struct Header<'a> {
     duration_ms: u64,
     summary: &'a str,
     failed: u32,
+    failed_at: u32,
 }
 
 fn header(detail: &Detail) -> Header<'_> {
@@ -356,6 +359,7 @@ fn header(detail: &Detail) -> Header<'_> {
         duration_ms: WHEELHOUSE_RICH_NO_DURATION,
         summary: "",
         failed: 0,
+        failed_at: 0,
     };
     match detail {
         Detail::Turn { role } => {
@@ -391,7 +395,7 @@ fn header(detail: &Detail) -> Header<'_> {
             (out.name, out.title) = (name, title);
             out.duration_ms = duration_ms.unwrap_or(WHEELHOUSE_RICH_NO_DURATION);
         }
-        Detail::ToolRun(summary) => (out.summary, out.failed) = (&summary.text, summary.failed),
+        Detail::ToolRun(summary) => (out.summary, out.failed, out.failed_at) = (&summary.text, summary.failed, summary.failed_at),
         _ => {}
     }
     out
@@ -542,6 +546,7 @@ impl Buffers {
             duration_ms: head.duration_ms,
             summary: Text::borrowed(head.summary),
             failed: head.failed,
+            failed_at: head.failed_at,
         }
     }
 }
@@ -778,6 +783,7 @@ pub struct WheelhouseRichContainer {
     pub duration_ms: u64,
     pub summary: Text,
     pub failed: u32,
+    pub failed_at: u32,
 }
 
 /// The node `key`'s Container fields, borrowed from the handle until the
@@ -805,6 +811,7 @@ pub unsafe extern "C" fn wheelhouse_rich_text_container(
             duration_ms: head.duration_ms,
             summary: Text::borrowed(head.summary),
             failed: head.failed,
+            failed_at: head.failed_at,
         };
         Ok(())
     })

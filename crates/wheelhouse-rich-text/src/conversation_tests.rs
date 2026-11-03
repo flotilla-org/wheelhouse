@@ -426,6 +426,7 @@ fn assert_tool_runs(doc: &Tree) {
                 count(&|_, s| matches!(s, ToolStatus::Failed | ToolStatus::Interrupted)),
             ]
         );
+        assert_eq!(summary.failed > 0, (summary.failed_at as usize) < summary.text.len());
     }
 }
 
@@ -470,8 +471,12 @@ fn a_tool_run_counts_its_calls_by_kind_then_failures() {
     let summary = |calls: &[(ToolKind, ToolStatus)]| RunSummary::new(calls.iter().copied()).text;
     let calls = [(Shell, Ok), (Read, Ok), (Edit, Failed), (Shell, Interrupted), (Edit, Ok), (Shell, Pending)];
     assert_eq!(summary(&calls), "Ran 3 commands · edited 2 files · read 1 file · 2 failed");
+    let s = RunSummary::new(calls);
+    assert_eq!(&s.text[s.failed_at as usize..], "2 failed");
     assert_eq!(summary(&[(Search, Ok), (Agent, Ok), (Web, AwaitingApproval), (Mcp, Ok)]), "Ran 1 search · called 3 other tools");
     assert_eq!(summary(&[(Read, Ok), (Read, Ok)]), "Read 2 files");
+    let s = RunSummary::new([(Read, Ok), (Read, Ok)]);
+    assert_eq!(s.failed_at as usize, s.text.len());
 }
 
 #[test]
@@ -526,4 +531,77 @@ fn a_calls_title_and_input_follow_its_kind() {
     assert_eq!(input, s(&format!(r#"{{"content":"{}…","file_path":"a.rs"}}"#, "x".repeat(60))));
     assert_eq!(shown("Todo", "", "other", "{}"), (String::new(), None));
     assert_eq!(shown("Todo", "", "other", ""), (String::new(), None));
+}
+
+// A call's input is restaged with each change to the call, but the Tree
+// keeps a node whose key and content match, so only a changed input reaches
+// a View: a result leaves it alone, and more arguments update it in place.
+#[test]
+fn a_calls_input_changes_only_when_its_arguments_do() {
+    let start = line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","kind":"shell"}"#);
+    let args = |seq: u32, delta: &str| {
+        let delta = serde_json::to_string(delta).unwrap();
+        line(&format!(r#"{{"type":"ToolCallArgs","threadId":"t","seq":{seq},"toolCallId":"c","delta":{delta}}}"#))
+    };
+    let mut rich = RichText::open_conversation(&[line(HELLO), start, args(2, r#"{"command":"ls"#)].concat());
+    let id = rich.subscribe();
+    rich.poll(id).unwrap();
+    let call = Key::named(&["t", "tool", "c"]);
+    let first = rich.doc().children(rich.doc().get(call).unwrap()).next().unwrap();
+    // Arguments still streaming in aren't JSON yet: shown as they are.
+    assert_eq!((rich.doc().kind(first), rich.doc().text(first)), (Kind::Input, r#"{"command":"ls"#));
+    let input = rich.doc().key(first);
+    let touches = |delta: Option<Delta>| {
+        delta.into_iter().flat_map(|d| d.ops).any(|op| match op {
+            Op::Upsert(c) => c.key == input,
+            Op::Remove(key) => key == input,
+            Op::Children { parent, ops } => parent == input || ops.iter().any(|o| matches!(o, ListOp::Insert { key, .. } if *key == input)),
+        })
+    };
+    rich.append(&args(3, r#" -l"}"#));
+    let delta = rich.poll(id).unwrap();
+    assert!(delta.as_ref().is_some_and(|d| d.ops.iter().any(|op| matches!(op, Op::Upsert(c) if c.key == input && c.text == "ls -l"))));
+    assert!(!delta.unwrap().ops.iter().any(|op| matches!(op, Op::Remove(key) if *key == input)), "updated in place");
+    rich.append(&line(r#"{"type":"ToolCallResult","threadId":"t","seq":4,"toolCallId":"c","content":"a\nb\n"}"#));
+    assert!(!touches(rich.poll(id).unwrap()), "a result leaves the input alone");
+}
+
+#[test]
+fn a_search_matchs_location_is_its_path_and_line() {
+    use super::conversation::location;
+    fn at(line: &str) -> &str {
+        &line[..location(line)]
+    }
+    assert_eq!(at("src/a.rs:3: flaky"), "src/a.rs:3");
+    assert_eq!(at("a:1"), "a:1");
+    assert_eq!(at("a:1:2"), "a:1");
+    assert_eq!(at("a:1-context"), "a:1");
+    assert_eq!(at(r"C:\x:3: y"), r"C:\x:3");
+    // A path alone, a line that isn't one, and a colon first.
+    assert_eq!(at("src/a.rs"), "");
+    assert_eq!(at("note: 12 apples"), "");
+    assert_eq!(at(":3"), "");
+}
+
+#[test]
+fn a_reads_language_comes_from_a_path_only() {
+    let language = |title: &str, args: &str| {
+        let start = format!(
+            r#"{{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Read","title":"{title}","kind":"read"}}"#
+        );
+        let args = serde_json::to_string(args).unwrap();
+        let args = format!(r#"{{"type":"ToolCallArgs","threadId":"t","seq":2,"toolCallId":"c","delta":{args}}}"#);
+        let result = line(r#"{"type":"ToolCallResult","threadId":"t","seq":3,"toolCallId":"c","content":"x\n"}"#);
+        let rich = RichText::open_conversation(&[line(HELLO), line(&start), line(&args), result].concat());
+        let call = rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap();
+        let code = rich.doc().children(call).find(|&c| rich.doc().kind(c) == Kind::Code).unwrap();
+        match rich.doc().detail(code) {
+            Detail::Code { language } => language.clone(),
+            _ => unreachable!(),
+        }
+    };
+    assert_eq!(language("Read config", r#"{"file_path":"src/lib.rs"}"#), "rs");
+    assert_eq!(language("src/tides.md", ""), "md");
+    assert_eq!(language("Read v1.2", ""), "");
+    assert_eq!(language("notes", r#"{"file_path":"v1.2"}"#), "");
 }

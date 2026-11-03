@@ -287,6 +287,7 @@ struct UIShell_RtNode
   U64 duration_ms;
   String8 summary;
   U32 failed;
+  U32 failed_at;
 };
 
 typedef struct UIShell_RtModel UIShell_RtModel;
@@ -432,6 +433,7 @@ uishell_rt_node_set(UIShell_RtModel *m, UIShell_RtNode *n, WheelhouseRichNode *c
   n->duration_ms = c->duration_ms;
   n->summary = uishell_rt_s8(c->summary);
   n->failed = c->failed;
+  n->failed_at = c->failed_at;
   n->spans = (WheelhouseRichSpan *)c->spans;
   n->span_count = c->span_count;
   Temp scratch = scratch_begin(0, 0);
@@ -1178,7 +1180,8 @@ uishell_rt_styled(Arena *arena, UIShell_RtTheme *t, UIShell_RtNode *n)
   if(uishell_rt_is_diff(n))
   {
     // Added lines green, removed red, hunk headers weak: by the first
-    // character, the file headers left plain.
+    // character. A file's header is a `--- ` line with a `+++ ` line after
+    // it, left plain: a removed line reading `-- ` is not one.
     U64 lines = 1;
     for(U64 i = 0; i < n->text.size; i += 1) { lines += n->text.str[i] == '\n'; }
     result.runs = push_array(arena, WhTextStyleRun, lines);
@@ -1190,12 +1193,16 @@ uishell_rt_styled(Arena *arena, UIShell_RtTheme *t, UIShell_RtNode *n)
       result.inks[1+i] = (UIShell_RtStyleInk){.ink = inks[i], .color = colors[i]};
     }
     result.style_count = 4;
+    B32 after_header = 0;
     for(U64 start = 0; start < n->text.size;)
     {
       U64 end = start;
       while(end < n->text.size && n->text.str[end] != '\n') { end += 1; }
       String8 line = str8_substr(n->text, r1u64(start, end));
-      B32 header = str8_match(str8_prefix(line, 4), str8_lit("+++ "), 0) || str8_match(str8_prefix(line, 4), str8_lit("--- "), 0);
+      String8 next = str8_skip(n->text, Min(end + 1, n->text.size));
+      B32 header = (str8_match(str8_prefix(line, 4), str8_lit("--- "), 0) && str8_match(str8_prefix(next, 4), str8_lit("+++ "), 0)) ||
+                   (after_header && str8_match(str8_prefix(line, 4), str8_lit("+++ "), 0));
+      after_header = header && line.str[0] == '-';
       U32 style = header ? 0 : line.size && line.str[0] == '+' ? 1 : line.size && line.str[0] == '-' ? 2 :
                   str8_match(str8_prefix(line, 2), str8_lit("@@"), 0) ? 3 : 0;
       if(style && end > start) { result.runs[result.run_count++] = (WhTextStyleRun){(U32)start, (U32)(end - start), style}; }
@@ -4754,6 +4761,11 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       wheelhouse_rich_delta_release(delta);
       uishell_rt_prune_tables(s);
       uishell_rt_prune_codes(s);
+      for(U64 i = 0; i < s->opened_count;)
+      {
+        if(uishell_rt_node(&s->model, s->opened[i]) == 0) { s->opened[i] = s->opened[--s->opened_count]; }
+        else { i += 1; }
+      }
       // A reload starts find's scan again.
       s->match_count = 0;
     }
@@ -4980,10 +4992,8 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       if(n->section == WHEELHOUSE_RICH_SECTION_SUBAGENT) { label = str8_lit("Subagent"); detail = n->title; }
       if(run)
       {
-        // The failures are the summary's last part.
-        label = n->summary;
-        U64 cut = n->failed ? str8_find_needle_reverse(n->summary, 0, str8_lit(" \xC2\xB7 "), 0) : 0;
-        if(cut > 0) { label = str8_prefix(n->summary, cut); failed = str8_skip(n->summary, cut); }
+        label = str8_prefix(n->summary, n->failed_at);
+        failed = str8_skip(n->summary, n->failed_at);
       }
       String8 duration = n->duration_ms != WHEELHOUSE_RICH_NO_DURATION ? uishell_rt_duration(ui_build_arena(), n->duration_ms) : str8_zero();
       B32 thread = (p->style->chrome & UIShell_RtChrome_Thread) != 0;

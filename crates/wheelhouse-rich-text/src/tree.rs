@@ -320,8 +320,10 @@ pub struct RunSummary {
     /// Failed or interrupted.
     pub failed: u32,
     /// Such as "Ran 3 commands · edited 2 files · read 1 file · 1 failed".
-    /// The failures, when there are any, are its last part.
     pub text: String,
+    /// Where in `text` the failures ("1 failed") start: its length if none
+    /// failed.
+    pub failed_at: u32,
 }
 
 impl RunSummary {
@@ -349,6 +351,8 @@ impl RunSummary {
         let text = parts.into_iter().filter(|(n, _)| *n > 0).map(|(_, part)| part).collect::<Vec<_>>().join(" · ");
         let mut chars = text.chars();
         s.text = chars.next().map(|first| first.to_uppercase().chain(chars).collect()).unwrap_or_default();
+        let failures = if s.failed > 0 { format!("{} failed", s.failed).len() } else { 0 };
+        s.failed_at = (s.text.len() - failures) as u32;
         s
     }
 }

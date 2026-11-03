@@ -497,7 +497,7 @@ uishell_rt_diag_conversation(Arena *arena)
     str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":36,\"toolCallId\":\"c8\",\"toolCallName\":\"Grep\",\"title\":\"berth\",\"kind\":\"search\"}"),
     str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":37,\"toolCallId\":\"c8\",\"messageId\":\"r8\",\"status\":\"ok\",\"mediaType\":\"text/plain\",\"content\":\"src/a.rs:3: berth\\nsrc/b.rs:12: berths\\n\"}"),
     str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":38,\"toolCallId\":\"c10\",\"toolCallName\":\"Edit\",\"title\":\"src/berths.rs\",\"kind\":\"edit\"}"),
-    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":39,\"toolCallId\":\"c10\",\"messageId\":\"r10\",\"status\":\"ok\",\"mediaType\":\"text/x-diff\",\"content\":\"--- a/src/berths.rs\\n+++ b/src/berths.rs\\n@@ -1 +1 @@\\n-old berth\\n+new berth\\n\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":39,\"toolCallId\":\"c10\",\"messageId\":\"r10\",\"status\":\"ok\",\"mediaType\":\"text/x-diff\",\"content\":\"--- a/src/berths.rs\\n+++ b/src/berths.rs\\n@@ -1,2 +1 @@\\n-old berth\\n--- a note\\n+new berth\\n\"}"),
     str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":40,\"toolCallId\":\"c11\",\"toolCallName\":\"Screenshot\",\"kind\":\"other\"}"),
     str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":41,\"toolCallId\":\"c11\",\"messageId\":\"r11\",\"status\":\"ok\",\"mediaType\":\"text/plain\",\"content\":\"captured\\n\"}"),
   };
@@ -1698,6 +1698,18 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
           if(n && b.draw) { uishell_rt_block_height(s, n, dim_2f32(b.box->rect).x, &e); }
           RichCheck(n && b.draw && uishell_rt_is_diff(n) && !uishell_rt_code_embedded(n) && uishell_rt_diag_inks_palette(s, e, 2) &&
                     uishell_rt_diag_inks_palette(s, e, 1), "an edit's output is a diff, its added and removed lines coloured");
+          // A removed line reading "-- a note" shows as "--- a note": red,
+          // not a file's header.
+          U64 note = n ? str8_find_needle(n->text, 0, str8_lit("--- a note"), 0) : 0;
+          B32 note_red = 0;
+          UIShell_RtStyled styled = n ? uishell_rt_styled(scratch.arena, &s->theme, n) : (UIShell_RtStyled){0};
+          for(U64 r = 0; r < styled.run_count; r += 1)
+          {
+            WhTextStyleRun *run = &styled.runs[r];
+            UIShell_RtStyleInk *ink = &styled.inks[run->style];
+            note_red |= run->start <= note && note < run->start + run->len && (ink->ink & UIShell_RtInk_Literal) && ink->color == (UISHELL_RT_PALETTE_BIT | 1);
+          }
+          RichCheck(note_red, "a removed line that starts with -- is red, not taken for a file's header");
 
           //- A search's matches: a list of path:line entries.
           U64 matches = grep->children[0];

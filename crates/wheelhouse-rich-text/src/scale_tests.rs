@@ -153,3 +153,28 @@ fn a_large_transcripts_tail_takes_less_than_a_frame() {
     );
     assert!(opened + polled < Duration::from_millis(16), "the tail took {:?}", opened + polled);
 }
+
+/// A live conversation thousands of items long, its lines appended one at a
+/// time: an append late on costs about what one early on does, however
+/// many items its slot holds, Tool Runs and all.
+#[test]
+fn appending_to_a_long_conversation_costs_the_same_late_as_early() {
+    let mut c = Seeded(11);
+    let events = generate::conversation::events(&mut c, 6_000);
+    let lines: Vec<Vec<u8>> = events.iter().map(|e| generate::conversation::jsonl(std::slice::from_ref(e))).collect();
+    let mut rich = RichText::open_conversation(&[]);
+    let (fifth, mut first, mut last) = (lines.len() / 5, Duration::ZERO, Duration::ZERO);
+    for (i, line) in lines.iter().enumerate() {
+        let start = Instant::now();
+        rich.append(line);
+        let took = start.elapsed();
+        if i < fifth {
+            first += took;
+        } else if i >= lines.len() - fifth {
+            last += took;
+        }
+    }
+    let items = rich.doc().children(rich.doc().root().unwrap()).count();
+    eprintln!("{} lines, {items} top-level children: first fifth {first:?}, last fifth {last:?}", lines.len());
+    assert!(last < first * 3, "late appends took {last:?}, early ones {first:?}");
+}

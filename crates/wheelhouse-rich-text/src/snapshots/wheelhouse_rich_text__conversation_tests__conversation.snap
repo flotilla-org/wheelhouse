@@ -11,7 +11,7 @@ Root
     Paragraph "I'll run the suite." [Emphasis "suite"]
     Code Code { language: "rust" } "fn mi() {\n    ne();\n}"
     Embed application/vnd.flotilla.table [None, None] 2 rows "a\tb\n1\t2"
-  ToolRun ToolRun(RunSummary { commands: 2, edits: 1, reads: 1, searches: 0, others: 2, failed: 1, text: "Ran 2 commands · edited 1 file · read 1 file · called 2 other tools · 1 failed" })
+  ToolRun ToolRun(RunSummary { commands: 2, edits: 1, reads: 1, searches: 0, others: 2, failed: 1, text: "Ran 2 commands · edited 1 file · read 1 file · called 2 other tools · 1 failed", failed_at: 74 })
     Section Section { section: Tool, name: "Bash", title: "cargo test", tool: Shell, status: Failed, duration_ms: Some(4200) }
       Input Code { language: "sh" } "cargo test"
       Log "error: ka lo\n100%\nsee the docs" [Color(Palette(1)) "error"] [Strong "error"] [Color(Palette(208)) "ka"] [Background(Rgb(10, 20, 30)) "lo"] [Link(https://example.com/x) "the docs"]

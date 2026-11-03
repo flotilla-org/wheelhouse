@@ -1560,6 +1560,7 @@ typedef struct {
   uint64_t duration_ms;
   WheelhouseText summary;
   uint32_t failed;
+  uint32_t failed_at;
 } WheelhouseRichContainer;
 
 // As ListOpView, with a Rich Text key: INSERT reads `at` and `key`, REMOVE
@@ -1664,10 +1665,12 @@ typedef struct {
   // WHEELHOUSE_RICH_NO_DURATION.
   uint64_t duration_ms;
   // A Tool Run's calls by kind, such as "Ran 3 commands · edited 2 files ·
-  // 1 failed": its failures, when `failed` isn't 0, are its last part.
+  // 1 failed".
   WheelhouseText summary;
   // How many of a Tool Run's calls failed or were interrupted.
   uint32_t failed;
+  // Where in `summary` its failures start: its length if none failed.
+  uint32_t failed_at;
 } WheelhouseRichNode;
 
 // Scrolling is worked out from the Scroll Anchor, so heights changing above

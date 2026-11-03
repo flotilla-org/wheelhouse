@@ -433,7 +433,7 @@ fn lead(doc: &Tree, key: Key) -> usize {
 }
 
 /// Where a search match's `path:line` ends in it, or 0.
-fn location(line: &str) -> usize {
+pub(crate) fn location(line: &str) -> usize {
     let bytes = line.as_bytes();
     for (colon, _) in line.match_indices(':').filter(|&(i, _)| i > 0) {
         let digits = bytes[colon + 1..].iter().take_while(|b| b.is_ascii_digit()).count();
@@ -456,8 +456,13 @@ fn stage_result(r: &ToolResult, kind: ToolKind, path: &str, staged: &mut Staged,
         log.chunks().into_iter().map(|chunk| chunk.text).collect::<Vec<_>>().join("\n")
     };
     if kind == ToolKind::Read && !media.starts_with("image/") {
+        // A title that isn't a path, such as "Read v1.2", names no language.
         let file = path.rsplit(['/', '\\']).next().unwrap_or("");
-        let language = file.rsplit_once('.').map_or("", |(_, extension)| extension);
+        let extension = file.rsplit_once('.').map_or("", |(_, extension)| extension);
+        let named = !file.contains(char::is_whitespace)
+            && extension.chars().all(|c| c.is_ascii_alphanumeric())
+            && extension.chars().any(|c| c.is_ascii_alphabetic());
+        let language = if named { extension } else { "" };
         let content = if media == MARKDOWN || media == DIFF { r.content.trim_end_matches('\n').to_owned() } else { text(&r.content) };
         staged.push(parent, Kind::Code, None, &content, vec![], Detail::Code { language: language.into() });
     } else if kind == ToolKind::Search && media != MARKDOWN && media != DIFF && !media.starts_with("image/") {
@@ -977,10 +982,18 @@ impl Conversation {
         out
     }
 
-    /// How many groups `list[..end]` holds: the Tree index of the group
-    /// starting at `end`.
-    fn groups_before(&self, list: &[(Order, Key)], end: usize) -> usize {
-        (0..end).filter(|&i| i == 0 || !(self.is_call(list[i].1) && self.is_call(list[i - 1].1))).count()
+    /// The Tree index of the group starting at `list[lo]`, where `list` is
+    /// `slot`'s list now, `old` was its window `lo..hi`, and `list[hi..]` is
+    /// unchanged: counted from whichever end of the list is nearer, so an
+    /// append costs what its window does. Only the root and a subagent's
+    /// Section hold nothing but groups, so a call's count from its start.
+    fn group_index(&self, slot: Key, list: &[(Order, Key)], lo: usize, hi: usize, old: &[(Order, Key)], doc: &Tree) -> usize {
+        let only_groups = slot == Key::ROOT || matches!(self.items.get(&slot).map(|i| &i.body), Some(Body::Subagent { .. }));
+        if only_groups && list.len() - hi < lo {
+            let count = doc.get(slot).map_or(0, |id| doc.node(id).count as usize);
+            return count - self.groups(old).len() - self.groups(&list[hi..]).len();
+        }
+        (0..lo).filter(|&i| i == 0 || !(self.is_call(list[i].1) && self.is_call(list[i - 1].1))).count()
     }
 
     fn run_detail(&self, calls: &[(Order, Key)]) -> Detail {
@@ -1052,9 +1065,9 @@ impl Conversation {
         // Its neighbours' groups, which it may have kept apart or held together.
         let lo = if at > 0 { self.group_at(&list, at - 1).start } else { 0 };
         let hi = if at + 1 < list.len() { self.group_at(&list, at + 1).end } else { list.len() };
-        let first = self.groups_before(&list, lo);
         let old = list[lo..hi].to_vec();
         list.remove(at);
+        let first = self.group_index(slot, &list, lo, hi - 1, &old, sink.doc);
         self.regroup(slot, first, &old, &list[lo..hi - 1], sink);
         self.slots.insert(slot, list);
         let mut stack = vec![key];
@@ -1122,8 +1135,8 @@ impl Conversation {
                     list.splice(at..at, new[run..end].iter().copied());
                     let lo = if at > 0 { self.group_at(&list, at - 1).start } else { 0 };
                     let hi = if at + n < list.len() { self.group_at(&list, at + n).end } else { list.len() };
-                    let first = self.groups_before(&list, lo);
                     let old: Vec<(Order, Key)> = list[lo..at].iter().chain(&list[at + n..hi]).copied().collect();
+                    let first = self.group_index(slot, &list, lo, hi, &old, sink.doc);
                     self.regroup(slot, first, &old, &list[lo..hi], sink);
                     for &(order, key) in &new[run..end] {
                         self.items.get_mut(&key).unwrap().placed = Some((slot, order));
@@ -1134,12 +1147,19 @@ impl Conversation {
                 self.slots.insert(slot, list);
             }
         }
+        let (mut runs, mut in_runs) = (vec![], HashSet::new());
         for key in touched {
             if inserted.contains(&key) {
                 continue;
             }
             let own = self.slots.get(&key).map_or(0, |list| self.groups(list).len());
-            let run = self.run_of(key).map(<[_]>::to_vec);
+            // A run's summary is staged once, after all its calls change.
+            if !in_runs.contains(&key) {
+                if let Some(run) = self.run_of(key).map(<[_]>::to_vec) {
+                    in_runs.extend(run.iter().map(|&(_, k)| k));
+                    runs.push(run);
+                }
+            }
             let Some(item) = self.items.get_mut(&key) else { continue };
             if item.placed.is_none() || !item.dirty {
                 continue;
@@ -1164,9 +1184,9 @@ impl Conversation {
                 }
                 _ => {}
             }
-            if let Some(run) = run {
-                self.update_run(&run, sink);
-            }
+        }
+        for run in runs {
+            self.update_run(&run, sink);
         }
     }
 }
