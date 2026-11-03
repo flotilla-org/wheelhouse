@@ -11773,6 +11773,8 @@ rd_app_menu_spec_content(RD_AppMenuSpec *spec)
   {
     UI_Row UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
       ui_label(str8_lit(BUILD_TITLE_STRING_LITERAL));
+    UI_Row UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
+      ui_labelf("%S \xC2\xB7 %S", wm_backend_name(), r_backend_name());
     ui_spacer(ui_em(1.f, 1.f));
     UI_PrefHeight(ui_children_sum(1)) UI_Row UI_Padding(ui_pct(1, 0))
     {

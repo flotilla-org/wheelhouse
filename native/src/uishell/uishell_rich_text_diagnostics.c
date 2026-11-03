@@ -222,7 +222,7 @@ uishell_rt_diag_point(UIShell_RtDiag *d, UIShell_RichTextState *s, U64 key, U32 
   Vec2F32 result = v2f32(-1, -1);
   if(!ui_box_is_nil(b.box) && n)
   {
-    UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, &s->theme, n);
+    UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, &s->theme, s->styles, n);
     UIShell_RtLayoutEntry *e = 0;
     uishell_rt_block_height(s, n, s->width, &e);
     WhTextCaret caret = {0};
@@ -335,7 +335,7 @@ uishell_rt_diag_code_rect(UIShell_RichTextState *s, UIShell_RtNode *n, Rng2F32 b
   Temp scratch = scratch_begin(0, 0);
   UIShell_RtPlaced p = {0};
   p.rect = block;
-  p.frame = uishell_rt_frame(scratch.arena, &s->model, &s->theme, n);
+  p.frame = uishell_rt_frame(scratch.arena, &s->model, &s->theme, s->styles, n);
   UIShell_RtCode *c = uishell_rt_code_of(s, n->key);
   B32 capped = 0;
   Rng2F32 r = c ? shift_2f32(uishell_rt_code_rect(&p, uishell_rt_code_height(c, &capped)), block.p0) : r2f32p(0, 0, 0, 0);
@@ -563,6 +563,15 @@ uishell_rt_diag_from_end(UIShell_RichTextState *s)
   return Max(0.0, w.total - w.viewport - w.top);
 }
 
+// The Section and Tool Run header rows on screen.
+internal U64
+uishell_rt_diag_headers(void)
+{
+  U64 count = 0;
+  for(UI_Box *b = ui_state->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_state->root).next) { count += b->custom_draw == uishell_rt_header_draw; }
+  return count;
+}
+
 // The View at its end, following it, with the pointer on the scroll bar's
 // strip, which brings an overlay bar up. Returns the bar's thumb.
 internal UI_Box *
@@ -596,7 +605,7 @@ uishell_rt_diag_scroll_bar(UIShell_RtDiag *d, String8 path, char *what)
 
   //- A click on the track, above the thumb, pages up.
   UI_Box *thumb = uishell_rt_diag_bar_up(d, &s);
-  for(UI_Box *b = ui_state->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_state->root).next) { headers += b->custom_draw == uishell_rt_header_draw; }
+  headers += uishell_rt_diag_headers();
   B32 following = uishell_rt_diag_window(s).at_end;
   Rng2F32 track = thumb->parent->rect, thumb_rect = thumb->rect;
   Vec2F32 at = v2f32(center_2f32(thumb_rect).x, thumb_rect.y0 - 4);
@@ -624,6 +633,7 @@ uishell_rt_diag_scroll_bar(UIShell_RtDiag *d, String8 path, char *what)
   {
     d->mouse = v2f32(from.x, from.y - dy*i/6);
     s = uishell_rt_diag_frame(d, 0);
+    headers += uishell_rt_diag_headers();
     broken &= !uishell_rt_diag_window(s).at_end;
   }
   WheelhouseRichWindow w = uishell_rt_diag_window(s);
@@ -855,7 +865,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       for(U64 i = 0; i < w.entry_count; i += 1)
       {
         if(w.entries[i].key != target->key) { continue; }
-        UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, &s->theme, target);
+        UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, &s->theme, s->styles, target);
         F64 line_top = w.entries[i].top + f.pad_top + f.inset_y + e->layout->text.lines[e->layout->text.line_count-1].y;
         wheelhouse_rich_text_scroll_by(s->doc, s->sub, line_top + 2 - w.top, &error);
         break;
@@ -1572,6 +1582,11 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
         for(UI_Box *b = user_text.box->next; !ui_box_is_nil(b); b = b->next) { if(b == bubble) { bubble_behind = 1; break; } }
       }
       RichCheck(bubble_behind, "a bubble is drawn behind its text");
+      UIShell_RtContainerStyle *bubble_style = uishell_rt_container_style(s->styles, user);
+      F32 below = user_text.draw ? bubble->rect.y1 - user_text.box->rect.y1 : 0;
+      fprintf(stderr, "RICH_TEXT_CHAT bubble below its text=%.1f\n", below);
+      RichCheck(user_text.draw && user->child_count == 1 && bubble_style && abs_f32(below - uishell_rt_em(&s->theme, bubble_style->inset_bottom)) < 0.5f,
+                "below a bubble's last paragraph is its bottom inset alone, without the paragraph's gap");
       UIShell_RtDiagBox assistant_text = uishell_rt_diag_box(scratch.arena, assistant->children[0]);
       RichCheck(assistant_text.draw && abs_f32(assistant_text.box->rect.x0 - column_x0) < 0.5f && abs_f32(assistant_text.box->rect.x1 - column_x1) < 0.5f &&
                 ui_box_is_nil(uishell_rt_diag_drawn(uishell_rt_chrome_draw, assistant->key)), "an assistant Turn spans the column, without chrome");
@@ -1774,7 +1789,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
           s = uishell_rt_diag_frames(d, 3);
           UIShell_RtNode *n = uishell_rt_node(&s->model, out);
           UIShell_RtDiagBox b = uishell_rt_diag_box(scratch.arena, out);
-          UIShell_RtFrame f = n ? uishell_rt_frame(scratch.arena, &s->model, &s->theme, n) : (UIShell_RtFrame){0};
+          UIShell_RtFrame f = n ? uishell_rt_frame(scratch.arena, &s->model, &s->theme, s->styles, n) : (UIShell_RtFrame){0};
           UIShell_RtLayoutEntry *e = 0;
           if(n && b.draw) { uishell_rt_block_height(s, n, dim_2f32(b.box->rect).x, &e); }
           UI_Box *expand = b.draw ? uishell_rt_diag_named(b.box, str8_lit("###rt_expand")) : &ui_nil_box;

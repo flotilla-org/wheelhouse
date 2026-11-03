@@ -43,4 +43,6 @@
 # error Renderer backend not specified.
 #endif
 
+internal String8 r_backend_name(void);
+
 #endif // RENDER_INC_H

@@ -33,8 +33,8 @@ WM_HookDecls
 // after the one it would replace until it has proven itself (ADR 0015).
 global WM_Backend wm_backends[] =
 {
-  {str8_lit_comp("x11"), wm_x11_init, WM_HookTableInit(x11)},
-  {str8_lit_comp("wayland"), wm_wayland_init, WM_HookTableInit(wayland)},
+  {str8_lit_comp("x11"), str8_lit_comp("X11"), wm_x11_init, WM_HookTableInit(x11)},
+  {str8_lit_comp("wayland"), str8_lit_comp("Wayland"), wm_wayland_init, WM_HookTableInit(wayland)},
 };
 
 // --window_manager:<name> (or WHEELHOUSE_WINDOW_MANAGER) names the only one
@@ -62,3 +62,18 @@ wm_init(CmdLine *cmdln)
   return 0;
 }
 #endif
+
+// The window manager this run uses, as Help shows it.
+internal String8
+wm_backend_name(void)
+{
+#if WM_BACKEND_MULTI
+  return wm_backend ? wm_backend->label : str8_lit("none");
+#elif WM_STUB
+  return str8_lit("none");
+#elif OS_WINDOWS
+  return str8_lit("Win32");
+#elif OS_MAC
+  return str8_lit("Cocoa");
+#endif
+}
