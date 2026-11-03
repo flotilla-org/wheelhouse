@@ -180,18 +180,29 @@ fn appending_to_a_long_conversation_costs_the_same_late_as_early() {
 }
 
 /// A call whose arguments stream in as many small deltas, such as a Write
-/// of a large file: each delta costs what it adds, not what came before.
+/// of a large file, or a multi-edit whose deltas end inside it with `}`:
+/// each delta costs what it adds, not what came before.
 #[test]
 fn streaming_a_large_calls_arguments_costs_what_each_delta_adds() {
+    let content = format!(r#"{{"file_path":"big.txt","content":"{}"}}"#, "abcdefgh".repeat(256 * 1024));
+    let pieces: Vec<String> = content.as_bytes().chunks(1024).map(|piece| std::str::from_utf8(piece).unwrap().to_owned()).collect();
+    stream_arguments(&pieces, r#"{"content":"abcdefgh"#);
+    let edit = r#"{"old":"abcdefgh abcdefgh abcdefgh","new":"hgfedcba hgfedcba"}"#;
+    let mut pieces = vec![r#"{"file_path":"big.txt","edits":["#.to_owned()];
+    pieces.extend((0..4000).map(|i| format!("{}{edit}", if i == 0 { "" } else { "," })));
+    pieces.push("]}".to_owned());
+    stream_arguments(&pieces, r#"{"edits":[{"new":"#);
+}
+
+fn stream_arguments(pieces: &[String], input_prefix: &str) {
     let line = |event: String| format!("{event}\n").into_bytes();
     let start = r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Write","kind":"edit"}"#;
-    let args = format!(r#"{{"file_path":"big.txt","content":"{}"}}"#, "abcdefgh".repeat(256 * 1024));
-    let deltas: Vec<Vec<u8>> = args
-        .as_bytes()
-        .chunks(1024)
+    let args: String = pieces.concat();
+    let deltas: Vec<Vec<u8>> = pieces
+        .iter()
         .enumerate()
         .map(|(i, piece)| {
-            let delta = serde_json::to_string(std::str::from_utf8(piece).unwrap()).unwrap();
+            let delta = serde_json::to_string(piece).unwrap();
             line(format!(r#"{{"type":"ToolCallArgs","threadId":"t","seq":{},"toolCallId":"c","delta":{delta}}}"#, i + 2))
         })
         .collect();
@@ -207,8 +218,11 @@ fn streaming_a_large_calls_arguments_costs_what_each_delta_adds() {
         }
     }
     eprintln!("{} deltas of {} bytes: first half {first:?}, second half {last:?}", deltas.len(), args.len());
-    assert!(last < first * 3, "late deltas took {last:?}, early ones {first:?}");
+    // A quadratic cost puts three times the first half's in the second.
+    assert!(last < first * 2, "late deltas took {last:?}, early ones {first:?}");
     let call = rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap();
     let input = rich.doc().children(call).next().unwrap();
-    assert!(rich.doc().text(input).starts_with(r#"{"content":"abcdefgh"#), "the input, its content folded");
+    let want = input_prefix;
+    let text = rich.doc().text(input);
+    assert!(text.starts_with(want), "the input, parsed and folded: {}", &text[..text.len().min(80)]);
 }

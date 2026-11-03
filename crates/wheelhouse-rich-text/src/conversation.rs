@@ -196,12 +196,32 @@ struct ToolResult {
 
 #[derive(Debug)]
 enum Body {
-    Text { role: Role, md: Markdown },
-    Reasoning { md: Markdown },
-    Tool { name: String, title: String, kind: ToolKind, args: String, result: Option<ToolResult>, started: Option<u64>, shown: Shown },
-    Subagent { status: ToolStatus },
-    Divider { text: String },
-    Notice { text: String },
+    Text {
+        role: Role,
+        md: Markdown,
+    },
+    Reasoning {
+        md: Markdown,
+    },
+    Tool {
+        name: String,
+        title: String,
+        kind: ToolKind,
+        args: String,
+        nesting: Nesting,
+        result: Option<ToolResult>,
+        started: Option<u64>,
+        shown: Shown,
+    },
+    Subagent {
+        status: ToolStatus,
+    },
+    Divider {
+        text: String,
+    },
+    Notice {
+        text: String,
+    },
 }
 
 #[derive(Debug)]
@@ -413,12 +433,41 @@ struct Shown {
     input: Option<(String, &'static str)>,
 }
 
+/// How far a call's arguments have closed the JSON value they open, read a
+/// delta at a time.
+#[derive(Debug, Clone, Copy, Default)]
+struct Nesting {
+    depth: u32,
+    string: bool,
+    escape: bool,
+    opened: bool,
+}
+
+impl Nesting {
+    fn feed(&mut self, text: &str) {
+        for b in text.bytes() {
+            match (self.string, b) {
+                (true, _) if self.escape => self.escape = false,
+                (true, b'\\') => self.escape = true,
+                (true, b'"') | (false, b'"') => self.string = !self.string,
+                (false, b'{' | b'[') => (self.depth, self.opened) = (self.depth + 1, true),
+                (false, b'}' | b']') => self.depth = self.depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+
+    /// Whether they may be a whole value: only then are they parsed, so a
+    /// delta costs what it adds, however big the arguments get.
+    fn closed(&self) -> bool {
+        self.opened && self.depth == 0 && !self.string
+    }
+}
+
 impl Shown {
-    fn of(name: &str, title: &str, kind: ToolKind, args: &str) -> Shown {
+    fn of(name: &str, title: &str, kind: ToolKind, args: &str, closed: bool) -> Shown {
         let args = args.trim();
-        // Arguments streaming in end a JSON value only when they're done,
-        // or nearly: the rest aren't parsed, so a delta costs what it adds.
-        let value = if args.ends_with(['}', ']']) { serde_json::from_str::<Value>(args).ok() } else { None };
+        let value = if closed { serde_json::from_str::<Value>(args).ok() } else { None };
         let title = shown_title(name, title, kind, value.as_ref());
         let input = match value {
             _ if args.is_empty() => None,
@@ -485,6 +534,8 @@ fn stage_result(r: &ToolResult, kind: ToolKind, path: &str, staged: &mut Staged,
         let content = if media == ANSI { text(&r.content) } else { r.content.trim_end_matches('\n').to_owned() };
         staged.push(parent, Kind::Code, None, &content, vec![], Detail::Code { language: language.into() });
     } else if kind == ToolKind::Search && media != MARKDOWN && media != DIFF && !media.starts_with("image/") {
+        // Any other output, JSON included, is lines of matches: markdown, a
+        // diff and an image keep the Blocks their media types give them.
         let content = text(&r.content);
         let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
         if !lines.is_empty() {
@@ -761,11 +812,12 @@ impl Conversation {
                 self.tool(at, order, &thread, &e.tool_call_id, (n, t, k, e.timestamp), None);
             }
             Event::ToolCallArgs(e) => {
-                if let Some(Body::Tool { name, title, kind, args, shown, .. }) =
+                if let Some(Body::Tool { name, title, kind, args, nesting, shown, .. }) =
                     self.items.get_mut(&tool_key(&thread, &e.tool_call_id)).map(|i| &mut i.body)
                 {
                     args.push_str(&e.delta);
-                    *shown = Shown::of(name, title, *kind, args);
+                    nesting.feed(&e.delta);
+                    *shown = Shown::of(name, title, *kind, args, nesting.closed());
                 }
             }
             Event::ToolCallResult(e) => {
@@ -815,16 +867,27 @@ impl Conversation {
     ) {
         let key = tool_key(thread, id);
         let (name, title, kind, started) = head;
-        let shown = Shown::of(&name, &title, kind, "");
-        let fresh = Body::Tool { name: name.clone(), title: title.clone(), kind, args: String::new(), result: None, started, shown };
+        let shown = Shown::of(&name, &title, kind, "", false);
+        let fresh = Body::Tool {
+            name: name.clone(),
+            title: title.clone(),
+            kind,
+            args: String::new(),
+            nesting: Nesting::default(),
+            result: None,
+            started,
+            shown,
+        };
         if let Some(item) = self.create(key, order, thread, || fresh) {
-            if let Body::Tool { name: n, title: t, kind: k, args, started: s, shown, .. } = &mut item.body {
+            if let Body::Tool { name: n, title: t, kind: k, args, nesting, started: s, shown, .. } = &mut item.body {
                 (*n, *t, *k, *s) = (name, title, kind, started);
                 if let Some(arguments) = snapshot {
                     *args = arguments.to_owned();
+                    *nesting = Nesting::default();
+                    nesting.feed(args);
                     item.snapshot = Some(at);
                 }
-                *shown = Shown::of(n, t, *k, args);
+                *shown = Shown::of(n, t, *k, args, nesting.closed());
             }
         }
         // Subagents it started now go inside it.
@@ -1196,10 +1259,20 @@ impl Conversation {
             match &mut item.body {
                 Body::Text { md, .. } | Body::Reasoning { md } => md.stream(key, sink),
                 Body::Tool { kind, result, shown, .. } => {
-                    let mut input = Staged::under(key, 0);
-                    stage_input(key, shown, &mut input, 0);
+                    // Only an input that changed is staged again.
                     let was = lead(sink.doc, key);
-                    sink.splice(key, 0, Some(was), input);
+                    let current =
+                        (was == 1).then(|| sink.doc.get(input_key(key))).flatten().map(|id| (sink.doc.text(id), sink.doc.detail(id)));
+                    let same = match (&shown.input, current) {
+                        (None, None) => true,
+                        (Some((text, language)), Some((t, Detail::Code { language: l }))) => text == t && language == l,
+                        _ => false,
+                    };
+                    if !same {
+                        let mut input = Staged::under(key, 0);
+                        stage_input(key, shown, &mut input, 0);
+                        sink.splice(key, 0, Some(was), input);
+                    }
                     let mut staged = Staged::under(key, 0);
                     if let Some(r) = result {
                         stage_result(r, *kind, &shown.title, &mut staged, 0);

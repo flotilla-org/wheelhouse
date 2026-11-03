@@ -580,6 +580,7 @@ fn a_search_matchs_location_is_its_path_and_line() {
     // A path alone, a line that isn't one, and a colon first.
     assert_eq!(at("src/a.rs"), "");
     assert_eq!(at("note: 12 apples"), "");
+    assert_eq!(at("foo: 12-bar"), "");
     assert_eq!(at(":3"), "");
 }
 
