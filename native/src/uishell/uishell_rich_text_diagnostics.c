@@ -142,14 +142,21 @@ uishell_rt_diag_edit(UIShell_RtDiag *d, String8 name)
   uishell_rt_diag_frame(d, &events);
 }
 
-internal UIShell_RichTextState *
-uishell_rt_diag_open(UIShell_RtDiag *d, String8 path)
+// A new View of `path`, not yet drawn.
+internal void
+uishell_rt_diag_view(UIShell_RtDiag *d, String8 path)
 {
   CFG_Node *window = cfg_node_from_id(d->ws->cfg_id);
   CFG_Node *host = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
   d->panel = rd_fixture_leaf(rd_fixture_owner(host));
   d->view = rd_fixture_view(d->panel, str8_lit("rich_text"), rd_eval_string_from_file_path(d->arena, path), 1);
   d->address = rd_view_address_from_cfg(d->view);
+}
+
+internal UIShell_RichTextState *
+uishell_rt_diag_open(UIShell_RtDiag *d, String8 path)
+{
+  uishell_rt_diag_view(d, path);
   UIShell_RichTextState *s = 0;
   // The content cache reads the file on its own threads.
   for(U32 i = 0; i < 1000; i += 1)
@@ -2094,6 +2101,19 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       RichCheck(s->doc && uishell_rt_diag_block_with(s, str8_lit("Message 45:")) && !uishell_rt_diag_block_with(s, str8_lit("Message 0:")) &&
                 s->fed == properties_from_file_path(grow).size, "a file replaced by a longer one opens again");
     }
+
+    //- A View of a conversation whose file isn't there yet polls for it.
+    String8 later = push_str8f(scratch.arena, "%S/later.events.jsonl", dir);
+    delete_file_at_path(later);
+    uishell_rt_diag_view(d, later);
+    U64 saved_deadline = rd_state->frame_deadline_us;
+    rd_state->frame_deadline_us = 0;
+    s = uishell_rt_diag_frame(d, 0);
+    RichCheck(s && s->doc == 0 && rd_state->frame_deadline_us != 0, "a View of a conversation not written yet asks for a frame to look again");
+    rd_state->frame_deadline_us = saved_deadline;
+    write_data_to_file_path(later, push_str8f(scratch.arena, "{\"type\":\"Hello\",\"contract\":1}\n%S", uishell_rt_diag_message(scratch.arena, 7)));
+    s = uishell_rt_diag_frames(d, 3);
+    RichCheck(s && s->doc && uishell_rt_diag_block_with(s, str8_lit("Message 7:")), "and shows it once it is written");
     d->rect = r2f32p(0, 0, 900, 600);
     scratch_end(scratch);
   }

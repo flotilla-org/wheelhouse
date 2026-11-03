@@ -1749,6 +1749,9 @@ struct UIShell_RichTextState
   // the core has, and which file they came from.
   U64 fed;
   FileID file_id;
+  // The file as it was when opening it failed.
+  U64 failed_size;
+  DenseTime failed_modified;
 };
 
 internal void
@@ -4684,16 +4687,27 @@ uishell_rt_reopen(UIShell_RichTextState *s, String8 path, String8 thread)
 // through the content cache, so it knows how much the core has, and then
 // reads only what was appended, never the whole file again. A file that
 // shrinks or is replaced opens again; one that goes missing keeps what
-// shows until it is back.
+// shows until it is back. A file truncated and rewritten in place past its
+// old size within one poll reads as an append: contract files are only
+// appended to, or rewritten from the start by the translator.
 internal void
 uishell_rt_follow(UIShell_RichTextState *s, String8 path, String8 thread, FileProperties props, Arena *scratch)
 {
   char *error = 0;
+  // Growth shows within a poll, and so does a file that isn't there yet.
+  rd_request_frame_at(now_time_us() + UISHELL_RT_FOLLOW_POLL_US);
   if(props.modified == 0) { return; }
-  if(s->doc && (props.size < s->fed || file_id_compare(id_from_file_path(path), s->file_id) != 0))
+  if(s->doc)
   {
-    uishell_rt_reopen(s, path, thread);
+    // An id that can't be read (mid-rename, say) is no evidence of a new file.
+    FileID id = id_from_file_path(path);
+    FileID none = {0};
+    B32 replaced = file_id_compare(id, none) != 0 && file_id_compare(id, s->file_id) != 0;
+    if(props.size < s->fed || replaced) { uishell_rt_reopen(s, path, thread); }
   }
+  // An open that failed waits for the file to change, rather than reading
+  // all of it again every frame.
+  if(s->doc == 0 && s->failed_size == props.size && s->failed_modified == props.modified) { return; }
   if(s->doc == 0 || props.size > s->fed)
   {
     File file = file_open(AccessFlag_Read|AccessFlag_ShareRead|AccessFlag_ShareWrite, path);
@@ -4715,19 +4729,21 @@ uishell_rt_follow(UIShell_RichTextState *s, String8 path, String8 thread, FilePr
       if(s->doc) { wheelhouse_rich_text_scroll_to_end(s->doc, s->sub, &error); }
       String8 failure = uishell_rt_error(&error);
       s->load_error = failure.size ? push_str8_copy(s->arena, failure) : str8_zero();
+      s->failed_size = s->doc ? 0 : props.size;
+      s->failed_modified = s->doc ? 0 : props.modified;
+      s->fed = s->doc ? got : 0;
     }
+    else if(wheelhouse_rich_text_append(s->doc, uishell_rt_wt(data), 0, &error)) { s->fed += got; }
     else
     {
-      wheelhouse_rich_text_append(s->doc, uishell_rt_wt(data), 0, &error);
+      // What the core has no longer matches the file: start again from it.
       uishell_rt_error(&error);
+      uishell_rt_reopen(s, path, thread);
     }
-    s->fed += s->doc ? got : 0;
     file_close(file);
     // A burst bigger than a step reads on over the next frames.
     if(s->doc && s->fed < size) { rd_request_frame(); }
   }
-  // Growth shows within a poll.
-  if(s->doc) { rd_request_frame_at(now_time_us() + UISHELL_RT_FOLLOW_POLL_US); }
 }
 
 WH_VIEW_UI_FUNCTION_DEF(rich_text)
