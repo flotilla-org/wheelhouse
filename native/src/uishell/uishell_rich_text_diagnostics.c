@@ -1702,6 +1702,11 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     else { fprintf(stderr, "generating the conversation failed: %s\n", error ? error : "(no error)"); }
     RichCheck(made, "a conversation is generated for the scroll bar");
     uishell_rt_error(&error);
+    // Inside the window: the layout squeezes a View larger than it, and the
+    // bar at the View's edge would be clipped off (CI's windows are 820 by
+    // 615 on macOS, 803 by 574 on Windows).
+    Vec2F32 window = dim_2f32(wm_client_rect_from_window(d->ws->os));
+    d->rect = r2f32p(0, 0, Min(900, window.x), Min(600, window.y));
     UI_ScrollBarStyle saved_style = ui_active_scroll_bar_style();
     // At a rate of 1, an overlay bar fades in within a frame.
     d->animation.scroll_animation_rate = d->animation.hot_animation_rate = 1.f;
@@ -1714,6 +1719,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     }
     ui_set_active_scroll_bar_style(saved_style);
     d->animation = (UI_AnimationInfo){0};
+    d->rect = r2f32p(0, 0, 900, 600);
   }
 
   //- Timing: the generated 35 MB transcript, to its first painted tail.
