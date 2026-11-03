@@ -314,6 +314,27 @@ uishell_table_diagnostics(RD_WindowState *ws)
     // error, no notice, no sections, so the footer draws its bare row.
     UIShell_SidebarState *saved_sidebar = ws->sidebar, sidebar = {0};
     if(!ws->sidebar) { ws->sidebar = &sidebar; }
+    // A described table's tab says its table's name, not its link; a canned
+    // table's says its name.
+    {
+      Temp temp = temp_begin(scratch.arena);
+      UI_EventList no_events = {0};
+      UI_AnimationInfo no_animation = {0};
+      ui_begin_build(ws->os, &no_events, &ws->ui->icon_info, ws->theme, &no_animation, 1.f/60, 1.f/60);
+      CFG_Node *linked = rd_fixture_view(panel, str8_lit("table"), str8_lit("http+unix://%2Ftmp%2Fnone.sock/tables/convoys?namespace=flotilla"), 0);
+      DR_FStrList linked_fstrs = rd_title_fstrs_from_cfg(temp.arena, linked, 0);
+      String8 linked_title = dr_string_from_fstrs(temp.arena, &linked_fstrs);
+      TableCheck(str8_find_needle(linked_title, 0, str8_lit("convoys"), 0) < linked_title.size &&
+                 str8_find_needle(linked_title, 0, str8_lit("http"), 0) == linked_title.size, "a described table's tab says its table's name, not its link");
+      CFG_Node *canned = rd_fixture_view(panel, str8_lit("table"), str8_lit("records"), 0);
+      DR_FStrList canned_fstrs = rd_title_fstrs_from_cfg(temp.arena, canned, 0);
+      String8 canned_title = dr_string_from_fstrs(temp.arena, &canned_fstrs);
+      TableCheck(str8_find_needle(canned_title, 0, str8_lit("records"), 0) < canned_title.size, "a canned table's tab says its name");
+      ui_end_build();
+      rd_fixture_remove(linked);
+      rd_fixture_remove(canned);
+      temp_end(temp);
+    }
     for EachElement(n, names)
     {
       CFG_Node *view = rd_fixture_view(panel, str8_lit("table"), names[n], 1);

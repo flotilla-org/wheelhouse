@@ -2104,9 +2104,11 @@ dependencies = [
  "binnacle-described",
  "binnacle-described-http",
  "binnacle-format",
+ "binnacle-layout",
  "binnacle-memory",
  "binnacle-testkit",
  "hegeltest",
+ "serde_json",
  "tokio",
 ]
 
