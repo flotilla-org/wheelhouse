@@ -436,7 +436,7 @@ struct Shown {
 /// How far a call's arguments have closed the JSON value they open, read a
 /// delta at a time.
 #[derive(Debug, Clone, Copy, Default)]
-struct Nesting {
+pub(crate) struct Nesting {
     depth: u32,
     string: bool,
     escape: bool,
@@ -444,7 +444,7 @@ struct Nesting {
 }
 
 impl Nesting {
-    fn feed(&mut self, text: &str) {
+    pub(crate) fn feed(&mut self, text: &str) {
         for b in text.bytes() {
             match (self.string, b) {
                 (true, _) if self.escape => self.escape = false,
@@ -459,7 +459,7 @@ impl Nesting {
 
     /// Whether they may be a whole value: only then are they parsed, so a
     /// delta costs what it adds, however big the arguments get.
-    fn closed(&self) -> bool {
+    pub(crate) fn closed(&self) -> bool {
         self.opened && self.depth == 0 && !self.string
     }
 }

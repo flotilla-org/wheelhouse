@@ -627,3 +627,34 @@ fn a_call_whose_arguments_go_loses_its_input() {
     rich.doc().assert_rows();
     assert_eq!(kinds(&rich), [Kind::Log]);
 }
+
+#[test]
+fn arguments_close_only_when_their_value_does_outside_strings() {
+    use super::conversation::Nesting;
+    let closed = |pieces: &[&str]| {
+        let mut nesting = Nesting::default();
+        pieces.iter().for_each(|p| nesting.feed(p));
+        nesting.closed()
+    };
+    let cases: &[(&[&str], bool)] = &[
+        (&[r#"{"a":1}"#], true),
+        (&[r#"{"a":"#, "1", "}"], true),
+        (&[r#"{"a":[{"b":2}"#], false),
+        (&[r#"[1,[2]]"#], true),
+        // Braces and brackets inside a string don't count.
+        (&[r#"{"a":"}]"#], false),
+        (&[r#"{"a":"}]"}"#], true),
+        // An escaped quote doesn't end a string; an escaped backslash
+        // before one does, even split across deltas.
+        (&[r#"{"a":"\"}"#], false),
+        (&[r#"{"a":"\\"}"#], true),
+        (&[r#"{"a":"\"#, r#"\"}"#], true),
+        (&[r#"{"a":"\"#, r#""}"#], false),
+        // Nothing opened yet, or a bare scalar.
+        (&[""], false),
+        (&["42"], false),
+    ];
+    for (pieces, want) in cases {
+        assert_eq!(closed(pieces), *want, "{pieces:?}");
+    }
+}
