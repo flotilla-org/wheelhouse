@@ -526,13 +526,13 @@ uishell_scroll_thumb_diagnostics(RD_WindowState *ws)
     sig = uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, none);
     ThumbCheck(sig.bar[axis].kind == UI_ScrollBarActionKind_None && sig.bar[axis].step == 0, "a released bar reports nothing");
 
-    // Classic arrows step and its track pages, towards either end.
-    if(style == UI_ScrollBarStyle_Classic)
+    // Classic arrows step and either style's track pages (#665), towards
+    // either end.
     {
       fraction = 0.5;
       axes[axis].thumb.fraction = fraction;
       for(U32 direction = 0; direction < 2; direction++)
-      for(U32 page = 0; page < 2; page++)
+      for(U32 page = style == UI_ScrollBarStyle_Classic ? 0 : 1; page < 2; page++)
       {
         mouse = v2f32(200, 200);
         for(U32 frame = 0; frame < 3; frame++) { uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, none); }
@@ -550,7 +550,7 @@ uishell_scroll_thumb_diagnostics(RD_WindowState *ws)
         press.pos = release.pos = mouse;
         sig = uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, press);
         ThumbCheck(sig.bar[axis].kind == UI_ScrollBarActionKind_None && sig.bar[axis].step == (direction ? 1 : -1) &&
-                   !!sig.bar[axis].page == !!page, "classic arrow steps and track pages");
+                   !!sig.bar[axis].page == !!page, "an arrow steps and the track pages");
         uishell_scroll_test_thumb_frame(ws, &region, axes, mouse, release);
       }
     }

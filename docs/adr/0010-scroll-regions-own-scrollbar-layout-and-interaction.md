@@ -26,7 +26,9 @@ Every layout calculation starts afresh, so gutters disappear when content fits.
 Overlay bars leave the viewport unchanged. They appear while the content
 scrolls and for about a second after, while the pointer is on the bar's own
 strip at the edge (its resting width and inset), and while dragged; they
-widen once the pointer is on them. A fading bar takes no clicks, so controls
+widen once the pointer is on them. While up, an overlay bar's track pages as
+a classic one's does (#665, 2026-11-03; before, it passed clicks through to
+the content). A fading bar takes no clicks, so controls
 just inside the strip stay reachable (#250, 2026-10-08; this replaced
 appearing whenever the pointer was inside the viewport). Where the system
 wants scroll bars always shown (macOS "Show scroll bars: Always", read into

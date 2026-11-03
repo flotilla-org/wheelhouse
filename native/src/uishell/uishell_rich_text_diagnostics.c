@@ -73,6 +73,7 @@ struct UIShell_RtDiag
   U64 now_us;
   U32 failures;
   UIShell_RtDiagClip clip;
+  UI_AnimationInfo animation;
 };
 
 // One frame of the View in `d->rect`, with `events`.
@@ -80,8 +81,7 @@ internal UIShell_RichTextState *
 uishell_rt_diag_frame(UIShell_RtDiag *d, UI_EventList *events)
 {
   UI_EventList none = {0};
-  UI_AnimationInfo animation = {0};
-  ui_begin_build(d->ws->os, events ? events : &none, &d->ws->ui->icon_info, d->ws->theme, &animation, 1.f/60, 1.f/60);
+  ui_begin_build(d->ws->os, events ? events : &none, &d->ws->ui->icon_info, d->ws->theme, &d->animation, 1.f/60, 1.f/60);
   ui_state->mouse = d->mouse;
   UIShell_RegsScope(.window = d->ws->cfg_id, .panel = d->panel, .tab = d->address, .view = d->address)
   UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(12)
@@ -481,6 +481,121 @@ uishell_rt_diag_fixture(Arena *arena, U64 paragraphs, String8 extra_in_paragraph
   }
   str8_list_pushf(arena, &out, "## Repeat\n\nThe first.\n\n## Repeat\n\nThe second.\n");
   return str8_list_join(arena, &out, 0);
+}
+
+//- The scroll bar (#665).
+
+internal WheelhouseRichWindow
+uishell_rt_diag_window(UIShell_RichTextState *s)
+{
+  char *error = 0;
+  WheelhouseRichWindow w = {0};
+  wheelhouse_rich_text_window(s->doc, s->sub, &w, &error);
+  return w;
+}
+
+// The viewport's distance from the document's end, which backfill at the
+// front doesn't move.
+internal F64
+uishell_rt_diag_from_end(UIShell_RichTextState *s)
+{
+  WheelhouseRichWindow w = uishell_rt_diag_window(s);
+  return Max(0.0, w.total - w.viewport - w.top);
+}
+
+// The View at its end, following it, with the pointer on the scroll bar's
+// strip, which brings an overlay bar up. Returns the bar's thumb.
+internal UI_Box *
+uishell_rt_diag_bar_up(UIShell_RtDiag *d, UIShell_RichTextState **s)
+{
+  char *error = 0;
+  wheelhouse_rich_text_scroll_to_end((*s)->doc, (*s)->sub, &error);
+  d->mouse = v2f32(d->rect.x1 - 3, center_2f32(d->rect).y);
+  UI_Key content = ui_key_from_stringf(rd_view_ui_key(d->address), "###rich_text_content");
+  UI_Key bar = ui_key_from_stringf(content, "scroll_region_bar_%i", Axis2_Y);
+  UI_Key track = ui_key_from_stringf(bar, "##_scroll_area_%i", Axis2_Y);
+  *s = uishell_rt_diag_frames(d, 4);
+  return ui_box_from_key(ui_key_from_stringf(track, "##_scroller_%i", Axis2_Y));
+}
+
+// The scroll bar of a View of `path`, in the active style, driven by the
+// pointer events the window sends: its track pages, and its thumb drags,
+// breaking follow-tail until it reaches the bottom.
+internal void
+uishell_rt_diag_scroll_bar(UIShell_RtDiag *d, String8 path, char *what)
+{
+  Temp scratch = scratch_begin(&d->arena, 1);
+  char *style = ui_active_scroll_bar_style() == UI_ScrollBarStyle_Overlay ? "overlay" : "classic";
+  UIShell_RichTextState *s = uishell_rt_diag_open(d, path);
+  RichCheck(s && s->doc, (char *)push_str8f(scratch.arena, "%s opens, for the %s scroll bar", what, style).str);
+  if(!(s && s->doc)) { scratch_end(scratch); return; }
+  char *error = 0;
+  F32 line = uishell_rt_line_px(&s->theme);
+  U64 writes = d->clip.writes;
+  U64 headers = 0;
+
+  //- A click on the track, above the thumb, pages up.
+  UI_Box *thumb = uishell_rt_diag_bar_up(d, &s);
+  for(UI_Box *b = ui_state->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, ui_state->root).next) { headers += b->custom_draw == uishell_rt_header_draw; }
+  B32 following = uishell_rt_diag_window(s).at_end;
+  Rng2F32 track = thumb->parent->rect, thumb_rect = thumb->rect;
+  Vec2F32 at = v2f32(center_2f32(thumb_rect).x, thumb_rect.y0 - 4);
+  d->now_us += 2000000;
+  s = uishell_rt_diag_click(d, at, 0, 1);
+  F64 page = Max(line, s->viewport - line), paged = uishell_rt_diag_from_end(s);
+  fprintf(stderr, "RICH_TEXT_SCROLL_BAR %s %s track=%.0f..%.0f thumb=%.0f..%.0f page=%.1f paged=%.1f headers=%llu\n", what, style,
+          track.y0, track.y1, thumb_rect.y0, thumb_rect.y1, page, paged, (unsigned long long)headers);
+  RichCheck(!ui_box_is_nil(thumb) && following && at.y > track.y0 && abs_f64(paged - page) < 1 && !uishell_rt_diag_window(s).at_end,
+            (char *)push_str8f(scratch.arena, "%s, %s bar: a click on the track pages the View up", what, style).str);
+
+  //- A drag of the thumb scrolls by its share of the travel, and follow-tail
+  // stays broken while the thumb is held, however backfill grows the front.
+  thumb = uishell_rt_diag_bar_up(d, &s);
+  track = thumb->parent->rect;
+  F32 travel = floor_f32(dim_2f32(track).y) - floor_f32(dim_2f32(thumb->rect).y);
+  Vec2F32 from = center_2f32(thumb->rect);
+  d->mouse = from;
+  d->now_us += 2000000;
+  s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = from});
+  B32 held = !s->selecting && ui_key_match(ui_active_key(UI_MouseButtonKind_Left), thumb->key);
+  B32 broken = 1;
+  F32 dy = 60;
+  for(U32 i = 1; i <= 6; i += 1)
+  {
+    d->mouse = v2f32(from.x, from.y - dy*i/6);
+    s = uishell_rt_diag_frame(d, 0);
+    broken &= !uishell_rt_diag_window(s).at_end;
+  }
+  WheelhouseRichWindow w = uishell_rt_diag_window(s);
+  F64 dragged = uishell_rt_diag_from_end(s), expected = dy/travel*(w.total - w.viewport);
+  for(U32 i = 0; i < 10; i += 1)
+  {
+    s = uishell_rt_diag_frame(d, 0);
+    broken &= !uishell_rt_diag_window(s).at_end && uishell_rt_diag_from_end(s) > 0;
+  }
+  fprintf(stderr, "RICH_TEXT_SCROLL_BAR %s %s drag=%.0f travel=%.0f dragged=%.1f expected=%.1f\n", what, style, dy, travel, dragged, expected);
+  // Within a tenth: backfill runs on a time budget, and the Blocks a drag
+  // reveals swap estimated heights for measured ones, so the total the drag
+  // was placed against drifts from the one read after (#665).
+  RichCheck(held && abs_f64(dragged - expected) <= Max(line, expected*0.1),
+            (char *)push_str8f(scratch.arena, "%s, %s bar: dragging the thumb scrolls the View", what, style).str);
+  RichCheck(held && broken, (char *)push_str8f(scratch.arena, "%s, %s bar: follow-tail breaks while the thumb is dragged", what, style).str);
+
+  //- Dragged to the bottom, the View follows the tail again.
+  for(U32 i = 1; i <= 8; i += 1)
+  {
+    d->mouse = v2f32(from.x, track.y1 + 40*i);
+    s = uishell_rt_diag_frame(d, 0);
+  }
+  B32 rearmed = uishell_rt_diag_window(s).at_end;
+  s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = d->mouse});
+  s = uishell_rt_diag_frames(d, 10);
+  RichCheck(rearmed && uishell_rt_diag_window(s).at_end && uishell_rt_diag_from_end(s) < 0.5,
+            (char *)push_str8f(scratch.arena, "%s, %s bar: dragging the thumb to the bottom re-arms follow-tail", what, style).str);
+  WheelhouseRichSelection sel = {0};
+  RichCheck(!wheelhouse_rich_text_selection(s->doc, s->sub, &sel, &error) && d->clip.writes == writes && (!s->conversation || headers > 0),
+            (char *)push_str8f(scratch.arena, "%s, %s bar: its clicks reach no Block, Section header or action", what, style).str);
+  scratch_end(scratch);
 }
 
 internal B32
@@ -1570,6 +1685,41 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     }
     d->rect = r2f32p(0, 0, 900, 600);
     scratch_end(scratch);
+  }
+
+  //- The scroll bar takes clicks and drags in either style, over markdown
+  // and over a generated conversation, its Sections' header rows on screen
+  // (#665).
+  {
+    WheelhouseBytes bytes = {0};
+    String8 generated = push_str8f(arena, "%S/rich-text-scroll-bar.events.jsonl", dir);
+    B32 made = wheelhouse_rich_text_generate_conversation(3, 2u << 20, &bytes, &error);
+    if(made)
+    {
+      write_data_to_file_path(generated, str8(bytes.data, bytes.len));
+      wheelhouse_bytes_free(bytes);
+    }
+    else { fprintf(stderr, "generating the conversation failed: %s\n", error ? error : "(no error)"); }
+    RichCheck(made, "a conversation is generated for the scroll bar");
+    uishell_rt_error(&error);
+    // Inside the window: the layout squeezes a View larger than it, and the
+    // bar at the View's edge would be clipped off (CI's windows are 820 by
+    // 615 on macOS, 803 by 574 on Windows).
+    Vec2F32 window = dim_2f32(wm_client_rect_from_window(d->ws->os));
+    d->rect = r2f32p(0, 0, Min(900, window.x), Min(600, window.y));
+    UI_ScrollBarStyle saved_style = ui_active_scroll_bar_style();
+    // At a rate of 1, an overlay bar fades in within a frame.
+    d->animation.scroll_animation_rate = d->animation.hot_animation_rate = 1.f;
+    UI_ScrollBarStyle styles[] = {UI_ScrollBarStyle_Classic, UI_ScrollBarStyle_Overlay};
+    for EachElement(i, styles)
+    {
+      ui_set_active_scroll_bar_style(styles[i]);
+      uishell_rt_diag_scroll_bar(d, path, "markdown");
+      uishell_rt_diag_scroll_bar(d, generated, "a conversation");
+    }
+    ui_set_active_scroll_bar_style(saved_style);
+    d->animation = (UI_AnimationInfo){0};
+    d->rect = r2f32p(0, 0, 900, 600);
   }
 
   //- Timing: the generated 35 MB transcript, to its first painted tail.
