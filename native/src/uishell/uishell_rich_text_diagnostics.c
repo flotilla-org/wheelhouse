@@ -1505,6 +1505,13 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
                 dim_2f32(bubble->rect).x < dim_2f32(d->rect).x && user_text.draw && user_text.box->rect.x0 > bubble->rect.x0 &&
                 user_text.box->rect.x1 < bubble->rect.x1 && user_text.box->rect.y0 >= bubble->rect.y0 && user_text.box->rect.y1 <= bubble->rect.y1,
                 "a user Turn is a bubble, end-aligned and narrower than the View, around its text");
+      // RAD draws siblings last to first, so the bubble must be built after its text to sit behind it.
+      B32 bubble_behind = 0;
+      if(!ui_box_is_nil(bubble) && user_text.draw && bubble->parent == user_text.box->parent)
+      {
+        for(UI_Box *b = user_text.box->next; !ui_box_is_nil(b); b = b->next) { if(b == bubble) { bubble_behind = 1; break; } }
+      }
+      RichCheck(bubble_behind, "a bubble is drawn behind its text");
       UIShell_RtDiagBox assistant_text = uishell_rt_diag_box(scratch.arena, assistant->children[0]);
       RichCheck(assistant_text.draw && abs_f32(assistant_text.box->rect.x0 - column_x0) < 0.5f && abs_f32(assistant_text.box->rect.x1 - column_x1) < 0.5f &&
                 ui_box_is_nil(uishell_rt_diag_drawn(uishell_rt_chrome_draw, assistant->key)), "an assistant Turn spans the column, without chrome");

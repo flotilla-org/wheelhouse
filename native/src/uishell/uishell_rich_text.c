@@ -4655,52 +4655,6 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   Vec2F32 mouse = ui_mouse();
   UI_Parent(bars.content_box)
   {
-    //- Chrome behind the Blocks: a background over a Container's rows,
-    // from its header to its bottom inset (or as far as the Window goes).
-    {
-      U64 cap = 64, count = 0;
-      UIShell_RtChromeDraw *chromes = push_array(scratch.arena, UIShell_RtChromeDraw, cap);
-      Rng2F32 *rects = push_array(scratch.arena, Rng2F32, cap);
-      for(U64 i = 0; i < pl.count; i += 1)
-      {
-        UIShell_RtPlaced *p = &pl.v[i];
-        UIShell_RtNode *n = p->node ? p->node : p->container;
-        if(n == 0) { continue; }
-        // The row's own Container, then the Containers holding it.
-        UIShell_RtContainerStyle *st = p->style;
-        UIShell_RtNode *c = p->style ? n : 0;
-        if(c == 0) { c = uishell_rt_styled_parent(s, n, &st); }
-        for(; c != 0 && count < cap; c = uishell_rt_styled_parent(s, c, &st))
-        {
-          if(!(st->chrome & UIShell_RtChrome_Background)) { continue; }
-          F32 y0 = p->rect.y0, y1 = p->rect.y1;
-          if(c == n && p->part == WHEELHOUSE_RICH_PART_FOOTER) { y1 = y0 + uishell_rt_em(t, st->inset_bottom); }
-          U64 at = 0;
-          for(; at < count && chromes[at].key != c->key; at += 1) {}
-          Rng1F32 x = uishell_rt_chrome_column(s, c, st);
-          if(at == count)
-          {
-            Vec4F32 color = mix_4f32(t->background, t->text, 0.07f);
-            chromes[count] = (UIShell_RtChromeDraw){c->key, color, uishell_rt_em(t, st->radius)};
-            rects[count++] = r2f32p(x.min, y0, x.max, y1);
-          }
-          else
-          {
-            rects[at].y0 = Min(rects[at].y0, y0);
-            rects[at].y1 = Max(rects[at].y1, y1);
-          }
-        }
-      }
-      for(U64 i = 0; i < count; i += 1)
-      {
-        if(rects[i].y1 <= 0 || rects[i].y0 >= pl.viewport) { continue; }
-        UIShell_RtChromeDraw *d = push_array(ui_build_arena(), UIShell_RtChromeDraw, 1);
-        *d = chromes[i];
-        UI_Box *box = &ui_nil_box;
-        UI_Rect(rects[i]) { box = ui_build_box_from_stringf(UI_BoxFlag_Floating, "###rt_chrome_%llx", (unsigned long long)d->key); }
-        ui_box_equip_custom_draw(box, uishell_rt_chrome_draw, d);
-      }
-    }
 
     //- Section headers: an icon for the kind, the name, the title and a
     // status mark.
@@ -4932,6 +4886,53 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       {
         ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground,
                                   "%S###rt_action_%u", copied ? str8_lit("Copied") : uishell_rt_action_label(actions[i].action), actions[i].action);
+      }
+    }
+    //- Chrome behind the Blocks, built last: RAD draws siblings last to first, so
+    // the first box built is drawn on top. A background over a Container's rows,
+    // from its header to its bottom inset (or as far as the Window goes).
+    {
+      U64 cap = 64, count = 0;
+      UIShell_RtChromeDraw *chromes = push_array(scratch.arena, UIShell_RtChromeDraw, cap);
+      Rng2F32 *rects = push_array(scratch.arena, Rng2F32, cap);
+      for(U64 i = 0; i < pl.count; i += 1)
+      {
+        UIShell_RtPlaced *p = &pl.v[i];
+        UIShell_RtNode *n = p->node ? p->node : p->container;
+        if(n == 0) { continue; }
+        // The row's own Container, then the Containers holding it.
+        UIShell_RtContainerStyle *st = p->style;
+        UIShell_RtNode *c = p->style ? n : 0;
+        if(c == 0) { c = uishell_rt_styled_parent(s, n, &st); }
+        for(; c != 0 && count < cap; c = uishell_rt_styled_parent(s, c, &st))
+        {
+          if(!(st->chrome & UIShell_RtChrome_Background)) { continue; }
+          F32 y0 = p->rect.y0, y1 = p->rect.y1;
+          if(c == n && p->part == WHEELHOUSE_RICH_PART_FOOTER) { y1 = y0 + uishell_rt_em(t, st->inset_bottom); }
+          U64 at = 0;
+          for(; at < count && chromes[at].key != c->key; at += 1) {}
+          Rng1F32 x = uishell_rt_chrome_column(s, c, st);
+          if(at == count)
+          {
+            Vec4F32 color = mix_4f32(t->background, t->text, 0.07f);
+            chromes[count] = (UIShell_RtChromeDraw){c->key, color, uishell_rt_em(t, st->radius)};
+            rects[count++] = r2f32p(x.min, y0, x.max, y1);
+          }
+          else
+          {
+            rects[at].y0 = Min(rects[at].y0, y0);
+            rects[at].y1 = Max(rects[at].y1, y1);
+          }
+        }
+      }
+      for(U64 i = 0; i < count; i += 1)
+      {
+        if(rects[i].y1 <= 0 || rects[i].y0 >= pl.viewport) { continue; }
+        UIShell_RtChromeDraw *d = push_array(ui_build_arena(), UIShell_RtChromeDraw, 1);
+        *d = chromes[i];
+        UI_Box *box = &ui_nil_box;
+        UI_Rect(rects[i]) { box = ui_build_box_from_stringf(UI_BoxFlag_Floating, "###rt_chrome_%llx", (unsigned long long)d->key); }
+        ui_box_equip_custom_draw(box, uishell_rt_chrome_draw, d);
       }
     }
   }
