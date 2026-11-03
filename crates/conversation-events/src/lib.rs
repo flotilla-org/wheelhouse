@@ -252,6 +252,10 @@ pub struct ToolCallStart {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<ToolKind>,
+    /// When the call started, in milliseconds since the Unix epoch, as
+    /// AG-UI's `timestamp`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -315,6 +319,10 @@ pub struct ToolCallResult {
     pub structured: Option<Value>,
     #[serde(default)]
     pub truncated: Option<Truncated>,
+    /// When the result came, in milliseconds since the Unix epoch, as
+    /// AG-UI's `timestamp`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

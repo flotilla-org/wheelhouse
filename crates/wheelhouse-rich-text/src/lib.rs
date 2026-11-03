@@ -35,8 +35,8 @@ pub use pages::PAGE;
 pub use ring::{Delta, Op, RING_CAPACITY};
 pub use select::{copy_block, rendered, Format, Point, Selection};
 pub use tree::{
-    Alert, Align, Attr, Cell, Children, Color, Detail, Entry, InlineObject, Key, Kind, NodeContent, NodeId, Part, Role, SectionKind, Span,
-    Table, ToolKind, ToolStatus, Tree, NO_STRING, TABLE_MEDIA_TYPE,
+    Alert, Align, Attr, Cell, Children, Color, Detail, Entry, InlineObject, Key, Kind, NodeContent, NodeId, Part, Role, RunSummary,
+    SectionKind, Span, Table, ToolKind, ToolStatus, Tree, NO_STRING, TABLE_MEDIA_TYPE,
 };
 pub use view::{Anchor, Metrics, Position, Thumb, View, Window, WindowEntry, OVERSCAN};
 

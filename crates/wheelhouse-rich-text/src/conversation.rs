@@ -9,6 +9,7 @@
 //! the file in any pieces, tail first or not, gives the same tree.
 use std::collections::hash_map::Entry as MapEntry;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use conversation_events::{
@@ -21,7 +22,7 @@ use super::ingest::{parse_into, Staged};
 use super::log::Log;
 use super::ring::Ring;
 use super::tail::{repair, Fence};
-use super::tree::{Detail, Key, Kind, Role, SectionKind, ToolKind, ToolStatus, Tree};
+use super::tree::{Attr, Detail, Key, Kind, Role, RunSummary, SectionKind, Span, ToolKind, ToolStatus, Tree};
 use super::view::View;
 
 /// The file offset of an item's first line, then its place in that line (a
@@ -190,13 +191,14 @@ struct ToolResult {
     content: String,
     structured: Option<Value>,
     truncated: Option<Truncated>,
+    ended: Option<u64>,
 }
 
 #[derive(Debug)]
 enum Body {
     Text { role: Role, md: Markdown },
     Reasoning { md: Markdown },
-    Tool { name: String, title: String, kind: ToolKind, args: String, result: Option<ToolResult> },
+    Tool { name: String, title: String, kind: ToolKind, args: String, result: Option<ToolResult>, started: Option<u64> },
     Subagent { status: ToolStatus },
     Divider { text: String },
     Notice { text: String },
@@ -216,22 +218,26 @@ struct Item {
 
 impl Item {
     fn head(&self) -> (Kind, &str, Detail) {
-        let section = |section, name: &str, title: &str, tool, status| Detail::Section {
+        let section = |section, name: &str, title: &str, tool, status, duration_ms| Detail::Section {
             section,
             name: name.to_owned(),
             title: title.to_owned(),
             tool,
             status,
+            duration_ms,
         };
         let streaming = |md: &Markdown| if md.ended { ToolStatus::Ok } else { ToolStatus::Pending };
         match &self.body {
             Body::Text { role, .. } => (Kind::Turn, "", Detail::Turn { role: *role }),
-            Body::Reasoning { md } => (Kind::Section, "", section(SectionKind::Reasoning, "", "", ToolKind::Other, streaming(md))),
-            Body::Tool { name, title, kind, result, .. } => {
+            Body::Reasoning { md } => (Kind::Section, "", section(SectionKind::Reasoning, "", "", ToolKind::Other, streaming(md), None)),
+            Body::Tool { name, title, kind, args, result, started } => {
                 let status = result.as_ref().map_or(ToolStatus::Pending, |r| r.status);
-                (Kind::Section, "", section(SectionKind::Tool, name, title, *kind, status))
+                let duration = started.zip(result.as_ref().and_then(|r| r.ended)).and_then(|(start, end)| end.checked_sub(start));
+                (Kind::Section, "", section(SectionKind::Tool, name, &shown_title(name, title, *kind, args), *kind, status, duration))
             }
-            Body::Subagent { status } => (Kind::Section, "", section(SectionKind::Subagent, "", &self.thread, ToolKind::Agent, *status)),
+            Body::Subagent { status } => {
+                (Kind::Section, "", section(SectionKind::Subagent, "", &self.thread, ToolKind::Agent, *status, None))
+            }
             Body::Divider { text } => (Kind::Divider, text, Detail::None),
             Body::Notice { text } => (Kind::Notice, text, Detail::None),
         }
@@ -254,6 +260,17 @@ fn reasoning_key(thread: &str, id: &str) -> Key {
 
 fn tool_key(thread: &str, id: &str) -> Key {
     Key::named(&[thread, "tool", id])
+}
+
+/// A tool call's input Block's key: always its first child.
+fn input_key(call: Key) -> Key {
+    Key::named(&["input", &call.0.to_string()])
+}
+
+/// A Tool Run's key, from its first call's: a run streaming in grows at its
+/// end and keeps its key.
+fn run_key(first: Key) -> Key {
+    Key::named(&["run", &first.0.to_string()])
 }
 
 /// The slot of a thread outside the one a View shows: never placed, so
@@ -311,6 +328,7 @@ fn result(e: &ToolCallResult) -> ToolResult {
         content: e.content.clone(),
         structured: e.structured.clone(),
         truncated: e.truncated.clone(),
+        ended: e.timestamp,
     }
 }
 
@@ -336,10 +354,129 @@ fn starts(event: &Event) -> usize {
     }
 }
 
-/// The result's Blocks under `parent`, by media type.
-fn stage_result(r: &ToolResult, staged: &mut Staged, parent: u32) {
+/// A string past this many characters is folded in a call's input.
+const FOLD: usize = 80;
+/// A search shows at most this many matches.
+const MATCHES: usize = 500;
+
+/// `text` up to `chars` characters, with an ellipsis if it goes on.
+fn folded(text: &str, chars: usize) -> String {
+    match text.char_indices().nth(chars) {
+        Some((at, _)) => format!("{}…", &text[..at]),
+        None => text.to_owned(),
+    }
+}
+
+fn first_line(text: &str) -> &str {
+    text.trim().lines().next().unwrap_or("")
+}
+
+/// What a call's header shows as its title (#667): the path an edit or a
+/// read names and the pattern a search names, else the producer's title;
+/// without one, a command, or the tool's name and its first argument.
+fn shown_title(name: &str, title: &str, kind: ToolKind, args: &str) -> String {
+    let value: Option<Value> = serde_json::from_str(args).ok();
+    let arg = |keys: &[&str]| value.as_ref().and_then(|v| keys.iter().find_map(|k| v.get(*k)?.as_str())).filter(|s| !s.trim().is_empty());
+    let named = match kind {
+        ToolKind::Edit | ToolKind::Read => arg(&["file_path", "notebook_path", "path"]),
+        ToolKind::Search => arg(&["pattern", "query"]),
+        _ => None,
+    };
+    if let Some(named) = named {
+        return first_line(named).to_owned();
+    }
+    if !title.is_empty() {
+        return title.to_owned();
+    }
+    if kind == ToolKind::Shell {
+        return arg(&["command"]).map_or_else(String::new, |c| first_line(c).to_owned());
+    }
+    let summary =
+        value.as_ref().and_then(Value::as_object).and_then(|o| o.values().find_map(|v| v.as_str().filter(|s| !s.trim().is_empty())));
+    summary.map_or_else(String::new, |s| format!("{name} {}", folded(first_line(s), FOLD)))
+}
+
+fn fold_strings(value: &mut Value) {
+    match value {
+        Value::String(s) if s.chars().count() > FOLD => *s = folded(s, FOLD - 20),
+        Value::Array(items) => items.iter_mut().for_each(fold_strings),
+        Value::Object(fields) => fields.values_mut().for_each(fold_strings),
+        _ => {}
+    }
+}
+
+/// A call's input Block under `parent`, if it has input: a shell call's
+/// command whole, or else its arguments as compact JSON, long strings
+/// folded.
+fn stage_input(call: Key, kind: ToolKind, args: &str, staged: &mut Staged, parent: u32) -> Option<u32> {
+    let args = args.trim();
+    let (text, language) = match serde_json::from_str::<Value>(args) {
+        _ if args.is_empty() => return None,
+        Ok(value) if value.as_object().is_some_and(|o| o.is_empty()) => return None,
+        Ok(value) if kind == ToolKind::Shell && value.get("command").and_then(Value::as_str).is_some() => {
+            (value["command"].as_str().unwrap_or_default().to_owned(), "sh")
+        }
+        Ok(mut value) => {
+            fold_strings(&mut value);
+            (value.to_string(), "json")
+        }
+        // Still streaming in, or not JSON.
+        Err(_) => (folded(args, 2 * FOLD), ""),
+    };
+    Some(staged.push(parent, Kind::Input, Some(input_key(call)), &text, vec![], Detail::Code { language: language.into() }))
+}
+
+/// How many of the call `key`'s first children are its input: 0 or 1.
+fn lead(doc: &Tree, key: Key) -> usize {
+    let first = doc.get(key).and_then(|id| doc.children(id).next());
+    usize::from(first.is_some_and(|c| doc.key(c) == input_key(key)))
+}
+
+/// Where a search match's `path:line` ends in it, or 0.
+fn location(line: &str) -> usize {
+    let bytes = line.as_bytes();
+    for (colon, _) in line.match_indices(':').filter(|&(i, _)| i > 0) {
+        let digits = bytes[colon + 1..].iter().take_while(|b| b.is_ascii_digit()).count();
+        let end = colon + 1 + digits;
+        if digits > 0 && (end == bytes.len() || matches!(bytes[end], b':' | b'-')) {
+            return end;
+        }
+    }
+    0
+}
+
+/// The result's Blocks under `parent`, by the call's kind, then media type:
+/// a read's file as code in the language of its path's extension, a
+/// search's matches as a list.
+fn stage_result(r: &ToolResult, kind: ToolKind, path: &str, staged: &mut Staged, parent: u32) {
     let media = r.media_type.as_str();
-    if media == MARKDOWN {
+    let text = |content: &str| {
+        let mut log = Log::default();
+        log.feed(content);
+        log.chunks().into_iter().map(|chunk| chunk.text).collect::<Vec<_>>().join("\n")
+    };
+    if kind == ToolKind::Read && !media.starts_with("image/") {
+        let file = path.rsplit(['/', '\\']).next().unwrap_or("");
+        let language = file.rsplit_once('.').map_or("", |(_, extension)| extension);
+        let content = if media == MARKDOWN || media == DIFF { r.content.trim_end_matches('\n').to_owned() } else { text(&r.content) };
+        staged.push(parent, Kind::Code, None, &content, vec![], Detail::Code { language: language.into() });
+    } else if kind == ToolKind::Search && media != MARKDOWN && media != DIFF && !media.starts_with("image/") {
+        let content = text(&r.content);
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        if !lines.is_empty() {
+            let list = staged.push(parent, Kind::List, None, "", vec![], Detail::List { ordered: false, start: 1, tight: true });
+            for line in lines.iter().take(MATCHES) {
+                let item = staged.push(list, Kind::ListItem, None, "", vec![], Detail::Item { task: None });
+                let end = location(line) as u32;
+                let spans = if end > 0 { vec![Span { start: 0, len: end, attr: Attr::Code }] } else { vec![] };
+                staged.push(item, Kind::Paragraph, None, line, spans, Detail::None);
+            }
+        }
+        if lines.len() > MATCHES {
+            let text = format!("{} more matches", lines.len() - MATCHES);
+            staged.push(parent, Kind::Notice, None, &text, vec![], Detail::None);
+        }
+    } else if media == MARKDOWN {
         parse_into(staged, parent, &r.content, 0);
     } else if media == DIFF {
         let patch = r.structured.as_ref().and_then(|s| s.get("patch").or(Some(s))).and_then(Value::as_str);
@@ -597,7 +734,7 @@ impl Conversation {
             Event::ReasoningMessageEnd(e) => self.markdown(reasoning_key(&thread, &e.message_id), |md| md.ended = true),
             Event::ToolCallStart(e) => {
                 let (n, t, k) = (e.tool_call_name, e.title.unwrap_or_default(), tool_kind(e.kind));
-                self.tool(at, order, &thread, &e.tool_call_id, n, t, k, None);
+                self.tool(at, order, &thread, &e.tool_call_id, (n, t, k, e.timestamp), None);
             }
             Event::ToolCallArgs(e) => {
                 if let Some(Body::Tool { args, .. }) = self.items.get_mut(&tool_key(&thread, &e.tool_call_id)).map(|i| &mut i.body) {
@@ -639,13 +776,22 @@ impl Conversation {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn tool(&mut self, at: u64, order: Order, thread: &str, id: &str, name: String, title: String, kind: ToolKind, snapshot: Option<&str>) {
+    /// A call's start: its name, title, kind and timestamp.
+    fn tool(
+        &mut self,
+        at: u64,
+        order: Order,
+        thread: &str,
+        id: &str,
+        head: (String, String, ToolKind, Option<u64>),
+        snapshot: Option<&str>,
+    ) {
         let key = tool_key(thread, id);
-        let fresh = Body::Tool { name: name.clone(), title: title.clone(), kind, args: String::new(), result: None };
+        let (name, title, kind, started) = head;
+        let fresh = Body::Tool { name: name.clone(), title: title.clone(), kind, args: String::new(), result: None, started };
         if let Some(item) = self.create(key, order, thread, || fresh) {
-            if let Body::Tool { name: n, title: t, kind: k, args, .. } = &mut item.body {
-                (*n, *t, *k) = (name, title, kind);
+            if let Body::Tool { name: n, title: t, kind: k, args, started: s, .. } = &mut item.body {
+                (*n, *t, *k, *s) = (name, title, kind, started);
                 if let Some(arguments) = snapshot {
                     *args = arguments.to_owned();
                     item.snapshot = Some(at);
@@ -676,6 +822,7 @@ impl Conversation {
                         content: m.text(),
                         structured: m.structured.clone(),
                         truncated: m.truncated.clone(),
+                        ended: None,
                     };
                     match self.items.get_mut(&key) {
                         Some(item) if item.snapshot.is_none_or(|s| s <= at) => {
@@ -729,16 +876,8 @@ impl Conversation {
                     for call in m.tool_calls {
                         let title = call.title.unwrap_or_default();
                         let order = next();
-                        self.tool(
-                            at,
-                            order,
-                            thread,
-                            &call.id,
-                            call.function.name,
-                            title,
-                            tool_kind(call.kind),
-                            Some(&call.function.arguments),
-                        );
+                        let head = (call.function.name, title, tool_kind(call.kind), None);
+                        self.tool(at, order, thread, &call.id, head, Some(&call.function.arguments));
                     }
                 }
             }
@@ -770,26 +909,154 @@ impl Conversation {
         slot == Key::ROOT || self.items.get(&slot).is_some_and(|i| i.placed.is_some())
     }
 
-    /// An item with its own Blocks, under the staged root.
-    fn stage(&mut self, key: Key, staged: &mut Staged, doc: &mut Tree) {
+    /// An item with its own Blocks, under the staged node `parent`.
+    fn stage(&mut self, key: Key, staged: &mut Staged, parent: u32, doc: &mut Tree) {
         let item = self.items.get_mut(&key).expect("a staged item exists");
         let (kind, text, detail) = item.head();
-        let node = staged.push(0, kind, Some(key), text, vec![], detail);
+        let node = staged.push(parent, kind, Some(key), text, vec![], detail);
         match &mut item.body {
             Body::Text { md, .. } | Body::Reasoning { md } => md.stage(staged, node, doc),
-            Body::Tool { result: Some(r), .. } => stage_result(r, staged, node),
+            Body::Tool { name, title, kind, args, result, .. } => {
+                if let Some(r) = result {
+                    stage_result(r, *kind, &shown_title(name, title, *kind, args), staged, node);
+                }
+                // Staged after the result, so the result's ordinals are as
+                // an update stages them, then moved first.
+                if stage_input(key, *kind, args, staged, node).is_some() {
+                    staged.nodes[node as usize].children.rotate_right(1);
+                }
+            }
             _ => {}
         }
         item.dirty = false;
     }
 
+    /// An item the Tree already has, as it is there, or else a new one.
+    fn stage_placed(&mut self, key: Key, staged: &mut Staged, parent: u32, doc: &mut Tree) {
+        match doc.get(key) {
+            Some(id) => {
+                staged.copy(parent, doc, id);
+            }
+            None => self.stage(key, staged, parent, doc),
+        }
+    }
+
+    fn is_call(&self, key: Key) -> bool {
+        matches!(self.items.get(&key).map(|i| &i.body), Some(Body::Tool { .. }))
+    }
+
+    /// The group `list[i]` is in: its run of consecutive calls, or itself.
+    /// A slot's children in the Tree are its groups, a run of two or more
+    /// calls as a Tool Run (#667).
+    fn group_at(&self, list: &[(Order, Key)], i: usize) -> Range<usize> {
+        if !self.is_call(list[i].1) {
+            return i..i + 1;
+        }
+        let (mut start, mut end) = (i, i + 1);
+        while start > 0 && self.is_call(list[start - 1].1) {
+            start -= 1;
+        }
+        while end < list.len() && self.is_call(list[end].1) {
+            end += 1;
+        }
+        start..end
+    }
+
+    /// The groups of `items`, which start and end with whole groups.
+    fn groups(&self, items: &[(Order, Key)]) -> Vec<Range<usize>> {
+        let mut out: Vec<Range<usize>> = vec![];
+        let mut prev = false;
+        for (i, &(_, key)) in items.iter().enumerate() {
+            let call = self.is_call(key);
+            match out.last_mut() {
+                Some(last) if call && prev => last.end = i + 1,
+                _ => out.push(i..i + 1),
+            }
+            prev = call;
+        }
+        out
+    }
+
+    /// How many groups `list[..end]` holds: the Tree index of the group
+    /// starting at `end`.
+    fn groups_before(&self, list: &[(Order, Key)], end: usize) -> usize {
+        (0..end).filter(|&i| i == 0 || !(self.is_call(list[i].1) && self.is_call(list[i - 1].1))).count()
+    }
+
+    fn run_detail(&self, calls: &[(Order, Key)]) -> Detail {
+        Detail::ToolRun(RunSummary::new(calls.iter().filter_map(|(_, key)| match &self.items.get(key)?.body {
+            Body::Tool { kind, result, .. } => Some((*kind, result.as_ref().map_or(ToolStatus::Pending, |r| r.status))),
+            _ => None,
+        })))
+    }
+
+    fn update_run(&self, calls: &[(Order, Key)], sink: &mut Sink) {
+        let key = run_key(calls[0].1);
+        let mut head = Staged::under(key, 0);
+        head.push(0, Kind::ToolRun, Some(key), "", vec![], self.run_detail(calls));
+        sink.update(&head, 1);
+    }
+
+    /// The Tool Run `key` is in, as its calls.
+    fn run_of(&self, key: Key) -> Option<&[(Order, Key)]> {
+        let (slot, order) = self.items.get(&key)?.placed?;
+        let list = self.slots.get(&slot)?;
+        let group = self.group_at(list, list.binary_search(&(order, key)).ok()?);
+        (group.len() > 1).then(|| &list[group])
+    }
+
+    /// A change to `slot`'s items, into the Tree: `old`, whose groups start
+    /// at the slot's child `at`, is now `new`. Both start and end with whole
+    /// groups, and only the groups that differ are staged again; a run that
+    /// keeps its first call keeps its Tool Run, and only its calls change.
+    fn regroup(&mut self, slot: Key, at: usize, old: &[(Order, Key)], new: &[(Order, Key)], sink: &mut Sink) {
+        let (was, now) = (self.groups(old), self.groups(new));
+        let same = |a: &[(Order, Key)], b: &[(Order, Key)]| a.iter().map(|e| e.1).eq(b.iter().map(|e| e.1));
+        let (prefix, suffix) = trim(was.len(), now.len(), |i, j| same(&old[was[i].clone()], &new[now[j].clone()]));
+        let (was, now) = (&was[prefix..was.len() - suffix], &now[prefix..now.len() - suffix]);
+        if let ([w], [n]) = (was, now) {
+            let (old, new) = (&old[w.clone()], &new[n.clone()]);
+            if old.len() > 1 && new.len() > 1 && old[0].1 == new[0].1 {
+                self.update_run(new, sink);
+                let (prefix, suffix) = trim(old.len(), new.len(), |i, j| old[i].1 == new[j].1);
+                let run = run_key(new[0].1);
+                let mut staged = Staged::under(run, 0);
+                for &(_, key) in &new[prefix..new.len() - suffix] {
+                    self.stage_placed(key, &mut staged, 0, sink.doc);
+                }
+                sink.splice(run, prefix, Some(old.len() - suffix), staged);
+                return;
+            }
+        }
+        let mut staged = Staged::under(slot, 0);
+        for group in now {
+            let items = &new[group.clone()];
+            let parent = if items.len() > 1 {
+                staged.push(0, Kind::ToolRun, Some(run_key(items[0].1)), "", vec![], self.run_detail(items))
+            } else {
+                0
+            };
+            for &(_, key) in items {
+                self.stage_placed(key, &mut staged, parent, sink.doc);
+            }
+        }
+        let at = at + lead(sink.doc, slot);
+        sink.splice(slot, at + prefix, Some(at + prefix + was.len()), staged);
+    }
+
     /// Takes an item out of its slot, and every item placed inside it.
     fn unplace(&mut self, key: Key, sink: &mut Sink, again: &mut Vec<Key>) {
         let Some((slot, order)) = self.items.get_mut(&key).and_then(|i| i.placed.take()) else { return };
-        let list = self.slots.get_mut(&slot).expect("a placed item's slot");
+        let mut list = self.slots.remove(&slot).expect("a placed item's slot");
         let at = list.binary_search(&(order, key)).expect("a placed item is in its slot");
+        // Its neighbours' groups, which it may have kept apart or held together.
+        let lo = if at > 0 { self.group_at(&list, at - 1).start } else { 0 };
+        let hi = if at + 1 < list.len() { self.group_at(&list, at + 1).end } else { list.len() };
+        let first = self.groups_before(&list, lo);
+        let old = list[lo..hi].to_vec();
         list.remove(at);
-        sink.splice(slot, at, Some(at + 1), Staged::under(slot, 0));
+        self.regroup(slot, first, &old, &list[lo..hi - 1], sink);
+        self.slots.insert(slot, list);
         let mut stack = vec![key];
         while let Some(container) = stack.pop() {
             for (_, inner) in self.slots.remove(&container).unwrap_or_default() {
@@ -838,50 +1105,41 @@ impl Conversation {
             for (slot, mut new) in slots {
                 new.sort_unstable();
                 new.dedup();
-                let list = self.slots.entry(slot).or_default();
+                let mut list = self.slots.remove(&slot).unwrap_or_default();
                 // Each new item's place in the merged list, then runs of
-                // neighbours.
+                // neighbours, each merged in as it goes into the Tree.
                 let mut places = Vec::with_capacity(new.len());
                 for (i, entry) in new.iter().enumerate() {
                     places.push(list.partition_point(|e| e < entry) + i);
                 }
-                let merged: Vec<(Order, Key)> = {
-                    let mut merged = Vec::with_capacity(list.len() + new.len());
-                    let (mut a, mut b) = (0, 0);
-                    while a < list.len() || b < new.len() {
-                        if b < new.len() && (a == list.len() || new[b] < list[a]) {
-                            merged.push(new[b]);
-                            b += 1;
-                        } else {
-                            merged.push(list[a]);
-                            a += 1;
-                        }
-                    }
-                    merged
-                };
-                *list = merged;
                 let mut run = 0;
                 while run < new.len() {
                     let mut end = run + 1;
                     while end < new.len() && places[end] == places[end - 1] + 1 {
                         end += 1;
                     }
-                    let mut staged = Staged::under(slot, 0);
+                    let (at, n) = (places[run], end - run);
+                    list.splice(at..at, new[run..end].iter().copied());
+                    let lo = if at > 0 { self.group_at(&list, at - 1).start } else { 0 };
+                    let hi = if at + n < list.len() { self.group_at(&list, at + n).end } else { list.len() };
+                    let first = self.groups_before(&list, lo);
+                    let old: Vec<(Order, Key)> = list[lo..at].iter().chain(&list[at + n..hi]).copied().collect();
+                    self.regroup(slot, first, &old, &list[lo..hi], sink);
                     for &(order, key) in &new[run..end] {
-                        self.stage(key, &mut staged, sink.doc);
                         self.items.get_mut(&key).unwrap().placed = Some((slot, order));
                         inserted.insert(key);
                     }
-                    sink.splice(slot, places[run], Some(places[run]), staged);
                     run = end;
                 }
+                self.slots.insert(slot, list);
             }
         }
         for key in touched {
             if inserted.contains(&key) {
                 continue;
             }
-            let own = self.slots.get(&key).map_or(0, Vec::len);
+            let own = self.slots.get(&key).map_or(0, |list| self.groups(list).len());
+            let run = self.run_of(key).map(<[_]>::to_vec);
             let Some(item) = self.items.get_mut(&key) else { continue };
             if item.placed.is_none() || !item.dirty {
                 continue;
@@ -893,17 +1151,38 @@ impl Conversation {
             sink.update(&head, 1);
             match &mut item.body {
                 Body::Text { md, .. } | Body::Reasoning { md } => md.stream(key, sink),
-                Body::Tool { result, .. } => {
+                Body::Tool { name, title, kind, args, result, .. } => {
+                    let mut input = Staged::under(key, 0);
+                    stage_input(key, *kind, args, &mut input, 0);
+                    let was = lead(sink.doc, key);
+                    sink.splice(key, 0, Some(was), input);
                     let mut staged = Staged::under(key, 0);
                     if let Some(r) = result {
-                        stage_result(r, &mut staged, 0);
+                        stage_result(r, *kind, &shown_title(name, title, *kind, args), &mut staged, 0);
                     }
-                    sink.splice(key, own, None, staged);
+                    sink.splice(key, lead(sink.doc, key) + own, None, staged);
                 }
                 _ => {}
             }
+            if let Some(run) = run {
+                self.update_run(&run, sink);
+            }
         }
     }
+}
+
+/// How many of two sequences' first and last elements match, by `same(i, j)`
+/// on their indices, without overlapping.
+fn trim(a: usize, b: usize, same: impl Fn(usize, usize) -> bool) -> (usize, usize) {
+    let mut prefix = 0;
+    while prefix < a && prefix < b && same(prefix, prefix) {
+        prefix += 1;
+    }
+    let mut suffix = 0;
+    while suffix < a - prefix && suffix < b - prefix && same(a - 1 - suffix, b - 1 - suffix) {
+        suffix += 1;
+    }
+    (prefix, suffix)
 }
 
 /// What a hover action copies (#546).

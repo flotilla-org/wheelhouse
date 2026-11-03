@@ -67,6 +67,8 @@ pub enum Kind {
     Turn = 5,
     /// A tool call, reasoning, or a subagent's thread.
     Section = 6,
+    /// Two or more tool calls in a row, with no text between them (#667).
+    ToolRun = 7,
     Paragraph = 16,
     Heading = 17,
     Code = 18,
@@ -78,6 +80,8 @@ pub enum Kind {
     Divider = 22,
     /// A note standing in for content, such as output that was cut.
     Notice = 23,
+    /// A tool call's input: its command, or its arguments as compact JSON.
+    Input = 24,
 }
 
 impl Kind {
@@ -94,6 +98,7 @@ impl Kind {
             4 => Kind::Footnote,
             5 => Kind::Turn,
             6 => Kind::Section,
+            7 => Kind::ToolRun,
             16 => Kind::Paragraph,
             17 => Kind::Heading,
             18 => Kind::Code,
@@ -102,6 +107,7 @@ impl Kind {
             21 => Kind::Log,
             22 => Kind::Divider,
             23 => Kind::Notice,
+            24 => Kind::Input,
             _ => return None,
         })
     }
@@ -296,7 +302,55 @@ pub enum Detail {
         title: String,
         tool: ToolKind,
         status: ToolStatus,
+        /// From the call's start to its result, when both have timestamps.
+        duration_ms: Option<u64>,
     },
+    ToolRun(RunSummary),
+}
+
+/// A Tool Run's calls counted by kind, and the summary they read as, by
+/// #667's rule: commands, edits, reads, searches, others, then failures.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct RunSummary {
+    pub commands: u32,
+    pub edits: u32,
+    pub reads: u32,
+    pub searches: u32,
+    pub others: u32,
+    /// Failed or interrupted.
+    pub failed: u32,
+    /// Such as "Ran 3 commands · edited 2 files · read 1 file · 1 failed".
+    /// The failures, when there are any, are its last part.
+    pub text: String,
+}
+
+impl RunSummary {
+    pub fn new(calls: impl IntoIterator<Item = (ToolKind, ToolStatus)>) -> RunSummary {
+        let mut s = RunSummary::default();
+        for (kind, status) in calls {
+            match kind {
+                ToolKind::Shell => s.commands += 1,
+                ToolKind::Edit => s.edits += 1,
+                ToolKind::Read => s.reads += 1,
+                ToolKind::Search => s.searches += 1,
+                ToolKind::Agent | ToolKind::Web | ToolKind::Mcp | ToolKind::Other => s.others += 1,
+            }
+            s.failed += u32::from(matches!(status, ToolStatus::Failed | ToolStatus::Interrupted));
+        }
+        let plural = |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let parts = [
+            (s.commands, format!("ran {}", plural(s.commands, "command", "commands"))),
+            (s.edits, format!("edited {}", plural(s.edits, "file", "files"))),
+            (s.reads, format!("read {}", plural(s.reads, "file", "files"))),
+            (s.searches, format!("ran {}", plural(s.searches, "search", "searches"))),
+            (s.others, format!("called {}", plural(s.others, "other tool", "other tools"))),
+            (s.failed, format!("{} failed", s.failed)),
+        ];
+        let text = parts.into_iter().filter(|(n, _)| *n > 0).map(|(_, part)| part).collect::<Vec<_>>().join(" · ");
+        let mut chars = text.chars();
+        s.text = chars.next().map(|first| first.to_uppercase().chain(chars).collect()).unwrap_or_default();
+        s
+    }
 }
 
 /// A node's own content, without its children.
@@ -504,7 +558,7 @@ impl Tree {
         &self.spans[id.0 as usize]
     }
 
-    fn side(&self, id: NodeId) -> &Side {
+    pub(crate) fn side(&self, id: NodeId) -> &Side {
         self.side.get(&id.0).unwrap_or(&NO_SIDE)
     }
 
@@ -530,6 +584,12 @@ impl Tree {
 
     pub(crate) fn source_info(&self, id: NodeId) -> &SourceInfo {
         &self.sources[id.0 as usize]
+    }
+
+    /// The streaming tail's scratch string its text is in, if it is.
+    pub(crate) fn scratch_slot(&self, id: NodeId) -> Option<u32> {
+        let page = self.node(id).text.page;
+        (page & SCRATCH != 0).then_some(page & !SCRATCH)
     }
 
     pub fn content(&self, id: NodeId) -> NodeContent {

@@ -232,7 +232,7 @@ fn repair_closes_what_is_open_and_leaves_bare_markers() {
 #[test]
 fn backfill_inserts_at_the_front_and_the_view_stays_still() {
     let bytes = generate::conversation::jsonl(&generate::conversation::events(&mut generate::Seeded(9), 120));
-    let tuning = Tuning { tail_items: 10, tail_bytes: usize::MAX, step: Some(2_000) };
+    let tuning = Tuning { tail_items: 20, tail_bytes: usize::MAX, step: Some(2_000) };
     let mut rich = RichText::tuned_conversation(&bytes, RING_CAPACITY, tuning);
     let tail_len = rich.doc().children(rich.doc().root().unwrap()).count();
     assert!(rich.backfill_remaining() > 0);
@@ -390,4 +390,140 @@ fn copy_all_quotes_a_notice_whole_and_keeps_a_divider_out_of_headings() {
     let compaction = line(r#"{"type":"Custom","threadId":"t","seq":2,"name":"compaction","value":{}}"#);
     let all = RichText::open_conversation(&[line(HELLO), error, compaction].concat()).copy_all().unwrap();
     assert_eq!(all, "> first line\n> second line\n\n*— compaction —*");
+}
+
+/// What a Tool Run must be, wherever it is: two or more calls, its summary
+/// counting them, and maximal, so no call or run sits beside another.
+fn assert_tool_runs(doc: &Tree) {
+    let call = |id: NodeId| matches!(doc.detail(id), Detail::Section { section: SectionKind::Tool, .. });
+    for parent in doc.preorder() {
+        let children: Vec<NodeId> = doc.children(parent).collect();
+        if doc.kind(parent) != Kind::ToolRun {
+            for pair in children.windows(2) {
+                let grouped = |id| call(id) || doc.kind(id) == Kind::ToolRun;
+                assert!(!(grouped(pair[0]) && grouped(pair[1])), "{:?} and {:?} are one run", doc.key(pair[0]), doc.key(pair[1]));
+            }
+            continue;
+        }
+        assert!(children.len() >= 2 && children.iter().all(|&c| call(c)), "{:?} holds only calls, two or more", doc.key(parent));
+        let calls: Vec<(ToolKind, ToolStatus)> = children
+            .iter()
+            .map(|&c| match doc.detail(c) {
+                Detail::Section { tool, status, .. } => (*tool, *status),
+                _ => unreachable!(),
+            })
+            .collect();
+        let count = |f: &dyn Fn(ToolKind, ToolStatus) -> bool| calls.iter().filter(|&&(k, s)| f(k, s)).count() as u32;
+        let Detail::ToolRun(summary) = doc.detail(parent) else { panic!("a Tool Run's detail") };
+        assert_eq!(
+            [summary.commands, summary.edits, summary.reads, summary.searches, summary.others, summary.failed],
+            [
+                count(&|k, _| k == ToolKind::Shell),
+                count(&|k, _| k == ToolKind::Edit),
+                count(&|k, _| k == ToolKind::Read),
+                count(&|k, _| k == ToolKind::Search),
+                count(&|k, _| matches!(k, ToolKind::Agent | ToolKind::Web | ToolKind::Mcp | ToolKind::Other)),
+                count(&|_, s| matches!(s, ToolStatus::Failed | ToolStatus::Interrupted)),
+            ]
+        );
+    }
+}
+
+#[hegel::test(test_cases = 300)]
+fn tool_runs_are_the_maximal_runs_of_calls_streamed_or_whole(tc: TestCase) {
+    let mut c = Draws(&tc);
+    let items = 1 + c.below(12);
+    let events = generate::conversation::events(&mut c, items);
+    let bytes = generate::conversation::jsonl(&events);
+    let reference = whole(&bytes);
+    assert_tool_runs(reference.doc());
+    // Every call is still there, in a run or not.
+    for event in &events {
+        let calls: Vec<(&str, &str)> = match event {
+            conversation_events::Event::ToolCallStart(e) => vec![(&e.thread_id, &e.tool_call_id)],
+            conversation_events::Event::MessagesSnapshot(e) => {
+                e.messages.iter().flat_map(|m| &m.tool_calls).map(|call| (e.thread_id.as_str(), call.id.as_str())).collect()
+            }
+            _ => vec![],
+        };
+        for (thread, id) in calls {
+            assert!(reference.doc().get(Key::named(&[thread, "tool", id])).is_some(), "{thread} {id} is in the tree");
+        }
+    }
+    // Event by event, as a live conversation streams.
+    let mut rich = RichText::open_conversation(&bytes[..0]);
+    let mut at = 0;
+    for event in &events {
+        let line = generate::conversation::jsonl(std::slice::from_ref(event));
+        rich.append(&bytes[at..at + line.len()]);
+        at += line.len();
+        rich.doc().assert_rows();
+        assert_tool_runs(rich.doc());
+    }
+    assert_eq!(canon(rich.doc()), canon(reference.doc()));
+}
+
+#[test]
+fn a_tool_run_counts_its_calls_by_kind_then_failures() {
+    use ToolKind::*;
+    use ToolStatus::*;
+    let summary = |calls: &[(ToolKind, ToolStatus)]| RunSummary::new(calls.iter().copied()).text;
+    let calls = [(Shell, Ok), (Read, Ok), (Edit, Failed), (Shell, Interrupted), (Edit, Ok), (Shell, Pending)];
+    assert_eq!(summary(&calls), "Ran 3 commands · edited 2 files · read 1 file · 2 failed");
+    assert_eq!(summary(&[(Search, Ok), (Agent, Ok), (Web, AwaitingApproval), (Mcp, Ok)]), "Ran 1 search · called 3 other tools");
+    assert_eq!(summary(&[(Read, Ok), (Read, Ok)]), "Read 2 files");
+}
+
+#[test]
+fn a_calls_duration_is_from_its_start_to_its_result() {
+    let call = line(
+        r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","kind":"shell","timestamp":1800000000000}"#,
+    );
+    let timed = line(r#"{"type":"ToolCallResult","threadId":"t","seq":2,"toolCallId":"c","content":"","timestamp":1800000002500}"#);
+    let untimed = line(r#"{"type":"ToolCallResult","threadId":"t","seq":2,"toolCallId":"c","content":""}"#);
+    let duration = |events: &[&[u8]]| {
+        let rich = RichText::open_conversation(&[&line(HELLO)[..]].iter().chain(events).copied().collect::<Vec<_>>().concat());
+        match rich.doc().detail(rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap()) {
+            Detail::Section { duration_ms, .. } => *duration_ms,
+            _ => unreachable!(),
+        }
+    };
+    assert_eq!(duration(&[&call, &timed]), Some(2500));
+    assert_eq!(duration(&[&call, &untimed]), None);
+    assert_eq!(duration(&[&call]), None);
+}
+
+#[test]
+fn a_calls_title_and_input_follow_its_kind() {
+    // The title a header shows, and the call's input Block, if it has one.
+    let shown = |name: &str, title: &str, kind: &str, args: &str| {
+        let start = format!(
+            r#"{{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"{name}","title":"{title}","kind":"{kind}"}}"#
+        );
+        let args = serde_json::to_string(args).unwrap();
+        let args = format!(r#"{{"type":"ToolCallArgs","threadId":"t","seq":2,"toolCallId":"c","delta":{args}}}"#);
+        let rich = RichText::open_conversation(&[line(HELLO), line(&start), line(&args)].concat());
+        let doc = rich.doc();
+        let call = doc.get(Key::named(&["t", "tool", "c"])).unwrap();
+        let Detail::Section { title, .. } = doc.detail(call) else { unreachable!() };
+        let input = doc.children(call).next().filter(|&c| doc.kind(c) == Kind::Input).map(|c| doc.text(c).to_owned());
+        (title.clone(), input)
+    };
+    let s = |text: &str| Some(text.to_owned());
+    // A described command keeps its description; an undescribed one shows
+    // its first line. Its input is the whole command.
+    assert_eq!(shown("Bash", "Run the tests", "shell", r#"{"command":"cargo test\necho done"}"#).0, "Run the tests");
+    assert_eq!(shown("Bash", "", "shell", r#"{"command":"cargo test\necho done"}"#), ("cargo test".into(), s("cargo test\necho done")));
+    // An edit or a read shows its path, a search its pattern.
+    assert_eq!(shown("Edit", "Fix it", "edit", r#"{"file_path":"src/lib.rs","old_string":"a"}"#).0, "src/lib.rs");
+    assert_eq!(shown("Read", "", "read", r#"{"file_path":"notes.md"}"#), ("notes.md".into(), s(r#"{"file_path":"notes.md"}"#)));
+    assert_eq!(shown("Grep", "", "search", r#"{"pattern":"ka.*lo","path":"src"}"#).0, "ka.*lo");
+    // Anything else without a title: its name and its first argument.
+    assert_eq!(shown("Fetch", "", "web", r#"{"url":"https://example.com"}"#).0, "Fetch https://example.com");
+    // Input is compact JSON, long strings folded; none for no arguments.
+    let long = "x".repeat(100);
+    let (_, input) = shown("Write", "", "edit", &format!(r#"{{"file_path":"a.rs","content":"{long}"}}"#));
+    assert_eq!(input, s(&format!(r#"{{"content":"{}…","file_path":"a.rs"}}"#, "x".repeat(60))));
+    assert_eq!(shown("Todo", "", "other", "{}"), (String::new(), None));
+    assert_eq!(shown("Todo", "", "other", ""), (String::new(), None));
 }

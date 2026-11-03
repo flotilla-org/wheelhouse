@@ -12,10 +12,10 @@
 {"type":"TextMessageContent","threadId":"t1","seq":11,"messageId":"m2","delta":"    ne();\n}\n```\n\n| a | b |\n"}
 {"type":"TextMessageContent","threadId":"t1","seq":12,"messageId":"m2","delta":"|---|---|\n| 1 | 2 |\n"}
 {"type":"TextMessageEnd","threadId":"t1","seq":13,"messageId":"m2"}
-{"type":"ToolCallStart","threadId":"t1","seq":14,"toolCallId":"c1","toolCallName":"Bash","title":"cargo test","kind":"shell","parentMessageId":"m2"}
+{"type":"ToolCallStart","threadId":"t1","seq":14,"toolCallId":"c1","toolCallName":"Bash","title":"cargo test","kind":"shell","parentMessageId":"m2","timestamp":1800000000000}
 {"type":"ToolCallArgs","threadId":"t1","seq":15,"toolCallId":"c1","delta":"{\"command\":\"cargo test\"}"}
 {"type":"ToolCallEnd","threadId":"t1","seq":16,"toolCallId":"c1"}
-{"type":"ToolCallResult","threadId":"t1","seq":17,"toolCallId":"c1","messageId":"r1","status":"failed","mediaType":"text/x-ansi","content":"\u001b[1;31merror\u001b[0m: \u001b[38;5;208mka\u001b[39m \u001b[48;2;10;20;30mlo\u001b[0m\n10%\r50%\r100%\nsee \u001b]8;;https://example.com/x\u0007the docs\u001b]8;;\u0007\u001b[?25l\n","truncated":{"totalBytes":120000,"ref":"session.jsonl:42"}}
+{"type":"ToolCallResult","threadId":"t1","seq":17,"toolCallId":"c1","messageId":"r1","timestamp":1800000004200,"status":"failed","mediaType":"text/x-ansi","content":"\u001b[1;31merror\u001b[0m: \u001b[38;5;208mka\u001b[39m \u001b[48;2;10;20;30mlo\u001b[0m\n10%\r50%\r100%\nsee \u001b]8;;https://example.com/x\u0007the docs\u001b]8;;\u0007\u001b[?25l\n","truncated":{"totalBytes":120000,"ref":"session.jsonl:42"}}
 {"type":"ToolCallStart","threadId":"t1","seq":18,"toolCallId":"c2","toolCallName":"Edit","title":"src/lib.rs","kind":"edit"}
 {"type":"ToolCallResult","threadId":"t1","seq":19,"toolCallId":"c2","messageId":"r2","status":"ok","mediaType":"text/x-diff","content":"","structured":{"patch":"--- a/src/lib.rs\n+++ b/src/lib.rs\n-ka\n+lo\n"}}
 {"type":"ToolCallStart","threadId":"t1","seq":20,"toolCallId":"c3","toolCallName":"Read","title":"notes.md","kind":"read"}

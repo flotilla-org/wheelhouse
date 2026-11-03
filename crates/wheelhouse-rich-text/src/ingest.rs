@@ -6,7 +6,9 @@ use std::ops::Range;
 
 use pulldown_cmark::{Alignment, BlockQuoteKind, CodeBlockKind, Event, LinkType, MetadataBlockKind, Options, Parser, Tag, TagEnd};
 
-use super::tree::{content_hash, Alert, Align, Attr, Cell, Detail, Key, Kind, Side, Span, Table, NIL, NO_STRING, TABLE_MEDIA_TYPE};
+use super::tree::{
+    content_hash, Alert, Align, Attr, Cell, Detail, Key, Kind, NodeId, Side, Span, Table, Tree, NIL, NO_STRING, TABLE_MEDIA_TYPE,
+};
 
 pub(crate) fn options() -> Options {
     Options::ENABLE_TABLES
@@ -160,6 +162,38 @@ impl Staged {
         });
         self.nodes[parent as usize].children.push(id);
         id
+    }
+
+    /// The Tree's node `id` and its subtree under `parent`, as they are: a
+    /// splice keeps every node of it.
+    pub fn copy(&mut self, parent: u32, doc: &Tree, id: NodeId) -> u32 {
+        let first = self.nodes.len() as u32;
+        let mut stack = vec![(parent, id)];
+        while let Some((parent, id)) = stack.pop() {
+            let text = doc.text(id);
+            let start = self.texts.len() as u32;
+            self.texts.push_str(text);
+            let at = self.nodes.len() as u32;
+            self.nodes.push(StagedNode {
+                key: doc.key(id),
+                kind: doc.kind(id),
+                level: doc.level(id),
+                hidden: doc.hidden(id),
+                parent,
+                children: vec![],
+                text: (start, text.len() as u32),
+                spans: doc.spans(id).to_vec(),
+                side: doc.side(id).clone(),
+                hash: doc.node(id).hash,
+                source: doc.source_info(id).clone(),
+                scratch: doc.scratch_slot(id),
+            });
+            self.nodes[parent as usize].children.push(at);
+            let from = stack.len();
+            stack.extend(doc.children(id).map(|child| (at, child)));
+            stack[from..].reverse();
+        }
+        first
     }
 
     /// Like [`Staged::push`], with strings for the spans to name.

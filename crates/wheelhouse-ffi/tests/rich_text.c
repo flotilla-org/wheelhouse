@@ -46,10 +46,10 @@ static char *read_file(const char *path) {
 /* A node as a model keeps it: its content and its child list. */
 typedef struct {
     uint64_t key;
-    uint32_t kind, level, hidden, task, alert, ordered, tight, role, section, tool, status;
-    uint64_t version, start;
-    char *text;
-    size_t text_len;
+    uint32_t kind, level, hidden, task, alert, ordered, tight, role, section, tool, status, failed;
+    uint64_t version, start, duration_ms;
+    char *text, *summary;
+    size_t text_len, summary_len;
     WheelhouseRichSpan *spans;
     size_t span_count;
     uint64_t *children;
@@ -70,6 +70,7 @@ static Node *lookup(Model *m, uint64_t key) {
 
 static void drop_node(Node *n) {
     free(n->text);
+    free(n->summary);
     free(n->spans);
     free(n->children);
 }
@@ -83,6 +84,7 @@ static void clear(Model *m) {
 
 static void set_content(Node *n, const WheelhouseRichNode *c) {
     free(n->text);
+    free(n->summary);
     free(n->spans);
     n->key = c->key;
     n->kind = c->kind;
@@ -98,7 +100,12 @@ static void set_content(Node *n, const WheelhouseRichNode *c) {
     n->section = c->section;
     n->tool = c->tool;
     n->status = c->status;
-    assert(c->name.data && c->title.data);
+    n->duration_ms = c->duration_ms;
+    n->failed = c->failed;
+    assert(c->name.data && c->title.data && c->summary.data);
+    n->summary = malloc(c->summary.len + 1);
+    memcpy(n->summary, c->summary.data, c->summary.len);
+    n->summary_len = c->summary.len;
     assert(c->text.data);
     n->text = malloc(c->text.len + 1);
     memcpy(n->text, c->text.data, c->text.len);
@@ -180,6 +187,8 @@ static void same_node(const Node *a, const Node *b) {
     assert(a->level == b->level && a->hidden == b->hidden && a->task == b->task && a->alert == b->alert);
     assert(a->ordered == b->ordered && a->tight == b->tight && a->start == b->start);
     assert(a->role == b->role && a->section == b->section && a->tool == b->tool && a->status == b->status);
+    assert(a->duration_ms == b->duration_ms && a->failed == b->failed);
+    assert(a->summary_len == b->summary_len && memcmp(a->summary, b->summary, a->summary_len) == 0);
     assert(a->text_len == b->text_len && memcmp(a->text, b->text, a->text_len) == 0);
     assert(a->span_count == b->span_count);
     for (size_t i = 0; i < a->span_count; ++i) {
@@ -428,17 +437,21 @@ static void drive_conversation(const char *jsonl) {
     }
     assert(left == 0);
     /* A Container's fields read by key as its delta gave them. */
-    size_t sections = 0, turns = 0, logs = 0;
+    size_t sections = 0, turns = 0, logs = 0, runs = 0, timed = 0;
     WheelhouseRichContainer c;
     for (size_t i = 0; i < m.count; ++i) {
         Node *n = &m.nodes[i];
         ok(wheelhouse_rich_text_container(h, n->key, &c, &error));
         assert(c.kind == n->kind && c.role == n->role && c.section == n->section && c.tool == n->tool && c.status == n->status);
+        assert(c.duration_ms == n->duration_ms && c.failed == n->failed && c.summary.len == n->summary_len &&
+               memcmp(c.summary.data, n->summary, n->summary_len) == 0);
+        runs += n->kind == WHEELHOUSE_RICH_KIND_TOOL_RUN && n->summary_len > 0;
+        timed += n->duration_ms != WHEELHOUSE_RICH_NO_DURATION;
         sections += n->kind == WHEELHOUSE_RICH_KIND_SECTION && n->section != WHEELHOUSE_RICH_SECTION_NONE && n->status != WHEELHOUSE_RICH_STATUS_NONE;
         turns += n->kind == WHEELHOUSE_RICH_KIND_TURN && n->role != WHEELHOUSE_RICH_ROLE_NONE;
         logs += n->kind == WHEELHOUSE_RICH_KIND_LOG;
     }
-    assert(sections > 0 && turns > 0 && logs > 0);
+    assert(sections > 0 && turns > 0 && logs > 0 && runs > 0 && timed > 0);
     uint64_t absent = 12345;
     while (lookup(&m, absent)) ++absent;
     fails(wheelhouse_rich_text_container(h, absent, &c, &error));

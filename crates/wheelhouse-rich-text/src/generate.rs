@@ -316,8 +316,15 @@ pub mod conversation {
             self.events.push(Event::ReasoningMessageEnd(ReasoningMessageEnd { thread_id: t, seq, message_id: id }));
         }
 
+        /// Milliseconds since the epoch, or none, as a producer may leave
+        /// them out.
+        fn timestamp(&mut self, c: &mut impl Choose) -> Option<u64> {
+            c.chance(2).then(|| 1_800_000_000_000 + self.ids * 1000 + c.below(5000) as u64)
+        }
+
         /// A started call and its id.
-        fn call(&mut self, thread: &str, name: &str, kind: ToolKind, title: String) -> String {
+        fn call(&mut self, c: &mut impl Choose, thread: &str, name: &str, kind: ToolKind, title: String) -> String {
+            let timestamp = self.timestamp(c);
             let id = self.id("c");
             let t = thread.to_owned();
             let seq = self.seq(thread);
@@ -329,17 +336,29 @@ pub mod conversation {
                 parent_message_id: None,
                 title: Some(title.clone()),
                 kind: Some(kind),
+                timestamp,
             }));
             let seq = self.seq(thread);
-            let delta = json!({ "input": title }).to_string();
+            // Each kind's own argument, which a header may show instead of
+            // the title, and sometimes a long one, which its input folds.
+            let field = match kind {
+                ToolKind::Shell => "command",
+                ToolKind::Edit | ToolKind::Read => "file_path",
+                ToolKind::Search => "pattern",
+                _ => "input",
+            };
+            let value = if c.chance(4) { words(c, 30, 40) } else { title.clone() };
+            let delta = json!({ field: value }).to_string();
             self.events.push(Event::ToolCallArgs(ToolCallArgs { thread_id: t.clone(), seq, tool_call_id: id.clone(), delta }));
             let seq = self.seq(thread);
             self.events.push(Event::ToolCallEnd(ToolCallEnd { thread_id: t, seq, tool_call_id: id.clone() }));
             id
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn result(
             &mut self,
+            c: &mut impl Choose,
             thread: &str,
             call: &str,
             media_type: &str,
@@ -347,6 +366,7 @@ pub mod conversation {
             status: ToolStatus,
             truncated: Option<Truncated>,
         ) {
+            let timestamp = self.timestamp(c);
             let message_id = self.id("r");
             let seq = self.seq(thread);
             let structured = (media_type == "image/png").then(|| json!({ "alt": "a synthetic picture" }));
@@ -361,13 +381,36 @@ pub mod conversation {
                 media_type: Some(media_type.into()),
                 structured,
                 truncated,
+                timestamp,
             }));
         }
 
+        /// A call, and its result unless it's left pending.
         fn tool(&mut self, c: &mut impl Choose, thread: &str, scale: usize) {
+            let call = self.start_tool(c, thread);
+            self.end_tool(c, thread, &call, scale);
+        }
+
+        /// Calls made together, their results after them in any order, some
+        /// never: a Tool Run whose calls finish while it streams.
+        fn parallel(&mut self, c: &mut impl Choose, thread: &str, scale: usize) {
+            let mut calls: Vec<String> = (0..2 + c.below(3)).map(|_| self.start_tool(c, thread)).collect();
+            while !calls.is_empty() {
+                let call = calls.remove(c.below(calls.len()));
+                if !c.chance(5) {
+                    self.end_tool(c, thread, &call, scale);
+                }
+            }
+        }
+
+        fn start_tool(&mut self, c: &mut impl Choose, thread: &str) -> String {
             let kinds = [ToolKind::Shell, ToolKind::Edit, ToolKind::Read, ToolKind::Search, ToolKind::Web, ToolKind::Mcp, ToolKind::Other];
             let kind = kinds[c.below(kinds.len())];
-            let call = self.call(thread, &word(c), kind, words(c, 1, 3));
+            let (name, title) = (word(c), words(c, 1, 3));
+            self.call(c, thread, &name, kind, title)
+        }
+
+        fn end_tool(&mut self, c: &mut impl Choose, thread: &str, call: &str, scale: usize) {
             let statuses = [ToolStatus::Ok, ToolStatus::Ok, ToolStatus::Failed, ToolStatus::Interrupted, ToolStatus::AwaitingApproval];
             let status = statuses[c.below(statuses.len())];
             let truncated =
@@ -380,11 +423,12 @@ pub mod conversation {
                 6 => ("image/png", String::new()),
                 _ => ("application/octet-stream", words(c, 1, 4)),
             };
-            self.result(thread, &call, media, content, status, truncated);
+            self.result(c, thread, call, media, content, status, truncated);
         }
 
         fn subagent(&mut self, c: &mut impl Choose, thread: &str, scale: usize) {
-            let call = self.call(thread, "Task", ToolKind::Agent, words(c, 2, 4));
+            let title = words(c, 2, 4);
+            let call = self.call(c, thread, "Task", ToolKind::Agent, title);
             let child = self.id("t");
             let (seq, run_id) = (self.seq(&child), self.id("run"));
             self.events.push(Event::RunStarted(RunStarted {
@@ -407,7 +451,8 @@ pub mod conversation {
                 outcome: Some(outcome.into()),
                 ..RunFinished::default()
             }));
-            self.result(thread, &call, "text/markdown", inline(c, 2, 6), ToolStatus::Ok, None);
+            let report = inline(c, 2, 6);
+            self.result(c, thread, &call, "text/markdown", report, ToolStatus::Ok, None);
         }
 
         fn snapshot(&mut self, c: &mut impl Choose, thread: &str) {
@@ -446,7 +491,7 @@ pub mod conversation {
         }
 
         fn item(&mut self, c: &mut impl Choose, thread: &str, scale: usize, top: bool) {
-            match c.below(24) {
+            match c.below(26) {
                 0..=4 => {
                     let text = inline(c, 2, 10);
                     self.message(c, thread, Role::User, &text)
@@ -467,6 +512,7 @@ pub mod conversation {
                     self.events.push(Event::RunError(RunError { thread_id: thread.into(), seq, message: words(c, 2, 5), code: None }));
                 }
                 23 if top => self.snapshot(c, thread),
+                24 | 25 => self.parallel(c, thread, scale),
                 _ => {
                     let text = words(c, 2, 6);
                     self.message(c, thread, Role::System, &text)
