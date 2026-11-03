@@ -574,7 +574,10 @@ uishell_rt_diag_scroll_bar(UIShell_RtDiag *d, String8 path, char *what)
     broken &= !uishell_rt_diag_window(s).at_end && uishell_rt_diag_from_end(s) > 0;
   }
   fprintf(stderr, "RICH_TEXT_SCROLL_BAR %s %s drag=%.0f travel=%.0f dragged=%.1f expected=%.1f\n", what, style, dy, travel, dragged, expected);
-  RichCheck(held && abs_f64(dragged - expected) <= Max(line, expected*0.02),
+  // Within a tenth: backfill runs on a time budget, and the Blocks a drag
+  // reveals swap estimated heights for measured ones, so the total the drag
+  // was placed against drifts from the one read after (#665).
+  RichCheck(held && abs_f64(dragged - expected) <= Max(line, expected*0.1),
             (char *)push_str8f(scratch.arena, "%s, %s bar: dragging the thumb scrolls the View", what, style).str);
   RichCheck(held && broken, (char *)push_str8f(scratch.arena, "%s, %s bar: follow-tail breaks while the thumb is dragged", what, style).str);
 
