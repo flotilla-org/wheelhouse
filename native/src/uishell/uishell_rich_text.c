@@ -964,7 +964,7 @@ uishell_rt_control_gap(UIShell_RtTheme *t)
 }
 
 internal UIShell_RtFrame
-uishell_rt_frame(Arena *arena, UIShell_RtModel *m, UIShell_RtTheme *t, UIShell_RtNode *n)
+uishell_rt_frame(Arena *arena, UIShell_RtModel *m, UIShell_RtTheme *t, UIShell_RtStyleSet *styles, UIShell_RtNode *n)
 {
   UIShell_RtFrame f = {0};
   F32 px = uishell_rt_px(t);
@@ -1089,6 +1089,13 @@ uishell_rt_frame(Arena *arena, UIShell_RtModel *m, UIShell_RtTheme *t, UIShell_R
     } break;
   }
   if(f.label_above) { f.inset_y += uishell_rt_line_px(t); }
+  // The last Block in a styled Container leaves its gap out: the Container's
+  // bottom inset is the space below it, as CSS keeps a last child's margin
+  // out of its parent's padding.
+  for(UIShell_RtNode *c = n, *a = parent; a != 0 && a->child_count != 0 && a->children[a->child_count-1] == c->key; c = a, a = uishell_rt_node(m, a->parent))
+  {
+    if(uishell_rt_container_style(styles, a) != 0) { f.pad_bottom = 0; break; }
+  }
   return f;
 }
 
@@ -2302,7 +2309,7 @@ internal F32
 uishell_rt_block_height(UIShell_RichTextState *s, UIShell_RtNode *n, F32 content_width, UIShell_RtLayoutEntry **layout_out)
 {
   Temp scratch = scratch_begin(0, 0);
-  UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, &s->theme, n);
+  UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, &s->theme, s->styles, n);
   F32 inner = 0;
   if(layout_out) { *layout_out = 0; }
   if(f.rule)
@@ -2425,7 +2432,7 @@ uishell_rt_fit_width(UIShell_RichTextState *s, UIShell_RtNode *c, UIShell_RtCont
       continue;
     }
     if(++blocks > 32) { full = 1; break; }
-    UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, &s->theme, n);
+    UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, &s->theme, s->styles, n);
     if(f.code || f.table || f.rule || f.divider) { full = 1; break; }
     UIShell_RtLayoutEntry *e = uishell_rt_layout(&s->layouts, &s->theme, n, &f, uishell_rt_text_width(&f, inner), 0);
     if(e == 0) { full = 1; break; }
@@ -2679,7 +2686,7 @@ uishell_rt_build_bucket(UIShell_RichTextState *s, UIShell_RtBucket *b, UIShell_R
 {
   Temp scratch = scratch_begin(0, 0);
   UIShell_RtTheme *t = &s->theme;
-  UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, t, n);
+  UIShell_RtFrame f = uishell_rt_frame(scratch.arena, &s->model, &s->theme, s->styles, n);
   if(b->arena == 0) { b->arena = arena_alloc(.reserve_size = MB(4), .commit_size = KB(16), .name = "rich text block bucket"); }
   else { arena_clear(b->arena); }
   b->bucket = dr_bucket_make_on(b->arena);
@@ -3599,7 +3606,7 @@ uishell_rt_place(Arena *arena, UIShell_RichTextState *s, F32 content_x, F32 cont
     Rng1F32 x = uishell_rt_column(s, n);
     p->rect.x0 = x.min;
     p->rect.x1 = x.max;
-    p->frame = uishell_rt_frame(arena, &s->model, &s->theme, p->node);
+    p->frame = uishell_rt_frame(arena, &s->model, &s->theme, s->styles, p->node);
     p->cap = uishell_rt_cap(s, p->node, &p->frame, dim_1f32(x));
     uishell_rt_block_height(s, p->node, dim_1f32(x), &p->layout);
   }

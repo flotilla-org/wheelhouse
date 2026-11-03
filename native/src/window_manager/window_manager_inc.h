@@ -32,10 +32,13 @@ typedef struct WM_Backend WM_Backend;
 struct WM_Backend
 {
   String8 name;
+  String8 label;
   B32 (*init)(CmdLine *cmdln);
   WM_HookFields
 };
 global WM_Backend *wm_backend = 0;
 #endif
+
+internal String8 wm_backend_name(void);
 
 #endif // WINDOW_MANAGER_INC_H
