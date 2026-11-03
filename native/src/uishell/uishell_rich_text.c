@@ -1745,6 +1745,10 @@ struct UIShell_RichTextState
   // When the conversation was opened, and when its tail first painted.
   U64 opened_us;
   U64 first_tail_us;
+  // A conversation follows its file as it grows (#617): the bytes of it
+  // the core has, and which file they came from.
+  U64 fed;
+  FileID file_id;
 };
 
 internal void
@@ -2920,6 +2924,10 @@ uishell_rt_duration(Arena *arena, U64 ms)
 // A pending call's spinner: dots round a circle, the brightest moving on.
 #define UISHELL_RT_SPINNER_DOTS 8
 #define UISHELL_RT_SPINNER_STEP_US 90000
+// How often a conversation's file is looked at for growth, and the most of
+// it read in one frame.
+#define UISHELL_RT_FOLLOW_POLL_US 250000
+#define UISHELL_RT_FOLLOW_STEP MB(4)
 
 typedef struct UIShell_RtSpinnerDraw UIShell_RtSpinnerDraw;
 struct UIShell_RtSpinnerDraw
@@ -2977,6 +2985,7 @@ struct UIShell_RtPlacement
   F32 content_x;
   F32 content_width;
   B32 at_end;
+  U32 new_count;
 };
 
 // In a Block's coordinates: the code, and its hover controls right to left
@@ -3576,6 +3585,7 @@ uishell_rt_place(Arena *arena, UIShell_RichTextState *s, F32 content_x, F32 cont
   pl.total = w.total;
   pl.viewport = w.viewport;
   pl.at_end = w.at_end;
+  pl.new_count = w.new_count;
   pl.v = push_array(arena, UIShell_RtPlaced, Max(entry_count, 1));
   for(U64 i = 0; i < entry_count; i += 1)
   {
@@ -4660,73 +4670,125 @@ uishell_rt_path_from_expr(Arena *arena, String8 expr)
   return raw_from_escaped_str8(arena, str8_substr(expr, r1u64(prefix.size, expr.size-suffix.size)));
 }
 
+// A View of another file or thread, or of its file again.
+internal void
+uishell_rt_reopen(UIShell_RichTextState *s, String8 path, String8 thread)
+{
+  uishell_rt_reset(s);
+  MemoryCopy(s->path, path.str, path.size);
+  s->path_size = path.size;
+  s->thread = push_str8_copy(s->arena, thread);
+}
+
+// A conversation follows its file (#617). It reads the file itself, not
+// through the content cache, so it knows how much the core has, and then
+// reads only what was appended, never the whole file again. A file that
+// shrinks or is replaced opens again; one that goes missing keeps what
+// shows until it is back.
+internal void
+uishell_rt_follow(UIShell_RichTextState *s, String8 path, String8 thread, FileProperties props, Arena *scratch)
+{
+  char *error = 0;
+  if(props.modified == 0) { return; }
+  if(s->doc && (props.size < s->fed || file_id_compare(id_from_file_path(path), s->file_id) != 0))
+  {
+    uishell_rt_reopen(s, path, thread);
+  }
+  if(s->doc == 0 || props.size > s->fed)
+  {
+    File file = file_open(AccessFlag_Read|AccessFlag_ShareRead|AccessFlag_ShareWrite, path);
+    if(file_match(file, file_zero())) { return; }
+    U64 size = properties_from_file(file).size;
+    U64 want = s->doc == 0 ? size : Min(size - Min(size, s->fed), UISHELL_RT_FOLLOW_STEP);
+    U8 *bytes = push_array_no_zero(scratch, U8, Max(want, 1));
+    U64 got = file_read(file, r1u64(s->fed, s->fed + want), bytes);
+    String8 data = str8(bytes, got);
+    if(s->doc == 0)
+    {
+      s->file_id = id_from_file(file);
+      s->conversation = 1;
+      s->opened_us = now_time_us();
+      if(thread.size) { s->doc = wheelhouse_rich_text_open_thread(uishell_rt_wt(data), uishell_rt_wt(thread), &error); }
+      else { s->doc = wheelhouse_rich_text_open_conversation(uishell_rt_wt(data), &error); }
+      if(s->doc && !wheelhouse_rich_text_subscribe(s->doc, &s->sub, &error)) { wheelhouse_rich_text_free(s->doc); s->doc = 0; }
+      // A conversation opens at its newest.
+      if(s->doc) { wheelhouse_rich_text_scroll_to_end(s->doc, s->sub, &error); }
+      String8 failure = uishell_rt_error(&error);
+      s->load_error = failure.size ? push_str8_copy(s->arena, failure) : str8_zero();
+    }
+    else
+    {
+      wheelhouse_rich_text_append(s->doc, uishell_rt_wt(data), 0, &error);
+      uishell_rt_error(&error);
+    }
+    s->fed += s->doc ? got : 0;
+    file_close(file);
+    // A burst bigger than a step reads on over the next frames.
+    if(s->doc && s->fed < size) { rd_request_frame(); }
+  }
+  // Growth shows within a poll.
+  if(s->doc) { rd_request_frame_at(now_time_us() + UISHELL_RT_FOLLOW_POLL_US); }
+}
+
 WH_VIEW_UI_FUNCTION_DEF(rich_text)
 {
   Temp scratch = scratch_begin(0, 0);
   UIShell_RichTextState *s = wh_view_state(ctx, UIShell_RichTextState);
   rd_view_state_from_view(ctx->settings.view, 0)->release_user_data = uishell_rt_release;
   if(!s->initialized) { uishell_rt_reset(s); }
-  s->theme = uishell_rt_theme();
-  UIShell_RtTheme *t = &s->theme;
-  F32 px = uishell_rt_px(t), line = uishell_rt_line_px(t);
   char *error = 0;
   s->stats.frames += 1;
   s->stats.frame_layouts = 0;
   s->stats.frame_layout_us = 0;
   s->stats.blocks_boxed = 0;
 
-  //- The file, through the content cache: saving it changes its hash, and
+  //- Markdown through the content cache: saving it changes its hash, and
   // the reload keeps the reading position (the core's Scroll Anchor).
   // A conversation shows from its contract file (#616), one thread of it
-  // if the View names a subagent's.
+  // if the View names a subagent's, and follows it as it grows (#617).
   String8 path = uishell_rt_path_from_expr(scratch.arena, rd_expr_from_cfg(rd_cfg_from_view(ctx->settings.view)));
   String8 thread = wh_view_setting(ctx, str8_lit("thread"));
   if((!str8_match(path, str8(s->path, s->path_size), 0) || !str8_match(thread, s->thread, 0)) && path.size <= sizeof(s->path))
   {
-    uishell_rt_reset(s);
-    MemoryCopy(s->path, path.str, path.size);
-    s->path_size = path.size;
-    s->thread = push_str8_copy(s->arena, thread);
+    uishell_rt_reopen(s, path, thread);
   }
   B32 conversation = str8_match(wh_media_type_from_path(path), str8_lit(WH_CONVERSATION_MEDIA_TYPE), 0);
   FileProperties props = properties_from_file_path(path);
-  U128 hash = path.size ? c_hash_from_key(fs_key_from_path(path, 0), 0) : u128_zero();
-  B32 empty_file = props.modified != 0 && props.size == 0;
-  if((!u128_match(hash, u128_zero()) || empty_file) && (s->doc == 0 || !u128_match(hash, s->loaded_hash)))
+  if(conversation)
   {
-    Access *access = access_open();
-    String8 data = u128_match(hash, u128_zero()) ? str8_zero() : c_data_from_hash(access, hash);
-    // A static conversation reopens when its file changes; following one
-    // as it grows is #617's.
-    if(s->doc && conversation)
-    {
-      uishell_rt_reset(s);
-      MemoryCopy(s->path, path.str, path.size);
-      s->path_size = path.size;
-      s->thread = push_str8_copy(s->arena, thread);
-    }
-    if(s->doc == 0)
-    {
-      s->conversation = conversation;
-      s->opened_us = now_time_us();
-      if(!conversation) { s->doc = wheelhouse_rich_text_open(uishell_rt_wt(data), &error); }
-      else if(thread.size) { s->doc = wheelhouse_rich_text_open_thread(uishell_rt_wt(data), uishell_rt_wt(thread), &error); }
-      else { s->doc = wheelhouse_rich_text_open_conversation(uishell_rt_wt(data), &error); }
-      if(s->doc && !wheelhouse_rich_text_subscribe(s->doc, &s->sub, &error)) { wheelhouse_rich_text_free(s->doc); s->doc = 0; }
-      // A conversation opens at its newest.
-      if(s->doc && conversation) { wheelhouse_rich_text_scroll_to_end(s->doc, s->sub, &error); }
-    }
-    else
-    {
-      U32 changed = 0;
-      wheelhouse_rich_text_reload(s->doc, uishell_rt_wt(data), &changed, &error);
-    }
-    String8 failure = uishell_rt_error(&error);
-    s->load_error = failure.size ? push_str8_copy(s->arena, failure) : str8_zero();
-    s->loaded_hash = hash;
-    access_close(access);
+    uishell_rt_follow(s, path, thread, props, scratch.arena);
+    rd_workspace_surface_contribute_version(s->fed ^ s->file_id.v[0] ^ s->file_id.v[1] ^ s->file_id.v[2]);
   }
-  rd_workspace_surface_contribute_version(hash.u64[0] ^ hash.u64[1]);
+  else
+  {
+    U128 hash = path.size ? c_hash_from_key(fs_key_from_path(path, 0), 0) : u128_zero();
+    B32 empty_file = props.modified != 0 && props.size == 0;
+    if((!u128_match(hash, u128_zero()) || empty_file) && (s->doc == 0 || !u128_match(hash, s->loaded_hash)))
+    {
+      Access *access = access_open();
+      String8 data = u128_match(hash, u128_zero()) ? str8_zero() : c_data_from_hash(access, hash);
+      if(s->doc == 0)
+      {
+        s->doc = wheelhouse_rich_text_open(uishell_rt_wt(data), &error);
+        if(s->doc && !wheelhouse_rich_text_subscribe(s->doc, &s->sub, &error)) { wheelhouse_rich_text_free(s->doc); s->doc = 0; }
+      }
+      else
+      {
+        U32 changed = 0;
+        wheelhouse_rich_text_reload(s->doc, uishell_rt_wt(data), &changed, &error);
+      }
+      String8 failure = uishell_rt_error(&error);
+      s->load_error = failure.size ? push_str8_copy(s->arena, failure) : str8_zero();
+      s->loaded_hash = hash;
+      access_close(access);
+    }
+    rd_workspace_surface_contribute_version(hash.u64[0] ^ hash.u64[1]);
+  }
+
+  // After loading, which may have reset the state.
+  s->theme = uishell_rt_theme();
+  UIShell_RtTheme *t = &s->theme;
+  F32 px = uishell_rt_px(t), line = uishell_rt_line_px(t);
 
   //- The Container Style set: the View's, or by its content.
   UIShell_RtStyleSet *styles = uishell_rt_style_set_from_name(wh_view_setting(ctx, str8_lit("container_styles")));
@@ -4885,6 +4947,36 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   axes[Axis2_Y].activity = (F32)pl.top;
   axes[Axis2_Y].drag_origin = &fraction;
   axes[Axis2_Y].drag_origin_size = sizeof(fraction);
+  //- "↓ N new" (#541, decision 6), built before the content so it draws
+  // over it and takes its press: items arrived below a reader who scrolled
+  // up, and a click jumps to the end, which follows again.
+  if(!pl.at_end && pl.new_count > 0)
+  {
+    String8 label = push_str8f(scratch.arena, "%u new", pl.new_count);
+    F32 em = ui_top_font_size(), h = floor_f32(line*1.4f);
+    F32 w = floor_f32(fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, label).x + em*3.2f);
+    F32 cx = floor_f32((region.viewport.x0 + region.viewport.x1)/2), bottom = region.viewport.y1 - line;
+    UI_Box *jump = &ui_nil_box;
+    UI_Parent(root) UI_Rect(r2f32p(cx - w/2, bottom - h, cx + w/2, bottom)) UI_ChildLayoutAxis(Axis2_X)
+    {
+      jump = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|
+                                       UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects, "###rich_text_jump_to_end");
+    }
+    UI_Parent(jump) UI_PrefHeight(ui_px(h, 1)) UI_TextAlignment(UI_TextAlign_Center)
+    {
+      UI_PrefWidth(ui_em(1.8f, 1)) RD_Font(RD_FontSlot_Icons)
+      {
+        ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_jump_icon", rd_icon_kind_text_table[RD_IconKind_DownArrow]);
+      }
+      UI_PrefWidth(ui_pct(1, 0)) ui_build_box_from_stringf(UI_BoxFlag_DrawText, "%S###rt_jump_label", label);
+    }
+    if(ui_clicked(ui_signal_from_box(jump)))
+    {
+      wheelhouse_rich_text_scroll_to_end(s->doc, s->sub, &error);
+      uishell_rt_error(&error);
+      pl = uishell_rt_place(scratch.arena, s, content_x, content_width);
+    }
+  }
   UI_ScrollRegionThumbSignal bars = ui_scroll_region_build_thumbs(root, content_key, &region, axes, UI_BoxFlag_Floating);
   UI_ScrollBarSignal bar = bars.bar[Axis2_Y];
   if(bar.kind == UI_ScrollBarActionKind_Drag && bar.drag_moved && bar.drag_origin)

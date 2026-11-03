@@ -661,3 +661,111 @@ fn arguments_close_only_when_their_value_does_outside_strings() {
         assert_eq!(closed(pieces), *want, "{pieces:?}");
     }
 }
+
+/// What "↓ N new" counts, written apart from the View's own scan.
+fn items(doc: &Tree) -> Vec<Key> {
+    let root = doc.root();
+    doc.entries()
+        .iter()
+        .filter(|e| match e.part {
+            Part::Header => {
+                matches!(doc.kind(e.node), Kind::Turn | Kind::Section) || (doc.parent(e.node) == root && doc.kind(e.node) != Kind::ToolRun)
+            }
+            Part::Block => doc.parent(e.node) == root,
+            Part::Footer => false,
+        })
+        .map(|e| doc.key(e.node))
+        .collect()
+}
+
+/// Follow-tail as a conversation's file grows (#617, #541 decision 6).
+#[hegel::test(test_cases = 300)]
+fn a_view_follows_a_growing_conversation(tc: TestCase) {
+    let mut c = Draws(&tc);
+    let count = 1 + c.below(12);
+    let events = generate::conversation::events(&mut c, count);
+    let bytes = generate::conversation::jsonl(&generate::conversation::split_deltas(&mut c, &events));
+    let cuts = cuts(&mut c, &bytes, false);
+    let mut rich = RichText::open_conversation(&bytes[..cuts[0]]);
+    while rich.backfill(Duration::ZERO) > 0 {}
+    let id = rich.subscribe();
+    {
+        let (doc, view) = rich.view_mut(id).unwrap();
+        view.set_metrics(doc, Metrics { width: 200.0, line_height: 10.0, chars_per_line: 20.0 });
+        view.set_viewport(20.0 + c.below(200) as f64);
+        view.scroll_to_end();
+    }
+    // The items there were when follow broke, and the last of them.
+    let mut broke: Option<(Vec<Key>, Option<Key>)> = None;
+    for pair in cuts.windows(2) {
+        let (doc, view) = rich.view_mut(id).unwrap();
+        match c.below(5) {
+            0 => view.scroll_by(doc, -(1.0 + c.below(300) as f64)),
+            1 => view.scroll_by(doc, 1.0 + c.below(300) as f64),
+            2 => view.scroll_to_end(),
+            3 => {
+                // Expanding a Section in view.
+                let window = view.window(doc);
+                let shown = |e: &&WindowEntry| e.part == Part::Header && e.top >= window.top && e.top < window.top + window.viewport;
+                let sections: Vec<Key> = window
+                    .entries
+                    .iter()
+                    .filter(shown)
+                    .map(|e| e.key)
+                    .filter(|&k| doc.kind(doc.get(k).unwrap()) == Kind::Section)
+                    .collect();
+                if !sections.is_empty() {
+                    let key = sections[c.below(sections.len())];
+                    let (was_following, last) = (view.at_end(), items(doc).last().copied());
+                    view.set_collapsed(doc, key, true).unwrap();
+                    let window = view.window(doc);
+                    let header = window.entries.iter().find(|e| e.key == key && e.part == Part::Header).unwrap();
+                    if header.top >= window.top && header.top < window.top + window.viewport {
+                        view.set_collapsed(doc, key, false).unwrap();
+                        assert!(!view.at_end(), "expanding a Section in view turns follow off");
+                        assert_eq!(view.anchor().map(|a| (a.key, a.part)), Some((key, Part::Header)), "and anchors on it");
+                        if was_following {
+                            broke = Some((items(doc), last));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        if view.at_end() {
+            broke = None;
+        } else if broke.is_none() {
+            broke = Some((items(doc), items(doc).last().copied()));
+        }
+        let before = view.window(doc);
+        let anchor = view.anchor();
+        let anchor_top =
+            anchor.and_then(|a| before.entries.iter().find(|e| e.key == a.key && e.part == a.part)).map(|e| e.top - before.top);
+        rich.append(&bytes[pair[0]..pair[1]]);
+        let (doc, view) = rich.view_mut(id).unwrap();
+        let window = view.window(doc);
+        if before.at_end {
+            assert!(window.at_end, "growth never breaks follow");
+            assert_eq!(window.top, (window.total - window.viewport).max(0.0), "a following View stays pinned to the end");
+            assert_eq!(window.new, 0);
+            continue;
+        }
+        assert!(!window.at_end, "growth never re-arms follow");
+        assert_eq!(view.anchor(), anchor, "growth never moves a reader's anchor");
+        if let (Some(a), Some(was)) = (anchor, anchor_top) {
+            let now = window.entries.iter().find(|e| e.key == a.key && e.part == a.part).map(|e| e.top - window.top);
+            if window.top > 0.0 && window.top < (window.total - window.viewport).max(0.0) {
+                assert_eq!(now, Some(was), "nor where the anchor shows");
+            }
+        }
+        let (seen, last) = broke.as_ref().unwrap();
+        let now = items(doc);
+        let after = last.map_or(0, |k| now.iter().position(|&n| n == k).unwrap() + 1);
+        assert!(now[..after].iter().all(|k| seen.contains(k)), "a new item came before the last seen");
+        assert_eq!(window.new as usize, now.len() - after, "items after the last one seen are new");
+    }
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.scroll_to_end();
+    let window = view.window(doc);
+    assert!(window.at_end && window.new == 0, "jumping to the end re-arms follow");
+}

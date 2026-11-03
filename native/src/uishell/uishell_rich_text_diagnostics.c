@@ -572,6 +572,62 @@ uishell_rt_diag_headers(void)
   return count;
 }
 
+//- Following a growing conversation (#617).
+
+// Message `i` of a growing conversation, as its three contract lines.
+internal String8
+uishell_rt_diag_message(Arena *arena, U64 i)
+{
+  unsigned long long n = i;
+  return push_str8f(arena,
+                    "{\"type\":\"TextMessageStart\",\"threadId\":\"g\",\"seq\":%llu,\"messageId\":\"g%llu\",\"role\":\"%s\"}\n"
+                    "{\"type\":\"TextMessageContent\",\"threadId\":\"g\",\"seq\":%llu,\"messageId\":\"g%llu\",\"delta\":\"Message %llu: the pilot boards at the outer mark, the tug takes the line, and the berth is cleared.\"}\n"
+                    "{\"type\":\"TextMessageEnd\",\"threadId\":\"g\",\"seq\":%llu,\"messageId\":\"g%llu\"}\n",
+                    3*n + 1, n, i % 2 ? "assistant" : "user", 3*n + 2, n, n, 3*n + 3, n);
+}
+
+// Appends messages `*next` on to the file, `count` of them, and runs the
+// frames that read them.
+internal UIShell_RichTextState *
+uishell_rt_diag_grow(UIShell_RtDiag *d, String8 path, U64 *next, U64 count)
+{
+  Temp scratch = scratch_begin(&d->arena, 1);
+  String8List more = {0};
+  for(U64 i = 0; i < count; i += 1, *next += 1) { str8_list_push(scratch.arena, &more, uishell_rt_diag_message(scratch.arena, *next)); }
+  append_data_to_file_path(path, str8_list_join(scratch.arena, &more, 0));
+  scratch_end(scratch);
+  return uishell_rt_diag_frames(d, 3);
+}
+
+// The "N new" control, found by its label (a box without text keeps no
+// string), or nil when it isn't up.
+internal UI_Box *
+uishell_rt_diag_jump(void)
+{
+  UI_Box *label = uishell_rt_diag_box_named(str8_lit("###rt_jump_label"));
+  return ui_box_is_nil(label) ? &ui_nil_box : label->parent;
+}
+
+internal String8
+uishell_rt_diag_jump_label(void)
+{
+  return uishell_rt_diag_text(uishell_rt_diag_box_named(str8_lit("###rt_jump_label")));
+}
+
+// Where the anchor's row is in the viewport, as the View placed it.
+internal F32
+uishell_rt_diag_anchor_y(UIShell_RtDiag *d, UIShell_RichTextState *s, WheelhouseRichAnchor *anchor)
+{
+  char *error = 0;
+  wheelhouse_rich_text_anchor(s->doc, s->sub, anchor, &error);
+  WheelhouseRichWindow w = uishell_rt_diag_window(s);
+  for(U64 i = 0; i < w.entry_count; i += 1)
+  {
+    if(w.entries[i].key == anchor->key && w.entries[i].part == anchor->part) { return (F32)(w.entries[i].top - w.top); }
+  }
+  return -1e9f;
+}
+
 // The View at its end, following it, with the pointer on the scroll bar's
 // strip, which brings an overlay bar up. Returns the bar's thumb.
 internal UI_Box *
@@ -614,7 +670,9 @@ uishell_rt_diag_scroll_bar(UIShell_RtDiag *d, String8 path, char *what)
   F64 page = Max(line, s->viewport - line), paged = uishell_rt_diag_from_end(s);
   fprintf(stderr, "RICH_TEXT_SCROLL_BAR %s %s track=%.0f..%.0f thumb=%.0f..%.0f page=%.1f paged=%.1f headers=%llu\n", what, style,
           track.y0, track.y1, thumb_rect.y0, thumb_rect.y1, page, paged, (unsigned long long)headers);
-  RichCheck(!ui_box_is_nil(thumb) && following && at.y > track.y0 && abs_f64(paged - page) < 1 && !uishell_rt_diag_window(s).at_end,
+  // Within a line: the rows a page reveals swap their estimated heights for
+  // measured ones, which moves the end the distance is read from.
+  RichCheck(!ui_box_is_nil(thumb) && following && at.y > track.y0 && abs_f64(paged - page) < line && !uishell_rt_diag_window(s).at_end,
             (char *)push_str8f(scratch.arena, "%s, %s bar: a click on the track pages the View up", what, style).str);
 
   //- A drag of the thumb scrolls by its share of the travel, and follow-tail
@@ -1921,6 +1979,120 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
           RichCheck(s->conversation && own && !other, "the thread's View shows its thread alone");
         }
       }
+    }
+    d->rect = r2f32p(0, 0, 900, 600);
+    scratch_end(scratch);
+  }
+
+  //- Following a growing conversation (#617): only what is appended is
+  // read; a following View stays pinned to the end, a reader who scrolled
+  // up stays put and sees "N new", and jumping to the end follows again.
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    String8 grow = push_str8f(arena, "%S/growing.events.jsonl", dir);
+    U64 next = 0;
+    write_data_to_file_path(grow, push_str8f(scratch.arena, "{\"type\":\"Hello\",\"contract\":1}\n%S", uishell_rt_diag_message(scratch.arena, next++)));
+    d->rect = r2f32p(0, 0, 700, 400);
+    s = uishell_rt_diag_open(d, grow);
+    s = uishell_rt_diag_grow(d, grow, &next, 11);
+    WheelhouseRichText *doc = s ? s->doc : 0;
+    U64 opened_us = s ? s->opened_us : 0;
+    RichCheck(doc && s->conversation && uishell_rt_diag_window(s).at_end && uishell_rt_diag_block_with(s, str8_lit("Message 11:")),
+              "a conversation's file read from its start grows from appends");
+    if(doc)
+    {
+      Rng2F32 content = uishell_rt_diag_content(d);
+      s = uishell_rt_diag_grow(d, grow, &next, 3);
+      UIShell_RtNode *newest = uishell_rt_diag_block_with(s, str8_lit("Message 14:"));
+      UIShell_RtDiagBox newest_box = newest ? uishell_rt_diag_box(scratch.arena, newest->key) : (UIShell_RtDiagBox){&ui_nil_box, 0};
+      fprintf(stderr, "RICH_TEXT_FOLLOW fed=%llu size=%llu from_end=%.1f\n", (unsigned long long)s->fed,
+              (unsigned long long)properties_from_file_path(grow).size, uishell_rt_diag_from_end(s));
+      RichCheck(s->doc == doc && s->opened_us == opened_us && s->fed == properties_from_file_path(grow).size,
+                "growth is appended to the open conversation, not reopened");
+      RichCheck(uishell_rt_diag_window(s).at_end && uishell_rt_diag_from_end(s) < 0.5 && newest_box.draw &&
+                newest_box.box->rect.y1 <= content.y1 + 0.5f && uishell_rt_diag_jump_label().size == 0,
+                "while following, the View stays pinned to the end as content grows");
+
+      //- Scrolling up breaks follow; growth doesn't move the reader.
+      for(U32 i = 0; i < 3; i += 1) { s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(content), .delta_2f32 = v2f32(0, -1)}); }
+      s = uishell_rt_diag_frames(d, 2);
+      WheelhouseRichAnchor before = {0}, after = {0};
+      F32 y_before = uishell_rt_diag_anchor_y(d, s, &before);
+      RichCheck(!uishell_rt_diag_window(s).at_end && uishell_rt_diag_window(s).new_count == 0 && uishell_rt_diag_jump_label().size == 0,
+                "scrolling up breaks follow, with nothing new yet");
+      s = uishell_rt_diag_grow(d, grow, &next, 3);
+      F32 y_after = uishell_rt_diag_anchor_y(d, s, &after);
+      String8 label = uishell_rt_diag_jump_label();
+      fprintf(stderr, "RICH_TEXT_FOLLOW anchor_y=%.1f->%.1f new=%u label=\"%.*s\"\n", y_before, y_after, uishell_rt_diag_window(s).new_count, str8_varg(label));
+      RichCheck(!uishell_rt_diag_window(s).at_end && after.key == before.key && after.part == before.part && abs_f32(y_after - y_before) < 0.5f,
+                "growth never moves a View that isn't following");
+      RichCheck(uishell_rt_diag_window(s).new_count == 3 && str8_match(label, str8_lit("3 new"), 0), "\"3 new\" counts the messages appended since");
+      s = uishell_rt_diag_grow(d, grow, &next, 2);
+      RichCheck(str8_match(uishell_rt_diag_jump_label(), str8_lit("5 new"), 0), "and keeps counting as more arrive");
+
+      //- Its click jumps to the end, which follows again.
+      UI_Box *jump = uishell_rt_diag_jump();
+      if(!ui_box_is_nil(jump)) { d->now_us += 2000000; s = uishell_rt_diag_click(d, center_2f32(jump->rect), 0, 1); }
+      RichCheck(uishell_rt_diag_window(s).at_end && uishell_rt_diag_from_end(s) < 0.5 && uishell_rt_diag_jump_label().size == 0,
+                "clicking \"N new\" jumps to the end");
+      s = uishell_rt_diag_grow(d, grow, &next, 2);
+      RichCheck(uishell_rt_diag_window(s).at_end && uishell_rt_diag_from_end(s) < 0.5, "jumping to the end re-arms follow");
+
+      //- Reaching the bottom again re-arms it too.
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(content), .delta_2f32 = v2f32(0, -1)});
+      B32 broke = !uishell_rt_diag_window(s).at_end;
+      for(U32 i = 0; i < 10 && !uishell_rt_diag_window(s).at_end; i += 1)
+      {
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Scroll, .pos = center_2f32(content), .delta_2f32 = v2f32(0, 1)});
+      }
+      s = uishell_rt_diag_grow(d, grow, &next, 1);
+      RichCheck(broke && uishell_rt_diag_window(s).at_end && uishell_rt_diag_from_end(s) < 0.5, "scrolling back to the bottom re-arms follow");
+
+      //- Expanding a Section in view turns follow off and anchors on it.
+      append_data_to_file_path(grow, str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"g\",\"seq\":900,\"toolCallId\":\"gc\",\"toolCallName\":\"Bash\",\"title\":\"cargo test berths\",\"kind\":\"shell\"}\n"
+                                              "{\"type\":\"ToolCallResult\",\"threadId\":\"g\",\"seq\":901,\"toolCallId\":\"gc\",\"messageId\":\"gr\",\"status\":\"ok\",\"mediaType\":\"text/plain\",\"content\":\"berths ok\\n\"}\n"));
+      s = uishell_rt_diag_frames(d, 3);
+      UIShell_RtNode *call = uishell_rt_diag_tool(s, str8_lit("cargo test berths"));
+      UI_Box *header = call ? uishell_rt_diag_drawn(uishell_rt_header_draw, call->key) : &ui_nil_box;
+      RichCheck(call && uishell_rt_collapsed(s, call->key) && !ui_box_is_nil(header) && uishell_rt_diag_window(s).at_end,
+                "a call that arrives while following shows its header, collapsed");
+      if(!ui_box_is_nil(header))
+      {
+        F32 header_y = header->rect.y0 - content.y0;
+        d->now_us += 2000000;
+        s = uishell_rt_diag_click(d, center_2f32(header->rect), 0, 1);
+        WheelhouseRichAnchor anchor = {0};
+        F32 y = uishell_rt_diag_anchor_y(d, s, &anchor);
+        RichCheck(!uishell_rt_collapsed(s, call->key) && !uishell_rt_diag_window(s).at_end && anchor.key == call->key &&
+                  anchor.part == WHEELHOUSE_RICH_PART_HEADER && abs_f32(y - header_y) < 0.5f,
+                  "expanding a Section in view turns follow off and anchors the View on it");
+        s = uishell_rt_diag_grow(d, grow, &next, 2);
+        F32 y_grown = uishell_rt_diag_anchor_y(d, s, &after);
+        RichCheck(after.key == call->key && abs_f32(y_grown - header_y) < 0.5f && str8_match(uishell_rt_diag_jump_label(), str8_lit("2 new"), 0),
+                  "and growth below leaves it where it is");
+      }
+
+      //- A file that shrinks, or is replaced, opens again.
+      String8List shorter = {0};
+      str8_list_push(scratch.arena, &shorter, str8_lit("{\"type\":\"Hello\",\"contract\":1}\n"));
+      U64 restart = 0;
+      str8_list_push(scratch.arena, &shorter, uishell_rt_diag_message(scratch.arena, restart));
+      write_data_to_file_path(grow, str8_list_join(scratch.arena, &shorter, 0));
+      s = uishell_rt_diag_frames(d, 3);
+      RichCheck(s->doc && s->fed == properties_from_file_path(grow).size && uishell_rt_diag_block_with(s, str8_lit("Message 0:")) &&
+                !uishell_rt_diag_block_with(s, str8_lit("Message 11:")) && uishell_rt_diag_window(s).at_end,
+                "a file that shrinks opens again, at its end");
+      String8 swap = push_str8f(scratch.arena, "%S/growing.swap", dir);
+      String8List replaced = {0};
+      str8_list_push(scratch.arena, &replaced, str8_lit("{\"type\":\"Hello\",\"contract\":1}\n"));
+      for(U64 i = 40; i < 46; i += 1) { str8_list_push(scratch.arena, &replaced, uishell_rt_diag_message(scratch.arena, i)); }
+      write_data_to_file_path(swap, str8_list_join(scratch.arena, &replaced, 0));
+      // Windows' move doesn't replace an existing file.
+      delete_file_at_path(grow);
+      move_file_path(grow, swap);
+      s = uishell_rt_diag_frames(d, 3);
+      RichCheck(s->doc && uishell_rt_diag_block_with(s, str8_lit("Message 45:")) && !uishell_rt_diag_block_with(s, str8_lit("Message 0:")) &&
+                s->fed == properties_from_file_path(grow).size, "a file replaced by a longer one opens again");
     }
     d->rect = r2f32p(0, 0, 900, 600);
     scratch_end(scratch);

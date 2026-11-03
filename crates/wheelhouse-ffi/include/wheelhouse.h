@@ -1711,6 +1711,9 @@ typedef struct {
   double total;
   // 1 while following the end.
   uint32_t at_end;
+  // Items after the last one there was when follow-tail broke, for a
+  // "↓ N new" control; 0 while following.
+  uint32_t new_count;
   const WheelhouseRichWindowEntry *entries;
   size_t entry_count;
 } WheelhouseRichWindow;

@@ -532,6 +532,18 @@ fn follow_tail_breaks_on_scrolling_up_and_rearms_at_the_bottom() {
 }
 
 #[test]
+fn a_scroll_up_with_everything_in_view_keeps_following() {
+    let mut rich = RichText::open("One.\n\nTwo.\n");
+    let id = rich.subscribe();
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.set_metrics(doc, Metrics { width: 100.0, line_height: 10.0, chars_per_line: 50.0 });
+    view.set_viewport(100.0);
+    view.scroll_to_end();
+    view.scroll_by(doc, -20.0);
+    assert!(view.at_end(), "nothing moved, so nothing new would show");
+}
+
+#[test]
 fn a_width_change_makes_measured_heights_scaled_estimates() {
     let mut rich = RichText::open("one\n\ntwo\n\nthree\n");
     let id = rich.subscribe();

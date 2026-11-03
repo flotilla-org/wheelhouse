@@ -1192,6 +1192,9 @@ pub struct WheelhouseRichWindow {
     pub total: f64,
     /// 1 while following the end.
     pub at_end: u32,
+    /// Items after the last one there was when follow-tail broke, for a
+    /// "↓ N new" control; 0 while following.
+    pub new_count: u32,
     pub entries: *const WheelhouseRichWindowEntry,
     pub entry_count: usize,
 }
@@ -1223,6 +1226,7 @@ pub unsafe extern "C" fn wheelhouse_rich_text_window(
             viewport: window.viewport,
             total: window.total,
             at_end: u32::from(window.at_end),
+            new_count: window.new,
             entries: range(&h.window, (0, h.window.len())),
             entry_count: h.window.len(),
         };
