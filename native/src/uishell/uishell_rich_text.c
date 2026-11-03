@@ -4594,25 +4594,12 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     if(!done) { rd_request_frame(); }
   }
 
-  //- Input, against what was drawn: where the content box was last frame,
-  // and the Blocks as they are placed now.
+  //- The scroll bar, over the Scroll Anchor's thumb, signalled before the
+  // View's own input: an overlay bar lies over the content box, and a press
+  // on it is the bar's (#665).
   UI_Key content_key = ui_key_from_stringf(rd_view_ui_key(ctx->settings.view), "###rich_text_content");
   Rng2F32 content_rect = ui_box_from_key(content_key)->rect;
   UIShell_RtPlacement pl = uishell_rt_place(scratch.arena, s, content_x, content_width);
-  B32 pressed = 0;
-  uishell_rt_pointer(s, &pl, content_rect, &pressed);
-  if(pressed) { uishell_cmd("focus_panel"); }
-  B32 focused = 0;
-  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active())
-  {
-    focused = 1;
-    UIShell_RtStop *stops = 0;
-    U64 stop_count = uishell_rt_stops(scratch.arena, s, &pl, &stops);
-    uishell_rt_keys(s, &pl, stops, stop_count);
-    uishell_rt_register_edit_owner(content_key, s, ctx->settings.view);
-  }
-
-  //- The scroll bar, over the Scroll Anchor's thumb.
   WheelhouseRichThumb thumb = {0};
   wheelhouse_rich_text_thumb(s->doc, s->sub, &thumb, &error);
   uishell_rt_error(&error);
@@ -4630,12 +4617,29 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     F64 from = *(F64 *)bar.drag_origin;
     F64 target = Clamp(0.0, from + bar.drag_pct, 1.0)*Max(0.0, pl.total - pl.viewport);
     wheelhouse_rich_text_scroll_by(s->doc, s->sub, target - pl.top, &error);
+    pl = uishell_rt_place(scratch.arena, s, content_x, content_width);
   }
   else if(bar.step != 0)
   {
     wheelhouse_rich_text_scroll_by(s->doc, s->sub, bar.page ? bar.step*Max(line, (F32)pl.viewport - line) : bar.step*line*3, &error);
+    pl = uishell_rt_place(scratch.arena, s, content_x, content_width);
   }
   uishell_rt_error(&error);
+
+  //- Input, against what was drawn: where the content box was last frame,
+  // and the Blocks as they are placed now.
+  B32 pressed = 0;
+  uishell_rt_pointer(s, &pl, content_rect, &pressed);
+  if(pressed) { uishell_cmd("focus_panel"); }
+  B32 focused = 0;
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active())
+  {
+    focused = 1;
+    UIShell_RtStop *stops = 0;
+    U64 stop_count = uishell_rt_stops(scratch.arena, s, &pl, &stops);
+    uishell_rt_keys(s, &pl, stops, stop_count);
+    uishell_rt_register_edit_owner(content_key, s, ctx->settings.view);
+  }
 
   //- Place again after the input, and build a box per visible Block.
   pl = uishell_rt_place(scratch.arena, s, content_x, content_width);

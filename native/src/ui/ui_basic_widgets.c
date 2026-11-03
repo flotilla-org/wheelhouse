@@ -1293,9 +1293,10 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
       if(scrollable)
       {
         ui_set_next_pref_size(axis, ui_pct(position_fraction*(1.f-thumb_fraction), 0));
-        // overlay floats over content, so its track is layout-only (non-clickable)
-        // and passes clicks through; classic keeps click-to-page on the track.
-        UI_Box *space_before_box = ui_build_box_from_stringf(overlay ? 0 : UI_BoxFlag_Clickable, "##scroll_area_before");
+        // Either style's track pages. An overlay bar takes clicks only while
+        // it is up, on its own strip, so content under a fading one stays
+        // reachable (ui_scroll_region_build_thumbs, #665).
+        UI_Box *space_before_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "##scroll_area_before");
         space_before_sig = ui_signal_from_box(space_before_box);
       }
 
@@ -1331,7 +1332,7 @@ ui_scroll_bar_styled(Axis2 axis, UI_Size off_axis_size, UI_ScrollBarStyle style,
       if(scrollable)
       {
         ui_set_next_pref_size(axis, ui_pct((1.f-position_fraction)*(1.f-thumb_fraction), 0));
-        UI_Box *space_after_box = ui_build_box_from_stringf(overlay ? 0 : UI_BoxFlag_Clickable, "##scroll_area_after");
+        UI_Box *space_after_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable, "##scroll_area_after");
         space_after_sig = ui_signal_from_box(space_after_box);
       }
     }
