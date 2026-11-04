@@ -57,6 +57,9 @@ pub struct Window {
     pub viewport: f64,
     pub total: f64,
     pub at_end: bool,
+    /// Items after the last one there was when follow-tail broke: the
+    /// "↓ N new" count, 0 while following.
+    pub new: u32,
     pub entries: Vec<WindowEntry>,
 }
 
@@ -99,6 +102,9 @@ pub struct View {
     /// The anchored line's top within its entry, as last known.
     line_top: f32,
     at_end: bool,
+    /// The last item when follow-tail broke (or the View opened); None if
+    /// there was none, so every item is new.
+    seen: Option<(Key, Part)>,
     collapsed: HashSet<Key>,
     pub(crate) selection: Option<Selection>,
     pub(crate) find: Option<Find>,
@@ -123,6 +129,22 @@ pub(crate) fn estimate(doc: &Tree, entry: Entry, metrics: &Metrics) -> f32 {
     }
 }
 
+/// What "N new" counts: a Turn, a Section, or anything else at the top
+/// level but a Tool Run, whose calls count instead.
+fn is_item(doc: &Tree, entry: Entry) -> bool {
+    let kind = doc.kind(entry.node);
+    let top = doc.parent(entry.node) == doc.root();
+    match entry.part {
+        Part::Header => matches!(kind, Kind::Turn | Kind::Section) || (top && kind != Kind::ToolRun),
+        Part::Block => top,
+        Part::Footer => false,
+    }
+}
+
+fn last_item(doc: &Tree) -> Option<(Key, Part)> {
+    doc.entries().iter().rev().find(|&&e| is_item(doc, e)).map(|e| (doc.key(e.node), e.part))
+}
+
 impl View {
     pub(crate) fn new(doc: &Tree) -> View {
         let mut view = View {
@@ -134,6 +156,7 @@ impl View {
             anchor: None,
             line_top: 0.0,
             at_end: false,
+            seen: last_item(doc),
             collapsed: HashSet::new(),
             selection: None,
             find: None,
@@ -257,10 +280,14 @@ impl View {
         }
     }
 
-    /// After a batch of edits.
+    /// After a batch of a conversation's edits. Its items' keys come from
+    /// their ids, so an anchor whose key is still there stays on it, even if
+    /// its content changed and another item now looks as it did.
     pub(crate) fn settle(&mut self, doc: &Tree, anchor: Option<AnchorWas>) {
         self.collapsed.retain(|&key| doc.get(key).is_some_and(|id| !doc.kind(id).is_block()));
-        self.restore_anchor(doc, anchor);
+        if !self.anchor.is_some_and(|a| doc.entry_of(a.key, a.part).is_some()) {
+            self.restore_anchor(doc, anchor);
+        }
         if let Some(find) = &mut self.find {
             find.restart();
         }
@@ -298,6 +325,29 @@ impl View {
                 }
             }
         }
+    }
+
+    fn unfollow(&mut self, doc: &Tree) {
+        if self.at_end {
+            self.at_end = false;
+            self.seen = last_item(doc);
+        }
+    }
+
+    /// Only the entries after the last one seen are scanned, so the cost is
+    /// what grew.
+    fn new_items(&self, doc: &Tree) -> u32 {
+        if self.at_end {
+            return 0;
+        }
+        let after = match self.seen {
+            None => 0,
+            Some((key, part)) => match doc.entry_of(key, part) {
+                Some(i) => i + 1,
+                None => return 0,
+            },
+        };
+        doc.entries()[after..].iter().filter(|&&e| is_item(doc, e)).count() as u32
     }
 
     fn max_top(&self) -> f64 {
@@ -358,11 +408,12 @@ impl View {
     }
 
     /// Scrolling up breaks follow-tail, and reaching the bottom re-arms it.
+    /// A scroll up that can't move, with everything in view, keeps following.
     pub fn scroll_by(&mut self, doc: &Tree, delta: f64) {
         let top = self.top(doc);
         let next = (top + delta).clamp(0.0, self.max_top());
-        if delta < 0.0 {
-            self.at_end = false;
+        if delta < 0.0 && next < top {
+            self.unfollow(doc);
         }
         self.anchor_at(doc, next);
         if delta > 0.0 && self.max_top() - next <= f64::from(self.metrics.line_height) / 2.0 {
@@ -373,7 +424,7 @@ impl View {
     /// Breaks follow-tail.
     pub fn scroll_to(&mut self, doc: &Tree, anchor: Anchor) -> Result<(), String> {
         let entry = doc.entry_of(anchor.key, anchor.part).ok_or("no such entry")?;
-        self.at_end = false;
+        self.unfollow(doc);
         self.anchor = Some(anchor);
         if let Position::Text { byte, .. } = anchor.position {
             let e = doc.entries()[entry];
@@ -471,7 +522,7 @@ impl View {
         let in_view = at >= top && at < top + self.viewport;
         self.rehide(doc, id);
         if !collapsed && in_view {
-            self.at_end = false;
+            self.unfollow(doc);
             let anchor = Anchor { key, part: Part::Header, position: Position::Fraction(0.0), viewport_offset: at - top };
             self.anchor = Some(anchor);
         }
@@ -546,7 +597,7 @@ impl View {
                 at += row.size();
             }
         }
-        Window { top, viewport: self.viewport, total, at_end: self.at_end, entries }
+        Window { top, viewport: self.viewport, total, at_end: self.at_end, new: self.new_items(doc), entries }
     }
 
     pub fn thumb(&self, doc: &Tree) -> Thumb {
