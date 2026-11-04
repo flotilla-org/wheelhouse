@@ -486,6 +486,17 @@ uishell_table_query_extras(void *user_data)
   scratch_end(scratch);
 }
 
+// What a table View's tab says in place of its expression: a described
+// table's table name, not its link (#577); a canned table's own name.
+internal String8
+uishell_table_title(Arena *arena, String8 expr)
+{
+  U64 cap = expr.size;
+  U8 *out = push_array_no_zero(arena, U8, cap);
+  U64 size = wheelhouse_table_title((WheelhouseText){expr.str, expr.size}, out, cap);
+  return str8(out, size);
+}
+
 WH_VIEW_UI_FUNCTION_DEF(table)
 {
   Temp scratch = scratch_begin(0, 0);

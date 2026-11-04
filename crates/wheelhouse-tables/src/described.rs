@@ -2,7 +2,8 @@
 //! server describes, read live over HTTP. The table is opened by its link;
 //! the core holds the source, and a thread of its own runs the transport,
 //! waking the host whenever an event comes so the table redraws as data
-//! arrives.
+//! arrives. Its columns are laid out as binnacle lays out every described
+//! table until the server's Presentations come (#577).
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +15,7 @@ use binnacle_core::{Axis, Grid, Key};
 use binnacle_described::{DescribedSource, HostRequest, Received, Scope};
 use binnacle_described_http::{Endpoint, Event, Options, Transport};
 use binnacle_format::{format, FixedOffset, FormatContext, FormatOptions, Timestamp, Value};
+use binnacle_layout::{JsonId, Layout};
 
 use crate::{Align, Cell};
 
@@ -190,6 +192,8 @@ pub struct Described {
     watcher: Watcher,
     connection: Connection,
     zone: FixedOffset,
+    /// The columns have been laid out: once, when they are first described.
+    laid_out: bool,
 }
 
 impl Described {
@@ -198,7 +202,7 @@ impl Described {
     pub fn open(link: &Link, utc_offset: i32, wake: Wake) -> std::io::Result<Described> {
         let watcher = Watcher::start(Options::new(link.endpoint.clone()), wake)?;
         let source = DescribedSource::new(link.table.clone(), link.scope()).zone(FixedOffset(utc_offset));
-        Ok(Described { source, watcher, connection: Connection::Open, zone: FixedOffset(utc_offset) })
+        Ok(Described { source, watcher, connection: Connection::Open, zone: FixedOffset(utc_offset), laid_out: false })
     }
 
     /// Feeds the source what came, telling `grid` what changed, and serves
@@ -236,9 +240,14 @@ impl Described {
                 if let Some((spec, totals)) = self.source.poll_view() {
                     grid.view_changed(spec, totals);
                 }
-                // New columns: say what each supports.
+                // New columns: say what each supports, and lay them out the
+                // first time.
                 if described {
                     self.source.declare(grid);
+                    if !self.laid_out {
+                        self.layout().restore(grid, &self.source);
+                        self.laid_out = true;
+                    }
                 }
             }
         }
@@ -248,6 +257,19 @@ impl Described {
         let options = FormatOptions::default();
         let relative = self.source.columns().iter().any(|c| options.relative_dates(c.role()));
         ((relative && self.source.row_count() != 0).then_some(RELATIVE_DATES), changed)
+    }
+
+    /// How the columns start: binnacle's generic Layout (Nested columns
+    /// hidden, the key then the state columns pinned leading), with the
+    /// fields the server gave no title hidden too, as bookkeeping
+    /// (`metadata.resourceVersion`). Hidden columns stay in the table, for
+    /// filters and find.
+    fn layout(&self) -> Layout<JsonId, JsonId> {
+        let mut layout = self.source.presentation(None, None);
+        let untitled = self.source.columns().iter().filter(|c| c.title().is_none() && !c.nested());
+        let hidden = &mut layout.view.get_or_insert_with(Default::default).cols.hidden;
+        hidden.extend(untitled.map(|c| JsonId::from(c.name())));
+        layout
     }
 
     /// What to say about the table above it, if anything: connecting,

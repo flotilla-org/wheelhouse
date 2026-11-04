@@ -3437,6 +3437,12 @@ size_t wheelhouse_table_count(void);
 // the count.
 WheelhouseText wheelhouse_table_name(size_t index);
 
+// Writes what a tab over the table name names says (a described table's
+// table name, not its link; a canned table's own name) to out, at most cap
+// bytes and cut at a character boundary, and returns how many it wrote:
+// zero for text that isn't UTF-8, or a NULL out.
+size_t wheelhouse_table_title(WheelhouseText name, uint8_t *out, size_t cap);
+
 // Opens the table name names, sized for text line pixels high whose
 // digits are digit pixels wide: a canned table's name, or a described
 // table's link (http://host:port/tables/{table}?namespace=…, or

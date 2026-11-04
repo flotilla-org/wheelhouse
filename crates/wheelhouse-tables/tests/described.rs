@@ -3,8 +3,8 @@
 //! under their described headers and wake the host, once until it looks;
 //! live changes apply in place under the sort; an unknown table says so;
 //! and a stream that ends is read again.
-use binnacle_core::{Axis, Key, SortColumn, SortSpec, ViewSpec, Viewport};
-use binnacle_described::Wire;
+use binnacle_core::{Axis, Edge, Key, SortColumn, SortSpec, ViewSpec, Viewport};
+use binnacle_described::{Field, Schema, Wire};
 use binnacle_described_http::Endpoint;
 use binnacle_testkit::fake_tables::{FakeTable, FakeTables, Running, Step};
 use std::path::PathBuf;
@@ -68,22 +68,28 @@ impl Host {
         }
     }
 
-    fn headers(&mut self) -> Vec<String> {
+    /// The columns shown, in order: those pinned leading, the strip's,
+    /// then those pinned trailing.
+    fn cols(&mut self) -> Vec<Key> {
         let snapshot = self.grid.snapshot();
-        let keys: Vec<Key> = snapshot.strip(Axis::Cols).iter().filter_map(|c| c.key).collect();
-        keys.into_iter().map(|k| self.table.header(Axis::Cols, k, 0)).collect()
+        let items = (snapshot.pinned(Axis::Cols, Edge::Leading).iter())
+            .chain(snapshot.strip(Axis::Cols))
+            .chain(snapshot.pinned(Axis::Cols, Edge::Trailing));
+        items.filter_map(|c| c.key).collect()
+    }
+
+    fn headers(&mut self) -> Vec<String> {
+        self.cols().into_iter().map(|k| self.table.header(Axis::Cols, k, 0)).collect()
     }
 
     fn column(&mut self, header: &str) -> Key {
-        let snapshot = self.grid.snapshot();
-        let keys: Vec<Key> = snapshot.strip(Axis::Cols).iter().filter_map(|c| c.key).collect();
-        keys.into_iter().find(|&k| self.table.header(Axis::Cols, k, 0) == header).expect(header)
+        self.cols().into_iter().find(|&k| self.table.header(Axis::Cols, k, 0) == header).expect(header)
     }
 
     /// The ids of the rows shown, in order; empty before the columns come.
     fn ids(&mut self) -> Vec<String> {
+        let cols = self.cols();
         let snapshot = self.grid.snapshot();
-        let cols: Vec<Key> = snapshot.strip(Axis::Cols).iter().filter_map(|c| c.key).collect();
         let Some(&id) = cols.iter().find(|&&k| self.table.header(Axis::Cols, k, 0) == "ID") else {
             return Vec::new();
         };
@@ -102,7 +108,11 @@ fn rows_arrive_under_their_described_headers_and_wake_the_host() {
     let mut host = Host::open(&link(&fake, "crews"));
     assert_eq!(host.table.status().as_deref(), Some("Connecting…"));
     host.until("the rows", |h| h.ids().len() == 10);
-    assert_eq!(host.headers(), ["ID", "Name", "Phase", "Started", "Load", "Spec"]);
+    // Laid out as binnacle lays out a described table: the key, then the
+    // state, pinned leading, and the object column (Spec) hidden.
+    assert_eq!(host.headers(), ["ID", "Phase", "Name", "Started", "Load"]);
+    let snapshot = host.grid.snapshot();
+    assert_eq!(snapshot.pins(Axis::Cols, Edge::Leading).count(), 2, "ID and Phase are pinned");
     assert_eq!(host.ids(), ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
     assert_eq!(host.table.status(), None, "synced, so nothing to say");
     // The source said what the columns support, so the Grid offers find
@@ -145,6 +155,32 @@ fn live_changes_apply_in_place_under_the_sort() {
     fake.push(Step::Delete { table: "crews".into(), key: vec![Wire::Int(5.into())] });
     host.until("the upsert and the delete", |h| h.ids().first().map(String::as_str) == Some("42") && h.ids().len() == 10);
     assert_eq!(host.ids(), ["42", "9", "8", "7", "6", "4", "3", "2", "1", "0"]);
+}
+
+/// A field the server gave no title is bookkeeping, as Kubernetes-style
+/// metadata is: it starts hidden.
+#[test]
+fn an_untitled_field_starts_hidden() {
+    let field = |json: serde_json::Value| Field::from_properties(json.as_object().unwrap().clone()).unwrap();
+    let schema = Schema {
+        fields: vec![
+            field(serde_json::json!({"name": "id", "type": "integer", "title": "ID", "roles": ["key"]})),
+            field(serde_json::json!({"name": "version", "type": "string"})),
+            field(serde_json::json!({"name": "name", "type": "string", "title": "Name"})),
+        ],
+        primary_key: vec!["id".into()],
+        foreign_keys: Vec::new(),
+    };
+    let rows = (0..3).map(|i| {
+        let mut row = row(i, &format!("n{i}"));
+        row.insert("version".into(), Wire::Text(format!("v{i}")));
+        row
+    });
+    let table = FakeTable::new("versions", schema).with_rows(rows.collect()).in_namespace("flotilla");
+    let fake = FakeTables::new().table(table).start().expect("the fake starts");
+    let mut host = Host::open(&link(&fake, "versions"));
+    host.until("the rows", |h| h.ids().len() == 3);
+    assert_eq!(host.headers(), ["ID", "Name"]);
 }
 
 #[test]

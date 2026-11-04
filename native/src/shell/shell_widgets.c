@@ -18,6 +18,12 @@ rd_title_fstrs_from_cfg(Arena *arena, CFG_Node *cfg, B32 include_extras)
     // A View's label is its Presentation State (rd_view_label_from_cfg).
     String8 label_string = rd_view_label_from_cfg(cfg);
     String8 expr_string = rd_expr_from_cfg(cfg);
+    // A table View's tab says its table's title, not its link (#577).
+    if(str8_match(cfg->string, str8_lit("table"), 0) && expr_string.size != 0)
+    {
+      if(label_string.size == 0) { label_string = uishell_table_title(arena, expr_string); }
+      expr_string = str8_zero();
+    }
     String8 collection_name = {0};
     String8 file_path = rd_path_from_cfg(cfg);
     Vec4F32 rgba = rd_color_from_cfg(cfg);

@@ -22,6 +22,12 @@ use binnacle_memory::{pump, FindCount, FindStep, IdentitySource, MemorySource, M
 /// The tables, by the name a host opens them with.
 pub const NAMES: [&str; 3] = ["records", "huge", "live"];
 
+/// What a tab over the table `name` names says: a described table's table
+/// name (`convoys`), not its link; a canned table's own name.
+pub fn title(name: &str) -> String {
+    Link::parse(name).map_or_else(|| name.to_owned(), |link| link.table)
+}
+
 /// The host's measures, in its unit (pixels): a line of text and the width
 /// of a digit, which the tables' default sizes are counted in.
 #[derive(Clone, Copy, Debug, PartialEq)]
