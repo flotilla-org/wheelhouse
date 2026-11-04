@@ -221,10 +221,18 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
     }
   }
 
+  // The table ends at its last row and column, as on the web: past them
+  // the View is empty, with no band or rule.
+  F32 x_end = o.x0+col_band, y_end = o.y0+row_band;
+  for(size_t c = 0; c < cols->strip_len; c += 1) { x_end = Max(x_end, o.x0+cols->strip[c].offset+cols->strip[c].size); }
+  for(size_t r = 0; r < rows->strip_len; r += 1) { y_end = Max(y_end, o.y0+rows->strip[r].offset+rows->strip[r].size); }
+  x_end = Min(x_end, o.x1);
+  y_end = Min(y_end, o.y1);
+
   // Header bands, then the rules after each item across them and the body,
   // so header cells are divided as the body's are.
-  dr_rect(r2f32p(o.x0, o.y0, o.x1, o.y0+row_band), band, 0, 0, 0.f);
-  dr_rect(r2f32p(o.x0, o.y0+row_band, o.x0+col_band, o.y1), band, 0, 0, 0.f);
+  dr_rect(r2f32p(o.x0, o.y0, x_end, o.y0+row_band), band, 0, 0, 0.f);
+  dr_rect(r2f32p(o.x0, o.y0+row_band, o.x0+col_band, y_end), band, 0, 0, 0.f);
   for(size_t c = 0; c < cols->strip_len; c += 1)
   {
     BinnacleStripItem *ci = &cols->strip[c];
@@ -233,7 +241,7 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
     if(x > o.x0+cx.min && x <= o.x0+cx.max)
     {
       dr_rect(r2f32p(x, o.y0, x+1.f, o.y0+row_band), header_line, 0, 0, 0.f);
-      dr_rect(r2f32p(x, o.y0+row_band, x+1.f, o.y1), line, 0, 0, 0.f);
+      dr_rect(r2f32p(x, o.y0+row_band, x+1.f, y_end), line, 0, 0, 0.f);
     }
   }
   for(size_t r = 0; r < rows->strip_len; r += 1)
@@ -244,7 +252,7 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
     if(y > o.y0+ry.min && y <= o.y0+ry.max)
     {
       dr_rect(r2f32p(o.x0, y-1.f, o.x0+col_band, y), header_line, 0, 0, 0.f);
-      dr_rect(r2f32p(o.x0+col_band, y-1.f, o.x1, y), line, 0, 0, 0.f);
+      dr_rect(r2f32p(o.x0+col_band, y-1.f, x_end, y), line, 0, 0, 0.f);
     }
   }
   for EachIndex(axis_idx, 2)
@@ -283,8 +291,8 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
   // The bands' edges on whole pixels, where the scroll bars beside them
   // start (ui_scroll_region_build_thumbs), so neither bar covers a rule.
   F32 band_y = round_f32(o.y0+row_band), band_x = round_f32(o.x0+col_band);
-  dr_rect(r2f32p(o.x0, band_y-1.f, o.x1, band_y), header_line, 0, 0, 0.f);
-  dr_rect(r2f32p(band_x-1.f, o.y0, band_x, o.y1), header_line, 0, 0, 0.f);
+  dr_rect(r2f32p(o.x0, band_y-1.f, x_end, band_y), header_line, 0, 0, 0.f);
+  dr_rect(r2f32p(band_x-1.f, o.y0, band_x, y_end), header_line, 0, 0, 0.f);
 
   // Focus, then a drag's drop line.
   if(snap->has_focus_rect)
