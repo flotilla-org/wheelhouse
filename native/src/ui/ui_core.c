@@ -3039,6 +3039,20 @@ ui_hover_card_blocks_pointer(UI_Box *box, Vec2F32 pos)
   return 0;
 }
 
+//- Shift turns a vertical wheel sideways. macOS has already done so by
+// the time the event arrives (its deltas are horizontal, Shift still held),
+// so a delta that already runs sideways is left as it is.
+internal Vec2F32
+ui_scroll_delta_from_event(UI_Event *evt)
+{
+  Vec2F32 delta = evt->delta_2f32;
+  if(evt->modifiers & WM_Modifier_Shift && delta.x == 0)
+  {
+    Swap(F32, delta.x, delta.y);
+  }
+  return delta;
+}
+
 internal UI_Signal
 ui_signal_from_box(UI_Box *box)
 {
@@ -3245,11 +3259,7 @@ ui_signal_from_box(UI_Box *box)
        (evt->modifiers == 0 || evt->modifiers == WM_Modifier_Shift) &&
        evt_mouse_in_bounds)
     {
-      Vec2F32 delta = evt->delta_2f32;
-      if(evt->modifiers & WM_Modifier_Shift)
-      {
-        Swap(F32, delta.x, delta.y);
-      }
+      Vec2F32 delta = ui_scroll_delta_from_event(evt);
       if(evt->scroll_is_precise && box->flags & UI_BoxFlag_ScrollPrecise)
       {
         sig.scroll_px = add_2f32(sig.scroll_px, delta);
@@ -3273,11 +3283,7 @@ ui_signal_from_box(UI_Box *box)
        (evt->modifiers == 0 || evt->modifiers == WM_Modifier_Shift) &&
        evt_mouse_in_bounds)
     {
-      Vec2F32 delta = evt->delta_2f32;
-      if(evt->modifiers & WM_Modifier_Shift)
-      {
-        Swap(F32, delta.x, delta.y);
-      }
+      Vec2F32 delta = ui_scroll_delta_from_event(evt);
       if(!(box->flags & UI_BoxFlag_ViewScrollX))
       {
         if(delta.y == 0)
