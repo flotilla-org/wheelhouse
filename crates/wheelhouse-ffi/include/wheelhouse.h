@@ -2450,6 +2450,14 @@ void wheelhouse_snapshot_release(WheelhouseSnapshot *s);
 
 void wheelhouse_effects_release(WheelhouseEffects *e);
 
+// Posts `body` to `path` on `endpoint` (`unix://PATH`) and returns at once;
+// a failure is written to stderr. Returns 0 for an endpoint that isn't
+// `unix://`.
+uint32_t wheelhouse_agent_input_post(WheelhouseText endpoint,
+                                     WheelhouseText path,
+                                     WheelhouseText body,
+                                     char **error_out);
+
 // Applies `edit` to `doc` by the core's rules, with `hidden` (and its
 // `context`) saying which tabs a settle passes over. Returns the edited
 // document and what the edit did, or NULL with an error for a malformed
@@ -3141,6 +3149,12 @@ uint32_t wheelhouse_rich_text_copy(WheelhouseRichText *h,
                                    uint32_t copy_format,
                                    WheelhouseBytes *out,
                                    char **error_out);
+
+// Where a conversation's producer takes input, from its hello: returns 0
+// with nothing written when it names none.
+uint32_t wheelhouse_rich_text_conversation_input(WheelhouseRichText *h,
+                                                 WheelhouseBytes *out,
+                                                 char **error_out);
 
 // A whole Block, collapsed or not.
 uint32_t wheelhouse_rich_text_copy_block(WheelhouseRichText *h,

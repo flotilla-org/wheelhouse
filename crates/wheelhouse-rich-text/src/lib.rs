@@ -113,6 +113,11 @@ impl RichText {
         self.conversation.is_some()
     }
 
+    /// Where a conversation's producer takes input, if its hello names one.
+    pub fn conversation_input(&self) -> Option<&str> {
+        self.conversation.as_ref()?.input()
+    }
+
     /// Bytes appended to a conversation's file, in any pieces: a line waits
     /// for its newline. Returns whether anything changed; false for markdown.
     pub fn append(&mut self, bytes: &[u8]) -> bool {

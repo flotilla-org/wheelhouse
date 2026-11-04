@@ -554,7 +554,7 @@ pub mod conversation {
     /// A conversation of about `items` top-level items, every message ended.
     pub fn events(c: &mut impl Choose, items: usize) -> Vec<Event> {
         let mut w = Writer::default();
-        w.events.push(Event::Hello(Hello { contract: CONTRACT }));
+        w.events.push(Event::Hello(Hello { contract: CONTRACT, input: None }));
         let seq = w.seq("t0");
         w.events.push(Event::RunStarted(RunStarted { thread_id: "t0".into(), seq, run_id: "run0".into(), ..RunStarted::default() }));
         for _ in 0..items {
@@ -595,7 +595,7 @@ pub mod conversation {
     pub fn large(seed: u64, bytes: usize) -> Vec<u8> {
         let mut c = Seeded(seed);
         let mut w = Writer::default();
-        w.events.push(Event::Hello(Hello { contract: CONTRACT }));
+        w.events.push(Event::Hello(Hello { contract: CONTRACT, input: None }));
         let mut out = vec![];
         let mut written = 0;
         while out.len() < bytes {

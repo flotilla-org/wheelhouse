@@ -1382,6 +1382,21 @@ pub unsafe extern "C" fn wheelhouse_rich_text_copy(
     .is_some() as u32
 }
 
+/// Where a conversation's producer takes input, from its hello: returns 0
+/// with nothing written when it names none.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_conversation_input(
+    h: *mut WheelhouseRichText,
+    out: *mut Bytes,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| match h.rich.conversation_input() {
+        Some(input) => write_bytes(out, input.as_bytes().to_vec()).map(|()| true),
+        None => Ok(false),
+    })
+    .unwrap_or(false) as u32
+}
+
 /// A whole Block, collapsed or not.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_rich_text_copy_block(

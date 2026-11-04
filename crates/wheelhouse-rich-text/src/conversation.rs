@@ -586,6 +586,8 @@ pub(crate) struct Conversation {
     floor: usize,
     lines: Lines,
     unsupported: bool,
+    /// Where the producer takes input, from the hello.
+    input: Option<String>,
     items: HashMap<Key, Item>,
     threads: HashMap<String, Thread>,
     /// Each slot's placed items, in order.
@@ -627,6 +629,10 @@ impl Conversation {
         conversation.ingest(events, sink);
         conversation.append(&bytes[head..], sink);
         conversation
+    }
+
+    pub fn input(&self) -> Option<&str> {
+        self.input.as_deref()
     }
 
     pub fn append(&mut self, bytes: &[u8], sink: &mut Sink) {
@@ -759,6 +765,7 @@ impl Conversation {
         let order = (at, 0);
         match event {
             Event::Hello(hello) => {
+                self.input = hello.input;
                 if hello.contract != CONTRACT {
                     self.unsupported = true;
                     let text = format!("Conversation contract {} isn't supported (this reads {CONTRACT})", hello.contract);

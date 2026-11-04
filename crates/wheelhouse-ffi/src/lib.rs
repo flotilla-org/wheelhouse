@@ -21,6 +21,7 @@ use wheelhouse_core::{
     WorkspaceId,
 };
 
+pub mod agent_input;
 pub mod arrangement;
 pub mod card;
 pub mod dashboard;
@@ -34,6 +35,7 @@ pub mod stream;
 pub mod strip;
 pub mod tables;
 pub mod text;
+pub use agent_input::*;
 pub use arrangement::*;
 pub use card::*;
 pub use dashboard::*;

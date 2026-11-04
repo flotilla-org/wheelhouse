@@ -1752,6 +1752,17 @@ struct UIShell_RichTextState
   // The file as it was when opening it failed.
   U64 failed_size;
   DenseTime failed_modified;
+  // Where the conversation's producer takes input, from its hello, and the
+  // composer's draft (the agent View prototype).
+  B32 input_read;
+  U8 input[512];
+  U64 input_size;
+  U8 compose[4096];
+  U64 compose_size;
+  TxtPt compose_cursor;
+  TxtPt compose_mark;
+  // A press on the content leaves the composer, on the next build.
+  B32 compose_blur;
 };
 
 internal void
@@ -4746,6 +4757,47 @@ uishell_rt_follow(UIShell_RichTextState *s, String8 path, String8 thread, FilePr
   }
 }
 
+//~ Input to the producer (the agent View prototype)
+
+internal String8
+uishell_rt_json_string(Arena *arena, String8 text)
+{
+  String8List parts = {0};
+  str8_list_push(arena, &parts, str8_lit("\""));
+  U64 start = 0;
+  for(U64 i = 0; i < text.size; i += 1)
+  {
+    U8 c = text.str[i];
+    if(c != '"' && c != '\\' && c >= 0x20) { continue; }
+    str8_list_push(arena, &parts, str8_substr(text, r1u64(start, i)));
+    if(c == '"' || c == '\\') { str8_list_pushf(arena, &parts, "\\%c", c); }
+    else { str8_list_pushf(arena, &parts, "\\u%04x", c); }
+    start = i + 1;
+  }
+  str8_list_push(arena, &parts, str8_substr(text, r1u64(start, text.size)));
+  str8_list_push(arena, &parts, str8_lit("\""));
+  return str8_list_join(arena, &parts, 0);
+}
+
+internal void
+uishell_rt_input_post(UIShell_RichTextState *s, String8 path, String8 body)
+{
+  char *error = 0;
+  wheelhouse_agent_input_post(uishell_rt_wt(str8(s->input, s->input_size)), uishell_rt_wt(path), uishell_rt_wt(body), &error);
+  uishell_rt_error(&error);
+}
+
+// A prompt goes as AG-UI's RunAgentInput, with only the new message: the
+// harness keeps the history. It shows once the harness takes it.
+internal void
+uishell_rt_send_prompt(UIShell_RichTextState *s, String8 text, Arena *scratch)
+{
+  U64 now = now_time_us();
+  String8 body = push_str8f(scratch, "{\"threadId\":\"\",\"runId\":\"wh-%llu\",\"messages\":[{\"id\":\"wh-%llu\",\"role\":\"user\",\"content\":%S}]}",
+                            (unsigned long long)now, (unsigned long long)now, uishell_rt_json_string(scratch, text));
+  uishell_rt_input_post(s, str8_lit("/run"), body);
+}
+
 WH_VIEW_UI_FUNCTION_DEF(rich_text)
 {
   Temp scratch = scratch_begin(0, 0);
@@ -4857,6 +4909,19 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     uishell_rt_error(&error);
   }
 
+  if(s->doc && s->conversation && !s->input_read)
+  {
+    WheelhouseBytes bytes = {0};
+    if(wheelhouse_rich_text_conversation_input(s->doc, &bytes, &error))
+    {
+      s->input_size = Min(bytes.len, sizeof(s->input));
+      MemoryCopy(s->input, bytes.data, s->input_size);
+      wheelhouse_bytes_free(bytes);
+    }
+    uishell_rt_error(&error);
+    s->input_read = 1;
+  }
+
   Vec2F32 dim = dim_2f32(ctx->rect);
   UI_Box *root = &ui_nil_box;
   UI_FixedWidth(dim.x) UI_FixedHeight(dim.y) UI_ChildLayoutAxis(Axis2_Y)
@@ -4899,8 +4964,69 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     if(ui_clicked(ui_buttonf("Source###rich_text_source"))) { uishell_cmd("toggle_markdown_source"); }
   }
 
+  //- The composer, when the producer takes input: Enter or Send prompts,
+  // Stop interrupts the running turn.
+  F32 compose_h = s->input_size ? floor_f32(line*2.4f) : 0;
+  UI_Key compose_key = ui_key_zero();
+  if(s->input_size)
+  {
+    F32 pad = floor_f32(px*0.4f), field_h = floor_f32(line*1.5f);
+    UI_Box *composer = &ui_nil_box;
+    // The field takes focus through its own focus-nav box, as the web
+    // View's address bar does through that View's root.
+    UI_Parent(root) UI_Rect(r2f32p(0, dim.y - compose_h, dim.x, dim.y)) UI_ChildLayoutAxis(Axis2_Y) UI_Focus(UI_FocusKind_On)
+    {
+      composer = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawBackground|UI_BoxFlag_DrawSideTop|UI_BoxFlag_DefaultFocusNav|
+                                           UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder, "###rich_text_composer");
+    }
+    UI_Parent(composer) UI_Focus(UI_FocusKind_Null) UI_PrefWidth(ui_px(dim.x, 1)) UI_Padding(ui_px((compose_h - field_h)/2, 1)) UI_PrefHeight(ui_px(field_h, 1)) UI_Row UI_Padding(ui_px(pad*2, 1))
+    {
+      UI_Key key = compose_key = ui_key_from_string(ui_active_seed_key(), str8_lit("###rich_text_compose"));
+      if(s->compose_blur) { ui_set_auto_focus_active_key(ui_key_zero()); s->compose_blur = 0; }
+      B32 active = ui_is_key_auto_focus_active(key);
+      UI_Signal field = {0};
+      UI_PrefWidth(ui_pct(1, 0))
+      {
+        field = ui_line_edit(&s->compose_cursor, &s->compose_mark, s->compose, sizeof(s->compose), &s->compose_size,
+                             str8(s->compose, s->compose_size), str8_lit("###rich_text_compose"));
+      }
+      if(ui_pressed(field))
+      {
+        uishell_cmd("focus_panel");
+        if(!active)
+        {
+          ui_set_auto_focus_active_key(key);
+          ui_kill_action();
+          // The click and the first keys may share this build: the field
+          // wasn't active when it built, so take that text now.
+          ui_consume_text_edit_events(key, s->compose, sizeof(s->compose), &s->compose_size, &s->compose_cursor, &s->compose_mark, 0);
+        }
+      }
+      // As the shell's own fields do: keys bound to text (Space is
+      // "accept") type while the field is active.
+      if(active || ui_pressed(field)) { ui_take_text_field_focus(); rd_state->text_edit_mode = 1; }
+      B32 send = ui_committed(field);
+      ui_spacer(ui_px(pad, 1));
+      UI_PrefWidth(ui_text_dim(10, 1))
+      {
+        if(ui_clicked(ui_buttonf("Send###rich_text_send"))) { send = 1; }
+        ui_spacer(ui_px(pad, 1));
+        if(ui_clicked(ui_buttonf("Stop###rich_text_stop"))) { uishell_rt_input_post(s, str8_lit("/stop"), str8_lit("{}")); }
+      }
+      String8 text = str8_skip_chop_whitespace(str8(s->compose, s->compose_size));
+      if(send && text.size)
+      {
+        uishell_rt_send_prompt(s, text, scratch.arena);
+        s->compose_size = 0;
+        s->compose_cursor = s->compose_mark = txt_pt(1, 1);
+        // Enter leaves the field; the next prompt types straight in.
+        ui_set_auto_focus_active_key(key);
+      }
+    }
+  }
+
   //- Geometry: a reading column, centred.
-  UI_ScrollRegion region = ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, bar_h, dim.x, dim.y), UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
+  UI_ScrollRegion region = ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, bar_h, dim.x, dim.y - compose_h), UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
   Vec2F32 vdim = dim_2f32(region.viewport);
   F32 margin = floor_f32(px*1.25f);
   F32 content_width = floor_f32(Clamp(px*8, vdim.x - 2*margin, px*48));
@@ -5013,9 +5139,16 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   // and the Blocks as they are placed now.
   B32 pressed = 0;
   uishell_rt_pointer(s, &pl, content_rect, &pressed);
-  if(pressed) { uishell_cmd("focus_panel"); }
+  if(pressed)
+  {
+    uishell_cmd("focus_panel");
+    // A press on the content leaves the composer.
+    if(!ui_key_match(compose_key, ui_key_zero())) { s->compose_blur = 1; }
+  }
   B32 focused = 0;
-  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active())
+  // While the composer has the keyboard, the content's keys and edit
+  // commands are its.
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && !ui_text_field_focus())
   {
     focused = 1;
     UIShell_RtStop *stops = 0;
