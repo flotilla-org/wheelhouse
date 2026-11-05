@@ -346,8 +346,8 @@ uishell_table_diagnostics(RD_WindowState *ws)
     // the web: no band, rule or wash is drawn past them.
     {
       WheelhouseText cells[] = {{(U8 *)"A", 1}, {(U8 *)"B", 1}, {(U8 *)"1", 1}, {(U8 *)"2", 1}, {(U8 *)"3", 1}, {(U8 *)"4", 1}};
-      WheelhouseTable *small = wheelhouse_table_open_cells(cells, 2, 3, 0, line, digit);
-      UIShell_TableDraw d = {small, uishell_table_diag_frame(small, 900, 600, 0), uishell_table_diag_no_text, 0};
+      WheelhouseTable *table = wheelhouse_table_open_cells(cells, 2, 3, 0, line, digit);
+      UIShell_TableDraw d = {table, uishell_table_diag_frame(table, 900, 600, 0), uishell_table_diag_no_text, 0};
       BinnacleAxisSnapshot *rows = &d.snap.axes[BINNACLE_ROWS], *cols = &d.snap.axes[BINNACLE_COLS];
       F32 x_end = cols->header, y_end = rows->header;
       for(size_t i = 0; i < cols->strip_len; i += 1) { x_end = Max(x_end, cols->strip[i].offset+cols->strip[i].size); }
@@ -377,9 +377,9 @@ uishell_table_diagnostics(RD_WindowState *ws)
           }
         }
       }
-      TableCheck(small != 0 && rows->count == 2 && cols->count == 2 && x_end < 900 && y_end < 600, "a small table's cells end inside its View");
+      TableCheck(table != 0 && rows->count == 2 && cols->count == 2 && x_end < 900 && y_end < 600, "a small table's cells end inside its View");
       TableCheck(count != 0 && x_max <= x_end+1.f && y_max <= y_end+1.f, "a small table draws nothing past its last row and column");
-      wheelhouse_table_free(small);
+      wheelhouse_table_free(table);
     }
     for EachElement(n, names)
     {
