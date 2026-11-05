@@ -7,6 +7,7 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::thread;
+use std::time::Duration;
 
 pub const WHEELHOUSE_AGENT_INPUT_SENDING: u32 = 0;
 pub const WHEELHOUSE_AGENT_INPUT_ACCEPTED: u32 = 1;
@@ -15,6 +16,8 @@ pub const WHEELHOUSE_AGENT_INPUT_FAILED: u32 = 2;
 /// Each ticket's status and, once failed, why.
 static TICKETS: Mutex<Option<HashMap<u64, (u32, String)>>> = Mutex::new(None);
 static NEXT_TICKET: AtomicU64 = AtomicU64::new(1);
+/// How long a post waits on the producer, each way.
+const POST_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn settle(ticket: u64, status: u32, why: String) {
     if let Some(tickets) = TICKETS.lock().unwrap().as_mut() {
@@ -75,9 +78,16 @@ fn post(socket: &str, path: &str, body: &str) -> std::io::Result<()> {
     use std::os::unix::net::UnixStream;
 
     let mut stream = UnixStream::connect(socket)?;
+    // A producer that takes the connection and never answers fails the send,
+    // rather than leaving it sending for good.
+    stream.set_read_timeout(Some(POST_TIMEOUT))?;
+    stream.set_write_timeout(Some(POST_TIMEOUT))?;
     write!(stream, "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())?;
-    let mut reply = String::new();
-    stream.read_to_string(&mut reply)?;
+    // Bytes, not a string: a body that isn't UTF-8 mustn't fail an accepted
+    // send.
+    let mut reply = vec![];
+    stream.read_to_end(&mut reply)?;
+    let reply = String::from_utf8_lossy(&reply);
     let status = reply.lines().next().unwrap_or_default();
     if status.split(' ').nth(1).is_some_and(|code| code.starts_with('2')) {
         Ok(())
@@ -130,7 +140,7 @@ mod tests {
     }
 
     /// One request, answered with `reply`; returns what was posted.
-    fn serve_once(listener: UnixListener, reply: &'static str) -> thread::JoinHandle<String> {
+    fn serve_once(listener: UnixListener, reply: &'static [u8]) -> thread::JoinHandle<String> {
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             // The whole request first: closing on unread bytes resets the
@@ -141,7 +151,7 @@ mod tests {
                 let n = stream.read(&mut chunk).unwrap();
                 request.extend_from_slice(&chunk[..n]);
             }
-            stream.write_all(reply.as_bytes()).unwrap();
+            stream.write_all(reply).unwrap();
             String::from_utf8_lossy(&request).into_owned()
         })
     }
@@ -159,7 +169,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let socket = dir.join("a.sock");
         let _ = std::fs::remove_file(&socket);
-        let server = serve_once(UnixListener::bind(&socket).unwrap(), "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n");
+        let server = serve_once(UnixListener::bind(&socket).unwrap(), b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n");
         let ticket = post_to(socket.to_str().unwrap(), r#"{"messages":[]}"#);
         assert_ne!(ticket, 0);
         assert_eq!(settled(ticket).0, WHEELHOUSE_AGENT_INPUT_ACCEPTED);
@@ -167,9 +177,15 @@ mod tests {
         wheelhouse_agent_input_forget(ticket);
 
         let _ = std::fs::remove_file(&socket);
-        let server = serve_once(UnixListener::bind(&socket).unwrap(), "HTTP/1.1 400 Bad Request\r\n\r\n{\"error\":\"no user message\"}");
+        let server = serve_once(UnixListener::bind(&socket).unwrap(), b"HTTP/1.1 400 Bad Request\r\n\r\n{\"error\":\"no user message\"}");
         let ticket = post_to(socket.to_str().unwrap(), "{}");
         assert_eq!(settled(ticket), (WHEELHOUSE_AGENT_INPUT_FAILED, r#"{"error":"no user message"}"#.into()));
+        server.join().unwrap();
+
+        let _ = std::fs::remove_file(&socket);
+        let server = serve_once(UnixListener::bind(&socket).unwrap(), b"HTTP/1.1 200 OK\r\n\r\n\xff\xfe");
+        let ticket = post_to(socket.to_str().unwrap(), "{}");
+        assert_eq!(settled(ticket).0, WHEELHOUSE_AGENT_INPUT_ACCEPTED, "a body that isn't UTF-8 still accepted");
         server.join().unwrap();
 
         let _ = std::fs::remove_file(&socket);

@@ -1817,6 +1817,8 @@ uishell_rt_release(void *user_data)
   if(s->match_arena) { arena_release(s->match_arena); s->match_arena = 0; }
   if(s->doc) { wheelhouse_rich_text_free(s->doc); s->doc = 0; }
   if(s->arena) { arena_release(s->arena); s->arena = 0; }
+  for(U64 i = 0; i < s->pending_count; i += 1) { wheelhouse_agent_input_forget(s->pending[i].ticket); }
+  s->pending_count = 0;
 }
 
 internal String8
@@ -4753,10 +4755,12 @@ uishell_rt_reopen(UIShell_RichTextState *s, String8 path, String8 thread)
   B32 same = str8_match(str8(s->path, s->path_size), path, 0);
   String8 draft = same ? push_str8_copy(scratch.arena, str8(s->compose, s->compose_size)) : str8_zero();
   String8 last = same ? push_str8_copy(scratch.arena, str8(s->last_prompt, s->last_prompt_size)) : str8_zero();
-  // Prompts on their way go on waiting in the new file.
+  // Prompts on their way go on waiting in the new file; the reset lets go
+  // of those another file has.
   U64 pending_count = same ? s->pending_count : 0;
   UIShell_RtPending *pending = push_array(scratch.arena, UIShell_RtPending, UISHELL_RT_PENDING_MAX);
   MemoryCopy(pending, s->pending, sizeof(s->pending));
+  if(same) { s->pending_count = 0; }
   uishell_rt_reset(s);
   MemoryCopy(s->pending, pending, sizeof(s->pending));
   s->pending_count = pending_count;
