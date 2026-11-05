@@ -295,6 +295,85 @@ fn a_tool_call_is_pending_until_its_result() {
     assert_eq!(status(&rich), ToolStatus::AwaitingApproval);
 }
 
+#[test]
+fn activity_is_the_open_run_and_its_running_tool() {
+    let run = line(r#"{"type":"RunStarted","threadId":"t","seq":1,"runId":"r"}"#);
+    let mut rich = RichText::open_conversation(&[line(HELLO), run].concat());
+    assert_eq!(rich.conversation_activity(), (true, None));
+    rich.append(&line(
+        r#"{"type":"ToolCallStart","threadId":"t","seq":2,"toolCallId":"c","toolCallName":"Bash","title":"ls","kind":"shell"}"#,
+    ));
+    assert_eq!(rich.conversation_activity(), (true, Some("ls")));
+    // A subagent's run and calls don't change the top-level activity.
+    rich.append(&line(r#"{"type":"RunStarted","threadId":"s","seq":1,"runId":"rs","parent":{"threadId":"t","toolCallId":"c"}}"#));
+    rich.append(&line(
+        r#"{"type":"ToolCallStart","threadId":"s","seq":2,"toolCallId":"d","toolCallName":"Read","title":"a.rs","kind":"read"}"#,
+    ));
+    rich.append(&line(r#"{"type":"RunFinished","threadId":"s","seq":3,"runId":"rs"}"#));
+    assert_eq!(rich.conversation_activity(), (true, Some("ls")));
+    rich.append(&line(r#"{"type":"ToolCallResult","threadId":"t","seq":3,"toolCallId":"c","status":"ok","content":""}"#));
+    assert_eq!(rich.conversation_activity(), (true, None));
+    rich.append(&line(r#"{"type":"RunFinished","threadId":"t","seq":4,"runId":"r"}"#));
+    assert_eq!(rich.conversation_activity(), (false, None));
+}
+
+#[test]
+fn backfill_leaves_activity_to_the_newest_lines() {
+    let mut events = vec![line(HELLO)];
+    for i in 0..400 {
+        events.push(line(&format!(r#"{{"type":"RunStarted","threadId":"t","seq":{},"runId":"r{i}"}}"#, 2 * i + 1)));
+        events.push(line(&format!(r#"{{"type":"RunFinished","threadId":"t","seq":{},"runId":"r{i}"}}"#, 2 * i + 2)));
+    }
+    let mut rich = RichText::tuned_conversation(&events.concat(), RING_CAPACITY, Tuning { tail_items: 1, tail_bytes: 1, step: Some(64) });
+    while rich.backfill(Duration::from_secs(1)) > 0 {}
+    assert_eq!(rich.conversation_activity(), (false, None));
+}
+
+#[test]
+fn a_user_message_is_known_by_its_id() {
+    let rich = RichText::open_conversation(&[line(HELLO), start("wh-1", "user"), start("a", "assistant")].concat());
+    assert!(rich.has_user_message("wh-1"));
+    assert!(!rich.has_user_message("a"));
+}
+
+/// The root's Turns, by text and whether each is pending.
+fn turns(doc: &Tree) -> Vec<(String, bool)> {
+    doc.children(doc.root().unwrap())
+        .filter_map(|id| match *doc.detail(id) {
+            Detail::Turn { pending, .. } => {
+                let text = doc.children(id).map(|c| doc.text(c).to_owned()).collect::<Vec<_>>().join("");
+                Some((text, pending))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+// A sent prompt shows at the end, pending, with later messages above it,
+// until its echo replaces it: the tree is then as if it was never pending.
+#[test]
+fn a_pending_prompt_waits_at_the_end_for_its_echo() {
+    let head = [line(HELLO), start("a", "assistant"), content("a", "Hello"), end("a")].concat();
+    let mut rich = RichText::open_conversation(&head);
+    rich.pend_user_message("wh-1", "Do the thing");
+    let reply = [start("b", "assistant"), content("b", "Still going"), end("b")].concat();
+    rich.append(&reply);
+    assert_eq!(turns(rich.doc()), [("Hello".into(), false), ("Still going".into(), false), ("Do the thing".into(), true)]);
+    let echo = [start("wh-1", "user"), content("wh-1", "Do the thing"), end("wh-1")].concat();
+    rich.append(&echo);
+    assert_eq!(turns(rich.doc()), [("Hello".into(), false), ("Still going".into(), false), ("Do the thing".into(), false)]);
+    assert_eq!(canon(rich.doc()), canon(RichText::open_conversation(&[head, reply, echo].concat()).doc()));
+}
+
+#[test]
+fn a_withdrawn_prompt_leaves_nothing_behind() {
+    let head = [line(HELLO), start("a", "assistant"), content("a", "Hello"), end("a")].concat();
+    let mut rich = RichText::open_conversation(&head);
+    rich.pend_user_message("wh-1", "Do the thing");
+    rich.withdraw_user_message("wh-1");
+    assert_eq!(canon(rich.doc()), canon(RichText::open_conversation(&head).doc()));
+}
+
 /// A node's subtree below it, as [`canon`] has it.
 fn canon_under(doc: &Tree, id: NodeId, out: &mut Vec<(NodeContent, Vec<Key>)>) {
     for child in doc.children(id) {

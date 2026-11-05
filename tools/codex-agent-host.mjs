@@ -94,10 +94,11 @@ function itemStarted(item) {
 }
 function itemCompleted(item, live) {
   if (item.type === 'userMessage') {
-    const text = userText(item);
-    emit('TextMessageStart', { messageId: item.id, role: 'user' });
-    emit('TextMessageContent', { messageId: item.id, delta: text });
-    emit('TextMessageEnd', { messageId: item.id });
+    // A prompt keeps the id its sender gave it, so the sender sees it arrive.
+    const id = item.clientId ?? item.id;
+    emit('TextMessageStart', { messageId: id, role: 'user' });
+    emit('TextMessageContent', { messageId: id, delta: userText(item) });
+    emit('TextMessageEnd', { messageId: id });
     return;
   }
   if (item.type === 'contextCompaction') { emit('Custom', { name: 'compaction', value: {} }); return; }

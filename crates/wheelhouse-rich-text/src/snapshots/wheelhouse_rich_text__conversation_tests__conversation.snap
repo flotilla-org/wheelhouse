@@ -3,11 +3,11 @@ source: crates/wheelhouse-rich-text/src/conversation_tests.rs
 expression: outline(whole(CONVERSATION).doc())
 ---
 Root
-  Turn Turn { role: User }
+  Turn Turn { role: User, pending: false }
     Paragraph "Why does ka lo fail? See the log." [Code "ka lo"] [Link(https://example.com/log) "the log"]
   Section Section { section: Reasoning, name: "", title: "", tool: Other, status: Ok, duration_ms: None }
     Paragraph "Summary: run the tests first." [Strong "tests"]
-  Turn Turn { role: Assistant }
+  Turn Turn { role: Assistant, pending: false }
     Paragraph "I'll run the suite." [Emphasis "suite"]
     Code Code { language: "rust" } "fn mi() {\n    ne();\n}"
     Embed application/vnd.flotilla.table [None, None] 2 rows "a\tb\n1\t2"
@@ -24,7 +24,7 @@ Root
       Notice "A terminal showing two failures"
     Section Section { section: Tool, name: "Task", title: "Find the flaky test", tool: Agent, status: Ok, duration_ms: None }
       Section Section { section: Subagent, name: "", title: "t2", tool: Agent, status: Ok, duration_ms: None }
-        Turn Turn { role: User }
+        Turn Turn { role: User, pending: false }
           Paragraph "Find the flaky test."
         Section Section { section: Tool, name: "Grep", title: "flaky", tool: Search, status: Ok, duration_ms: None }
           List List { ordered: false, start: 1, tight: true }
@@ -34,11 +34,11 @@ Root
     Section Section { section: Tool, name: "Bash", title: "cargo build", tool: Shell, status: Pending, duration_ms: None }
   Divider "compaction"
   Divider "interrupted"
-  Turn Turn { role: User }
+  Turn Turn { role: User, pending: false }
     Paragraph "Try again"
-  Turn Turn { role: Assistant }
+  Turn Turn { role: Assistant, pending: false }
     Paragraph "Done: all green." [Emphasis "all"]
   Section Section { section: Tool, name: "Bash", title: "cargo test", tool: Shell, status: Ok, duration_ms: None }
     Log "ok"
-  Turn Turn { role: Assistant }
+  Turn Turn { role: Assistant, pending: false }
     Paragraph "Still stream" [Strong "stream"]

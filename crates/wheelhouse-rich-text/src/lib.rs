@@ -118,6 +118,35 @@ impl RichText {
         self.conversation.as_ref()?.input()
     }
 
+    /// Whether a conversation's top-level run is open, and the title of its
+    /// running tool; not running for markdown.
+    pub fn conversation_activity(&self) -> (bool, Option<&str>) {
+        self.conversation.as_ref().map_or((false, None), |c| c.activity())
+    }
+
+    pub fn has_user_message(&self, id: &str) -> bool {
+        self.conversation.as_ref().is_some_and(|c| c.has_user_message(id))
+    }
+
+    /// Shows a prompt sent as user message `id` at a conversation's end,
+    /// pending, until the producer's message with that id replaces it.
+    pub fn pend_user_message(&mut self, id: &str, text: &str) {
+        // Pending already, or arrived: nothing changes, so nothing settles.
+        if self.conversation.as_ref().is_none_or(|c| c.has_user_message(id) || c.is_pending(id)) {
+            return;
+        }
+        let Some(mut conversation) = self.conversation.take() else { return };
+        self.edit(|sink| conversation.pend(id, text, sink));
+        self.conversation = Some(conversation);
+    }
+
+    /// Takes out a pending prompt that won't arrive.
+    pub fn withdraw_user_message(&mut self, id: &str) {
+        let Some(mut conversation) = self.conversation.take() else { return };
+        self.edit(|sink| conversation.withdraw(id, sink));
+        self.conversation = Some(conversation);
+    }
+
     /// Bytes appended to a conversation's file, in any pieces: a line waits
     /// for its newline. Returns whether anything changed; false for markdown.
     pub fn append(&mut self, bytes: &[u8]) -> bool {

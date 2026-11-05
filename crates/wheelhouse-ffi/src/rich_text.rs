@@ -363,11 +363,15 @@ fn header(detail: &Detail) -> Header<'_> {
         failed_at: 0,
     };
     match detail {
-        Detail::Turn { role } => {
+        Detail::Turn { role, pending } => {
             out.role = match role {
                 Role::User => WHEELHOUSE_RICH_ROLE_USER,
                 Role::Assistant => WHEELHOUSE_RICH_ROLE_ASSISTANT,
                 Role::System => WHEELHOUSE_RICH_ROLE_SYSTEM,
+            };
+            // A prompt not yet echoed reads as pending, as a running call does.
+            if *pending {
+                out.status = WHEELHOUSE_RICH_STATUS_PENDING;
             }
         }
         Detail::Section { section, name, title, tool, status, duration_ms } => {
@@ -1395,6 +1399,61 @@ pub unsafe extern "C" fn wheelhouse_rich_text_conversation_input(
         None => Ok(false),
     })
     .unwrap_or(false) as u32
+}
+
+/// Whether a conversation's top-level run is open; while it is, the title
+/// of its running tool goes to `tool_out` (empty when no tool is running).
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_conversation_running(
+    h: *mut WheelhouseRichText,
+    tool_out: *mut Bytes,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        let (running, tool) = h.rich.conversation_activity();
+        if running {
+            write_bytes(tool_out, tool.unwrap_or_default().as_bytes().to_vec())?;
+        }
+        Ok(running)
+    })
+    .unwrap_or(false) as u32
+}
+
+/// Whether a user message with this id has arrived: a sent prompt's echo.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_has_user_message(h: *mut WheelhouseRichText, id: Text, error_out: *mut *mut c_char) -> u32 {
+    run(h, error_out, |h| Ok(h.rich.has_user_message(&id.read()?))).unwrap_or(false) as u32
+}
+
+/// Shows a prompt sent as user message `id` at the conversation's end,
+/// pending, until the producer's message with that id replaces it.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_pend_user_message(
+    h: *mut WheelhouseRichText,
+    id: Text,
+    text: Text,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        h.rich.pend_user_message(&id.read()?, &text.read()?);
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// Takes out a pending prompt that won't arrive, such as one that failed
+/// to send.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_withdraw_user_message(
+    h: *mut WheelhouseRichText,
+    id: Text,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        h.rich.withdraw_user_message(&id.read()?);
+        Ok(())
+    })
+    .is_some() as u32
 }
 
 /// A whole Block, collapsed or not.
