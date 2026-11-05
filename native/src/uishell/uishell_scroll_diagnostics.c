@@ -840,6 +840,10 @@ uishell_scroll_region_diagnostics(RD_WindowState *ws)
     wheel.modifiers = WM_Modifier_Shift;
     uishell_scroll_test_frame(ws, &region, axes, mouse, wheel, &content);
     ScrollCheck(content.scroll.x == 1 && content.scroll.y == 0, "content retains Shift-wheel axis routing");
+    wheel.delta_2f32 = v2f32(30, 0);
+    uishell_scroll_test_frame(ws, &region, axes, mouse, wheel, &content);
+    ScrollCheck(content.scroll.x == 1 && content.scroll.y == 0, "Shift-wheel the platform already turned sideways stays sideways");
+    wheel.delta_2f32 = v2f32(0, 30);
     wheel.scroll_is_precise = 1;
     wheel.delta_2f32.y = 0.25f;
     uishell_scroll_test_frame(ws, &region, axes, mouse, wheel, &content);
