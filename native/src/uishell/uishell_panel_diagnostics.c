@@ -314,6 +314,37 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   failures += cfg_change_gen() != after_repair;
   rd_fixture_remove(selector);
   cfg_node_release(rd_state->cfg, commands_owner);
+  // PROTOTYPE (#697): a workspace View moves into a View's dock and back out.
+  {
+    CFG_Node *dock_ws = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
+    RD_PanelAddress ws_panel = rd_fixture_leaf(rd_fixture_owner(dock_ws));
+    CFG_Node *host = rd_fixture_view(ws_panel, str8_lit("terminal_fixture"), str8_zero(), 1);
+    CFG_Node *guest = rd_fixture_view(ws_panel, str8_lit("terminal_fixture"), str8_zero(), 0);
+    RD_ViewAddress guest_address = rd_view_address_from_cfg(guest);
+    RD_PanelOwner dock = rd_dock_owner_from_view(rd_view_address_from_cfg(host));
+    RD_PanelAddress dock_panel = rd_fixture_leaf(dock);
+    B32 target = rd_panel_drag_target(guest_address, dock_panel, 400);
+    fprintf(stderr, "%s dock: a workspace tab may drop into the dock\n", target ? "PASS" : "FAIL");
+    failures += !target;
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = ws_panel, .view = guest_address, .dst_panel = dock_panel, .prev_tab = rd_nil_view_address)
+    { uishell_dispatch_tab_command(str8_lit("move_view")); }
+    RD_ViewAddress moved = rd_view_address_from_cfg(guest);
+    B32 in_dock = rd_panel_owner_match(rd_panel_from_view(moved).owner, dock);
+    fprintf(stderr, "%s dock: move_view puts it in the dock (owner kind %d, same address %d)\n", in_dock ? "PASS" : "FAIL",
+            rd_panel_from_view(moved).owner.kind, rd_view_address_match(moved, guest_address));
+    failures += !in_dock;
+    UIShell_RegsScope(.window = ws->cfg_id, .panel = dock_panel, .view = moved, .dst_panel = ws_panel, .prev_tab = rd_nil_view_address)
+    { uishell_dispatch_tab_command(str8_lit("move_view")); }
+    B32 out = rd_panel_owner_match(rd_panel_from_view(rd_view_address_from_cfg(guest)).owner, rd_fixture_owner(dock_ws));
+    fprintf(stderr, "%s dock: move_view takes it back out\n", out ? "PASS" : "FAIL");
+    failures += !out;
+    UIShell_RegsScope(.window = ws->cfg_id, .tab = rd_view_address_from_cfg(guest))
+    { uishell_dispatch_tab_command(str8_lit("close_tab")); }
+    B32 home = cfg_node_from_id(guest->id) == guest && rd_panel_owner_match(rd_panel_from_view(rd_view_address_from_cfg(guest)).owner, dock);
+    fprintf(stderr, "%s dock: closing it sends it back to its dock\n", home ? "PASS" : "FAIL");
+    failures += !home;
+    cfg_node_release(rd_state->cfg, dock_ws);
+  }
   ui_select_state(saved_ui);
   ui_state_release(test_ui);
   cfg_node_release(rd_state->cfg, owner);

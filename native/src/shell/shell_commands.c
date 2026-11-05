@@ -934,6 +934,8 @@ uishell_dispatch_tab_command(String8 name)
     Temp scratch = scratch_begin(0, 0);
     RD_ViewAddress closed = uishell_regs()->tab;
     CFG_Node *tab = rd_cfg_from_view(closed);
+    // PROTOTYPE (#697): a View from a dock goes back to it instead.
+    if(rd_dock_return(closed)) { scratch_end(scratch); return 1; }
     if(!rd_dock_command_allowed("close", tab->string, rd_dock_closure(rd_dock_view_from_address(closed)))) { scratch_end(scratch); return 1; }
     RD_PanelAddress address = rd_panel_from_view(closed);
     RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, address.owner);

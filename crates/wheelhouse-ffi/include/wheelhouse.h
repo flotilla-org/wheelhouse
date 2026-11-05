@@ -250,6 +250,9 @@ typedef struct BinnacleGrid BinnacleGrid;
 // A window's sidebar dock.
 #define WHEELHOUSE_OWNER_SIDEBAR 1
 
+// PROTOTYPE (#697): a View's dock.
+#define WHEELHOUSE_OWNER_DOCK 2
+
 // The sidebar's dock: it accepts sections.
 #define WHEELHOUSE_DOCK_HOST_SIDEBAR 0
 

@@ -1652,6 +1652,9 @@ typedef struct UIShell_RichTextState UIShell_RichTextState;
 struct UIShell_RichTextState
 {
   B32 initialized;
+  B32 dock_hidden;
+  U32 dock_style;
+  B32 dock_style_set;
   Arena *arena;
   WheelhouseRichText *doc;
   U64 sub;
@@ -5396,6 +5399,90 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
   return gap + card_h + gap + (status ? row_h : 0);
 }
 
+
+//- PROTOTYPE (#697): a dock inside the conversation View.
+//
+// The dock is a panel tree of its own (RD_PanelOwnerKind_Dock), drawn by the
+// same panel area as the workspace and the sidebar, so its Views drag out to
+// the workspace and back like any tab. It is runtime only. With
+// WHEELHOUSE_PROTO_DOCK_DIR set, a new dock starts with that directory's
+// synthetic checklist.md and tasks.md.
+
+global RD_PanelOwner uishell_rt_dock_seeded[64];
+global U64 uishell_rt_dock_seeded_count = 0;
+
+internal void
+uishell_rt_dock_seed(RD_PanelOwner owner)
+{
+  for(U64 i = 0; i < uishell_rt_dock_seeded_count; i++) { if(rd_panel_owner_match(uishell_rt_dock_seeded[i], owner)) { return; } }
+  if(uishell_rt_dock_seeded_count >= ArrayCount(uishell_rt_dock_seeded)) { return; }
+  uishell_rt_dock_seeded[uishell_rt_dock_seeded_count++] = owner;
+  if(rd_arrangement_live(owner)->root != &rd_nil_arrangement_panel) { return; }
+  Temp scratch = scratch_begin(0, 0);
+  RD_PanelAddress top = rd_fixture_leaf(owner);
+  char *env = getenv("WHEELHOUSE_PROTO_DOCK_DIR");
+  String8 dir = env ? str8_cstring(env) : str8_zero();
+  if(dir.size)
+  {
+    String8 names[] = {str8_lit("checklist.md"), str8_lit("tasks.md")};
+    RD_PanelAddress panel = top;
+    for(U64 i = 0; i < ArrayCount(names); i++)
+    {
+      if(i != 0) { panel = rd_fixture_split(panel, Dir2_Down); }
+      String8 expr = push_str8f(scratch.arena, "file:\"%S/%S\".data", dir, names[i]);
+      rd_fixture_view(panel, str8_lit("rich_text"), expr, 1);
+    }
+  }
+  scratch_end(scratch);
+}
+
+internal void
+uishell_rt_dock(RD_ViewAddress host, Rng2F32 rect, U32 style)
+{
+  Temp scratch = scratch_begin(0, 0);
+  RD_PanelOwner owner = rd_dock_owner_from_view(host);
+  uishell_rt_dock_seed(owner);
+  if(rd_arrangement_live(owner)->root == &rd_nil_arrangement_panel) { rd_fixture_leaf(owner); }
+  CFG_Node *window = cfg_node_from_id(uishell_regs()->window);
+  RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
+  UIShell_WorkspaceMount mount = uishell_workspace_mount_from_dock(scratch.arena, owner);
+  if(ws != &rd_nil_window_state && mount.panel_tree.root != &rd_nil_panel_node)
+  {
+    // The panel area lays out in window coordinates.
+    UI_Parent(ui_root_from_state(ui_state)) UIShell_RegsScope(.view = rd_nil_view_address, .tab = rd_nil_view_address)
+    {
+      rd_state->dock_style = style;
+      rd_panel_area_ui(scratch, rect, rect, ws, &mount, wm_window_is_focused(ws->os), 0, 0, 0, 0);
+      // Anywhere else in the column takes a dragged View as a new section
+      // at the bottom (the panel area's own sites, built first, win).
+      if(rd_drag_is_active() && rd_state->drag_drop_regs_slot == UIShell_ContextRegSlot_View && contains_2f32(rect, ui_mouse()))
+      {
+        RD_ArrangementPanel *last = &rd_nil_arrangement_panel;
+        for(RD_ArrangementPanel *p = mount.arrangement->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(mount.arrangement->root, p))
+        { if(p->child_count == 0) { last = p; } }
+        RD_PanelAddress destination = rd_panel_address(owner, last->id);
+        RD_ViewAddress view = rd_state->drag_drop_regs->view;
+        B32 empty = last->tab_count == 0;
+        if(last != &rd_nil_arrangement_panel && !rd_arrangement_panel_from_view(mount.arrangement, view)->id &&
+           rd_panel_drag_target(view, destination, dim_2f32(rect).x)) UI_Rect(rect)
+        {
+          UI_Box *site = ui_build_box_from_string(UI_BoxFlag_DropSite, str8_lit("rich_text_dock_drop_site"));
+          ui_signal_from_box(site);
+          if(ui_key_match(site->key, ui_drop_hot_key()))
+          {
+            Rng2F32 target = rect;
+            if(!empty) { target.y0 = rect.y1 - dim_2f32(rect).y*0.3f; }
+            rd_drop_preview(target);
+            if(rd_drag_drop()) { rd_panel_drag_drop(destination, empty ? Dir2_Invalid : Dir2_Down, rd_nil_view_address); }
+          }
+        }
+      }
+      rd_state->dock_style = 0;
+    }
+  }
+  scratch_end(scratch);
+}
+
 WH_VIEW_UI_FUNCTION_DEF(rich_text)
 {
   Temp scratch = scratch_begin(0, 0);
@@ -5520,6 +5607,14 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     s->input_read = 1;
   }
 
+  // PROTOTYPE (#697): a conversation keeps a dock at its right.
+  Rng2F32 dock_rect = {0};
+  if(s->conversation && !s->dock_hidden && dim_2f32(ctx->rect).x > px*40)
+  {
+    F32 dock_w = floor_f32(Clamp(px*16, dim_2f32(ctx->rect).x*0.3f, px*28));
+    dock_rect = r2f32p(ctx->rect.x1 - dock_w, ctx->rect.y0, ctx->rect.x1, ctx->rect.y1);
+    ctx->rect.x1 -= dock_w;
+  }
   Vec2F32 dim = dim_2f32(ctx->rect);
   UI_Box *root = &ui_nil_box;
   UI_FixedWidth(dim.x) UI_FixedHeight(dim.y) UI_ChildLayoutAxis(Axis2_Y)
@@ -5560,7 +5655,17 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       rd_request_frame();
     }
     if(ui_clicked(ui_buttonf("Source###rich_text_source"))) { uishell_cmd("toggle_markdown_source"); }
+    if(s->conversation && ui_clicked(ui_buttonf("%s###rich_text_dock", s->dock_hidden ? "Show Dock" : "Hide Dock"))) { s->dock_hidden ^= 1; }
+    if(!s->dock_style_set)
+    {
+      char *style = getenv("WHEELHOUSE_PROTO_DOCK_STYLE");
+      s->dock_style = style ? (U32)atoi(style) % 3 : 1;
+      s->dock_style_set = 1;
+    }
+    char *style_names[] = {"Tabs", "Pills", "Sectioned"};
+    if(s->conversation && !s->dock_hidden && ui_clicked(ui_buttonf("Dock: %s###rich_text_dock_style", style_names[s->dock_style % 3]))) { s->dock_style = (s->dock_style + 1) % 3; }
   }
+  if(dim_2f32(dock_rect).x > 0) { uishell_rt_dock(ctx->settings.view, dock_rect, s->dock_style); }
 
   //- Geometry: a reading column, centred, and the composer at its foot
   // when the producer takes input (#683).

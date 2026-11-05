@@ -1168,6 +1168,13 @@ struct RD_State
   Arena *live_arrangement_arena;
   RD_LiveArrangement *first_live_arrangement;
   RD_LiveArrangement *free_live_arrangement;
+  // PROTOTYPE (#697): the host View of each dock owner seen.
+  RD_PanelOwner dock_owners[64];
+  RD_ViewAddress dock_hosts[64];
+  U64 dock_count;
+  // How the dock being drawn draws its panels: 0 tab strips with the
+  // workspace's borders, 1 a pill per section, 2 one sectioned pill.
+  U32 dock_style;
   U64 arrangement_version;
   U64 docking_restore_version;
 
@@ -1557,6 +1564,9 @@ internal CFG_Node *uishell_workspace_cfg_from_cfg(CFG_Node *cfg);
 // The owner of `host`'s arrangement of `kind`: a window hosts its sidebar; a
 // workspace's panels, or a window's own, are a Workspace's.
 internal RD_PanelOwner rd_panel_owner_from_host(RD_PanelOwnerKind kind, CFG_Node *host);
+internal RD_PanelOwner rd_dock_owner_from_view(RD_ViewAddress host);
+internal RD_ViewAddress rd_dock_host_from_owner_id(RD_PanelOwner owner);
+internal B32 rd_dock_return(RD_ViewAddress view);
 // The owner's host: a window or a workspace node.
 internal CFG_Node *rd_cfg_from_panel_owner(RD_PanelOwner owner);
 // Whether `panel` is a panel of its owner's live arrangement.
@@ -1674,6 +1684,11 @@ internal RD_DockView rd_dock_view_from_address(RD_ViewAddress view);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_owner_cfg(Arena *arena, CFG_Node *window, CFG_Node *owner);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_sidebar(Arena *arena, CFG_Node *window);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_panel_owner(Arena *arena, RD_PanelOwner owner);
+internal UIShell_WorkspaceMount uishell_workspace_mount_from_dock(Arena *arena, RD_PanelOwner owner);
+internal void rd_drop_preview(Rng2F32 target);
+internal void rd_panel_drag_drop(RD_PanelAddress destination, Dir2 direction, RD_ViewAddress previous_tab);
+internal B32 rd_panel_drag_target(RD_ViewAddress view, RD_PanelAddress destination, F32 width);
+internal void rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_WindowState *ws, UIShell_WorkspaceMount *mount, B32 window_is_focused, B32 query_is_open, F32 tab_strip_inset_left, F32 tab_strip_inset_right, B32 tabs_in_title_bar);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_window(Arena *arena, CFG_Node *window);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_cfg(Arena *arena, CFG_Node *cfg);
 internal UIShell_WorkspaceMount uishell_workspace_mount_from_current_regs(Arena *arena);

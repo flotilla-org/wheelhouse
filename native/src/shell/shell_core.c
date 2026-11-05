@@ -3496,10 +3496,71 @@ rd_panel_owner_from_host(RD_PanelOwnerKind kind, CFG_Node *host)
   return owner;
 }
 
+// PROTOTYPE (#697): a dock's owner, by its host View; the host is
+// remembered so the owner leads back to it.
+internal RD_PanelOwner
+rd_dock_owner_from_view(RD_ViewAddress host)
+{
+  RD_PanelOwner owner = {RD_PanelOwnerKind_Dock};
+  U128 hash = u128_hash_from_str8(str8_struct(&host));
+  MemoryCopy(owner.id.v, &hash, sizeof(owner.id.v));
+  for(U64 i = 0; i < rd_state->dock_count; i++)
+  {
+    if(rd_panel_owner_match(rd_state->dock_owners[i], owner)) { return owner; }
+  }
+  if(rd_state->dock_count < ArrayCount(rd_state->dock_owners))
+  {
+    rd_state->dock_owners[rd_state->dock_count] = owner;
+    rd_state->dock_hosts[rd_state->dock_count] = host;
+    rd_state->dock_count += 1;
+  }
+  return owner;
+}
+
+internal RD_ViewAddress
+rd_dock_host_from_owner_id(RD_PanelOwner owner)
+{
+  for(U64 i = 0; i < rd_state->dock_count; i++)
+  {
+    if(rd_panel_owner_match(rd_state->dock_owners[i], owner)) { return rd_state->dock_hosts[i]; }
+  }
+  return rd_nil_view_address;
+}
+
+// PROTOTYPE (#697): sends `view` back to the dock it left, as a new section
+// at the bottom. False when it has no dock to go back to.
+internal B32
+rd_dock_return(RD_ViewAddress view)
+{
+  CFG_Node *home = cfg_node_child_from_string(rd_cfg_from_view(view), str8_lit("dock_home"));
+  String8 hex = home->first->string;
+  if(hex.size != 32 || rd_panel_from_view(view).owner.kind == RD_PanelOwnerKind_Dock) { return 0; }
+  RD_PanelOwner dock = {RD_PanelOwnerKind_Dock};
+  U64 id[2] = {u64_from_str8(str8_prefix(hex, 16), 16), u64_from_str8(str8_skip(hex, 16), 16)};
+  MemoryCopy(dock.id.v, id, sizeof(id));
+  if(rd_view_address_is_nil(rd_dock_host_from_owner_id(dock)) || rd_cfg_from_view(rd_dock_host_from_owner_id(dock)) == &cfg_nil_node) { return 0; }
+  Temp scratch = scratch_begin(0, 0);
+  RD_Arrangement *a = rd_arrangement_from_panel_owner(scratch.arena, dock);
+  RD_ArrangementPanel *last = rd_dock_restore_leaf(a);
+  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+  { if(p->child_count == 0) { last = p; } }
+  RD_PanelID panel = last->tab_count == 0 ? last->id : rd_arrangement_split(a, last->id, Dir2_Down);
+  rd_arrangement_insert_tab(a, view, panel, rd_nil_view_address, 1);
+  rd_arrangement_set(a);
+  scratch_end(scratch);
+  return 1;
+}
+
 internal CFG_Node *
 rd_cfg_from_panel_owner(RD_PanelOwner owner)
 {
   CFG_Node *host = &cfg_nil_node;
+  // A dock's Views are where its host View is.
+  if(owner.kind == RD_PanelOwnerKind_Dock)
+  {
+    rd_view_owner_kind_from_cfg(rd_cfg_from_view(rd_dock_host_from_owner_id(owner)), &host);
+    return host;
+  }
   if(owner.kind != RD_PanelOwnerKind_Workspace && owner.kind != RD_PanelOwnerKind_Null) { host = uishell_window_from_id(owner.id); }
   if(host == &cfg_nil_node && owner.kind != RD_PanelOwnerKind_Null) { host = cfg_node_from_id(uishell_workspace_cfg_id_from_id(owner.id)); }
   return host;
@@ -3643,7 +3704,18 @@ rd_arrangement_set(RD_Arrangement *arrangement)
         RD_Arrangement *other = l->arrangement;
         if(rd_panel_owner_match(other->owner, owner)) { continue; }
         rd_arrangement_readdress(other, from, to);
-        if(rd_arrangement_detach_tab(other, to)) { l->version = ++rd_state->arrangement_version; }
+        if(rd_arrangement_detach_tab(other, to))
+        {
+          l->version = ++rd_state->arrangement_version;
+          // PROTOTYPE (#697): a View leaving a dock remembers it, so closing
+          // it sends it back.
+          if(other->owner.kind == RD_PanelOwnerKind_Dock && owner.kind != RD_PanelOwnerKind_Dock)
+          {
+            U64 id[2]; MemoryCopy(id, other->owner.id.v, sizeof(id));
+            CFG_Node *home = cfg_node_child_from_string_or_alloc(rd_state->cfg, view, str8_lit("dock_home"));
+            cfg_node_new_replace(rd_state->cfg, home, push_str8f(scratch.arena, "%016I64x%016I64x", id[0], id[1]));
+          }
+        }
       }
     }
   }
@@ -3691,7 +3763,8 @@ rd_arrangement_intent(U32 kind, RD_PanelOwner owner)
 {
   WheelhouseArrangementIntent intent = {0};
   intent.kind = kind;
-  intent.owner_kind = owner.kind == RD_PanelOwnerKind_Sidebar ? WHEELHOUSE_OWNER_SIDEBAR : WHEELHOUSE_OWNER_WORKSPACE;
+  intent.owner_kind = owner.kind == RD_PanelOwnerKind_Sidebar ? WHEELHOUSE_OWNER_SIDEBAR :
+                      owner.kind == RD_PanelOwnerKind_Dock ? WHEELHOUSE_OWNER_DOCK : WHEELHOUSE_OWNER_WORKSPACE;
   MemoryCopy(intent.owner.bytes, owner.id.v, sizeof(intent.owner.bytes));
   intent.dir = WHEELHOUSE_DIR_NONE;
   return intent;
@@ -3716,7 +3789,8 @@ rd_arrangement_apply_intent(WheelhouseArrangementIntent intent)
 {
   RD_ArrangementIntentResult result = {0};
   Temp scratch = scratch_begin(0, 0);
-  RD_PanelOwner owner = {intent.owner_kind == WHEELHOUSE_OWNER_SIDEBAR ? RD_PanelOwnerKind_Sidebar : RD_PanelOwnerKind_Workspace};
+  RD_PanelOwner owner = {intent.owner_kind == WHEELHOUSE_OWNER_SIDEBAR ? RD_PanelOwnerKind_Sidebar :
+                         intent.owner_kind == WHEELHOUSE_OWNER_DOCK ? RD_PanelOwnerKind_Dock : RD_PanelOwnerKind_Workspace};
   MemoryCopy(owner.id.v, intent.owner.bytes, sizeof(owner.id.v));
   RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, owner);
   RD_ViewAddress view = intent.has_tab ? rd_view_from_core_tab(&intent.tab) : rd_nil_view_address;
@@ -3800,7 +3874,9 @@ rd_panel_from_view(RD_ViewAddress view)
   for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0 && result.id == 0; l = l->next)
   {
     RD_Arrangement *a = l->arrangement;
-    if(!uishell_workspace_id_match(a->owner.id, view.id)) { continue; }
+    // A dock's Views are its host View's owner's.
+    UIShell_WorkspaceId views_id = a->owner.kind == RD_PanelOwnerKind_Dock ? rd_dock_host_from_owner_id(a->owner).id : a->owner.id;
+    if(!uishell_workspace_id_match(views_id, view.id)) { continue; }
     RD_ArrangementPanel *panel = rd_arrangement_panel_from_view(a, view);
     if(panel != &rd_nil_arrangement_panel) { result = rd_panel_address(a->owner, panel->id); }
   }
@@ -3892,6 +3968,7 @@ rd_view_owner_kind_from_panel_owner(RD_PanelOwner owner, CFG_Node *view, CFG_Nod
   CFG_Node *host = rd_cfg_from_panel_owner(owner);
   RD_ViewOwnerKind kind = RD_ViewOwnerKind_Null;
   if(owner.kind == RD_PanelOwnerKind_Workspace) { kind = RD_ViewOwnerKind_Workspace; }
+  else if(owner.kind == RD_PanelOwnerKind_Dock) { kind = rd_view_owner_kind_from_cfg(rd_cfg_from_view(rd_dock_host_from_owner_id(owner)), 0); }
   else if(owner.kind != RD_PanelOwnerKind_Null) { kind = rd_view_is_section(view) ? RD_ViewOwnerKind_Dashboard : RD_ViewOwnerKind_Window; }
   if(host_out) { *host_out = host; }
   return kind;
@@ -4136,7 +4213,8 @@ rd_dock_host_from_owner(RD_PanelOwner owner, F32 width)
   host.has_workspace_subject = !in_window && cfg_node_child_from_string(host_cfg, str8_lit("subject")) != &cfg_nil_node;
   host.available_width = width;
   // A window's own panels are a level apart from its sidebar's.
-  host.level = !in_window ? host_cfg->id : owner.kind == RD_PanelOwnerKind_Workspace ? ~window->id : window->id;
+  // A dock is at its host's level, so its Views move to and from there.
+  host.level = !in_window ? host_cfg->id : owner.kind != RD_PanelOwnerKind_Sidebar ? ~window->id : window->id;
   return host;
 }
 
@@ -4784,10 +4862,25 @@ uishell_workspace_mount_from_sidebar(Arena *arena, CFG_Node *window)
 }
 
 internal UIShell_WorkspaceMount
+uishell_workspace_mount_from_dock(Arena *arena, RD_PanelOwner owner)
+{
+  CFG_Node *host = rd_cfg_from_panel_owner(owner);
+  UIShell_WorkspaceMount mount = {0};
+  mount.owner_cfg = host;
+  mount.window_cfg = rd_window_from_cfg(host);
+  mount.workspace_cfg = str8_match(host->string, str8_lit("workspace"), 0) ? host : &cfg_nil_node;
+  mount.arrangement = rd_arrangement_from_panel_owner(arena, owner);
+  mount.owner = owner;
+  mount.panel_tree = rd_panel_tree_from_arrangement(arena, owner, mount.arrangement);
+  return mount;
+}
+
+internal UIShell_WorkspaceMount
 uishell_workspace_mount_from_panel_owner(Arena *arena, RD_PanelOwner owner)
 {
   CFG_Node *host = rd_cfg_from_panel_owner(owner);
   if(owner.kind == RD_PanelOwnerKind_Sidebar) { return uishell_workspace_mount_from_sidebar(arena, host); }
+  if(owner.kind == RD_PanelOwnerKind_Dock) { return uishell_workspace_mount_from_dock(arena, owner); }
   return uishell_workspace_mount_from_owner_cfg(arena, rd_window_from_cfg(host), host);
 }
 
@@ -6264,6 +6357,21 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                                   panel_rect_pct.x1*content_rect_dim.x,
                                   panel_rect_pct.y1*content_rect_dim.y);
         plan->panel_rect = pad_2f32(plan->panel_rect, -panel_inset_px);
+        // PROTOTYPE (#697): stacked pills stand apart; a sectioned pill keeps
+        // its sections together inside one margin.
+        if(panel->address.owner.kind == RD_PanelOwnerKind_Dock && rd_state->dock_style != 0)
+        {
+          F32 gap = floor_f32(ui_top_font_size()*0.4f);
+          if(rd_state->dock_style == 1) { plan->panel_rect = pad_2f32(plan->panel_rect, -gap); }
+          else
+          {
+            plan->panel_rect = pad_2f32(plan->panel_rect, panel_inset_px);
+            if(panel_rect_pct.x0 <= 0.001f) { plan->panel_rect.x0 += gap; }
+            if(panel_rect_pct.x1 >= 0.999f) { plan->panel_rect.x1 -= gap; }
+            if(panel_rect_pct.y0 <= 0.001f) { plan->panel_rect.y0 += gap; }
+            if(panel_rect_pct.y1 >= 0.999f) { plan->panel_rect.y1 -= gap; }
+          }
+        }
         plan->panel_rect = r2f32p(round_f32(plan->panel_rect.x0), round_f32(plan->panel_rect.y0), round_f32(plan->panel_rect.x1), round_f32(plan->panel_rect.y1));
 
         plan->settled_panel_rect = r2f32p(target_rect_pct.x0*content_rect_dim.x,
@@ -6274,6 +6382,12 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
         plan->settled_panel_rect = r2f32p(round_f32(plan->settled_panel_rect.x0), round_f32(plan->settled_panel_rect.y0), round_f32(plan->settled_panel_rect.x1), round_f32(plan->settled_panel_rect.y1));
 
         plan->presentation = rd_dock_presentation(rd_dock_host_kind_from_panel_owner(panel->address.owner), panel->tabs.count);
+        // PROTOTYPE (#697): a dock shows its panels with tab strips; section
+        // headers need the Renderer to draw one, as the sidebar's do.
+        if(panel->address.owner.kind == RD_PanelOwnerKind_Dock)
+        {
+          plan->presentation = rd_setting_b32_from_name(str8_lit("dock_sections")) ? RD_DockPresentation_SectionHeader : RD_DockPresentation_Tabs;
+        }
         plan->panel_inset_px = panel_inset_px;
         plan->tab_bar_rheight = floor_f32(ui_top_font_size()*3.5f);
         plan->tab_bar_vheight = floor_f32(ui_top_font_size()*rd_setting_f32_from_name(str8_lit("tab_height")));
@@ -6397,6 +6511,8 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
           continue;
         }
 
+        // PROTOTYPE (#697): a pill-styled dock draws its own shapes.
+        if(panel->address.owner.kind == RD_PanelOwnerKind_Dock && rd_state->dock_style != 0) { continue; }
         B32 top_tabbed = (panel->tab_side != Side_Max);
         B32 omit_workspace_edges = (panel_inset_px < 0.5f);
         rd_panel_frame_segment_list_push_edge(scratch.arena, &raw_frame_segments, panel, Axis2_X, Side_Min, body.x0, r1f32(body.y0, body.y1), panel_border_px, panel_area_rect, edge_tol, omit_workspace_edges);
@@ -7294,6 +7410,32 @@ rd_panel_area_ui(Temp scratch, Rng2F32 content_rect, Rng2F32 window_rect, RD_Win
                 }
                 ui_eat_event(evt);
               }
+            }
+          }
+          // PROTOTYPE (#697): a pill-styled dock's section shape, built last
+          // so it paints under the panel (siblings paint in reverse order). A
+          // sectioned pill rounds only its outer corners and rules off the
+          // sections below the first.
+          if(build_panel && panel->address.owner.kind == RD_PanelOwnerKind_Dock && rd_state->dock_style != 0)
+          {
+            Vec4F32 bg = ui_color_from_name(str8_lit("background")), fg = ui_color_from_name(str8_lit("text"));
+            F32 radius = floor_f32(ui_top_font_size()*0.7f);
+            Rng2F32 shape = panel_rect;
+            F32 r00 = radius, r01 = radius, r10 = radius, r11 = radius;
+            if(rd_state->dock_style == 2)
+            {
+              Rng2F32 pct = rd_target_rect_from_panel_node(r2f32p(0, 0, 1, 1), panel_tree.root, panel);
+              if(pct.y0 > 0.001f) { r00 = r10 = 0; }
+              if(pct.y1 < 0.999f) { r01 = r11 = 0; }
+              if(pct.x0 > 0.001f) { r00 = r01 = 0; }
+              if(pct.x1 < 0.999f) { r10 = r11 = 0; }
+            }
+            UI_Rect(shape) UI_BackgroundColor(mix_4f32(bg, fg, 0.07f)) UI_CornerRadius00(r00) UI_CornerRadius01(r01) UI_CornerRadius10(r10) UI_CornerRadius11(r11)
+            { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
+            if(rd_state->dock_style == 2 && r00 == 0 && r10 == 0)
+            {
+              UI_Rect(r2f32p(shape.x0, shape.y0, shape.x1, shape.y0 + 1.f)) UI_BackgroundColor(mix_4f32(bg, fg, 0.2f))
+              { ui_build_box_from_key(UI_BoxFlag_DrawBackground, ui_key_zero()); }
             }
           }
         }
