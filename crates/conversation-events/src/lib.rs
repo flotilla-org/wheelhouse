@@ -103,6 +103,10 @@ impl Event {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Hello {
     pub contract: u32,
+    /// Where the producer takes input (a prototype, not yet in #548's
+    /// contract): `unix://PATH`, an HTTP server on a socket.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
 }
 
 /// A subagent's run names the tool call that started it.

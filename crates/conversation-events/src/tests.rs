@@ -14,7 +14,7 @@ fn events(bytes: &[u8]) -> Vec<Event> {
 fn the_wire_example_reads_with_our_additions() {
     let events = events(WIRE);
     assert_eq!(events.len(), 14);
-    assert_eq!(events[0], Event::Hello(Hello { contract: CONTRACT }));
+    assert_eq!(events[0], Event::Hello(Hello { contract: CONTRACT, input: None }));
     let Event::ToolCallStart(start) = &events[8] else { panic!("{:?}", events[8]) };
     assert_eq!((start.title.as_deref(), start.kind), (Some("cargo test -p wheelhouse-text"), Some(ToolKind::Shell)));
     let Event::ToolCallResult(result) = &events[11] else { panic!("{:?}", events[11]) };
@@ -216,6 +216,6 @@ fn a_result_without_a_message_id_gets_one_from_its_call() {
 #[test]
 fn unknown_events_are_not_written() {
     let mut out = vec![];
-    write(&mut out, &[Event::Unknown, Event::Hello(Hello { contract: CONTRACT })]).unwrap();
+    write(&mut out, &[Event::Unknown, Event::Hello(Hello { contract: CONTRACT, input: None })]).unwrap();
     assert_eq!(out, b"{\"type\":\"Hello\",\"contract\":1}\n");
 }

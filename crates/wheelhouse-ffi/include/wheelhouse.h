@@ -136,6 +136,12 @@ typedef struct BinnacleGrid BinnacleGrid;
 // Show workspace_id, after a close; needs no completion.
 #define WHEELHOUSE_EFFECT_SHOW_WORKSPACE 7
 
+#define WHEELHOUSE_AGENT_INPUT_SENDING 0
+
+#define WHEELHOUSE_AGENT_INPUT_ACCEPTED 1
+
+#define WHEELHOUSE_AGENT_INPUT_FAILED 2
+
 // The size of a tab: the host's View Address, copied whole.
 #define WHEELHOUSE_TAB_BYTES 40
 
@@ -2450,6 +2456,21 @@ void wheelhouse_snapshot_release(WheelhouseSnapshot *s);
 
 void wheelhouse_effects_release(WheelhouseEffects *e);
 
+// Posts `body` to `path` on `endpoint` (`unix://PATH`) and returns its
+// ticket at once: 0 for an endpoint that isn't `unix://`. Ask after it
+// with wheelhouse_agent_input_status and let it go with
+// wheelhouse_agent_input_forget.
+uint64_t wheelhouse_agent_input_post(WheelhouseText endpoint,
+                                     WheelhouseText path,
+                                     WheelhouseText body,
+                                     char **error_out);
+
+// A ticket's WHEELHOUSE_AGENT_INPUT_* status; a failure's reason goes to
+// `why_out`. An unknown ticket reads as failed.
+uint32_t wheelhouse_agent_input_status(uint64_t ticket, WheelhouseBytes *why_out, char **error_out);
+
+void wheelhouse_agent_input_forget(uint64_t ticket);
+
 // Applies `edit` to `doc` by the core's rules, with `hidden` (and its
 // `context`) saying which tabs a settle passes over. Returns the edited
 // document and what the edit did, or NULL with an error for a malformed
@@ -3141,6 +3162,36 @@ uint32_t wheelhouse_rich_text_copy(WheelhouseRichText *h,
                                    uint32_t copy_format,
                                    WheelhouseBytes *out,
                                    char **error_out);
+
+// Where a conversation's producer takes input, from its hello: returns 0
+// with nothing written when it names none.
+uint32_t wheelhouse_rich_text_conversation_input(WheelhouseRichText *h,
+                                                 WheelhouseBytes *out,
+                                                 char **error_out);
+
+// Whether a conversation's top-level run is open; while it is, the title
+// of its running tool goes to `tool_out` (empty when no tool is running).
+uint32_t wheelhouse_rich_text_conversation_running(WheelhouseRichText *h,
+                                                   WheelhouseBytes *tool_out,
+                                                   char **error_out);
+
+// Whether a user message with this id has arrived: a sent prompt's echo.
+uint32_t wheelhouse_rich_text_has_user_message(WheelhouseRichText *h,
+                                               WheelhouseText id,
+                                               char **error_out);
+
+// Shows a prompt sent as user message `id` at the conversation's end,
+// pending, until the producer's message with that id replaces it.
+uint32_t wheelhouse_rich_text_pend_user_message(WheelhouseRichText *h,
+                                                WheelhouseText id,
+                                                WheelhouseText text,
+                                                char **error_out);
+
+// Takes out a pending prompt that won't arrive, such as one that failed
+// to send.
+uint32_t wheelhouse_rich_text_withdraw_user_message(WheelhouseRichText *h,
+                                                    WheelhouseText id,
+                                                    char **error_out);
 
 // A whole Block, collapsed or not.
 uint32_t wheelhouse_rich_text_copy_block(WheelhouseRichText *h,

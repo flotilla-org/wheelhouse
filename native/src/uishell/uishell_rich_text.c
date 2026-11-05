@@ -1635,6 +1635,19 @@ struct UIShell_RtColumn
 };
 #define UISHELL_RT_COLUMN_SLOTS 1024
 
+
+// A prompt sent to the producer (#683): sending until the producer accepts
+// it, then waiting until it shows in the conversation under its id.
+#define UISHELL_RT_PENDING_MAX 8
+typedef struct UIShell_RtPending UIShell_RtPending;
+struct UIShell_RtPending
+{
+  char id[32];
+  U64 ticket;
+  U64 sent_us;
+  U8 text[4096];
+  U64 text_size;
+};
 typedef struct UIShell_RichTextState UIShell_RichTextState;
 struct UIShell_RichTextState
 {
@@ -1752,6 +1765,31 @@ struct UIShell_RichTextState
   // The file as it was when opening it failed.
   U64 failed_size;
   DenseTime failed_modified;
+  // Where the conversation's producer takes input, from its hello, and the
+  // composer's draft (the agent View prototype).
+  B32 input_read;
+  U8 input[512];
+  U64 input_size;
+  U8 compose[4096];
+  U64 compose_size;
+  TxtPt compose_cursor;
+  TxtPt compose_mark;
+  // A press on the content leaves the composer, on the next build.
+  B32 compose_blur;
+  // The first line it shows, past 8; and the column Up and Down keep to,
+  // or -1.
+  U64 compose_first_line;
+  F32 compose_goal_x;
+  // When the cursor last moved: it stays lit a moment, then blinks.
+  U64 compose_moved_us;
+  // Prompts sent and not yet in the conversation, oldest first.
+  UIShell_RtPending pending[UISHELL_RT_PENDING_MAX];
+  U64 pending_count;
+  // The last prompt sent, for Up in an empty composer.
+  U8 last_prompt[4096];
+  U64 last_prompt_size;
+  // When the open run was first seen running, for its elapsed time.
+  U64 running_since_us;
 };
 
 internal void
@@ -1779,6 +1817,8 @@ uishell_rt_release(void *user_data)
   if(s->match_arena) { arena_release(s->match_arena); s->match_arena = 0; }
   if(s->doc) { wheelhouse_rich_text_free(s->doc); s->doc = 0; }
   if(s->arena) { arena_release(s->arena); s->arena = 0; }
+  for(U64 i = 0; i < s->pending_count; i += 1) { wheelhouse_agent_input_forget(s->pending[i].ticket); }
+  s->pending_count = 0;
 }
 
 internal String8
@@ -2403,6 +2443,35 @@ uishell_rt_styled_parent(UIShell_RichTextState *s, UIShell_RtNode *n, UIShell_Rt
 
 internal Rng1F32 uishell_rt_chrome_column(UIShell_RichTextState *s, UIShell_RtNode *c, UIShell_RtContainerStyle *st);
 
+// A sent prompt's bubble, which the composer's card matches.
+internal Vec4F32
+uishell_rt_bubble_color(UIShell_RtTheme *t)
+{
+  return mix_4f32(t->background, t->text, 0.07f);
+}
+
+// A pending prompt's bubble: fainter than a sent one's.
+internal Vec4F32
+uishell_rt_pending_wash(UIShell_RtTheme *t, F32 alpha)
+{
+  Vec4F32 color = mix_4f32(t->background, t->text, 0.035f);
+  color.w = alpha;
+  return color;
+}
+
+// Whether a Block is in a prompt sent from this View that the producer
+// hasn't echoed yet.
+internal B32
+uishell_rt_in_pending_turn(UIShell_RichTextState *s, UIShell_RtNode *n)
+{
+  UIShell_RtContainerStyle *st = 0;
+  for(UIShell_RtNode *c = uishell_rt_styled_parent(s, n, &st); c != 0; c = uishell_rt_styled_parent(s, c, &st))
+  {
+    if(c->kind == WHEELHOUSE_RICH_KIND_TURN) { return c->status == WHEELHOUSE_RICH_STATUS_PENDING; }
+  }
+  return 0;
+}
+
 // The column `n` sits in, in the content box: its styled Container's
 // inside, or the View's reading column.
 internal Rng1F32
@@ -2809,6 +2878,8 @@ struct UIShell_RtBlockDraw
   U64 current_find_quads;
   B32 focused;
   Vec4F32 focus_color;
+  // A pending prompt's Blocks fade under a wash of its bubble's colour.
+  Vec4F32 fade;
 };
 
 internal UI_BOX_CUSTOM_DRAW(uishell_rt_block_draw)
@@ -2823,6 +2894,7 @@ internal UI_BOX_CUSTOM_DRAW(uishell_rt_block_draw)
       dr_rect(d->quads[i], d->quad_colors[i], 0, 0, 0);
     }
   }
+  if(d->fade.w > 0) { dr_rect(box->rect, d->fade, 0, 0, 0); }
   if(d->focused)
   {
     dr_rect(pad_2f32(box->rect, 1.f), d->focus_color, 3.f, 1.5f, 1.f);
@@ -4547,6 +4619,7 @@ uishell_rt_reset(UIShell_RichTextState *s)
   s->focus_stop = -1;
   s->match_current = WHEELHOUSE_NONE;
   s->columns = push_array(s->arena, UIShell_RtColumn, UISHELL_RT_COLUMN_SLOTS);
+  s->compose_goal_x = -1;
 }
 
 typedef struct UIShell_RtRange UIShell_RtRange;
@@ -4677,7 +4750,26 @@ uishell_rt_path_from_expr(Arena *arena, String8 expr)
 internal void
 uishell_rt_reopen(UIShell_RichTextState *s, String8 path, String8 thread)
 {
+  // Its file again (rewritten) keeps the composer's draft and its Up.
+  Temp scratch = scratch_begin(0, 0);
+  B32 same = str8_match(str8(s->path, s->path_size), path, 0);
+  String8 draft = same ? push_str8_copy(scratch.arena, str8(s->compose, s->compose_size)) : str8_zero();
+  String8 last = same ? push_str8_copy(scratch.arena, str8(s->last_prompt, s->last_prompt_size)) : str8_zero();
+  // Prompts on their way go on waiting in the new file; the reset lets go
+  // of those another file has.
+  U64 pending_count = same ? s->pending_count : 0;
+  UIShell_RtPending *pending = push_array(scratch.arena, UIShell_RtPending, UISHELL_RT_PENDING_MAX);
+  MemoryCopy(pending, s->pending, sizeof(s->pending));
+  if(same) { s->pending_count = 0; }
   uishell_rt_reset(s);
+  MemoryCopy(s->pending, pending, sizeof(s->pending));
+  s->pending_count = pending_count;
+  MemoryCopy(s->compose, draft.str, draft.size);
+  s->compose_size = draft.size;
+  s->compose_cursor = s->compose_mark = txt_pt(1, 1 + draft.size);
+  MemoryCopy(s->last_prompt, last.str, last.size);
+  s->last_prompt_size = last.size;
+  scratch_end(scratch);
   MemoryCopy(s->path, path.str, path.size);
   s->path_size = path.size;
   s->thread = push_str8_copy(s->arena, thread);
@@ -4744,6 +4836,564 @@ uishell_rt_follow(UIShell_RichTextState *s, String8 path, String8 thread, FilePr
     // A burst bigger than a step reads on over the next frames.
     if(s->doc && s->fed < size) { rd_request_frame(); }
   }
+}
+
+//~ Input to the producer (the agent View prototype)
+
+internal String8
+uishell_rt_json_string(Arena *arena, String8 text)
+{
+  String8List parts = {0};
+  str8_list_push(arena, &parts, str8_lit("\""));
+  U64 start = 0;
+  for(U64 i = 0; i < text.size; i += 1)
+  {
+    U8 c = text.str[i];
+    if(c != '"' && c != '\\' && c >= 0x20) { continue; }
+    str8_list_push(arena, &parts, str8_substr(text, r1u64(start, i)));
+    if(c == '"' || c == '\\') { str8_list_pushf(arena, &parts, "\\%c", c); }
+    else { str8_list_pushf(arena, &parts, "\\u%04x", c); }
+    start = i + 1;
+  }
+  str8_list_push(arena, &parts, str8_substr(text, r1u64(start, text.size)));
+  str8_list_push(arena, &parts, str8_lit("\""));
+  return str8_list_join(arena, &parts, 0);
+}
+
+internal U64
+uishell_rt_input_post(UIShell_RichTextState *s, String8 path, String8 body)
+{
+  char *error = 0;
+  U64 ticket = wheelhouse_agent_input_post(uishell_rt_wt(str8(s->input, s->input_size)), uishell_rt_wt(path), uishell_rt_wt(body), &error);
+  uishell_rt_error(&error);
+  return ticket;
+}
+
+internal void
+uishell_rt_set_notice(UIShell_RichTextState *s, String8 notice)
+{
+  s->notice_size = Min(notice.size, sizeof(s->notice));
+  MemoryCopy(s->notice, notice.str, s->notice_size);
+  s->notice_until_us = now_time_us() + 6000000;
+}
+
+// A prompt that didn't send goes back to an empty composer, so nothing
+// typed is lost.
+internal void
+uishell_rt_unsend(UIShell_RichTextState *s, U64 index, String8 why)
+{
+  UIShell_RtPending *p = &s->pending[index];
+  if(s->compose_size == 0)
+  {
+    MemoryCopy(s->compose, p->text, p->text_size);
+    s->compose_size = p->text_size;
+    s->compose_cursor = s->compose_mark = txt_pt(1, 1 + s->compose_size);
+  }
+  Temp scratch = scratch_begin(0, 0);
+  uishell_rt_set_notice(s, push_str8f(scratch.arena, "Couldn't send: %S", why));
+  scratch_end(scratch);
+  char *error = 0;
+  wheelhouse_rich_text_withdraw_user_message(s->doc, uishell_rt_wt(str8_cstring(p->id)), &error);
+  uishell_rt_error(&error);
+  wheelhouse_agent_input_forget(p->ticket);
+  MemoryCopy(p, p + 1, sizeof(*p)*(s->pending_count - index - 1));
+  s->pending_count -= 1;
+}
+
+// A prompt goes as AG-UI's RunAgentInput, with only the new message: the
+// harness keeps the history. It shows at the conversation's end, pending,
+// until the conversation has a user message with its id.
+internal void
+uishell_rt_send_prompt(UIShell_RichTextState *s, String8 text, Arena *scratch)
+{
+  if(s->pending_count == UISHELL_RT_PENDING_MAX)
+  {
+    wheelhouse_agent_input_forget(s->pending[0].ticket);
+    MemoryCopy(&s->pending[0], &s->pending[1], sizeof(s->pending[0])*(UISHELL_RT_PENDING_MAX - 1));
+    s->pending_count -= 1;
+  }
+  UIShell_RtPending *p = &s->pending[s->pending_count++];
+  MemoryZeroStruct(p);
+  p->sent_us = now_time_us();
+  snprintf(p->id, sizeof(p->id), "wh-%llu", (unsigned long long)p->sent_us);
+  p->text_size = Min(text.size, sizeof(p->text));
+  MemoryCopy(p->text, text.str, p->text_size);
+  s->last_prompt_size = p->text_size;
+  MemoryCopy(s->last_prompt, p->text, p->text_size);
+  String8 body = push_str8f(scratch, "{\"threadId\":\"\",\"runId\":\"%s\",\"messages\":[{\"id\":\"%s\",\"role\":\"user\",\"content\":%S}]}",
+                            p->id, p->id, uishell_rt_json_string(scratch, text));
+  char *error = 0;
+  wheelhouse_rich_text_pend_user_message(s->doc, uishell_rt_wt(str8_cstring(p->id)), uishell_rt_wt(str8(p->text, p->text_size)), &error);
+  uishell_rt_error(&error);
+  p->ticket = uishell_rt_input_post(s, str8_lit("/run"), body);
+  if(p->ticket == 0) { uishell_rt_unsend(s, s->pending_count - 1, str8_lit("the producer's input isn't reachable")); }
+}
+
+// Pending prompts move on: one in the conversation is done, one that
+// failed goes back to the composer.
+internal void
+uishell_rt_pending_update(UIShell_RichTextState *s)
+{
+  for(U64 i = 0; i < s->pending_count;)
+  {
+    UIShell_RtPending *p = &s->pending[i];
+    char *error = 0;
+    B32 arrived = wheelhouse_rich_text_has_user_message(s->doc, uishell_rt_wt(str8_cstring(p->id)), &error);
+    uishell_rt_error(&error);
+    if(arrived)
+    {
+      wheelhouse_agent_input_forget(p->ticket);
+      MemoryCopy(p, p + 1, sizeof(*p)*(s->pending_count - i - 1));
+      s->pending_count -= 1;
+      continue;
+    }
+    WheelhouseBytes why = {0};
+    U32 status = wheelhouse_agent_input_status(p->ticket, &why, &error);
+    uishell_rt_error(&error);
+    if(status == WHEELHOUSE_AGENT_INPUT_FAILED)
+    {
+      Temp scratch = scratch_begin(0, 0);
+      String8 reason = push_str8_copy(scratch.arena, str8(why.data, why.len));
+      if(why.data) { wheelhouse_bytes_free(why); }
+      uishell_rt_unsend(s, i, reason);
+      scratch_end(scratch);
+      continue;
+    }
+    // A file opened again has lost it: show it there too.
+    wheelhouse_rich_text_pend_user_message(s->doc, uishell_rt_wt(str8_cstring(p->id)), uishell_rt_wt(str8(p->text, p->text_size)), &error);
+    uishell_rt_error(&error);
+    i += 1;
+  }
+}
+
+//~ The composer (the agent View prototype, #683)
+
+// The composer's text as the lines it shows: wrapped at `width` and at its
+// newlines, each a byte range of the text without its newline.
+typedef struct UIShell_RtComposeLines UIShell_RtComposeLines;
+struct UIShell_RtComposeLines
+{
+  Rng1U64 *v;
+  U64 count;
+};
+
+internal UIShell_RtComposeLines
+uishell_rt_compose_lines(Arena *arena, String8 text, FNT_Tag font, F32 size, F32 width)
+{
+  // Each line but the last takes at least a byte, so there are at most
+  // one more than the text has.
+  UIShell_RtComposeLines lines = {push_array(arena, Rng1U64, text.size + 1), 0};
+  for(U64 start = 0; start <= text.size;)
+  {
+    U64 newline = str8_find_needle(text, start, str8_lit("\n"), 0);
+    U64 line_start = start, at = start;
+    F32 x = 0;
+    while(at < newline)
+    {
+      // A word and the spaces after it stay on this line if the word fits.
+      U64 word_end = at;
+      while(word_end < newline && text.str[word_end] != ' ') { word_end += 1; }
+      U64 end = word_end;
+      while(end < newline && text.str[end] == ' ') { end += 1; }
+      F32 word_w = fnt_dim_from_tag_size_string(font, size, 0, 0, str8_substr(text, r1u64(at, word_end))).x;
+      if(x > 0 && x + word_w > width)
+      {
+        lines.v[lines.count++] = r1u64(line_start, at);
+        line_start = at;
+        x = 0;
+        continue;
+      }
+      if(word_w > width)
+      {
+        // A word wider than the line breaks where it stops fitting.
+        U64 cut = at + utf8_decode(text.str + at, text.size - at).inc;
+        while(cut < word_end)
+        {
+          U64 next = cut + utf8_decode(text.str + cut, text.size - cut).inc;
+          if(fnt_dim_from_tag_size_string(font, size, 0, 0, str8_substr(text, r1u64(at, next))).x > width) { break; }
+          cut = next;
+        }
+        if(cut < word_end)
+        {
+          lines.v[lines.count++] = r1u64(line_start, cut);
+          line_start = at = cut;
+          continue;
+        }
+      }
+      x += fnt_dim_from_tag_size_string(font, size, 0, 0, str8_substr(text, r1u64(at, end))).x;
+      at = end;
+    }
+    lines.v[lines.count++] = r1u64(line_start, newline);
+    start = newline + 1;
+  }
+  return lines;
+}
+
+// The line a byte shows on: where a wrapped line ends, the next one.
+internal U64
+uishell_rt_compose_line_of(UIShell_RtComposeLines *lines, U64 byte)
+{
+  U64 i = 0;
+  while(i + 1 < lines->count && lines->v[i + 1].min <= byte) { i += 1; }
+  return i;
+}
+
+// The last place a cursor can be on a line: before the space a wrapped
+// line ends with, since after it is the next line's start.
+internal U64
+uishell_rt_compose_line_end(String8 text, Rng1U64 line)
+{
+  if(line.max == line.min || line.max >= text.size || text.str[line.max] == '\n') { return line.max; }
+  U64 end = line.max - 1;
+  while(end > line.min && (text.str[end] & 0xc0) == 0x80) { end -= 1; }
+  return end;
+}
+
+internal F32
+uishell_rt_compose_x(String8 text, Rng1U64 line, U64 byte, FNT_Tag font, F32 size)
+{
+  return fnt_dim_from_tag_size_string(font, size, 0, 0, str8_substr(text, r1u64(line.min, Clamp(line.min, byte, line.max)))).x;
+}
+
+// The place on a line nearest `x`.
+internal U64
+uishell_rt_compose_byte_at(String8 text, Rng1U64 line, F32 x, FNT_Tag font, F32 size)
+{
+  F32 left = 0;
+  U64 end = uishell_rt_compose_line_end(text, line);
+  for(U64 at = line.min; at < end;)
+  {
+    U64 next = at + utf8_decode(text.str + at, text.size - at).inc;
+    F32 right = fnt_dim_from_tag_size_string(font, size, 0, 0, str8_substr(text, r1u64(line.min, next))).x;
+    if(x < (left + right)/2) { return at; }
+    left = right;
+    at = next;
+  }
+  return end;
+}
+
+// The field's selection and cursor, in its box's coordinates.
+typedef struct UIShell_RtComposeDraw UIShell_RtComposeDraw;
+struct UIShell_RtComposeDraw
+{
+  Rng2F32 *selection;
+  U64 selection_count;
+  Rng2F32 cursor;
+  Vec4F32 cursor_color;
+};
+
+internal UI_BOX_CUSTOM_DRAW(uishell_rt_compose_draw)
+{
+  UIShell_RtComposeDraw *d = (UIShell_RtComposeDraw *)user_data;
+  Vec4F32 select_color = ui_color_from_tags_key_name(box->tags_key, str8_lit("selection"));
+  for(U64 i = 0; i < d->selection_count; i += 1)
+  {
+    dr_rect(shift_2f32(d->selection[i], box->rect.p0), select_color, 2.f, 0, 1.f);
+  }
+  if(d->cursor_color.w > 0)
+  {
+    dr_rect(shift_2f32(d->cursor, box->rect.p0), d->cursor_color, 0, 0, 0);
+  }
+}
+
+#define UISHELL_RT_COMPOSE_LINES 8
+
+// The composer, when the producer takes input: a card at the foot of the
+// reading column, its field growing to 8 lines and then scrolling, beside
+// one button that sends or, while a run is open and there's nothing to
+// send, stops it. Enter sends; Shift+Enter or Ctrl+J starts a line. Above
+// it, while the agent works or a prompt is on its way, a row says so.
+// Returns the height it takes from the View's bottom.
+internal F32
+uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 column_x, F32 column_w, F32 px, Arena *scratch)
+{
+  char *error = 0;
+  WheelhouseBytes tool = {0};
+  B32 running = wheelhouse_rich_text_conversation_running(s->doc, &tool, &error);
+  String8 running_tool = str8_zero();
+  if(tool.data)
+  {
+    running_tool = push_str8_copy(scratch, str8(tool.data, tool.len));
+    wheelhouse_bytes_free(tool);
+  }
+  uishell_rt_error(&error);
+  if(running && s->running_since_us == 0) { s->running_since_us = now_time_us(); }
+  if(!running) { s->running_since_us = 0; }
+  uishell_rt_pending_update(s);
+  U64 now = now_time_us();
+  // Elapsed time, and "Sending" moving to "Waiting", redraw on their own.
+  if(running || s->pending_count) { rd_request_frame_at(now + 250000); }
+
+  FNT_Tag font = ui_top_font();
+  F32 size = ui_top_font_size();
+  F32 line_h = floor_f32(size*1.6f), pad = floor_f32(px*0.5f), gap = floor_f32(px*0.6f);
+  F32 button_w = floor_f32(fnt_dim_from_tag_size_string(font, size, 0, 0, str8_lit("Send")).x + size*2.4f);
+  F32 button_h = floor_f32(size*2.1f);
+  F32 text_w = Max(column_w - 2*pad - button_w - pad, size*4);
+  UI_Key key = ui_key_from_string(ui_active_seed_key(), str8_lit("###rich_text_compose"));
+  // The card holds the field's focus, and isn't built yet: ask last frame's.
+  UI_Key card_key = ui_key_zero();
+  UI_Parent(root) { card_key = ui_key_from_string(ui_active_seed_key(), str8_lit("###rich_text_composer")); }
+  UI_Box *last_card = ui_box_from_key(card_key);
+  if(s->compose_blur && !ui_box_is_nil(last_card)) { last_card->default_nav_focus_next_active_key = ui_key_zero(); }
+  s->compose_blur = 0;
+  B32 active = (last_card->flags & UI_BoxFlag_FocusActive) && ui_key_match(last_card->default_nav_focus_active_key, key) &&
+               !ui_key_match(last_card->default_nav_focus_next_active_key, ui_key_zero());
+
+  //- Keys, while the field has them.
+  B32 send = 0, stop = 0;
+  UIShell_RtComposeLines lines = uishell_rt_compose_lines(scratch, str8(s->compose, s->compose_size), font, size, text_w);
+  if(active)
+  {
+    for(UI_Event *evt = 0; ui_next_event(&evt);)
+    {
+      String8 text = str8(s->compose, s->compose_size);
+      U64 cursor = (U64)(s->compose_cursor.column - 1);
+      B32 taken = 1, vertical = 0, edited = 0;
+      B32 newline = evt->kind == UI_EventKind_Press &&
+                    ((evt->key == WM_Key_Return && (evt->modifiers & WM_Modifier_Shift)) ||
+                     (evt->key == WM_Key_J && evt->modifiers == WM_Modifier_Ctrl));
+      if(newline)
+      {
+        UI_Event insert = {.kind = UI_EventKind_Text, .string = str8_lit("\n")};
+        UI_TxtOp op = ui_single_line_txt_op_from_event(scratch, &insert, text, s->compose_cursor, s->compose_mark);
+        ui_apply_text_edit_op(scratch, op, s->compose, sizeof(s->compose), &s->compose_size, &s->compose_cursor, &s->compose_mark);
+        edited = 1;
+      }
+      else if(evt->kind == UI_EventKind_Press && (evt->slot == UI_EventActionSlot_Accept || evt->key == WM_Key_Return))
+      {
+        send = 1;
+      }
+      else if(evt->kind == UI_EventKind_Press && (evt->slot == UI_EventActionSlot_Cancel || evt->key == WM_Key_Esc))
+      {
+        // Esc stops a running turn, and otherwise leaves the field.
+        if(running) { stop = 1; }
+        else if(!ui_box_is_nil(last_card)) { last_card->default_nav_focus_next_active_key = ui_key_zero(); }
+      }
+      else if(evt->kind == UI_EventKind_Navigate && evt->delta_2s32.y != 0)
+      {
+        vertical = 1;
+        if(evt->delta_2s32.y < 0 && s->compose_size == 0 && s->last_prompt_size)
+        {
+          // Up in an empty field brings back the last prompt.
+          MemoryCopy(s->compose, s->last_prompt, s->last_prompt_size);
+          s->compose_size = s->last_prompt_size;
+          s->compose_cursor = s->compose_mark = txt_pt(1, 1 + s->compose_size);
+          edited = 1;
+        }
+        else
+        {
+          // Up and Down keep to the column they started from.
+          U64 at = uishell_rt_compose_line_of(&lines, cursor);
+          if(s->compose_goal_x < 0) { s->compose_goal_x = uishell_rt_compose_x(text, lines.v[at], cursor, font, size); }
+          U64 target = 0;
+          if(evt->delta_2s32.y < 0) { target = at == 0 ? 0 : uishell_rt_compose_byte_at(text, lines.v[at - 1], s->compose_goal_x, font, size); }
+          else { target = at + 1 == lines.count ? text.size : uishell_rt_compose_byte_at(text, lines.v[at + 1], s->compose_goal_x, font, size); }
+          s->compose_cursor = txt_pt(1, 1 + target);
+          if(!(evt->flags & UI_EventFlag_KeepMark)) { s->compose_mark = s->compose_cursor; }
+        }
+      }
+      else if(evt->kind == UI_EventKind_Navigate && evt->delta_unit == UI_EventDeltaUnit_Line)
+      {
+        // Home and End go to the ends of the line the cursor shows on.
+        Rng1U64 line = lines.v[uishell_rt_compose_line_of(&lines, cursor)];
+        U64 target = evt->delta_2s32.x > 0 ? uishell_rt_compose_line_end(text, line) : line.min;
+        s->compose_cursor = txt_pt(1, 1 + target);
+        if(!(evt->flags & UI_EventFlag_KeepMark)) { s->compose_mark = s->compose_cursor; }
+      }
+      else if((evt->kind == UI_EventKind_Edit || evt->kind == UI_EventKind_Navigate || evt->kind == UI_EventKind_Text) && evt->delta_2s32.y == 0)
+      {
+        // The rest is as a line edit has it, over the whole text.
+        UI_TxtOp op = ui_single_line_txt_op_from_event(scratch, evt, text, s->compose_cursor, s->compose_mark);
+        ui_apply_text_edit_op(scratch, op, s->compose, sizeof(s->compose), &s->compose_size, &s->compose_cursor, &s->compose_mark);
+        edited = 1;
+      }
+      else
+      {
+        taken = 0;
+      }
+      if(taken)
+      {
+        ui_eat_event(evt);
+        s->compose_moved_us = now;
+        if(!vertical) { s->compose_goal_x = -1; }
+      }
+      if(edited) { lines = uishell_rt_compose_lines(scratch, str8(s->compose, s->compose_size), font, size, text_w); }
+    }
+    ui_register_text_edit_owner(key, s->compose_cursor, s->compose_mark);
+  }
+
+  //- Geometry: the card at the foot of the column, its status row above.
+  String8 text = str8(s->compose, s->compose_size);
+  U64 shown = Clamp(1, lines.count, UISHELL_RT_COMPOSE_LINES);
+  F32 card_h = Max(shown*line_h, button_h) + 2*pad;
+  B32 status = running || s->pending_count;
+  F32 row_h = floor_f32(size*2.f);
+  Rng2F32 card_rect = r2f32p(column_x, bottom - gap - card_h, column_x + column_w, bottom - gap);
+  U64 cursor = (U64)(s->compose_cursor.column - 1), mark = (U64)(s->compose_mark.column - 1);
+  U64 cursor_line = uishell_rt_compose_line_of(&lines, cursor);
+  // Past 8 lines the field scrolls, keeping the cursor's line in sight.
+  if(cursor_line < s->compose_first_line) { s->compose_first_line = cursor_line; }
+  if(cursor_line >= s->compose_first_line + shown) { s->compose_first_line = cursor_line + 1 - shown; }
+  s->compose_first_line = Min(s->compose_first_line, lines.count - shown);
+
+  //- The status row.
+  if(status)
+  {
+    String8 left = str8_zero(), right = str8_zero();
+    if(running)
+    {
+      static const char *dots[] = {"   ", ".  ", ".. ", "..."};
+      U64 elapsed = (now - s->running_since_us)/1000000;
+      String8 what = running_tool.size ? push_str8f(scratch, " · %S", running_tool) : str8_zero();
+      left = push_str8f(scratch, "Working%s %llus%S", dots[(now/400000) % 4], (unsigned long long)elapsed, what);
+      right = str8_lit("Esc to stop");
+    }
+    else
+    {
+      // The newest prompt on its way: sending while the request is out, then
+      // waiting on the agent, after a moment so a quick echo never flickers.
+      UIShell_RtPending *p = &s->pending[s->pending_count - 1];
+      WheelhouseBytes why = {0};
+      U32 sent = wheelhouse_agent_input_status(p->ticket, &why, &error);
+      if(why.data) { wheelhouse_bytes_free(why); }
+      uishell_rt_error(&error);
+      B32 waiting = sent == WHEELHOUSE_AGENT_INPUT_ACCEPTED && now - p->sent_us > 1000000;
+      left = waiting ? str8_lit("Waiting for agent…") : str8_lit("Sending…");
+    }
+    UI_Box *row = &ui_nil_box;
+    UI_Parent(root) UI_Rect(r2f32p(column_x + pad, card_rect.y0 - row_h, column_x + column_w - pad, card_rect.y0)) UI_ChildLayoutAxis(Axis2_X)
+    {
+      row = ui_build_box_from_stringf(UI_BoxFlag_Floating, "###rich_text_compose_status");
+    }
+    UI_Parent(row) UI_PrefHeight(ui_px(row_h, 1)) UI_TagF("weak") UI_TextPadding(0)
+    {
+      UI_PrefWidth(ui_pct(1, 0)) ui_label(left);
+      if(right.size) { UI_PrefWidth(ui_text_dim(1, 1)) ui_label(right); }
+    }
+  }
+
+  //- The card. The field takes focus through the card's focus-nav box, as
+  // the web View's address bar does through that View's root.
+  UI_Box *card = &ui_nil_box;
+  UI_Parent(root) UI_Rect(card_rect) UI_Focus(UI_FocusKind_On) UI_CornerRadius(floor_f32(size*0.9f))
+    UI_BackgroundColor(uishell_rt_bubble_color(&s->theme))
+  {
+    card = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawBackground|UI_BoxFlag_DefaultFocusNav|
+                                     UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder, "###rich_text_composer");
+  }
+  UI_Parent(card) UI_Focus(UI_FocusKind_Null)
+  {
+    F32 field_h = shown*line_h;
+    UI_Box *field = &ui_nil_box;
+    UI_Rect(r2f32p(pad, pad + (card_h - 2*pad - field_h)/2, pad + text_w, pad + (card_h - 2*pad - field_h)/2 + field_h))
+    {
+      ui_set_next_hover_cursor(WM_Cursor_IBar);
+      // The cursor shows the field has the keys; no focus ring besides. It
+      // clips to its own rect, as a plain clip leaves out a pixel each side,
+      // and with it the cursor at the start of a line.
+      field = ui_build_box_from_key(UI_BoxFlag_Floating|UI_BoxFlag_Clip|UI_BoxFlag_ClipToRect|UI_BoxFlag_MouseClickable|
+                                    UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder, key);
+    }
+    F32 scroll = s->compose_first_line*line_h;
+    UIShell_RtComposeDraw *d = push_array(ui_build_arena(), UIShell_RtComposeDraw, 1);
+    d->selection = push_array(ui_build_arena(), Rng2F32, lines.count);
+    U64 lo = Min(cursor, mark), hi = Max(cursor, mark);
+    UI_Parent(field) UI_TextPadding(0) UI_PrefHeight(ui_px(line_h, 1))
+    {
+      if(text.size == 0 && !active)
+      {
+        UI_Rect(r2f32p(0, 0, text_w, line_h)) UI_TagF("weak")
+        {
+          ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText, "Message the agent###rt_compose_placeholder");
+        }
+      }
+      for(U64 i = s->compose_first_line; i < s->compose_first_line + shown; i += 1)
+      {
+        Rng1U64 line = lines.v[i];
+        F32 y = i*line_h - scroll;
+        UI_Rect(r2f32p(0, y, text_w, y + line_h))
+        {
+          UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc, "###rt_compose_line_%llu", (unsigned long long)i);
+          ui_box_equip_display_string(box, str8_substr(text, line));
+        }
+        // The selection over this line, with a sliver for a newline in it.
+        if(lo != hi && lo <= line.max && hi >= line.min && !(hi == line.min && i > 0 && lines.v[i - 1].max == line.min))
+        {
+          F32 x0 = uishell_rt_compose_x(text, line, lo, font, size);
+          F32 x1 = uishell_rt_compose_x(text, line, hi, font, size);
+          if(hi > line.max && line.max < text.size && text.str[line.max] == '\n') { x1 += floor_f32(size*0.4f); }
+          if(x1 > x0) { d->selection[d->selection_count++] = r2f32p(x0, y + line_h*0.1f, x1, y + line_h*0.9f); }
+        }
+      }
+    }
+    F32 cursor_x = uishell_rt_compose_x(text, lines.v[cursor_line], cursor, font, size);
+    F32 cursor_y = cursor_line*line_h - scroll;
+    d->cursor = r2f32p(cursor_x, cursor_y + line_h*0.15f, cursor_x + ClampBot(1.f, floor_f32(size/10.f)), cursor_y + line_h*0.85f);
+    // Lit for half a second after it moves, then on and off each half second.
+    if(active)
+    {
+      U64 since = now - s->compose_moved_us;
+      B32 lit = since < 500000 || ((since - 500000)/500000) % 2 == 1;
+      if(lit) { d->cursor_color = s->theme.text; }
+      rd_request_frame_at(now + 500000 - (since % 500000));
+    }
+    ui_box_equip_custom_draw(field, uishell_rt_compose_draw, d);
+
+    // A press puts the cursor under the mouse, and a drag selects.
+    UI_Signal sig = ui_signal_from_box(field);
+    if(ui_pressed(sig) || (active && ui_dragging(sig)))
+    {
+      Vec2F32 at = sub_2f32(ui_mouse(), field->rect.p0);
+      U64 i = (U64)Clamp(0, (S64)floor_f32((at.y + scroll)/line_h), (S64)lines.count - 1);
+      U64 byte = uishell_rt_compose_byte_at(text, lines.v[i], at.x, font, size);
+      s->compose_cursor = txt_pt(1, 1 + byte);
+      if(ui_pressed(sig))
+      {
+        s->compose_mark = s->compose_cursor;
+        s->compose_goal_x = -1;
+        s->compose_moved_us = now;
+        uishell_cmd("focus_panel");
+        if(!active)
+        {
+          ui_set_auto_focus_active_key(key);
+          ui_kill_action();
+          active = 1;
+        }
+      }
+    }
+    // As the shell's own fields do: keys bound to text (Space is "accept")
+    // type while the field is active.
+    if(active) { ui_take_text_field_focus(); rd_state->text_edit_mode = 1; }
+
+    // One button: Stop while a run is open and there's nothing to send.
+    B32 stop_button = running && str8_skip_chop_whitespace(text).size == 0;
+    F32 button_y = card_h - pad - button_h;
+    UI_Rect(r2f32p(column_w - pad - button_w, button_y, column_w - pad, button_y + button_h)) UI_CornerRadius(floor_f32(button_h/2))
+      UI_TextAlignment(UI_TextAlign_Center)
+    {
+      UI_Box *button = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_Clickable|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|
+                                                 UI_BoxFlag_DrawText|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|
+                                                 UI_BoxFlag_DisableFocusOverlay|UI_BoxFlag_DisableFocusBorder,
+                                                 "%s###rich_text_send", stop_button ? "Stop" : "Send");
+      if(ui_clicked(ui_signal_from_box(button))) { if(stop_button) { stop = 1; } else { send = 1; } }
+    }
+  }
+
+  //- What the keys and the button asked for.
+  if(stop) { wheelhouse_agent_input_forget(uishell_rt_input_post(s, str8_lit("/stop"), str8_lit("{}"))); }
+  String8 prompt = str8_skip_chop_whitespace(str8(s->compose, s->compose_size));
+  if(send && prompt.size)
+  {
+    uishell_rt_send_prompt(s, prompt, scratch);
+    s->compose_size = 0;
+    s->compose_cursor = s->compose_mark = txt_pt(1, 1);
+    s->compose_first_line = 0;
+    // The conversation goes to its end, where the prompt now is.
+    wheelhouse_rich_text_scroll_to_end(s->doc, s->sub, &error);
+    uishell_rt_error(&error);
+  }
+  return gap + card_h + gap + (status ? row_h : 0);
 }
 
 WH_VIEW_UI_FUNCTION_DEF(rich_text)
@@ -4857,6 +5507,19 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     uishell_rt_error(&error);
   }
 
+  if(s->doc && s->conversation && !s->input_read)
+  {
+    WheelhouseBytes bytes = {0};
+    if(wheelhouse_rich_text_conversation_input(s->doc, &bytes, &error))
+    {
+      s->input_size = Min(bytes.len, sizeof(s->input));
+      MemoryCopy(s->input, bytes.data, s->input_size);
+      wheelhouse_bytes_free(bytes);
+    }
+    uishell_rt_error(&error);
+    s->input_read = 1;
+  }
+
   Vec2F32 dim = dim_2f32(ctx->rect);
   UI_Box *root = &ui_nil_box;
   UI_FixedWidth(dim.x) UI_FixedHeight(dim.y) UI_ChildLayoutAxis(Axis2_Y)
@@ -4899,12 +5562,15 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     if(ui_clicked(ui_buttonf("Source###rich_text_source"))) { uishell_cmd("toggle_markdown_source"); }
   }
 
-  //- Geometry: a reading column, centred.
-  UI_ScrollRegion region = ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, bar_h, dim.x, dim.y), UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
-  Vec2F32 vdim = dim_2f32(region.viewport);
+  //- Geometry: a reading column, centred, and the composer at its foot
+  // when the producer takes input (#683).
   F32 margin = floor_f32(px*1.25f);
-  F32 content_width = floor_f32(Clamp(px*8, vdim.x - 2*margin, px*48));
-  F32 content_x = floor_f32(Max(margin, (vdim.x - content_width)/2));
+  F32 column_dim = dim_2f32(ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, bar_h, dim.x, dim.y), UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always)).viewport).x;
+  F32 content_width = floor_f32(Clamp(px*8, column_dim - 2*margin, px*48));
+  F32 content_x = floor_f32(Max(margin, (column_dim - content_width)/2));
+  F32 compose_h = s->input_size ? uishell_rt_composer(s, root, dim.y, content_x, content_width, px, scratch.arena) : 0;
+  UI_ScrollRegion region = ui_scroll_region_layout(ui_scroll_region_params(r2f32p(0, bar_h, dim.x, dim.y - compose_h), UI_ScrollAxisPolicy_Off, UI_ScrollAxisPolicy_Always));
+  Vec2F32 vdim = dim_2f32(region.viewport);
   s->content_x = content_x;
   if((F64)vdim.y != s->viewport)
   {
@@ -5013,9 +5679,16 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   // and the Blocks as they are placed now.
   B32 pressed = 0;
   uishell_rt_pointer(s, &pl, content_rect, &pressed);
-  if(pressed) { uishell_cmd("focus_panel"); }
+  if(pressed)
+  {
+    uishell_cmd("focus_panel");
+    // A press on the content leaves the composer.
+    if(s->input_size) { s->compose_blur = 1; }
+  }
   B32 focused = 0;
-  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active())
+  // While the composer has the keyboard, the content's keys and edit
+  // commands are its.
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && !ui_text_field_focus())
   {
     focused = 1;
     UIShell_RtStop *stops = 0;
@@ -5153,6 +5826,7 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       d->kind = p->node->kind;
       d->bucket = b->bucket;
       d->focus_color = t->focus;
+      if(uishell_rt_in_pending_turn(s, p->node)) { d->fade = uishell_rt_pending_wash(t, 0.5f); }
       uishell_rt_overlays(ui_build_arena(), s, p, d, &sel, has_sel, focused);
       UI_Box *box = &ui_nil_box;
       UI_Rect(p->rect)
@@ -5345,7 +6019,8 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
           Rng1F32 x = uishell_rt_chrome_column(s, c, st);
           if(at == count)
           {
-            Vec4F32 color = mix_4f32(t->background, t->text, 0.07f);
+            B32 pending = c->kind == WHEELHOUSE_RICH_KIND_TURN && c->status == WHEELHOUSE_RICH_STATUS_PENDING;
+            Vec4F32 color = pending ? uishell_rt_pending_wash(t, 1) : uishell_rt_bubble_color(t);
             chromes[count] = (UIShell_RtChromeDraw){c->key, color, uishell_rt_em(t, st->radius)};
             rects[count++] = r2f32p(x.min, y0, x.max, y1);
           }

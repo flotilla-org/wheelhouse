@@ -293,6 +293,8 @@ pub enum Detail {
     },
     Turn {
         role: Role,
+        /// Sent from this View, not yet echoed by the producer.
+        pending: bool,
     },
     /// What a frontend draws a Section's header from. A subagent's title is
     /// its thread's id.

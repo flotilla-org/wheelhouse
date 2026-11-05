@@ -199,6 +199,8 @@ enum Body {
     Text {
         role: Role,
         md: Markdown,
+        /// A prompt sent from this View that the producer hasn't echoed.
+        pending: bool,
     },
     Reasoning {
         md: Markdown,
@@ -248,7 +250,7 @@ impl Item {
         };
         let streaming = |md: &Markdown| if md.ended { ToolStatus::Ok } else { ToolStatus::Pending };
         match &self.body {
-            Body::Text { role, .. } => (Kind::Turn, "", Detail::Turn { role: *role }),
+            Body::Text { role, pending, .. } => (Kind::Turn, "", Detail::Turn { role: *role, pending: *pending }),
             Body::Reasoning { md } => (Kind::Section, "", section(SectionKind::Reasoning, "", "", ToolKind::Other, streaming(md), None)),
             Body::Tool { name, kind, result, started, shown, .. } => {
                 let status = result.as_ref().map_or(ToolStatus::Pending, |r| r.status);
@@ -262,6 +264,17 @@ impl Item {
             Body::Notice { text } => (Kind::Notice, text, Detail::None),
         }
     }
+}
+
+/// What a live View shows at its foot (the agent View prototype, #683):
+/// the open top-level run and its newest unfinished tool call. Backfill
+/// reads older lines, so only lines past `at` change it.
+#[derive(Debug, Default)]
+struct Activity {
+    at: u64,
+    run: Option<String>,
+    /// The call's thread, id and title.
+    tool: Option<(String, String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -586,6 +599,18 @@ pub(crate) struct Conversation {
     floor: usize,
     lines: Lines,
     unsupported: bool,
+    /// Where the producer takes input, from the hello.
+    input: Option<String>,
+    activity: Activity,
+    /// The ids of user messages, so a sent prompt knows it arrived.
+    user_messages: HashSet<String>,
+    /// Prompts sent from this View and not yet echoed, by message id: each
+    /// shows at the end until the producer's own message replaces it.
+    pending: HashMap<String, Key>,
+    /// Pending prompts to take out on the next settle.
+    withdrawn: Vec<Key>,
+    /// Prompts pended so far, so each goes after the last.
+    pended: u32,
     items: HashMap<Key, Item>,
     threads: HashMap<String, Thread>,
     /// Each slot's placed items, in order.
@@ -627,6 +652,71 @@ impl Conversation {
         conversation.ingest(events, sink);
         conversation.append(&bytes[head..], sink);
         conversation
+    }
+
+    pub fn input(&self) -> Option<&str> {
+        self.input.as_deref()
+    }
+
+    /// Whether a top-level run is open, and its running tool's title.
+    pub fn activity(&self) -> (bool, Option<&str>) {
+        let tool = self.activity.tool.as_ref().map(|(_, _, title)| title.as_str());
+        (self.activity.run.is_some(), tool)
+    }
+
+    pub fn has_user_message(&self, id: &str) -> bool {
+        self.user_messages.contains(id)
+    }
+
+    pub fn is_pending(&self, id: &str) -> bool {
+        self.pending.contains_key(id)
+    }
+
+    /// Shows a prompt sent as message `id` at the end, marked pending,
+    /// until a user message with that id arrives. Later items go above it.
+    pub fn pend(&mut self, id: &str, text: &str, sink: &mut Sink) {
+        if self.user_messages.contains(id) || self.pending.contains_key(id) {
+            return;
+        }
+        let key = Key::named(&["", "pending", id]);
+        let order = (u64::MAX, self.pended);
+        self.pended += 1;
+        let md = Markdown { raw: text.to_owned(), ended: true, ..Markdown::default() };
+        self.create(key, order, "", || Body::Text { role: Role::User, md, pending: true });
+        self.pending.insert(id.to_owned(), key);
+        self.settle(sink);
+    }
+
+    /// Takes out a pending prompt that won't arrive, such as one that
+    /// failed to send.
+    pub fn withdraw(&mut self, id: &str, sink: &mut Sink) {
+        if let Some(key) = self.pending.remove(id) {
+            self.withdrawn.push(key);
+            self.settle(sink);
+        }
+    }
+
+    fn note_activity(&mut self, at: u64, event: &Event) {
+        if at < self.activity.at {
+            return;
+        }
+        let thread = event.thread_id();
+        if self.threads.get(thread).is_some_and(|t| t.parent.is_some()) {
+            return;
+        }
+        let activity = &mut self.activity;
+        match event {
+            Event::RunStarted(e) if e.parent.is_none() => (activity.run, activity.tool) = (Some(e.run_id.clone()), None),
+            Event::RunFinished(_) | Event::RunError(_) => (activity.run, activity.tool) = (None, None),
+            Event::ToolCallStart(e) => {
+                activity.tool = Some((thread.to_owned(), e.tool_call_id.clone(), e.title.clone().unwrap_or_default()))
+            }
+            Event::ToolCallResult(e) if activity.tool.as_ref().is_some_and(|(t, id, _)| t == thread && *id == e.tool_call_id) => {
+                activity.tool = None
+            }
+            _ => return,
+        }
+        activity.at = at;
     }
 
     pub fn append(&mut self, bytes: &[u8], sink: &mut Sink) {
@@ -740,6 +830,15 @@ impl Conversation {
         if self.unsupported {
             return;
         }
+        self.note_activity(at, &event);
+        if let Event::TextMessageStart(e) = &event {
+            if e.role == EventRole::User {
+                self.user_messages.insert(e.message_id.clone());
+                if let Some(key) = self.pending.remove(&e.message_id) {
+                    self.withdrawn.push(key);
+                }
+            }
+        }
         if let Some(key) = target(&event) {
             match self.items.get(&key) {
                 None => {
@@ -759,6 +858,7 @@ impl Conversation {
         let order = (at, 0);
         match event {
             Event::Hello(hello) => {
+                self.input = hello.input;
                 if hello.contract != CONTRACT {
                     self.unsupported = true;
                     let text = format!("Conversation contract {} isn't supported (this reads {CONTRACT})", hello.contract);
@@ -795,7 +895,11 @@ impl Conversation {
             Event::TextMessageStart(e) => {
                 let r = role(e.role);
                 if let Some(Item { body: Body::Text { role, .. }, .. }) =
-                    self.create(message_key(&thread, &e.message_id), order, &thread, || Body::Text { role: r, md: Markdown::default() })
+                    self.create(message_key(&thread, &e.message_id), order, &thread, || Body::Text {
+                        role: r,
+                        md: Markdown::default(),
+                        pending: false,
+                    })
                 {
                     *role = r;
                 }
@@ -958,7 +1062,7 @@ impl Conversation {
                     if !text.is_empty() || m.tool_calls.is_empty() {
                         let order = next();
                         let md = Markdown { raw: text, ended: true, ..Markdown::default() };
-                        let body = Body::Text { role: role(r), md };
+                        let body = Body::Text { role: role(r), md, pending: false };
                         if let Some(item) = self.create(message_key(thread, &m.id), order, thread, || Body::Notice { text: String::new() })
                         {
                             item.body = body;
@@ -1173,7 +1277,16 @@ impl Conversation {
     /// Places what moved or is new, a run of neighbours in one splice, then
     /// renders what changed in place.
     fn settle(&mut self, sink: &mut Sink) {
-        let touched = std::mem::take(&mut self.touched);
+        for key in std::mem::take(&mut self.withdrawn) {
+            self.unplace(key, sink, &mut vec![]);
+            if let Some(item) = self.items.remove(&key) {
+                if let Some(thread) = self.threads.get_mut(&item.thread) {
+                    thread.items.retain(|&k| k != key);
+                }
+            }
+        }
+        let mut touched = std::mem::take(&mut self.touched);
+        touched.retain(|key| self.items.contains_key(key));
         self.touched_set.clear();
         let mut wanted: Vec<Key> = vec![];
         for &key in &touched {
@@ -1392,7 +1505,7 @@ impl Conversation {
         for &(_, key) in self.slots.get(&slot).into_iter().flatten() {
             let Some(item) = self.items.get(&key) else { continue };
             match &item.body {
-                Body::Text { role, md } => {
+                Body::Text { role, md, .. } => {
                     let label = match role {
                         Role::User => "User",
                         Role::Assistant => "Assistant",
