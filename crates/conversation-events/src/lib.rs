@@ -2,6 +2,8 @@
 //! event set with its names and camelCase fields, plus our additions. Readers
 //! skip unknown events and unknown fields; changes within a major version are
 //! additive only.
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -12,7 +14,7 @@ pub use fold::Fold;
 pub use jsonl::{parse_line, read, to_line, write, LineError, Lines};
 
 /// The contract's major version, which a stream's [`Hello`] carries.
-pub const CONTRACT: u32 = 1;
+pub const CONTRACT: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -28,6 +30,7 @@ pub enum Event {
     ToolCallArgs(ToolCallArgs),
     ToolCallEnd(ToolCallEnd),
     ToolCallResult(ToolCallResult),
+    ToolCallOutput(ToolCallOutput),
     ReasoningStart(ReasoningStart),
     ReasoningMessageStart(ReasoningMessageStart),
     ReasoningMessageContent(ReasoningMessageContent),
@@ -58,6 +61,7 @@ impl Event {
             Event::ToolCallArgs(e) => &e.thread_id,
             Event::ToolCallEnd(e) => &e.thread_id,
             Event::ToolCallResult(e) => &e.thread_id,
+            Event::ToolCallOutput(e) => &e.thread_id,
             Event::ReasoningStart(e) => &e.thread_id,
             Event::ReasoningMessageStart(e) => &e.thread_id,
             Event::ReasoningMessageContent(e) => &e.thread_id,
@@ -85,6 +89,7 @@ impl Event {
             Event::ToolCallArgs(e) => e.seq,
             Event::ToolCallEnd(e) => e.seq,
             Event::ToolCallResult(e) => e.seq,
+            Event::ToolCallOutput(e) => e.seq,
             Event::ReasoningStart(e) => e.seq,
             Event::ReasoningMessageStart(e) => e.seq,
             Event::ReasoningMessageContent(e) => e.seq,
@@ -130,6 +135,55 @@ pub struct RunStarted {
     pub parent_run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<Parent>,
+    /// The request the run started from, echoed so every watcher sees how
+    /// an interrupt was answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<RunAgentInput>,
+}
+
+/// AG-UI's `RunAgentInput`, as far as a watcher reads it.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunAgentInput {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub messages: Vec<Message>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resume: Vec<ResumeEntry>,
+}
+
+/// Something a run needs from outside before it can continue, such as an
+/// approval or an answer (CONTEXT.md, "Interrupt").
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Interrupt {
+    pub id: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Set when it asks to approve a tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// A JSON Schema for the answer; a question's choices go here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeEntry {
+    pub interrupt_id: String,
+    pub status: ResumeStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResumeStatus {
+    #[default]
+    Resolved,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -143,12 +197,29 @@ pub struct RunFinished {
     pub run_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
-    /// Such as `completed`, `interrupted` or `aborted`.
+    /// None means success.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub outcome: Option<String>,
+    pub outcome: Option<Outcome>,
 }
 
-pub const COMPLETED: &str = "completed";
+/// How a run ended, as AG-UI 1.0's `RunFinishedOutcome`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Outcome {
+    #[serde(rename_all = "camelCase")]
+    Success {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pending_tool_call_ids: Vec<String>,
+    },
+    /// The run waits for these; a new run resumes from them.
+    Interrupt {
+        interrupts: Vec<Interrupt>,
+    },
+    Cancelled,
+    /// An outcome this version doesn't know, read as success as AG-UI says.
+    #[serde(other)]
+    Unknown,
+}
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -188,6 +259,53 @@ pub struct TextMessageStart {
     pub message_id: String,
     #[serde(default)]
     pub role: Role,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
+}
+
+/// Who a message came from when it isn't the session's own user or agent
+/// (#693): its kind and the producer's scalar attribution fields.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Origin {
+    pub kind: OriginKind,
+    #[serde(flatten)]
+    pub fields: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum OriginKind {
+    #[default]
+    Human,
+    Orchestrator,
+    Peer,
+    TaskNotification,
+    /// A kind this version doesn't know, kept as written.
+    Other(String),
+}
+
+impl From<String> for OriginKind {
+    fn from(kind: String) -> Self {
+        match kind.as_str() {
+            "human" => OriginKind::Human,
+            "orchestrator" => OriginKind::Orchestrator,
+            "peer" => OriginKind::Peer,
+            "task-notification" => OriginKind::TaskNotification,
+            _ => OriginKind::Other(kind),
+        }
+    }
+}
+
+impl From<OriginKind> for String {
+    fn from(kind: OriginKind) -> Self {
+        match kind {
+            OriginKind::Human => "human".into(),
+            OriginKind::Orchestrator => "orchestrator".into(),
+            OriginKind::Peer => "peer".into(),
+            OriginKind::TaskNotification => "task-notification".into(),
+            OriginKind::Other(kind) => kind,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -232,8 +350,7 @@ pub enum ToolKind {
 pub enum ToolStatus {
     Ok,
     Failed,
-    Interrupted,
-    AwaitingApproval,
+    Cancelled,
     /// A status this version doesn't know.
     #[serde(other)]
     Unknown,
@@ -251,7 +368,8 @@ pub struct ToolCallStart {
     pub tool_call_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_message_id: Option<String>,
-    /// A short summary of the input, written by the producer.
+    /// A short summary of the input, written by the producer. A later
+    /// `ToolCallEnd` or `ToolCallResult` may replace it, or `kind`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -282,6 +400,10 @@ pub struct ToolCallEnd {
     #[serde(default)]
     pub seq: u64,
     pub tool_call_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ToolKind>,
 }
 
 /// Output past about 64 KiB is cut; the rest is in the native log.
@@ -298,6 +420,22 @@ pub const MARKDOWN: &str = "text/markdown";
 pub const ANSI: &str = "text/x-ansi";
 pub const DIFF: &str = "text/x-diff";
 pub const PLAIN: &str = "text/plain";
+/// [`SearchResult`]s in `structured`.
+pub const SEARCH_RESULTS: &str = "application/vnd.flotilla.search-results+json";
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SearchResult {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub domain: String,
+    #[serde(default)]
+    pub snippet: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -315,7 +453,12 @@ pub struct ToolCallResult {
     pub role: Option<Role>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<ToolStatus>,
-    /// [`MARKDOWN`], [`ANSI`], [`DIFF`], [`PLAIN`] or `image/*`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ToolKind>,
+    /// [`MARKDOWN`], [`ANSI`], [`DIFF`], [`PLAIN`] or `image/*`; `content`
+    /// is always a readable fallback for `structured`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_type: Option<String>,
     /// Such as a diff's patch.
@@ -327,6 +470,23 @@ pub struct ToolCallResult {
     /// AG-UI's `timestamp`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<u64>,
+}
+
+/// Output while a call runs, in the stream form only: the fold drops it, and
+/// the call's `ToolCallResult` replaces it.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCallOutput {
+    #[serde(default)]
+    pub thread_id: String,
+    #[serde(default)]
+    pub seq: u64,
+    pub tool_call_id: String,
+    #[serde(default)]
+    pub delta: String,
+    /// Set on the first delta; a shell's defaults to [`ANSI`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -426,6 +586,8 @@ pub struct Message {
     pub content: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
     /// An assistant message's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,

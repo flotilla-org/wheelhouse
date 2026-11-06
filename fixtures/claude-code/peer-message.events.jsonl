@@ -1,4 +1,4 @@
-{"type":"Hello","contract":1}
+{"type":"Hello","contract":2}
 {"type":"RunStarted","threadId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","seq":1,"runId":"u0001-aaaaaaaa","source":{"log":"peer-message/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl","record":"u0001-aaaaaaaa","line":1}}
 {"type":"TextMessageStart","threadId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","seq":2,"messageId":"u0001-aaaaaaaa","role":"user","source":{"log":"peer-message/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl","record":"u0001-aaaaaaaa","line":1}}
 {"type":"TextMessageContent","threadId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","seq":3,"messageId":"u0001-aaaaaaaa","delta":"Wait for the reviewer.","source":{"log":"peer-message/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl","record":"u0001-aaaaaaaa","line":1}}
@@ -18,4 +18,4 @@
 {"type":"TextMessageStart","threadId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","seq":17,"messageId":"msg_peer_c","role":"assistant","source":{"log":"peer-message/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl","record":"u0006-aaaaaaaa","line":6}}
 {"type":"TextMessageContent","threadId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","seq":18,"messageId":"msg_peer_c","delta":"Splitting it.","source":{"log":"peer-message/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl","record":"u0006-aaaaaaaa","line":6}}
 {"type":"TextMessageEnd","threadId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","seq":19,"messageId":"msg_peer_c","source":{"log":"peer-message/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl","record":"u0006-aaaaaaaa","line":6}}
-{"type":"RunFinished","threadId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","seq":20,"runId":"u0001-aaaaaaaa","outcome":"completed","source":{"log":"peer-message/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl"}}
+{"type":"RunFinished","threadId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","seq":20,"runId":"u0001-aaaaaaaa","source":{"log":"peer-message/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl"}}

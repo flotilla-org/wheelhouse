@@ -1,4 +1,4 @@
-{"type":"Hello","contract":1}
+{"type":"Hello","contract":2}
 {"type":"RunStarted","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":1,"runId":"u0001-ffffffff","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0001-ffffffff","line":1}}
 {"type":"TextMessageStart","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":2,"messageId":"u0001-ffffffff","role":"user","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0001-ffffffff","line":1}}
 {"type":"TextMessageContent","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":3,"messageId":"u0001-ffffffff","delta":"What is in this picture?","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0001-ffffffff","line":1}}
@@ -16,10 +16,10 @@
 {"type":"TextMessageStart","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":15,"messageId":"msg_img_c","role":"assistant","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0006-ffffffff","line":6}}
 {"type":"TextMessageContent","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":16,"messageId":"msg_img_c","delta":"A plot and a page.","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0006-ffffffff","line":6}}
 {"type":"TextMessageEnd","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":17,"messageId":"msg_img_c","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0006-ffffffff","line":6}}
-{"type":"RunFinished","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":18,"runId":"u0001-ffffffff","outcome":"completed","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0007-ffffffff","line":7}}
+{"type":"RunFinished","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":18,"runId":"u0001-ffffffff","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0007-ffffffff","line":7}}
 {"type":"RunStarted","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":19,"runId":"u0007-ffffffff","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0007-ffffffff","line":7}}
 {"type":"Custom","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":20,"name":"image","value":{"messageId":"u0007-ffffffff","mediaType":"image/png","data":"iVBORw0KGgqzzAR1u3ilAmCYhY6Yiaz2ZtMQYtUT0wM=","truncated":null},"source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0007-ffffffff","line":7}}
 {"type":"TextMessageStart","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":21,"messageId":"msg_img_d","role":"assistant","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0008-ffffffff","line":8}}
 {"type":"TextMessageContent","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":22,"messageId":"msg_img_d","delta":"Another plot.","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0008-ffffffff","line":8}}
 {"type":"TextMessageEnd","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":23,"messageId":"msg_img_d","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl","record":"u0008-ffffffff","line":8}}
-{"type":"RunFinished","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":24,"runId":"u0007-ffffffff","outcome":"completed","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl"}}
+{"type":"RunFinished","threadId":"ffffffff-ffff-4fff-8fff-ffffffffffff","seq":24,"runId":"u0007-ffffffff","source":{"log":"images/ffffffff-ffff-4fff-8fff-ffffffffffff.jsonl"}}

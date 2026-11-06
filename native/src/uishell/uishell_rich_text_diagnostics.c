@@ -460,7 +460,7 @@ uishell_rt_diag_conversation(Arena *arena)
 {
   String8 lines[] =
   {
-    str8_lit("{\"type\":\"Hello\",\"contract\":1}"),
+    str8_lit("{\"type\":\"Hello\",\"contract\":2}"),
     str8_lit("{\"type\":\"RunStarted\",\"threadId\":\"t1\",\"seq\":1,\"runId\":\"r1\"}"),
     str8_lit("{\"type\":\"TextMessageStart\",\"threadId\":\"t1\",\"seq\":2,\"messageId\":\"m1\",\"role\":\"user\"}"),
     str8_lit("{\"type\":\"TextMessageContent\",\"threadId\":\"t1\",\"seq\":3,\"messageId\":\"m1\",\"delta\":\"Please run the *harbour* tests.\"}"),
@@ -478,15 +478,15 @@ uishell_rt_diag_conversation(Arena *arena)
     str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":15,\"toolCallId\":\"c3\",\"toolCallName\":\"Edit\",\"title\":\"berths.rs\",\"kind\":\"edit\"}"),
     str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":16,\"toolCallId\":\"c3\",\"messageId\":\"r3\",\"status\":\"ok\",\"mediaType\":\"text/plain\",\"content\":\"edited\\n\"}"),
     str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":17,\"toolCallId\":\"c4\",\"toolCallName\":\"Grep\",\"title\":\"pilot\",\"kind\":\"search\"}"),
-    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":18,\"toolCallId\":\"c4\",\"messageId\":\"r4\",\"status\":\"interrupted\",\"content\":\"\"}"),
+    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":18,\"toolCallId\":\"c4\",\"messageId\":\"r4\",\"status\":\"cancelled\",\"content\":\"\"}"),
     str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":19,\"toolCallId\":\"c5\",\"toolCallName\":\"Fetch\",\"title\":\"example.com\",\"kind\":\"web\"}"),
-    str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":20,\"toolCallId\":\"c5\",\"messageId\":\"r5\",\"status\":\"awaiting_approval\",\"content\":\"\"}"),
+    str8_lit("{\"type\":\"RunFinished\",\"threadId\":\"t1\",\"seq\":20,\"runId\":\"r1\",\"outcome\":{\"type\":\"interrupt\",\"interrupts\":[{\"id\":\"i1\",\"reason\":\"tool_approval\",\"toolCallId\":\"c5\"}]}}"),
     str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t1\",\"seq\":21,\"toolCallId\":\"c9\",\"toolCallName\":\"Task\",\"title\":\"Find the berth\",\"kind\":\"agent\"}"),
     str8_lit("{\"type\":\"RunStarted\",\"threadId\":\"t2\",\"seq\":1,\"runId\":\"r2\",\"parent\":{\"threadId\":\"t1\",\"toolCallId\":\"c9\"}}"),
     str8_lit("{\"type\":\"TextMessageStart\",\"threadId\":\"t2\",\"seq\":2,\"messageId\":\"s1\",\"role\":\"user\"}"),
     str8_lit("{\"type\":\"TextMessageContent\",\"threadId\":\"t2\",\"seq\":3,\"messageId\":\"s1\",\"delta\":\"Find the free berth.\"}"),
     str8_lit("{\"type\":\"TextMessageEnd\",\"threadId\":\"t2\",\"seq\":4,\"messageId\":\"s1\"}"),
-    str8_lit("{\"type\":\"RunFinished\",\"threadId\":\"t2\",\"seq\":5,\"runId\":\"r2\",\"outcome\":\"completed\"}"),
+    str8_lit("{\"type\":\"RunFinished\",\"threadId\":\"t2\",\"seq\":5,\"runId\":\"r2\"}"),
     str8_lit("{\"type\":\"ToolCallResult\",\"threadId\":\"t1\",\"seq\":22,\"toolCallId\":\"c9\",\"messageId\":\"r9\",\"status\":\"ok\",\"mediaType\":\"text/markdown\",\"content\":\"Berth 7.\"}"),
     str8_lit("{\"type\":\"Custom\",\"threadId\":\"t1\",\"seq\":23,\"name\":\"compaction\",\"value\":{}}"),
     str8_lit("{\"type\":\"TextMessageStart\",\"threadId\":\"t1\",\"seq\":24,\"messageId\":\"m3\",\"role\":\"assistant\"}"),
@@ -1748,11 +1748,11 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
       }
 
       //- The status: a spinner while pending, nothing for ok, a red cross
-      // for failed or interrupted.
+      // for failed or cancelled.
       {
         String8 titles[] = {str8_lit("cargo test harbour"), str8_lit("tides.md"), str8_lit("berths.rs"), str8_lit("pilot"), str8_lit("example.com")};
-        U32 wanted[] = {WHEELHOUSE_RICH_STATUS_FAILED, WHEELHOUSE_RICH_STATUS_PENDING, WHEELHOUSE_RICH_STATUS_OK, WHEELHOUSE_RICH_STATUS_INTERRUPTED,
-                        WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL};
+        U32 wanted[] = {WHEELHOUSE_RICH_STATUS_FAILED, WHEELHOUSE_RICH_STATUS_PENDING, WHEELHOUSE_RICH_STATUS_OK, WHEELHOUSE_RICH_STATUS_CANCELLED,
+                        WHEELHOUSE_RICH_STATUS_WAITING};
         String8 cross = rd_icon_kind_text_table[RD_IconKind_X];
         B32 follows = 1, ok_empty = 0, failed_cross = 1;
         s = uishell_rt_diag_frames(d, 2);
@@ -1769,15 +1769,15 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
             case WHEELHOUSE_RICH_STATUS_PENDING: { follows &= spinner && ui_box_is_nil(mark); } break;
             case WHEELHOUSE_RICH_STATUS_OK: { ok_empty = !ui_box_is_nil(h) && !spinner && ui_box_is_nil(mark); } break;
             case WHEELHOUSE_RICH_STATUS_FAILED:
-            case WHEELHOUSE_RICH_STATUS_INTERRUPTED:
+            case WHEELHOUSE_RICH_STATUS_CANCELLED:
             {
               failed_cross &= str8_match(uishell_rt_diag_text(mark), cross, 0) && uishell_rt_diag_color_near(mark->text_color, s->theme.bad);
             } break;
             default: { follows &= str8_match(uishell_rt_diag_text(mark), rd_icon_kind_text_table[RD_IconKind_QuestionMark], 0); } break;
           }
         }
-        RichCheck(follows, "a pending call shows a spinner, one awaiting approval a question mark");
-        RichCheck(failed_cross, "a failed or interrupted call shows a red cross");
+        RichCheck(follows, "a pending call shows a spinner, one waiting on an Interrupt a question mark");
+        RichCheck(failed_cross, "a failed or cancelled call shows a red cross");
         RichCheck(ok_empty, "an ok call shows no status mark");
       }
 
@@ -1998,7 +1998,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     Temp scratch = scratch_begin(&arena, 1);
     String8 grow = push_str8f(arena, "%S/growing.events.jsonl", dir);
     U64 next = 0;
-    write_data_to_file_path(grow, push_str8f(scratch.arena, "{\"type\":\"Hello\",\"contract\":1}\n%S", uishell_rt_diag_message(scratch.arena, next++)));
+    write_data_to_file_path(grow, push_str8f(scratch.arena, "{\"type\":\"Hello\",\"contract\":2}\n%S", uishell_rt_diag_message(scratch.arena, next++)));
     d->rect = r2f32p(0, 0, 700, 400);
     s = uishell_rt_diag_open(d, grow);
     s = uishell_rt_diag_grow(d, grow, &next, 11);
@@ -2081,7 +2081,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
 
       //- A file that shrinks, or is replaced, opens again.
       String8List shorter = {0};
-      str8_list_push(scratch.arena, &shorter, str8_lit("{\"type\":\"Hello\",\"contract\":1}\n"));
+      str8_list_push(scratch.arena, &shorter, str8_lit("{\"type\":\"Hello\",\"contract\":2}\n"));
       U64 restart = 0;
       str8_list_push(scratch.arena, &shorter, uishell_rt_diag_message(scratch.arena, restart));
       write_data_to_file_path(grow, str8_list_join(scratch.arena, &shorter, 0));
@@ -2091,7 +2091,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
                 "a file that shrinks opens again, at its end");
       String8 swap = push_str8f(scratch.arena, "%S/growing.swap", dir);
       String8List replaced = {0};
-      str8_list_push(scratch.arena, &replaced, str8_lit("{\"type\":\"Hello\",\"contract\":1}\n"));
+      str8_list_push(scratch.arena, &replaced, str8_lit("{\"type\":\"Hello\",\"contract\":2}\n"));
       for(U64 i = 40; i < 46; i += 1) { str8_list_push(scratch.arena, &replaced, uishell_rt_diag_message(scratch.arena, i)); }
       write_data_to_file_path(swap, str8_list_join(scratch.arena, &replaced, 0));
       // Windows' move doesn't replace an existing file.
@@ -2111,7 +2111,7 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
     s = uishell_rt_diag_frame(d, 0);
     RichCheck(s && s->doc == 0 && rd_state->frame_deadline_us != 0, "a View of a conversation not written yet asks for a frame to look again");
     rd_state->frame_deadline_us = saved_deadline;
-    write_data_to_file_path(later, push_str8f(scratch.arena, "{\"type\":\"Hello\",\"contract\":1}\n%S", uishell_rt_diag_message(scratch.arena, 7)));
+    write_data_to_file_path(later, push_str8f(scratch.arena, "{\"type\":\"Hello\",\"contract\":2}\n%S", uishell_rt_diag_message(scratch.arena, 7)));
     s = uishell_rt_diag_frames(d, 3);
     RichCheck(s && s->doc && uishell_rt_diag_block_with(s, str8_lit("Message 7:")), "and shows it once it is written");
     d->rect = r2f32p(0, 0, 900, 600);

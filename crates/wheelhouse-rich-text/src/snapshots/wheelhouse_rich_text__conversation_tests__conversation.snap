@@ -20,7 +20,7 @@ Root
       Code Code { language: "diff" } "--- a/src/lib.rs\n+++ b/src/lib.rs\n-ka\n+lo"
     Section Section { section: Tool, name: "Read", title: "notes.md", tool: Read, status: Ok, duration_ms: None }
       Code Code { language: "md" } "# Notes\n\n- one\n- two"
-    Section Section { section: Tool, name: "Screenshot", title: "", tool: Other, status: Ok, duration_ms: None }
+    Section Section { section: Tool, name: "Screenshot", title: "terminal window", tool: Other, status: Ok, duration_ms: None }
       Notice "A terminal showing two failures"
     Section Section { section: Tool, name: "Task", title: "Find the flaky test", tool: Agent, status: Ok, duration_ms: None }
       Section Section { section: Subagent, name: "", title: "t2", tool: Agent, status: Ok, duration_ms: None }
@@ -31,9 +31,9 @@ Root
             ListItem Item { task: None }
               Paragraph "src/a.rs:3: flaky" [Code "src/a.rs:3"]
       Paragraph "It's sa_do." [Code "sa_do"]
-    Section Section { section: Tool, name: "Bash", title: "cargo build", tool: Shell, status: Pending, duration_ms: None }
+    Section Section { section: Tool, name: "Bash", title: "cargo build", tool: Shell, status: Waiting, duration_ms: None }
+      Log "   Compiling ka v0.1.0\n   Compiling lo v0.1.0"
   Divider "compaction"
-  Divider "interrupted"
   Turn Turn { role: User, pending: false }
     Paragraph "Try again"
   Turn Turn { role: Assistant, pending: false }

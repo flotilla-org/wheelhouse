@@ -12,7 +12,7 @@ import re
 import sys
 import time
 
-CONTRACT = 1
+CONTRACT = 2
 OUTPUT_CAP = 64 * 1024
 # Base64 can't be cut and still decode, so an image is whole or replaced by a marker.
 IMAGE_CAP = 4 * 1024 * 1024
@@ -161,7 +161,7 @@ class Thread:
         self.translator, self.id, self.source, self.parent = translator, thread_id, source, parent
         self.seq = 0
         self.run = None
-        self.run_interrupted = False
+        self.run_cancelled = False
         self.calls = {}  # open toolCallId -> name
         self.blocks = {}  # (message.id, kind) -> blocks of that kind seen so far
         self.line = 0
@@ -178,13 +178,15 @@ class Thread:
 
     def start_run(self, run_id):
         self.finish_run()
-        self.run, self.run_interrupted = run_id, False
+        self.run, self.run_cancelled = run_id, False
         extra = {'parent': self.parent} if self.parent else {}
         self.emit('RunStarted', runId=run_id, **extra)
 
     def finish_run(self):
         if self.run is not None:
-            self.emit('RunFinished', runId=self.run, outcome='interrupted' if self.run_interrupted else 'completed')
+            # No outcome is success.
+            extra = {'outcome': {'type': 'cancelled'}} if self.run_cancelled else {}
+            self.emit('RunFinished', runId=self.run, **extra)
             self.run = None
 
     def ensure_run(self, record):
@@ -285,7 +287,7 @@ class Thread:
             elif kind in ('notice', 'interrupt'):
                 tag = 'interrupt' if kind == 'interrupt' else leading_tag(text)
                 self.message('system', message_id, text, attribution({'kind': 'harness'}, tag=tag))
-                self.run_interrupted |= kind == 'interrupt'
+                self.run_cancelled |= kind == 'interrupt'
             elif kind == 'command':
                 name = tag_value(text, 'command-name') or tag_value(text, 'command-message') or ''
                 args = tag_value(text, 'command-args')
@@ -351,8 +353,8 @@ class Thread:
         text = result_text(content)
         status = 'failed' if block.get('is_error') else 'ok'
         if side.get('interrupted') is True or (block.get('is_error') and text.startswith(INTERRUPT_MARKERS)):
-            status = 'interrupted'
-            self.run_interrupted = True
+            status = 'cancelled'
+            self.run_cancelled = True
         fields = {'mediaType': 'text/plain'}
         images = images_of(content)
         image = images[0] if len(images) == 1 and not text else None
@@ -396,8 +398,8 @@ class Thread:
         self.at = {'log': str(self.source)}
         for call_id in list(self.calls):
             self.calls.pop(call_id)
-            self.run_interrupted = True
-            self.emit('ToolCallResult', toolCallId=call_id, messageId=f'{call_id}-result', status='interrupted',
+            self.run_cancelled = True
+            self.emit('ToolCallResult', toolCallId=call_id, messageId=f'{call_id}-result', status='cancelled',
                       mediaType='text/plain', content='', truncated=None)
         self.finish_run()
 

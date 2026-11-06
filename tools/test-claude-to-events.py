@@ -133,7 +133,7 @@ class GoldenTests(unittest.TestCase):
     def test_seq_counts_up_from_one_within_each_thread(self):
         for golden in FIXTURES.glob('*.events.jsonl'):
             lines = events(golden.read_text(encoding='utf-8'))
-            self.assertEqual(lines[0], {'type': 'Hello', 'contract': 1})
+            self.assertEqual(lines[0], {'type': 'Hello', 'contract': 2})
             for thread, items in by_thread(lines).items():
                 with self.subTest(golden.name, thread=thread):
                     self.assertEqual([e['seq'] for e in items], list(range(1, len(items) + 1)))
@@ -195,7 +195,7 @@ class GoldenTests(unittest.TestCase):
                    {'type': 'user', 'uuid': 'i', 'message': {'role': 'user', 'content': [
                        {'type': 'text', 'text': '\n[Request interrupted by user]'}]}}]
         finished = [e for e in events(self.translate_records(records)) if e['type'] == 'RunFinished']
-        self.assertEqual([e['outcome'] for e in finished], ['interrupted'])
+        self.assertEqual([e.get('outcome') for e in finished], [{'type': 'cancelled'}])
 
     def test_a_subagent_brief_after_a_reminder_is_still_the_brief(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -268,7 +268,7 @@ class FollowTests(unittest.TestCase):
             relative = files[0].relative_to(tmp)
             process = subprocess.Popen([sys.executable, str(TOOL), str(relative), '-o', str(out), '--follow'], cwd=tmp)
             try:
-                hello = '{"type":"Hello","contract":1}\n'
+                hello = '{"type":"Hello","contract":2}\n'
                 self.assertTrue(wait_for(lambda: out.exists() and out.read_text(encoding='utf-8') == hello))
                 seen = hello
                 for path, index in schedule:

@@ -1,4 +1,4 @@
-{"type":"Hello","contract":1}
+{"type":"Hello","contract":2}
 {"type":"RunStarted","threadId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","seq":1,"runId":"u0001-eeeeeeee","source":{"log":"queued-command/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jsonl","record":"u0001-eeeeeeee","line":1}}
 {"type":"TextMessageStart","threadId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","seq":2,"messageId":"u0001-eeeeeeee","role":"user","source":{"log":"queued-command/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jsonl","record":"u0001-eeeeeeee","line":1}}
 {"type":"TextMessageContent","threadId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","seq":3,"messageId":"u0001-eeeeeeee","delta":"Build the docs.","source":{"log":"queued-command/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jsonl","record":"u0001-eeeeeeee","line":1}}
@@ -20,4 +20,4 @@
 {"type":"TextMessageStart","threadId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","seq":19,"messageId":"msg_q_b","role":"assistant","source":{"log":"queued-command/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jsonl","record":"u0008-eeeeeeee","line":8}}
 {"type":"TextMessageContent","threadId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","seq":20,"messageId":"msg_q_b","delta":"Docs built; checking the links now.","source":{"log":"queued-command/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jsonl","record":"u0008-eeeeeeee","line":8}}
 {"type":"TextMessageEnd","threadId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","seq":21,"messageId":"msg_q_b","source":{"log":"queued-command/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jsonl","record":"u0008-eeeeeeee","line":8}}
-{"type":"RunFinished","threadId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","seq":22,"runId":"u0001-eeeeeeee","outcome":"completed","source":{"log":"queued-command/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jsonl"}}
+{"type":"RunFinished","threadId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","seq":22,"runId":"u0001-eeeeeeee","source":{"log":"queued-command/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee.jsonl"}}

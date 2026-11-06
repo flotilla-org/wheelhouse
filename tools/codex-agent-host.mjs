@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Prototype (#683): a Codex app-server client that writes Wheelhouse's conversation
-// event contract (#548) to a file the rich_text View follows, and takes
+// event contract (#548, version 2 from #690) to a file the rich_text View follows, and takes
 // prompts on stdin. Throwaway; it exists to learn what an agent View needs.
 //
 //   node tools/codex-agent-host.mjs --url ws://127.0.0.1:PORT (--new [--cwd DIR] | --thread ID) -o FILE [--watch] [--input SOCKET]
@@ -61,7 +61,8 @@ function toolResult(item) {
   const failed = item.status === 'failed' || item.status === 'declined' ||
     (item.type === 'commandExecution' && item.exitCode != null && item.exitCode !== 0) || item.success === false;
   const status = failed ? 'failed' : 'ok';
-  const base = { toolCallId: item.id, messageId: `${item.id}-result`, status };
+  const base = { toolCallId: item.id, messageId: `${item.id}-result`, status,
+    ...(item.type === 'webSearch' ? { title: toolTitle(item) || undefined } : {}) };
   switch (item.type) {
     case 'commandExecution': return { ...base, mediaType: 'text/x-ansi', content: item.aggregatedOutput ?? '' };
     case 'fileChange': return { ...base, mediaType: 'text/x-diff', content: diffOf(item) };
@@ -82,11 +83,10 @@ function itemStarted(item) {
   } else if (item.type === 'reasoning') {
     // Reasoning opens on its first text: Codex often sends none, and an empty
     // Block would show as a gap.
-  } else if (item.type === 'webSearch' && !toolTitle(item)) {
-    // The query arrives only when the search completes.
   } else if (KINDS[item.type]) {
     open.add(item.id);
-    emit('ToolCallStart', { toolCallId: item.id, toolCallName: item.type, title: toolTitle(item), kind: KINDS[item.type] });
+    // A web search's query arrives only when it completes, as a later title.
+    emit('ToolCallStart', { toolCallId: item.id, toolCallName: item.type, title: toolTitle(item) || undefined, kind: KINDS[item.type] });
     const input = item.type === 'commandExecution' ? { command: item.command, cwd: item.cwd } : item.arguments ?? {};
     emit('ToolCallArgs', { toolCallId: item.id, delta: JSON.stringify(input) });
     emit('ToolCallEnd', { toolCallId: item.id });
@@ -140,6 +140,9 @@ const say = (s) => process.stdout.write(s);
 
 let turnId = null;
 let approval = null; // {id, kind}
+const streamed = new Set();
+// No outcome is success; Codex's interrupted turn is AG-UI's cancelled run.
+const outcome = (turn) => (turn.status === 'interrupted' ? { outcome: { type: 'cancelled' } } : {});
 
 function onNotification(m, p) {
   if (p?.threadId && p.threadId !== threadId) return;
@@ -147,7 +150,7 @@ function onNotification(m, p) {
     case 'turn/started':
       turnId = p.turn.id; emit('RunStarted', { runId: p.turn.id }); say('\n[turn started]\n'); break;
     case 'turn/completed':
-      emit('RunFinished', { runId: p.turn.id, outcome: p.turn.status === 'interrupted' ? 'interrupted' : 'completed' });
+      emit('RunFinished', { runId: p.turn.id, ...outcome(p.turn) });
       turnId = null; say('\n[turn done]\n> '); break;
     case 'item/started': itemStarted(p.item); if (p.item.type === 'commandExecution') say(`\n$ ${p.item.command}\n`); break;
     case 'item/completed':
@@ -155,6 +158,13 @@ function onNotification(m, p) {
       if (p.item.type === 'userMessage') say(`\n> ${userText(p.item)}\n`);
       if (p.item.type === 'fileChange') say(`\n[edit ${toolTitle(p.item)}]\n`);
       break;
+    case 'item/commandExecution/outputDelta': {
+      // The result's aggregated output replaces what streamed.
+      const first = !streamed.has(p.itemId);
+      streamed.add(p.itemId);
+      emit('ToolCallOutput', { toolCallId: p.itemId, delta: p.delta, ...(first ? { mediaType: 'text/x-ansi' } : {}) });
+      break;
+    }
     case 'item/agentMessage/delta': emit('TextMessageContent', { messageId: p.itemId, delta: p.delta }); say(p.delta); break;
     case 'item/reasoning/summaryTextDelta':
       if (!open.has(p.itemId)) { open.add(p.itemId); emit('ReasoningMessageStart', { messageId: p.itemId }); }
@@ -239,7 +249,7 @@ ws.addEventListener('open', async () => {
   }
   const socket = opt('--input');
   if (socket) serveInput(socket);
-  writeFileSync(out, JSON.stringify({ type: 'Hello', contract: 1, ...(socket ? { input: `unix://${socket}` } : {}) }) + '\n');
+  writeFileSync(out, JSON.stringify({ type: 'Hello', contract: 2, ...(socket ? { input: `unix://${socket}` } : {}) }) + '\n');
   // History: pages newest first, emitted oldest first. The file can't take a
   // page in front of what it holds, so the whole history is read here.
   const turns = [];
@@ -254,7 +264,7 @@ ws.addEventListener('open', async () => {
     emit('RunStarted', { runId: t.id });
     for (const item of t.items ?? []) itemCompleted(item, false);
     if (t.status === 'inProgress') { turnId = t.id; continue; }
-    emit('RunFinished', { runId: t.id, outcome: t.status === 'interrupted' ? 'interrupted' : 'completed' });
+    emit('RunFinished', { runId: t.id, ...outcome(t) });
   }
   say(`thread ${threadId}: ${turns.length} turns of history -> ${out}\n> `);
   if (watchOnly) return;

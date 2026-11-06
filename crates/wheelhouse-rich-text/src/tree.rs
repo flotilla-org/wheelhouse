@@ -260,8 +260,9 @@ pub enum ToolStatus {
     Pending,
     Ok,
     Failed,
-    Interrupted,
-    AwaitingApproval,
+    Cancelled,
+    /// Named by an Interrupt that hasn't been answered.
+    Waiting,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -319,7 +320,7 @@ pub struct RunSummary {
     pub reads: u32,
     pub searches: u32,
     pub others: u32,
-    /// Failed or interrupted.
+    /// Failed or cancelled.
     pub failed: u32,
     /// Such as "Ran 3 commands · edited 2 files · read 1 file · 1 failed".
     pub text: String,
@@ -339,7 +340,7 @@ impl RunSummary {
                 ToolKind::Search => s.searches += 1,
                 ToolKind::Agent | ToolKind::Web | ToolKind::Mcp | ToolKind::Other => s.others += 1,
             }
-            s.failed += u32::from(matches!(status, ToolStatus::Failed | ToolStatus::Interrupted));
+            s.failed += u32::from(matches!(status, ToolStatus::Failed | ToolStatus::Cancelled));
         }
         let plural = |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
         let parts = [

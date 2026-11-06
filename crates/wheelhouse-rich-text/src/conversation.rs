@@ -13,8 +13,8 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use conversation_events::{
-    parse_line, Event, Lines, Message, Parent, Role as EventRole, ToolCallResult, ToolKind as EventToolKind, ToolStatus as EventToolStatus,
-    Truncated, ANSI, COMPACTION, COMPLETED, CONTRACT, DIFF, MARKDOWN,
+    parse_line, Event, Lines, Message, Outcome, Parent, Role as EventRole, ToolCallResult, ToolKind as EventToolKind,
+    ToolStatus as EventToolStatus, Truncated, ANSI, COMPACTION, CONTRACT, DIFF, MARKDOWN,
 };
 use serde_json::Value;
 
@@ -212,6 +212,10 @@ enum Body {
         args: String,
         nesting: Nesting,
         result: Option<ToolResult>,
+        /// Output while it runs, shown until the result replaces it.
+        streamed: Option<Box<ToolResult>>,
+        /// An open Interrupt names it.
+        waiting: bool,
         started: Option<u64>,
         shown: Shown,
     },
@@ -252,8 +256,8 @@ impl Item {
         match &self.body {
             Body::Text { role, pending, .. } => (Kind::Turn, "", Detail::Turn { role: *role, pending: *pending }),
             Body::Reasoning { md } => (Kind::Section, "", section(SectionKind::Reasoning, "", "", ToolKind::Other, streaming(md), None)),
-            Body::Tool { name, kind, result, started, shown, .. } => {
-                let status = result.as_ref().map_or(ToolStatus::Pending, |r| r.status);
+            Body::Tool { name, kind, result, waiting, started, shown, .. } => {
+                let status = tool_head_status(result.as_ref(), *waiting);
                 let duration = started.zip(result.as_ref().and_then(|r| r.ended)).and_then(|(start, end)| end.checked_sub(start));
                 (Kind::Section, "", section(SectionKind::Tool, name, &shown.title, *kind, status, duration))
             }
@@ -348,9 +352,16 @@ fn tool_kind(kind: Option<EventToolKind>) -> ToolKind {
 fn tool_status(status: Option<EventToolStatus>) -> ToolStatus {
     match status {
         Some(EventToolStatus::Failed) => ToolStatus::Failed,
-        Some(EventToolStatus::Interrupted) => ToolStatus::Interrupted,
-        Some(EventToolStatus::AwaitingApproval) => ToolStatus::AwaitingApproval,
+        Some(EventToolStatus::Cancelled) => ToolStatus::Cancelled,
         _ => ToolStatus::Ok,
+    }
+}
+
+fn tool_head_status(result: Option<&ToolResult>, waiting: bool) -> ToolStatus {
+    match result {
+        Some(r) => r.status,
+        None if waiting => ToolStatus::Waiting,
+        None => ToolStatus::Pending,
     }
 }
 
@@ -373,6 +384,8 @@ fn target(event: &Event) -> Option<Key> {
         Event::ReasoningMessageContent(e) => reasoning_key(&e.thread_id, &e.message_id),
         Event::ReasoningMessageEnd(e) => reasoning_key(&e.thread_id, &e.message_id),
         Event::ToolCallArgs(e) => tool_key(&e.thread_id, &e.tool_call_id),
+        Event::ToolCallEnd(e) => tool_key(&e.thread_id, &e.tool_call_id),
+        Event::ToolCallOutput(e) => tool_key(&e.thread_id, &e.tool_call_id),
         Event::ToolCallResult(e) => tool_key(&e.thread_id, &e.tool_call_id),
         _ => return None,
     })
@@ -619,6 +632,11 @@ pub(crate) struct Conversation {
     orphans: HashMap<Key, Vec<(u64, Event)>>,
     /// The subagent threads each tool call started, by the call's key.
     subagents: HashMap<Key, Vec<String>>,
+    /// Each call an open Interrupt names: the Interrupt's id and line.
+    waiting: HashMap<Key, (String, u64)>,
+    /// The line that answered each Interrupt. Backfill reads an answer
+    /// before the Interrupt it answers.
+    answered: HashMap<String, u64>,
     touched: Vec<Key>,
     touched_set: HashSet<Key>,
     created: Vec<Key>,
@@ -866,6 +884,15 @@ impl Conversation {
                 }
             }
             Event::RunStarted(e) => {
+                for entry in e.input.iter().flat_map(|input| &input.resume) {
+                    self.answered.insert(entry.interrupt_id.clone(), at);
+                    let answered: Vec<Key> =
+                        self.waiting.iter().filter(|(_, (id, from))| *id == entry.interrupt_id && *from < at).map(|(k, _)| *k).collect();
+                    for key in answered {
+                        self.waiting.remove(&key);
+                        self.set_waiting(key, false);
+                    }
+                }
                 if let Some(parent) = e.parent {
                     let entry = self.threads.entry(thread.clone()).or_default();
                     if entry.parent.as_ref().is_none_or(|(_, o)| order < *o) {
@@ -880,11 +907,32 @@ impl Conversation {
                 }
             }
             Event::RunFinished(ref e) => {
-                if let Some(outcome) = e.outcome.as_deref().filter(|&o| o != COMPLETED) {
-                    let text = outcome.to_owned();
-                    self.create(seq_key(&thread, e.seq, at), order, &thread, || Body::Divider { text });
-                }
-                let status = if e.outcome.as_deref().is_none_or(|o| o == COMPLETED) { ToolStatus::Ok } else { ToolStatus::Interrupted };
+                let status = match &e.outcome {
+                    Some(Outcome::Cancelled) => {
+                        self.create(seq_key(&thread, e.seq, at), order, &thread, || Body::Divider { text: "cancelled".into() });
+                        ToolStatus::Cancelled
+                    }
+                    Some(Outcome::Interrupt { interrupts }) => {
+                        for (i, interrupt) in interrupts.iter().enumerate() {
+                            match &interrupt.tool_call_id {
+                                Some(call) if self.answered.get(&interrupt.id).is_none_or(|&answer| answer < at) => {
+                                    let key = tool_key(&thread, call);
+                                    self.waiting.insert(key, (interrupt.id.clone(), at));
+                                    self.set_waiting(key, true);
+                                }
+                                Some(_) => {}
+                                // Drawing what it asks is #695's; until then it's a notice.
+                                None => {
+                                    let text = interrupt.message.clone().unwrap_or_else(|| interrupt.reason.clone());
+                                    let key = Key::named(&[&thread, &interrupt.id, "interrupt"]);
+                                    self.create(key, (at, i as u32), &thread, || Body::Notice { text });
+                                }
+                            }
+                        }
+                        ToolStatus::Waiting
+                    }
+                    _ => ToolStatus::Ok,
+                };
                 self.subagent_status(at, event, status);
             }
             Event::RunError(ref e) => {
@@ -924,16 +972,60 @@ impl Conversation {
                     *shown = Shown::of(name, title, *kind, args, nesting.closed());
                 }
             }
-            Event::ToolCallResult(e) => {
-                if let Some(Body::Tool { result: r, .. }) = self.items.get_mut(&tool_key(&thread, &e.tool_call_id)).map(|i| &mut i.body) {
-                    *r = Some(result(&e));
+            Event::ToolCallEnd(e) => self.retitle(tool_key(&thread, &e.tool_call_id), e.title, e.kind),
+            Event::ToolCallOutput(e) => {
+                if let Some(Body::Tool { result: None, streamed, .. }) =
+                    self.items.get_mut(&tool_key(&thread, &e.tool_call_id)).map(|i| &mut i.body)
+                {
+                    let streamed = streamed.get_or_insert_with(|| {
+                        Box::new(ToolResult {
+                            status: ToolStatus::Pending,
+                            media_type: e.media_type.clone().unwrap_or_default(),
+                            content: String::new(),
+                            structured: None,
+                            truncated: None,
+                            ended: None,
+                        })
+                    });
+                    streamed.content.push_str(&e.delta);
                 }
+            }
+            Event::ToolCallResult(e) => {
+                let key = tool_key(&thread, &e.tool_call_id);
+                if let Some(Body::Tool { result: r, streamed, .. }) = self.items.get_mut(&key).map(|i| &mut i.body) {
+                    *r = Some(result(&e));
+                    *streamed = None;
+                }
+                self.retitle(key, e.title, e.kind);
             }
             Event::MessagesSnapshot(e) => self.snapshot(at, &thread, e.messages),
             Event::Custom(e) if e.name == COMPACTION => {
                 self.create(seq_key(&thread, e.seq, at), order, &thread, || Body::Divider { text: COMPACTION.into() });
             }
             _ => {}
+        }
+    }
+
+    /// A title or kind that came after the call's start: the latest wins.
+    fn retitle(&mut self, key: Key, title: Option<String>, kind: Option<EventToolKind>) {
+        if let Some(Body::Tool { name, title: t, kind: k, args, nesting, shown, .. }) = self.items.get_mut(&key).map(|i| &mut i.body) {
+            if let Some(title) = title {
+                *t = title;
+            }
+            if kind.is_some() {
+                *k = tool_kind(kind);
+            }
+            *shown = Shown::of(name, t, *k, args, nesting.closed());
+        }
+    }
+
+    fn set_waiting(&mut self, key: Key, waiting: bool) {
+        if let Some(item) = self.items.get_mut(&key) {
+            if let Body::Tool { waiting: w, .. } = &mut item.body {
+                *w = waiting;
+                item.dirty = true;
+                self.touch(key);
+            }
         }
     }
 
@@ -979,6 +1071,8 @@ impl Conversation {
             args: String::new(),
             nesting: Nesting::default(),
             result: None,
+            streamed: None,
+            waiting: self.waiting.contains_key(&key),
             started,
             shown,
         };
@@ -1112,8 +1206,8 @@ impl Conversation {
         let node = staged.push(parent, kind, Some(key), text, vec![], detail);
         match &mut item.body {
             Body::Text { md, .. } | Body::Reasoning { md } => md.stage(staged, node, doc),
-            Body::Tool { kind, result, shown, .. } => {
-                if let Some(r) = result {
+            Body::Tool { kind, result, streamed, shown, .. } => {
+                if let Some(r) = result.as_ref().or(streamed.as_deref()) {
                     stage_result(r, *kind, &shown.title, staged, node);
                 }
                 // Staged after the result, so the result's ordinals are as
@@ -1189,7 +1283,7 @@ impl Conversation {
 
     fn run_detail(&self, calls: &[(Order, Key)]) -> Detail {
         Detail::ToolRun(RunSummary::new(calls.iter().filter_map(|(_, key)| match &self.items.get(key)?.body {
-            Body::Tool { kind, result, .. } => Some((*kind, result.as_ref().map_or(ToolStatus::Pending, |r| r.status))),
+            Body::Tool { kind, result, waiting, .. } => Some((*kind, tool_head_status(result.as_ref(), *waiting))),
             _ => None,
         })))
     }
@@ -1371,7 +1465,7 @@ impl Conversation {
             sink.update(&head, 1);
             match &mut item.body {
                 Body::Text { md, .. } | Body::Reasoning { md } => md.stream(key, sink),
-                Body::Tool { kind, result, shown, .. } => {
+                Body::Tool { kind, result, streamed, shown, .. } => {
                     // Only an input that changed is staged again.
                     let was = lead(sink.doc, key);
                     let current =
@@ -1387,7 +1481,7 @@ impl Conversation {
                         sink.splice(key, 0, Some(was), input);
                     }
                     let mut staged = Staged::under(key, 0);
-                    if let Some(r) = result {
+                    if let Some(r) = result.as_ref().or(streamed.as_deref()) {
                         stage_result(r, *kind, &shown.title, &mut staged, 0);
                     }
                     sink.splice(key, lead(sink.doc, key) + own, None, staged);

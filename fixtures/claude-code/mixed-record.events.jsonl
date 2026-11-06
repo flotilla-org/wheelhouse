@@ -1,4 +1,4 @@
-{"type":"Hello","contract":1}
+{"type":"Hello","contract":2}
 {"type":"RunStarted","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":1,"runId":"u0001-0a0a0a0a","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0001-0a0a0a0a","line":1}}
 {"type":"TextMessageStart","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":2,"messageId":"u0001-0a0a0a0a","role":"system","origin":{"kind":"harness","tag":"system-reminder"},"source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0001-0a0a0a0a","line":1}}
 {"type":"TextMessageContent","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":3,"messageId":"u0001-0a0a0a0a","delta":"<system-reminder>\nToday's date is 2026-11-02.\n</system-reminder>","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0001-0a0a0a0a","line":1}}
@@ -9,7 +9,7 @@
 {"type":"TextMessageStart","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":8,"messageId":"msg_mix_a","role":"assistant","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0002-0a0a0a0a","line":2}}
 {"type":"TextMessageContent","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":9,"messageId":"msg_mix_a","delta":"Because the loop stops one short.","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0002-0a0a0a0a","line":2}}
 {"type":"TextMessageEnd","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":10,"messageId":"msg_mix_a","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0002-0a0a0a0a","line":2}}
-{"type":"RunFinished","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":11,"runId":"u0001-0a0a0a0a","outcome":"completed","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0003-0a0a0a0a","line":3}}
+{"type":"RunFinished","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":11,"runId":"u0001-0a0a0a0a","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0003-0a0a0a0a","line":3}}
 {"type":"RunStarted","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":12,"runId":"u0003-0a0a0a0a","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0003-0a0a0a0a","line":3}}
 {"type":"TextMessageStart","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":13,"messageId":"u0003-0a0a0a0a","role":"user","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0003-0a0a0a0a","line":3}}
 {"type":"TextMessageContent","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":14,"messageId":"u0003-0a0a0a0a","delta":"Fix it.","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0003-0a0a0a0a","line":3}}
@@ -21,4 +21,4 @@
 {"type":"TextMessageStart","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":20,"messageId":"u0006-0a0a0a0a","role":"system","origin":{"kind":"harness","tag":"interrupt"},"source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0006-0a0a0a0a","line":6}}
 {"type":"TextMessageContent","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":21,"messageId":"u0006-0a0a0a0a","delta":"[Request interrupted by user]","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0006-0a0a0a0a","line":6}}
 {"type":"TextMessageEnd","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":22,"messageId":"u0006-0a0a0a0a","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl","record":"u0006-0a0a0a0a","line":6}}
-{"type":"RunFinished","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":23,"runId":"u0003-0a0a0a0a","outcome":"interrupted","source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl"}}
+{"type":"RunFinished","threadId":"0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a","seq":23,"runId":"u0003-0a0a0a0a","outcome":{"type":"cancelled"},"source":{"log":"mixed-record/0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a.jsonl"}}

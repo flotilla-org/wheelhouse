@@ -335,6 +335,10 @@ _Avoid_: Group, wrapper, message (a Turn is one kind of Container)
 A frontend's rule for presenting a kind of **Container** (with its role) inside **Rich Text**: its insets, maximum width, alignment and chrome, such as a chat bubble for a user Turn. A View picks a set of them (document, chat); Rich Text with none presents Containers plainly.
 _Avoid_: Presenter, theme, skin
 
+**Interrupt**:
+Something a run needs from outside before it can continue, such as an approval or an answer. The run ends waiting for it, and a new run resumes from it.
+_Avoid_: Pause, prompt, interrupted
+
 **Embedded View**:
 A **View** laid out inline inside another View's content, such as a table **Block** in **Rich Text** or a text View in a table cell. It resolves through the same **Handlers** by media type, and its state is part of its parent's, never a separate **Slot**.
 _Avoid_: Child view, widget, inline pane

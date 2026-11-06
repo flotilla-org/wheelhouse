@@ -1,4 +1,4 @@
-{"type":"Hello","contract":1}
+{"type":"Hello","contract":2}
 {"type":"RunStarted","threadId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","seq":1,"runId":"u0001-cccccccc","source":{"log":"harness-notices/cccccccc-cccc-4ccc-8ccc-cccccccccccc.jsonl","record":"u0001-cccccccc","line":1}}
 {"type":"TextMessageStart","threadId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","seq":2,"messageId":"u0001-cccccccc","role":"user","source":{"log":"harness-notices/cccccccc-cccc-4ccc-8ccc-cccccccccccc.jsonl","record":"u0001-cccccccc","line":1}}
 {"type":"TextMessageContent","threadId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","seq":3,"messageId":"u0001-cccccccc","delta":"Watch CI for me.","source":{"log":"harness-notices/cccccccc-cccc-4ccc-8ccc-cccccccccccc.jsonl","record":"u0001-cccccccc","line":1}}
@@ -28,4 +28,4 @@
 {"type":"TextMessageStart","threadId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","seq":27,"messageId":"msg_hn_d","role":"assistant","source":{"log":"harness-notices/cccccccc-cccc-4ccc-8ccc-cccccccccccc.jsonl","record":"u0010-cccccccc","line":10}}
 {"type":"TextMessageContent","threadId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","seq":28,"messageId":"msg_hn_d","delta":"Done.","source":{"log":"harness-notices/cccccccc-cccc-4ccc-8ccc-cccccccccccc.jsonl","record":"u0010-cccccccc","line":10}}
 {"type":"TextMessageEnd","threadId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","seq":29,"messageId":"msg_hn_d","source":{"log":"harness-notices/cccccccc-cccc-4ccc-8ccc-cccccccccccc.jsonl","record":"u0010-cccccccc","line":10}}
-{"type":"RunFinished","threadId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","seq":30,"runId":"u0001-cccccccc","outcome":"completed","source":{"log":"harness-notices/cccccccc-cccc-4ccc-8ccc-cccccccccccc.jsonl"}}
+{"type":"RunFinished","threadId":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","seq":30,"runId":"u0001-cccccccc","source":{"log":"harness-notices/cccccccc-cccc-4ccc-8ccc-cccccccccccc.jsonl"}}

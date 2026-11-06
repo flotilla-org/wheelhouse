@@ -1,4 +1,4 @@
-{"type":"Hello","contract":1}
+{"type":"Hello","contract":2}
 {"type":"RunStarted","threadId":"44444444-4444-4444-8444-444444444444","seq":1,"runId":"u0001-44444444","source":{"log":"edit-patch/44444444-4444-4444-8444-444444444444.jsonl","record":"u0001-44444444","line":1}}
 {"type":"TextMessageStart","threadId":"44444444-4444-4444-8444-444444444444","seq":2,"messageId":"u0001-44444444","role":"user","source":{"log":"edit-patch/44444444-4444-4444-8444-444444444444.jsonl","record":"u0001-44444444","line":1}}
 {"type":"TextMessageContent","threadId":"44444444-4444-4444-8444-444444444444","seq":3,"messageId":"u0001-44444444","delta":"Rename the constant.","source":{"log":"edit-patch/44444444-4444-4444-8444-444444444444.jsonl","record":"u0001-44444444","line":1}}
@@ -14,4 +14,4 @@
 {"type":"TextMessageStart","threadId":"44444444-4444-4444-8444-444444444444","seq":13,"messageId":"msg_edit_c","role":"assistant","source":{"log":"edit-patch/44444444-4444-4444-8444-444444444444.jsonl","record":"u0006-44444444","line":6}}
 {"type":"TextMessageContent","threadId":"44444444-4444-4444-8444-444444444444","seq":14,"messageId":"msg_edit_c","delta":"Renamed.","source":{"log":"edit-patch/44444444-4444-4444-8444-444444444444.jsonl","record":"u0006-44444444","line":6}}
 {"type":"TextMessageEnd","threadId":"44444444-4444-4444-8444-444444444444","seq":15,"messageId":"msg_edit_c","source":{"log":"edit-patch/44444444-4444-4444-8444-444444444444.jsonl","record":"u0006-44444444","line":6}}
-{"type":"RunFinished","threadId":"44444444-4444-4444-8444-444444444444","seq":16,"runId":"u0001-44444444","outcome":"completed","source":{"log":"edit-patch/44444444-4444-4444-8444-444444444444.jsonl"}}
+{"type":"RunFinished","threadId":"44444444-4444-4444-8444-444444444444","seq":16,"runId":"u0001-44444444","source":{"log":"edit-patch/44444444-4444-4444-8444-444444444444.jsonl"}}

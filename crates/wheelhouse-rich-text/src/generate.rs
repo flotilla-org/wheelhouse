@@ -244,9 +244,10 @@ pub mod conversation {
     use std::collections::HashMap;
 
     use conversation_events::{
-        Custom, Event, FunctionCall, Hello, Message, MessagesSnapshot, Parent, ReasoningMessageContent, ReasoningMessageEnd,
-        ReasoningMessageStart, Role, RunError, RunFinished, RunStarted, TextMessageContent, TextMessageEnd, TextMessageStart, ToolCall,
-        ToolCallArgs, ToolCallEnd, ToolCallResult, ToolCallStart, ToolKind, ToolStatus, Truncated, CONTRACT,
+        Custom, Event, FunctionCall, Hello, Interrupt, Message, MessagesSnapshot, Outcome, Parent, ReasoningMessageContent,
+        ReasoningMessageEnd, ReasoningMessageStart, Role, RunError, RunFinished, RunStarted, TextMessageContent, TextMessageEnd,
+        TextMessageStart, ToolCall, ToolCallArgs, ToolCallEnd, ToolCallOutput, ToolCallResult, ToolCallStart, ToolKind, ToolStatus,
+        Truncated, CONTRACT,
     };
     use serde_json::json;
 
@@ -259,6 +260,8 @@ pub mod conversation {
         ids: u64,
         /// The last text message, for a snapshot to repeat.
         last: Option<(String, String, Role, String)>,
+        /// Each thread's last call, for an Interrupt to name.
+        last_call: HashMap<String, String>,
     }
 
     impl Writer {
@@ -277,7 +280,13 @@ pub mod conversation {
             let id = self.id("m");
             let t = thread.to_owned();
             let seq = self.seq(thread);
-            self.events.push(Event::TextMessageStart(TextMessageStart { thread_id: t.clone(), seq, message_id: id.clone(), role }));
+            self.events.push(Event::TextMessageStart(TextMessageStart {
+                thread_id: t.clone(),
+                seq,
+                message_id: id.clone(),
+                role,
+                origin: None,
+            }));
             for delta in pieces(c, text) {
                 let seq = self.seq(thread);
                 self.events.push(Event::TextMessageContent(TextMessageContent {
@@ -351,7 +360,10 @@ pub mod conversation {
             let delta = json!({ field: value }).to_string();
             self.events.push(Event::ToolCallArgs(ToolCallArgs { thread_id: t.clone(), seq, tool_call_id: id.clone(), delta }));
             let seq = self.seq(thread);
-            self.events.push(Event::ToolCallEnd(ToolCallEnd { thread_id: t, seq, tool_call_id: id.clone() }));
+            // A title the producer learnt after the start.
+            let title = c.chance(4).then(|| words(c, 1, 3));
+            self.events.push(Event::ToolCallEnd(ToolCallEnd { thread_id: t, seq, tool_call_id: id.clone(), title, kind: None }));
+            self.last_call.insert(thread.to_owned(), id.clone());
             id
         }
 
@@ -382,6 +394,8 @@ pub mod conversation {
                 structured,
                 truncated,
                 timestamp,
+                title: None,
+                kind: None,
             }));
         }
 
@@ -411,8 +425,20 @@ pub mod conversation {
         }
 
         fn end_tool(&mut self, c: &mut impl Choose, thread: &str, call: &str, scale: usize) {
-            let statuses = [ToolStatus::Ok, ToolStatus::Ok, ToolStatus::Failed, ToolStatus::Interrupted, ToolStatus::AwaitingApproval];
+            let statuses = [ToolStatus::Ok, ToolStatus::Ok, ToolStatus::Failed, ToolStatus::Cancelled];
             let status = statuses[c.below(statuses.len())];
+            if c.chance(3) {
+                for i in 0..1 + c.below(3) {
+                    let seq = self.seq(thread);
+                    self.events.push(Event::ToolCallOutput(ToolCallOutput {
+                        thread_id: thread.into(),
+                        seq,
+                        tool_call_id: call.into(),
+                        delta: ansi(c, 1),
+                        media_type: (i == 0).then(|| "text/x-ansi".into()),
+                    }));
+                }
+            }
             let truncated =
                 c.chance(6).then(|| Truncated { total_bytes: 70_000 + c.below(1000) as u64, reference: format!("log:{}", c.below(99)) });
             let (media, content) = match c.below(8) {
@@ -437,6 +463,7 @@ pub mod conversation {
                 run_id,
                 parent_run_id: None,
                 parent: Some(Parent { thread_id: thread.into(), tool_call_id: call.clone() }),
+                input: None,
             }));
             let text = inline(c, 2, 6);
             self.message(c, &child, Role::User, &text);
@@ -444,13 +471,19 @@ pub mod conversation {
                 self.item(c, &child, scale, false);
             }
             let seq = self.seq(&child);
-            let outcome = if c.chance(4) { "interrupted" } else { "completed" };
-            self.events.push(Event::RunFinished(RunFinished {
-                thread_id: child,
-                seq,
-                outcome: Some(outcome.into()),
-                ..RunFinished::default()
-            }));
+            let outcome = match c.below(6) {
+                0 => Some(Outcome::Cancelled),
+                1 => {
+                    let id = self.id("i");
+                    let tool_call_id = self.last_call.get(&child).cloned().filter(|_| c.chance(2));
+                    let message = Some(inline(c, 2, 5));
+                    Some(Outcome::Interrupt {
+                        interrupts: vec![Interrupt { id, reason: "question".into(), message, tool_call_id, response_schema: None }],
+                    })
+                }
+                _ => None,
+            };
+            self.events.push(Event::RunFinished(RunFinished { thread_id: child, seq, outcome, ..RunFinished::default() }));
             let report = inline(c, 2, 6);
             self.result(c, thread, &call, "text/markdown", report, ToolStatus::Ok, None);
         }
