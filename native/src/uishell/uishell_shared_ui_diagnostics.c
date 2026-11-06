@@ -234,6 +234,110 @@ uishell_check_blur_mask(U32 *failures)
   scratch_end(scratch);
 }
 
+// What a rounded rect means, read back from this backend. The hand-written
+// rect shaders differ between backends; these are the cases a single-source
+// shader has to settle (ADR 0015 §5). Each case prints what it measured,
+// pass or fail, so runs on the three backends can be compared line by line.
+internal F32
+uishell_rect_semantics_linear(R_Readback *pixels, S32 x, S32 y, U32 channel)
+{
+  // BGRA bytes. OpenGL reads back its linear stage and D3D11 copies its
+  // linear stage into a UNORM target; only Metal's final target is sRGB.
+  U8 *p = pixels->data.str + ((U64)y*pixels->size.x + x)*4;
+  U8 bgra_index[] = {2, 1, 0, 3}; // channel 0..3 = r, g, b, a
+  F32 v = (F32)p[bgra_index[channel]]/255.f;
+#if R_BACKEND == R_BACKEND_METAL
+  if(channel < 3)
+  {
+    v = (v <= 0.04045f) ? v/12.92f : pow_f32((v + 0.055f)/1.055f, 2.4f);
+  }
+#endif
+  return v;
+}
+
+internal void
+uishell_check_rect_semantics(U32 *failures)
+{
+  Temp scratch = scratch_begin(0, 0);
+  Vec2S32 size = v2s32(192, 64);
+  DR_Bucket *bucket = dr_bucket_make();
+  DR_BucketScope(bucket)
+  {
+    dr_rect(r2f32p(0, 0, (F32)size.x, (F32)size.y), v4f32(0, 0, 0, 1), 0, 0, 0);
+
+    // A: per-corner radius and colour. Only the top-left corner (Corner_00)
+    // is rounded; each corner has its own colour.
+    R_Rect2DInst *a = dr_rect(r2f32p(8, 8, 56, 56), v4f32(1, 1, 1, 1), 0, 0, 0);
+    a->corner_radii[Corner_00] = 16;
+    a->colors[Corner_00] = v4f32(1, 0, 0, 1);
+    a->colors[Corner_01] = v4f32(0, 1, 0, 1); // x0, y1: bottom left
+    a->colors[Corner_10] = v4f32(0, 0, 1, 1); // x1, y0: top right
+    a->colors[Corner_11] = v4f32(1, 1, 1, 1);
+
+    // B: a radius with zero softness; smoothstep(0, 0, x) is undefined in
+    // GLSL and HLSL.
+    dr_rect(r2f32p(64, 8, 88, 32), v4f32(1, 1, 1, 1), 8, 0, 0);
+
+    // C: a transform that doubles size doubles the radius and softness too,
+    // so zoomed content looks the same, only larger. (66,2)-(86,22) lands at
+    // (132,4)-(172,44) with a radius of 16 and softness 2 on screen. The
+    // probe 5.5 px in from the corner along the diagonal is cut by that, but
+    // filled by an unscaled radius of 8 and softness of 1. (The softness inset
+    // matters: a probe nearer the corner is cut either way.)
+    DR_XForm2DScope(make_scale_3x3f32(v2f32(2, 2)))
+    {
+      dr_rect(r2f32p(66, 2, 86, 22), v4f32(1, 1, 1, 1), 8, 0, 1);
+    }
+
+    // D: group transparency 0.5 halves coverage once, not colour and
+    // coverage both.
+    DR_TransparencyScope(0.5f)
+    {
+      dr_rect(r2f32p(92, 8, 120, 32), v4f32(1, 1, 1, 1), 0, 0, 0);
+    }
+
+    // E: a 2px border with no fill shows the border and leaves the inside.
+    dr_rect(r2f32p(64, 36, 88, 60), v4f32(1, 1, 1, 1), 4, 2, 1);
+  }
+  R_Readback pixels = r_pass_list_readback(scratch.arena, size, &bucket->passes);
+  B32 ok = (pixels.format == R_Tex2DFormat_BGRA8 && pixels.size.x == size.x && pixels.size.y == size.y &&
+            pixels.data.size >= (U64)size.x*size.y*4);
+  UIImportCheck(ok);
+  if(ok)
+  {
+    String8 backend = r_backend_name();
+#define RectCase(label, expr, fmt, ...) do { B32 _pass = (expr); if(!_pass) { *failures += 1; } \
+fprintf(stderr, "%.*s rect %s: %s (" fmt ")\n", str8_varg(backend), (label), _pass ? "ok" : "DIFFERS", __VA_ARGS__); } while(0)
+#define L(x, y, c) uishell_rect_semantics_linear(&pixels, (x), (y), (c))
+    // A
+    RectCase("A rounded top-left corner is cut", L(9, 9, 0) < 0.1f && L(9, 9, 1) < 0.1f && L(9, 9, 2) < 0.1f,
+             "rgb %.2f %.2f %.2f", L(9, 9, 0), L(9, 9, 1), L(9, 9, 2));
+    RectCase("A square top-right corner is filled and blue", L(54, 9, 2) > 0.8f && L(54, 9, 0) < 0.2f,
+             "rgb %.2f %.2f %.2f", L(54, 9, 0), L(54, 9, 1), L(54, 9, 2));
+    RectCase("A square bottom-left corner is filled and green", L(9, 54, 1) > 0.8f && L(9, 54, 0) < 0.2f,
+             "rgb %.2f %.2f %.2f", L(9, 54, 0), L(9, 54, 1), L(9, 54, 2));
+    RectCase("A square bottom-right corner is filled and white", L(54, 54, 0) > 0.8f && L(54, 54, 1) > 0.8f && L(54, 54, 2) > 0.8f,
+             "rgb %.2f %.2f %.2f", L(54, 54, 0), L(54, 54, 1), L(54, 54, 2));
+    // B
+    RectCase("B zero softness keeps the inside", L(76, 20, 0) > 0.9f, "r %.2f", L(76, 20, 0));
+    RectCase("B zero softness cuts the corner", L(65, 9, 0) < 0.1f, "r %.2f", L(65, 9, 0));
+    // C
+    RectCase("C scaled rect fills its middle", L(152, 24, 0) > 0.9f, "r %.2f", L(152, 24, 0));
+    // A control: filled whether or not the radius scales. Failing it means
+    // something other than scaling is wrong with C.
+    RectCase("C scaled corner fills further in", L(142, 14, 0) > 0.9f, "r 10.5 px in %.2f", L(142, 14, 0));
+    RectCase("C radius scales with the transform", L(137, 9, 0) < 0.2f, "r 5.5 px in %.2f", L(137, 9, 0));
+    // D
+    RectCase("D transparency 0.5 gives half", L(106, 20, 0) > 0.42f && L(106, 20, 0) < 0.58f, "r %.2f", L(106, 20, 0));
+    // E
+    RectCase("E border is drawn", L(66, 48, 0) > 0.5f, "r at edge %.2f", L(66, 48, 0));
+    RectCase("E inside a border is empty", L(76, 48, 0) < 0.1f, "r inside %.2f", L(76, 48, 0));
+#undef L
+#undef RectCase
+  }
+  scratch_end(scratch);
+}
+
 // Check raster coverage through every platform provider, including descenders.
 internal void
 uishell_check_raster_baselines(Arena *arena, U32 *failures)
@@ -416,8 +520,12 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
 #if R_BACKEND == R_BACKEND_METAL
   uishell_check_metal_blur_kernel_bounds(&failures);
 #endif
+  U32 failures_before_blur = failures;
   uishell_check_blur_mask(&failures);
-  fprintf(stderr, "blur mask: %u failures\n", failures);
+  fprintf(stderr, "blur mask: %u failures\n", failures - failures_before_blur);
+  U32 failures_before_rect = failures;
+  uishell_check_rect_semantics(&failures);
+  fprintf(stderr, "rect semantics: %u failures\n", failures - failures_before_rect);
   fprintf(stderr, "shared UI diagnostics: %s (%u failures)\n", failures ? "FAIL" : "PASS", failures);
   scratch_end(scratch);
   return failures == 0;

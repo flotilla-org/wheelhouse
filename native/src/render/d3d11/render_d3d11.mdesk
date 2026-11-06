@@ -146,6 +146,10 @@ vs_main(CPU2Vertex cpu2vertex)
   float2 dst_verts_pct = float2((cpu2vertex.vertex_id >> 1) ? 1.f : 0.f,
                                 (cpu2vertex.vertex_id & 1)  ? 0.f : 1.f);
   
+  // Radius, border and softness scale with the transform, as the rect does,
+  // so scaled content looks the same, only larger (as OpenGL and Metal draw it).
+  float style_scale = max(xform_scale.x, xform_scale.y);
+  
   // rjf: fill vertex -> pixel data
   Vertex2Pixel vertex2pixel;
   {
@@ -158,9 +162,9 @@ vs_main(CPU2Vertex cpu2vertex)
     vertex2pixel.texcoord_pct         = src_p_verts_px[cpu2vertex.vertex_id] / texture_t2d_size_px;
     vertex2pixel.sdf_sample_pos       = (2.f * dst_verts_pct - 1.f) * vertex2pixel.rect_half_size_px;
     vertex2pixel.tint                 = src_color[cpu2vertex.vertex_id];
-    vertex2pixel.corner_radius_px     = dst_r_verts_px[cpu2vertex.vertex_id];
-    vertex2pixel.border_thickness_px  = border_thickness_px;
-    vertex2pixel.softness_px          = softness_px;
+    vertex2pixel.corner_radius_px     = dst_r_verts_px[cpu2vertex.vertex_id] * style_scale;
+    vertex2pixel.border_thickness_px  = border_thickness_px * style_scale;
+    vertex2pixel.softness_px          = softness_px * style_scale;
     vertex2pixel.omit_texture         = omit_texture;
   }
   return vertex2pixel;
