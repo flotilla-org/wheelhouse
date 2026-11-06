@@ -176,6 +176,34 @@ uishell_border_diagnostics(RD_WindowState *ws)
     if(had_show) { cfg_node_new_replace(rd_state->cfg, show, old_show); }
     else { cfg_node_release(rd_state->cfg, show); }
   }
+  // A user error's border shows only beside the status bar that says what
+  // it was and fades it (#536); without the bar there is no border.
+  {
+    CFG_Node *user = cfg_node_child_from_string(cfg_node_root(), str8_lit("user"));
+    CFG_Node *show = cfg_node_child_from_string(user, str8_lit("show_status_bar"));
+    B32 had_show = show != &cfg_nil_node;
+    String8 old_show = str8_copy(saved.arena, show->first->string);
+    for(U32 shown = 0; shown < 2; shown++)
+    {
+      show = cfg_node_child_from_string_or_alloc(rd_state->cfg, user, str8_lit("show_status_bar"));
+      cfg_node_new_replace(rd_state->cfg, show, shown ? str8_lit("1") : str8_lit("0"));
+      String8 error = str8_lit("Couldn't open a new tab because no panel was available.");
+      MemoryCopy(ws->error_buffer, error.str, error.size);
+      ws->error_string_size = error.size;
+      ws->error_t = 1.f;
+      fnt_frame();
+      dr_begin_frame(rd_font_from_slot(RD_FontSlot_Icons));
+      rd_window_frame();
+      if(shown ? !(ws->error_t > 0.5f && ws->error_t < 1.f) : ws->error_t != 0)
+      {
+        fprintf(stderr, "FAIL user error border (status bar %s): error_t %.3f\n", shown ? "shown" : "hidden", ws->error_t);
+        ok = 0;
+      }
+      ws->error_t = 0;
+    }
+    if(had_show) { cfg_node_new_replace(rd_state->cfg, show, old_show); }
+    else { cfg_node_release(rd_state->cfg, show); }
+  }
   // A divider drag resizes smoothly with the pointer from where the section
   // ended, never below none or above the setting's range.
   {
