@@ -287,40 +287,13 @@ struct R_OGL_Window
 // R_OGL_CORE_SHADERS selects the rect and blur shaders: 0, the hand-written
 // GLSL in render_opengl.mdesk; 1, GLSL generated from native/src/shaders/slang;
 // 2, GLSL generated from native/src/shaders/wgsl (tools/generate-core-shaders.sh).
-// The generated shaders take one std140 uniform block each, laid out as below.
+// The generated shaders take one std140 uniform block each (R_CoreRectUniforms,
+// R_CoreBlurUniforms in render_core.h).
 
 #if !defined(R_OGL_CORE_SHADERS)
 # define R_OGL_CORE_SHADERS 0
 #endif
 
-typedef struct R_OGL_CoreRectUniforms R_OGL_CoreRectUniforms;
-struct R_OGL_CoreRectUniforms
-{
-  Vec2F32 viewport_size;
-  F32 opacity;
-  F32 sample_is_surface;
-  Mat4x4F32 texture_sample_channel_map; // each v[i] is a column
-  Vec2F32 texture_size;
-  Vec2F32 xform_scale;
-  Vec4F32 xform[3];                     // rows
-  F32 surface_flip_y;
-  F32 _padding0_[3];
-};
-StaticAssert(sizeof(R_OGL_CoreRectUniforms) == 160, r_ogl_core_rect_uniforms_size);
-
-typedef struct R_OGL_CoreBlurUniforms R_OGL_CoreBlurUniforms;
-struct R_OGL_CoreBlurUniforms
-{
-  Rng2F32 rect;
-  Vec4F32 corner_radii;
-  Vec2F32 direction;
-  Vec2F32 viewport_size;
-  U32 blur_count;
-  F32 texcoord_flip_y;
-  F32 _padding0_[2];
-  Vec4F32 kernel[32];
-};
-StaticAssert(sizeof(R_OGL_CoreBlurUniforms) == 576, r_ogl_core_blur_uniforms_size);
 
 typedef struct R_OGL_State R_OGL_State;
 struct R_OGL_State

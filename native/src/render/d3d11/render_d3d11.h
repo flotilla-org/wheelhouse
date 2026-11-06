@@ -145,6 +145,15 @@ struct R_D3D11_FlushBuffer
   ID3D11Buffer *buffer;
 };
 
+// R_D3D11_CORE_SHADERS selects the rect and blur shaders: 0, the hand-written
+// HLSL in render_d3d11.mdesk; 1, HLSL generated from native/src/shaders/slang
+// (tools/generate-core-shaders.sh). The generated shaders read one constant
+// buffer each (R_CoreRectUniforms, R_CoreBlurUniforms in render_core.h) at b0,
+// and the rect shader keeps the POS, TEX, COL0..3, CRAD, STY input semantics.
+#if !defined(R_D3D11_CORE_SHADERS)
+# define R_D3D11_CORE_SHADERS 0
+#endif
+
 typedef struct R_D3D11_State R_D3D11_State;
 struct R_D3D11_State
 {
@@ -187,6 +196,8 @@ struct R_D3D11_State
   ID3D11InputLayout *ilays[R_D3D11_VShadKind_COUNT];
   ID3D11PixelShader *pshads[R_D3D11_PShadKind_COUNT];
   ID3D11Buffer *uniform_type_kind_buffers[R_D3D11_UniformTypeKind_COUNT];
+  ID3D11Buffer *core_rect_cbuffer; // R_CoreRectUniforms, for the generated rect shader
+  ID3D11Buffer *core_blur_cbuffer; // R_CoreBlurUniforms, for the generated blur shader
   
   // rjf: buffers to flush at subsequent frame
   Arena *buffer_flush_arena;

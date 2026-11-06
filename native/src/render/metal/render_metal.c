@@ -1,6 +1,12 @@
 // Copyright (c) Epic Games Tools
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 
+#if R_MTL_CORE_SHADERS == 1
+# include "shaders/generated/core_shaders_slang_msl.h"
+#elif R_MTL_CORE_SHADERS != 0
+# error R_MTL_CORE_SHADERS must be 0 (hand-written) or 1 (generated from Slang).
+#endif
+
 @implementation R_MTL_DisplayDelegate
 - (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update
 {
@@ -177,17 +183,23 @@ r_mtl_log_command_buffer_error(id<MTLCommandBuffer> command_buffer)
   }
 }
 
+// vertex_descriptor is zero for shaders that read their vertex data from
+// buffers themselves; the generated rect shader takes [[stage_in]] attributes.
 internal id<MTLRenderPipelineState>
-r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat color_pixel_format, MTLPixelFormat depth_pixel_format, B32 blend, B32 coverage_alpha)
+r_mtl_render_pipeline_from_libraries(id<MTLLibrary> vertex_library, NSString *vertex_name, id<MTLLibrary> fragment_library, NSString *fragment_name, MTLVertexDescriptor *vertex_descriptor, MTLPixelFormat color_pixel_format, MTLPixelFormat depth_pixel_format, B32 blend, B32 coverage_alpha)
 {
   id<MTLRenderPipelineState> result = 0;
-  id<MTLFunction> vertex_function = [library newFunctionWithName:vertex_name];
-  id<MTLFunction> fragment_function = [library newFunctionWithName:fragment_name];
+  id<MTLFunction> vertex_function = [vertex_library newFunctionWithName:vertex_name];
+  id<MTLFunction> fragment_function = [fragment_library newFunctionWithName:fragment_name];
   if(vertex_function != 0 && fragment_function != 0)
   {
     MTLRenderPipelineDescriptor *descriptor = [MTLRenderPipelineDescriptor new];
     descriptor.vertexFunction = vertex_function;
     descriptor.fragmentFunction = fragment_function;
+    if(vertex_descriptor != 0)
+    {
+      descriptor.vertexDescriptor = vertex_descriptor;
+    }
     descriptor.colorAttachments[0].pixelFormat = color_pixel_format;
     descriptor.depthAttachmentPixelFormat = depth_pixel_format;
     descriptor.colorAttachments[0].blendingEnabled = blend;
@@ -216,6 +228,68 @@ r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_n
   [fragment_function release];
   return result;
 }
+
+internal id<MTLRenderPipelineState>
+r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat color_pixel_format, MTLPixelFormat depth_pixel_format, B32 blend, B32 coverage_alpha)
+{
+  id<MTLRenderPipelineState> result = r_mtl_render_pipeline_from_libraries(library, vertex_name, library, fragment_name, 0, color_pixel_format, depth_pixel_format, blend, coverage_alpha);
+  return result;
+}
+
+#if R_MTL_CORE_SHADERS != 0
+// The blur pass keeps filling R_MTL_BlurUniforms; the generated shader reads
+// it as R_CoreBlurUniforms, whose texcoord_flip_y is that struct's zeroed padding.
+StaticAssert(sizeof(R_MTL_BlurUniforms) == sizeof(R_CoreBlurUniforms), r_mtl_core_blur_uniforms_size);
+StaticAssert(OffsetOf(R_MTL_BlurUniforms, blur_count) == OffsetOf(R_CoreBlurUniforms, blur_count), r_mtl_core_blur_count_offset);
+StaticAssert(OffsetOf(R_MTL_BlurUniforms, kernel) == OffsetOf(R_CoreBlurUniforms, kernel), r_mtl_core_blur_kernel_offset);
+
+internal id<MTLLibrary>
+r_mtl_library_from_source(String8 source, char *label)
+{
+  NSString *source_string = [[NSString alloc] initWithBytes:source.str length:source.size encoding:NSUTF8StringEncoding];
+  NSError *error = 0;
+  id<MTLLibrary> result = [r_mtl_state->device newLibraryWithSource:source_string options:0 error:&error];
+  r_mtl_log_ns_error(label, error);
+  [source_string release];
+  return result;
+}
+
+// The rect and blur pipelines from the shaders generated from Slang. Each
+// stage is its own library, with entry points vs_main and fs_main. The rect
+// vertex shader reads R_Rect2DInst as eight per-instance float4 attributes
+// from R_MTL_CORE_RECT_INSTANCE_BUFFER; its uniforms are at buffer 0.
+internal void
+r_mtl_build_core_pipelines(void)
+{
+  id<MTLLibrary> rect_vs = r_mtl_library_from_source(r_core_rect_vs_msl, "core rect vs");
+  id<MTLLibrary> rect_fs = r_mtl_library_from_source(r_core_rect_fs_msl, "core rect fs");
+  id<MTLLibrary> blur_vs = r_mtl_library_from_source(r_core_blur_vs_msl, "core blur vs");
+  id<MTLLibrary> blur_fs = r_mtl_library_from_source(r_core_blur_fs_msl, "core blur fs");
+  MTLVertexDescriptor *rect_vertex_descriptor = [MTLVertexDescriptor vertexDescriptor];
+  for(U32 idx = 0; idx < 8; idx += 1)
+  {
+    rect_vertex_descriptor.attributes[idx].format = MTLVertexFormatFloat4;
+    rect_vertex_descriptor.attributes[idx].offset = idx*sizeof(Vec4F32);
+    rect_vertex_descriptor.attributes[idx].bufferIndex = R_MTL_CORE_RECT_INSTANCE_BUFFER;
+  }
+  rect_vertex_descriptor.layouts[R_MTL_CORE_RECT_INSTANCE_BUFFER].stride = sizeof(R_Rect2DInst);
+  rect_vertex_descriptor.layouts[R_MTL_CORE_RECT_INSTANCE_BUFFER].stepFunction = MTLVertexStepFunctionPerInstance;
+  rect_vertex_descriptor.layouts[R_MTL_CORE_RECT_INSTANCE_BUFFER].stepRate = 1;
+  if(rect_vs != 0 && rect_fs != 0)
+  {
+    r_mtl_state->rect_pipeline = r_mtl_render_pipeline_from_libraries(rect_vs, @"vs_main", rect_fs, @"fs_main", rect_vertex_descriptor, MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 0);
+    r_mtl_state->rect_surface_pipeline = r_mtl_render_pipeline_from_libraries(rect_vs, @"vs_main", rect_fs, @"fs_main", rect_vertex_descriptor, MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 1);
+  }
+  if(blur_vs != 0 && blur_fs != 0)
+  {
+    r_mtl_state->blur_pipeline = r_mtl_render_pipeline_from_libraries(blur_vs, @"vs_main", blur_fs, @"fs_main", 0, MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 0);
+  }
+  [rect_vs release];
+  [rect_fs release];
+  [blur_vs release];
+  [blur_fs release];
+}
+#endif
 
 internal id<MTLRenderPipelineState>
 r_mtl_render_pipeline_from_library(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat pixel_format)
@@ -563,9 +637,13 @@ r_init(CmdLine *cmdln)
       r_mtl_log_ns_error("library creation", error);
       if(library != 0)
       {
+#if R_MTL_CORE_SHADERS != 0
+        r_mtl_build_core_pipelines();
+#else
         r_mtl_state->rect_pipeline = r_mtl_render_pipeline_from_library(library, @"rect_vertex", @"rect_fragment", MTLPixelFormatRGBA16Float);
         r_mtl_state->rect_surface_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"rect_vertex", @"rect_fragment", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 1);
         r_mtl_state->blur_pipeline = r_mtl_render_pipeline_from_library(library, @"blur_vertex", @"blur_fragment", MTLPixelFormatRGBA16Float);
+#endif
         r_mtl_state->mesh_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"mesh_vertex", @"mesh_fragment", MTLPixelFormatRGBA8Unorm, MTLPixelFormatDepth32Float, 1, 0);
         r_mtl_state->geo3d_composite_pipeline = r_mtl_render_pipeline_from_library(library, @"geo3d_composite_vertex", @"composite_fragment", MTLPixelFormatRGBA16Float);
         r_mtl_state->geo3d_composite_surface_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"geo3d_composite_vertex", @"composite_fragment", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 1);
@@ -1308,6 +1386,9 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                   {
                     group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
                   }
+#if R_MTL_CORE_SHADERS != 0
+                  R_CoreRectUniforms group_uniforms = r_core_rect_uniforms(pass_viewport_dim, group_params, group_xform, texture->format, texture->size, 0);
+#else
                   R_MTL_RectUniforms group_uniforms = {0};
                   group_uniforms.viewport_size = pass_viewport_dim;
                   group_uniforms.opacity = 1.f - group_params->transparency;
@@ -1320,6 +1401,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                   group_uniforms.xform[0] = v4f32(group_xform.v[0][0], group_xform.v[1][0], group_xform.v[2][0], 0);
                   group_uniforms.xform[1] = v4f32(group_xform.v[0][1], group_xform.v[1][1], group_xform.v[2][1], 0);
                   group_uniforms.xform[2] = v4f32(group_xform.v[0][2], group_xform.v[1][2], group_xform.v[2][2], 0);
+#endif
                   U64 uniform_offset = 0;
                   id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&group_uniforms, sizeof(group_uniforms), 256, &uniform_offset);
                   if(group_params->clip.x0 != 0 ||
@@ -1347,9 +1429,15 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                     MTLScissorRect scissor = {0, 0, (NSUInteger)pass_attachment_size.x, (NSUInteger)pass_attachment_size.y};
                     [encoder setScissorRect:scissor];
                   }
+#if R_MTL_CORE_SHADERS != 0
+                  [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:R_MTL_CORE_RECT_INSTANCE_BUFFER];
+                  [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:0];
+                  [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
+#else
                   [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:0];
                   [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:1];
                   [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:1];
+#endif
                   [encoder setFragmentTexture:texture->texture atIndex:0];
                   [encoder setFragmentSamplerState:r_mtl_state->samplers[group_params->tex_sample_kind] atIndex:0];
                   [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:inst_count];
@@ -1725,6 +1813,9 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
                   insts += batch_n->v.byte_count;
                 }
 
+#if R_MTL_CORE_SHADERS != 0
+                R_CoreRectUniforms group_uniforms = r_core_rect_uniforms(viewport_dim, group_params, group_params->xform, texture->format, texture->size, 0);
+#else
                 R_MTL_RectUniforms group_uniforms = {0};
                 group_uniforms.viewport_size = viewport_dim;
                 group_uniforms.opacity = 1.f - group_params->transparency;
@@ -1736,6 +1827,7 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
                 group_uniforms.xform[0] = v4f32(group_params->xform.v[0][0], group_params->xform.v[1][0], group_params->xform.v[2][0], 0);
                 group_uniforms.xform[1] = v4f32(group_params->xform.v[0][1], group_params->xform.v[1][1], group_params->xform.v[2][1], 0);
                 group_uniforms.xform[2] = v4f32(group_params->xform.v[0][2], group_params->xform.v[1][2], group_params->xform.v[2][2], 0);
+#endif
                 U64 uniform_offset = 0;
                 id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&group_uniforms, sizeof(group_uniforms), 256, &uniform_offset);
 
@@ -1759,9 +1851,15 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
                   MTLScissorRect scissor = {0, 0, (NSUInteger)size.x, (NSUInteger)size.y};
                   [encoder setScissorRect:scissor];
                 }
+#if R_MTL_CORE_SHADERS != 0
+                [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:R_MTL_CORE_RECT_INSTANCE_BUFFER];
+                [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:0];
+                [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
+#else
                 [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:0];
                 [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:1];
                 [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:1];
+#endif
                 [encoder setFragmentTexture:texture->texture atIndex:0];
                 [encoder setFragmentSamplerState:r_mtl_state->samplers[group_params->tex_sample_kind] atIndex:0];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:inst_count];

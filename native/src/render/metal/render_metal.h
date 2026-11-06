@@ -161,6 +161,16 @@ struct R_MTL_Geo3DCompositeUniforms
   Vec4F32 src_uv;  // x0 y0 x1 y1, geo3d color texture uv
 };
 
+// R_MTL_CORE_SHADERS selects the rect and blur shaders: 0, the hand-written MSL
+// in render_metal.mdesk; 1, MSL generated from native/src/shaders/slang
+// (tools/generate-core-shaders.sh). The generated shaders read their uniforms
+// (R_CoreRectUniforms, R_CoreBlurUniforms in render_core.h) from buffer 0; the
+// rect shader reads its instances as vertex attributes from the buffer below.
+#if !defined(R_MTL_CORE_SHADERS)
+# define R_MTL_CORE_SHADERS 0
+#endif
+#define R_MTL_CORE_RECT_INSTANCE_BUFFER 30
+
 typedef struct R_MTL_State R_MTL_State;
 struct R_MTL_State
 {

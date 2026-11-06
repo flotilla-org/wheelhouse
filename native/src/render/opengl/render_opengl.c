@@ -13,9 +13,9 @@
 #endif
 
 #if R_OGL_CORE_SHADERS == 1
-# include "shaders/generated/core_shaders_slang.h"
+# include "shaders/generated/core_shaders_slang_glsl.h"
 #elif R_OGL_CORE_SHADERS == 2
-# include "shaders/generated/core_shaders_wgsl.h"
+# include "shaders/generated/core_shaders_wgsl_glsl.h"
 #elif R_OGL_CORE_SHADERS != 0
 # error R_OGL_CORE_SHADERS must be 0 (hand-written), 1 (Slang) or 2 (WGSL).
 #endif
@@ -145,27 +145,16 @@ internal void
 r_ogl_rect_uniforms(GLuint shader, Vec2F32 viewport_dim, R_BatchGroup2DParams *group_params, Mat3x3F32 xform,
                     R_Tex2DFormat texture_fmt, Vec2S32 texture_size)
 {
-  Mat4x4F32 texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture_fmt);
 #if R_OGL_CORE_SHADERS == 0
+  Mat4x4F32 texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture_fmt);
   glUniformMatrix4fv(glGetUniformLocation(shader, "u_texture_sample_channel_map"), 1, 0, &texture_sample_channel_map.v[0][0]);
   glUniform2f(glGetUniformLocation(shader, "u_viewport_size_px"), viewport_dim.x, viewport_dim.y);
   glUniform1f(glGetUniformLocation(shader, "u_opacity"), 1.f - group_params->transparency);
   glUniform1f(glGetUniformLocation(shader, "u_sample_is_surface"), (F32)!!group_params->tex_sample_is_surface);
   glUniformMatrix3fv(glGetUniformLocation(shader, "u_xform"), 1, 0, &xform.v[0][0]);
 #else
-  R_OGL_CoreRectUniforms uniforms = {0};
-  uniforms.viewport_size = viewport_dim;
-  uniforms.opacity = 1.f - group_params->transparency;
-  uniforms.sample_is_surface = (F32)!!group_params->tex_sample_is_surface;
-  uniforms.texture_sample_channel_map = texture_sample_channel_map;
-  uniforms.texture_size = v2f32((F32)Max(texture_size.x, 1), (F32)Max(texture_size.y, 1));
-  uniforms.xform_scale = v2f32(length_2f32(v2f32(xform.v[0][0], xform.v[0][1])),
-                               length_2f32(v2f32(xform.v[1][0], xform.v[1][1])));
-  for EachIndex(row, 3)
-  {
-    uniforms.xform[row] = v4f32(xform.v[0][row], xform.v[1][row], xform.v[2][row], 0);
-  }
-  uniforms.surface_flip_y = 1.f; // surfaces render through the flipped stage projection
+  // Surfaces render through the flipped stage projection, so they are stored bottom-up.
+  R_CoreRectUniforms uniforms = r_core_rect_uniforms(viewport_dim, group_params, xform, texture_fmt, texture_size, 1);
   if(r_ogl_state->core_ubo == 0)
   {
     glGenBuffers(1, &r_ogl_state->core_ubo);
@@ -209,52 +198,8 @@ r_ogl_blur_core(R_PassParams_Blur *params, F32 backing_scale, Vec2F32 viewport_d
     return;
   }
   
-  R_OGL_CoreBlurUniforms uniforms = {0};
-  uniforms.corner_radii = v4f32(params->corner_radii[Corner_00], params->corner_radii[Corner_01], params->corner_radii[Corner_10], params->corner_radii[Corner_11]);
-  uniforms.viewport_size = viewport_dim;
-  uniforms.texcoord_flip_y = 1.f; // the stage is stored bottom-up
-  {
-    F32 weights[ArrayCount(uniforms.kernel)*2] = {0};
-    // The kernel steps in texels, pixels of the window's targets. One slot
-    // is reserved for the centre weight; the rest hold pairs.
-    F32 blur_size = Min(params->blur_size*backing_scale, ArrayCount(weights)-1);
-    U64 blur_count = (U64)round_f32(blur_size);
-    F32 stdev = (blur_size-1.f)/2.f;
-    F32 one_over_root_2pi_stdev2 = 1/sqrt_f32(2*pi32*stdev*stdev);
-    F32 euler32 = 2.718281828459045f;
-    weights[0] = 1.f;
-    if(stdev > 0.f)
-    {
-      for(U64 idx = 0; idx < blur_count; idx += 1)
-      {
-        F32 kernel_x = (F32)idx;
-        weights[idx] = one_over_root_2pi_stdev2*pow_f32(euler32, -kernel_x*kernel_x/(2.f*stdev*stdev));
-      }
-    }
-    if(weights[0] > 1.f)
-    {
-      MemoryZeroArray(weights);
-      weights[0] = 1.f;
-    }
-    else
-    {
-      for(U64 idx = 1; idx < blur_count; idx += 2)
-      {
-        F32 w0 = weights[idx + 0];
-        F32 w1 = weights[idx + 1];
-        F32 w = w0 + w1;
-        F32 t = w1 / w;
-        uniforms.kernel[(idx+1)/2] = v4f32(w, (F32)idx + t, 0, 0);
-      }
-    }
-    uniforms.kernel[0].x = weights[0];
-    uniforms.blur_count = 1 + (U32)(blur_count / 2);
-  }
-  F32 sample_radius = 0.f;
-  for(U32 idx = 1; idx < uniforms.blur_count; idx += 1)
-  {
-    sample_radius = Max(sample_radius, uniforms.kernel[idx].y);
-  }
+  // The kernel steps in texels, pixels of the window's targets; the stage is stored bottom-up.
+  R_CoreBlurUniforms uniforms = r_core_blur_uniforms(params, viewport_dim, params->blur_size*backing_scale, 1);
   
   if(r_ogl_state->core_ubo == 0)
   {
@@ -270,23 +215,13 @@ r_ogl_blur_core(R_PassParams_Blur *params, F32 backing_scale, Vec2F32 viewport_d
     {
       R_OGL_RenderTarget *src = (axis == 0 ? stage : scratch);
       R_OGL_RenderTarget *dst = (axis == 0 ? scratch : stage);
-      uniforms.rect = params->rect;
+      r_core_blur_pass(&uniforms, params, axis == 0 ? Axis2_X : Axis2_Y, viewport_dim, pixel_dim);
       if(axis == 0)
       {
-        // The vertical pass samples above and below the final rect, and the
-        // bilinear neighbours beside it; the horizontal pass writes all of it.
-        F32 pixel_w = viewport_dim.x/(F32)Max(pixel_dim.x, 1);
-        F32 pixel_h = viewport_dim.y/(F32)Max(pixel_dim.y, 1);
-        uniforms.rect.x0 -= pixel_w;
-        uniforms.rect.x1 += pixel_w;
-        uniforms.rect.y0 -= (ceil_f32(sample_radius)+1.f)*pixel_h;
-        uniforms.rect.y1 += (ceil_f32(sample_radius)+1.f)*pixel_h;
-        uniforms.direction = v2f32(1.f/(F32)Max(pixel_dim.x, 1), 0);
         glDisable(GL_SCISSOR_TEST);
       }
       else
       {
-        uniforms.direction = v2f32(0, 1.f/(F32)Max(pixel_dim.y, 1));
         if(clipped)
         {
           r_ogl_scissor_from_pixel_clip(clip_px, pixel_dim);

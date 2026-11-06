@@ -299,6 +299,44 @@ struct R_EffectSources
 };
 
 ////////////////////////////////
+//~ Core Shader Uniforms
+//
+// The uniform blocks of the rect and blur shaders generated from
+// native/src/shaders (tools/generate-core-shaders.sh). Every backend fills
+// these same bytes: std140 for OpenGL, a cbuffer for D3D11, a constant buffer
+// for Metal. Backends opt in per build (R_OGL_CORE_SHADERS,
+// R_D3D11_CORE_SHADERS, R_MTL_CORE_SHADERS) until the hand-written shaders go.
+
+typedef struct R_CoreRectUniforms R_CoreRectUniforms;
+struct R_CoreRectUniforms
+{
+  Vec2F32 viewport_size;
+  F32 opacity;
+  F32 sample_is_surface;
+  Mat4x4F32 texture_sample_channel_map; // each v[i] is a column
+  Vec2F32 texture_size;
+  Vec2F32 xform_scale;
+  Vec4F32 xform[3];                     // rows
+  F32 surface_flip_y;                   // 1 where surface textures are stored bottom-up (OpenGL)
+  F32 _padding0_[3];
+};
+StaticAssert(sizeof(R_CoreRectUniforms) == 160, r_core_rect_uniforms_size);
+
+typedef struct R_CoreBlurUniforms R_CoreBlurUniforms;
+struct R_CoreBlurUniforms
+{
+  Rng2F32 rect;
+  Vec4F32 corner_radii;
+  Vec2F32 direction;
+  Vec2F32 viewport_size;
+  U32 blur_count;
+  F32 texcoord_flip_y;                  // 1 where the stage is stored bottom-up (OpenGL)
+  F32 _padding0_[2];
+  Vec4F32 kernel[32];
+};
+StaticAssert(sizeof(R_CoreBlurUniforms) == 576, r_core_blur_uniforms_size);
+
+////////////////////////////////
 //~ rjf: Helpers
 
 internal U64 r_bytes_per_pixel_from_tex2dfmt(R_Tex2DFmt fmt);
@@ -322,6 +360,14 @@ internal void *r_batch_list_push_inst(Arena *arena, R_BatchList *list, U64 batch
 
 internal R_Pass *r_pass_push(Arena *arena, R_PassList *list, R_PassKind kind);
 internal R_Pass *r_pass_from_kind(Arena *arena, R_PassList *list, R_PassKind kind);
+
+////////////////////////////////
+//~ Core Shader Uniform Functions
+
+internal R_CoreRectUniforms r_core_rect_uniforms(Vec2F32 viewport_dim, R_BatchGroup2DParams *group_params, Mat3x3F32 xform,
+                                                 R_Tex2DFormat texture_fmt, Vec2S32 texture_size, B32 surface_flip_y);
+internal R_CoreBlurUniforms r_core_blur_uniforms(R_PassParams_Blur *params, Vec2F32 viewport_dim, F32 blur_size_texels, B32 texcoord_flip_y);
+internal void r_core_blur_pass(R_CoreBlurUniforms *uniforms, R_PassParams_Blur *params, Axis2 axis, Vec2F32 viewport_dim, Vec2S32 pixel_dim);
 
 ////////////////////////////////
 //~ Adapter Identity

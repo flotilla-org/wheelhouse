@@ -1,6 +1,12 @@
 // Copyright (c) Epic Games Tools
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 
+#if R_D3D11_CORE_SHADERS == 1
+# include "shaders/generated/core_shaders_slang_hlsl.h"
+#elif R_D3D11_CORE_SHADERS != 0
+# error R_D3D11_CORE_SHADERS must be 0 (hand-written) or 1 (generated from Slang).
+#endif
+
 ////////////////////////////////
 //~ rjf: Input Layout Element Tables
 
@@ -467,6 +473,12 @@ r_init(CmdLine *cmdln)
   {
     String8 source = *r_d3d11_g_vshad_kind_source_table[kind];
     String8 source_name = r_d3d11_g_vshad_kind_source_name_table[kind];
+    char *entry_point = "vs_main";
+#if R_D3D11_CORE_SHADERS != 0
+    // The generated HLSL keeps the rect input semantics (POS, TEX, COL0..3, CRAD, STY).
+    if(kind == R_D3D11_VShadKind_Rect) { source = r_core_rect_vs_hlsl; }
+    if(kind == R_D3D11_VShadKind_Blur) { source = r_core_blur_vs_hlsl; }
+#endif
     D3D11_INPUT_ELEMENT_DESC *ilay_elements = r_d3d11_g_vshad_kind_elements_ptr_table[kind];
     U64 ilay_elements_count = r_d3d11_g_vshad_kind_elements_count_table[kind];
     
@@ -481,7 +493,7 @@ r_init(CmdLine *cmdln)
                          (char *)source_name.str,
                          0,
                          0,
-                         "vs_main",
+                         entry_point,
                          "vs_5_0",
                          0,
                          0,
@@ -524,6 +536,11 @@ r_init(CmdLine *cmdln)
   {
     String8 source = *r_d3d11_g_pshad_kind_source_table[kind];
     String8 source_name = r_d3d11_g_pshad_kind_source_name_table[kind];
+    char *entry_point = "ps_main";
+#if R_D3D11_CORE_SHADERS != 0
+    if(kind == R_D3D11_PShadKind_Rect) { source = r_core_rect_fs_hlsl; entry_point = "fs_main"; }
+    if(kind == R_D3D11_PShadKind_Blur) { source = r_core_blur_fs_hlsl; entry_point = "fs_main"; }
+#endif
     
     // rjf: compile pixel shader
     ID3DBlob *pshad_source_blob = 0;
@@ -536,7 +553,7 @@ r_init(CmdLine *cmdln)
                          (char *)source_name.str,
                          0,
                          0,
-                         "ps_main",
+                         entry_point,
                          "ps_5_0",
                          0,
                          0,
@@ -582,6 +599,21 @@ r_init(CmdLine *cmdln)
     }
     r_d3d11_state->uniform_type_kind_buffers[kind] = buffer;
   }
+#if R_D3D11_CORE_SHADERS != 0
+  {
+    U32 sizes[] = {sizeof(R_CoreRectUniforms), sizeof(R_CoreBlurUniforms)};
+    ID3D11Buffer **buffers[] = {&r_d3d11_state->core_rect_cbuffer, &r_d3d11_state->core_blur_cbuffer};
+    for EachElement(idx, sizes)
+    {
+      D3D11_BUFFER_DESC desc = {0};
+      desc.ByteWidth      = sizes[idx];
+      desc.Usage          = D3D11_USAGE_DYNAMIC;
+      desc.BindFlags      = D3D11_BIND_CONSTANT_BUFFER;
+      desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+      r_d3d11_state->device->lpVtbl->CreateBuffer(r_d3d11_state->device, &desc, 0, buffers[idx]);
+    }
+  }
+#endif
   
   //- rjf: create backup texture
   ProfScope("create backup texture")
@@ -1325,11 +1357,81 @@ r_window_end_frame(WM_Window window, R_Handle window_equip)
 // Blurs params->rect of the stage in place, through scratch: the horizontal
 // pass writes scratch, the vertical pass writes back to the stage. Both
 // targets are resolution pixels; params are in the same pixels.
+#if R_D3D11_CORE_SHADERS != 0
+// The generated blur shader: one constant buffer per pass. The horizontal pass
+// widens its rect to cover the vertical pass's input and is not clipped; only
+// the vertical pass is clipped and masked to the rounded rect.
+internal void
+r_d3d11_blur_core(R_PassParams_Blur *params, Vec2S32 resolution,
+                  ID3D11RenderTargetView *stage_rtv, ID3D11ShaderResourceView *stage_srv,
+                  ID3D11RenderTargetView *scratch_rtv, ID3D11ShaderResourceView *scratch_srv)
+{
+  ID3D11DeviceContext1 *d_ctx = r_d3d11_state->device_ctx;
+  ID3D11SamplerState *sampler   = r_d3d11_state->samplers[R_Tex2DSampleKind_Linear];
+  ID3D11VertexShader *vshad     = r_d3d11_state->vshads[R_D3D11_VShadKind_Blur];
+  ID3D11PixelShader *pshad      = r_d3d11_state->pshads[R_D3D11_PShadKind_Blur];
+  ID3D11Buffer *uniforms_buffer = r_d3d11_state->core_blur_cbuffer;
+  
+  //- clip; a clip with nothing on the target blurs nothing
+  D3D11_RECT full = {0, 0, (LONG)resolution.x, (LONG)resolution.y};
+  D3D11_RECT clip_rect = full;
+  Rng2F32 clip = params->clip;
+  if(clip.x0 != 0 || clip.y0 != 0 || clip.x1 != 0 || clip.y1 != 0)
+  {
+    clip_rect.left   = (LONG)Clamp(0.f, clip.x0, (F32)resolution.x);
+    clip_rect.top    = (LONG)Clamp(0.f, clip.y0, (F32)resolution.y);
+    clip_rect.right  = (LONG)Clamp(0.f, clip.x1, (F32)resolution.x);
+    clip_rect.bottom = (LONG)Clamp(0.f, clip.y1, (F32)resolution.y);
+    if(clip_rect.right <= clip_rect.left || clip_rect.bottom <= clip_rect.top)
+    {
+      return;
+    }
+  }
+  
+  //- pipeline state shared by both passes
+  d_ctx->lpVtbl->OMSetDepthStencilState(d_ctx, r_d3d11_state->noop_depth_stencil, 0);
+  d_ctx->lpVtbl->OMSetBlendState(d_ctx, r_d3d11_state->no_blend_state, 0, 0xffffffff);
+  D3D11_VIEWPORT viewport = { 0.0f, 0.0f, (F32)resolution.x, (F32)resolution.y, 0.0f, 1.0f };
+  d_ctx->lpVtbl->RSSetViewports(d_ctx, 1, &viewport);
+  d_ctx->lpVtbl->RSSetState(d_ctx, (ID3D11RasterizerState *)r_d3d11_state->main_rasterizer);
+  d_ctx->lpVtbl->IASetPrimitiveTopology(d_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+  d_ctx->lpVtbl->IASetInputLayout(d_ctx, 0);
+  d_ctx->lpVtbl->VSSetShader(d_ctx, vshad, 0, 0);
+  d_ctx->lpVtbl->VSSetConstantBuffers(d_ctx, 0, 1, &uniforms_buffer);
+  d_ctx->lpVtbl->PSSetShader(d_ctx, pshad, 0, 0);
+  d_ctx->lpVtbl->PSSetConstantBuffers(d_ctx, 0, 1, &uniforms_buffer);
+  d_ctx->lpVtbl->PSSetSamplers(d_ctx, 0, 1, &sampler);
+  
+  // Coordinates here are the targets' pixels, so the kernel is too.
+  Vec2F32 viewport_dim = v2f32((F32)resolution.x, (F32)resolution.y);
+  R_CoreBlurUniforms uniforms = r_core_blur_uniforms(params, viewport_dim, params->blur_size, 0);
+  ID3D11ShaderResourceView *null_srv = 0;
+  for(Axis2 axis = Axis2_X; axis <= Axis2_Y; axis = (Axis2)(axis + 1))
+  {
+    r_core_blur_pass(&uniforms, params, axis, viewport_dim, resolution);
+    D3D11_MAPPED_SUBRESOURCE sub_rsrc = {0};
+    d_ctx->lpVtbl->Map(d_ctx, (ID3D11Resource *)uniforms_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub_rsrc);
+    MemoryCopy((U8 *)sub_rsrc.pData, &uniforms, sizeof(uniforms));
+    d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)uniforms_buffer, 0);
+    D3D11_RECT *scissor = (axis == Axis2_X ? &full : &clip_rect);
+    d_ctx->lpVtbl->RSSetScissorRects(d_ctx, 1, scissor);
+    d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, axis == Axis2_X ? &scratch_rtv : &stage_rtv, 0);
+    d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, axis == Axis2_X ? &stage_srv : &scratch_srv);
+    d_ctx->lpVtbl->Draw(d_ctx, 4, 0);
+    d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &null_srv);
+  }
+}
+#endif
+
 internal void
 r_d3d11_blur(R_PassParams_Blur *params, Vec2S32 resolution,
              ID3D11RenderTargetView *stage_rtv, ID3D11ShaderResourceView *stage_srv,
              ID3D11RenderTargetView *scratch_rtv, ID3D11ShaderResourceView *scratch_srv)
 {
+#if R_D3D11_CORE_SHADERS != 0
+  r_d3d11_blur_core(params, resolution, stage_rtv, stage_srv, scratch_rtv, scratch_srv);
+  return;
+#endif
   ID3D11DeviceContext1 *d_ctx = r_d3d11_state->device_ctx;
   ID3D11SamplerState *sampler   = r_d3d11_state->samplers[R_Tex2DSampleKind_Linear];
   ID3D11VertexShader *vshad     = r_d3d11_state->vshads[R_D3D11_VShadKind_Blur];
@@ -1626,6 +1728,22 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
             // rjf: get texture sample map matrix, based on format
             Mat4x4F32 texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture->format);
             
+#if R_D3D11_CORE_SHADERS != 0
+            // rjf: upload uniforms
+            {
+              Mat3x3F32 group_xform = group_params->xform;
+              if(to_surface)
+              {
+                group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
+              }
+              R_CoreRectUniforms uniforms = r_core_rect_uniforms(pass_viewport_dim, group_params, group_xform, texture->format, texture->size, 0);
+              uniforms_buffer = r_d3d11_state->core_rect_cbuffer;
+              D3D11_MAPPED_SUBRESOURCE sub_rsrc = {0};
+              d_ctx->lpVtbl->Map(d_ctx, (ID3D11Resource *)uniforms_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub_rsrc);
+              MemoryCopy((U8 *)sub_rsrc.pData, &uniforms, sizeof(uniforms));
+              d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)uniforms_buffer, 0);
+            }
+#else
             // rjf: upload uniforms
             R_D3D11_Uniforms_Rect uniforms = {0};
             {
@@ -1653,6 +1771,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
               MemoryCopy((U8 *)sub_rsrc.pData, &uniforms, sizeof(uniforms));
               d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)uniforms_buffer, 0);
             }
+#endif
 
             // rjf: setup output merger
             d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, to_surface ? &target->rtv : &wnd->stage_color_rtv, 0);
@@ -2100,6 +2219,13 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
               R_D3D11_Tex2D *texture = r_d3d11_tex2d_from_handle(texture_handle);
               Mat4x4F32 texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture->format);
 
+#if R_D3D11_CORE_SHADERS != 0
+              R_CoreRectUniforms uniforms = r_core_rect_uniforms(v2f32(resolution.x, resolution.y), group_params, group_params->xform, texture->format, texture->size, 0);
+              uniforms_buffer = r_d3d11_state->core_rect_cbuffer;
+              d_ctx->lpVtbl->Map(d_ctx, (ID3D11Resource *)uniforms_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub_rsrc);
+              MemoryCopy((U8 *)sub_rsrc.pData, &uniforms, sizeof(uniforms));
+              d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)uniforms_buffer, 0);
+#else
               R_D3D11_Uniforms_Rect uniforms = {0};
               uniforms.viewport_size = v2f32(resolution.x, resolution.y);
               uniforms.opacity = 1-group_params->transparency;
@@ -2116,6 +2242,7 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
               d_ctx->lpVtbl->Map(d_ctx, (ID3D11Resource *)uniforms_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub_rsrc);
               MemoryCopy((U8 *)sub_rsrc.pData, &uniforms, sizeof(uniforms));
               d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)uniforms_buffer, 0);
+#endif
 
               d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, &stage_color_rtv, 0);
               d_ctx->lpVtbl->OMSetDepthStencilState(d_ctx, r_d3d11_state->noop_depth_stencil, 0);

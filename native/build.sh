@@ -96,6 +96,12 @@ fi
 # Extra compiler flags for one build, e.g. WHEELHOUSE_CFLAGS=-DR_OGL_CORE_SHADERS=1
 # to draw rects and blurs with the generated shaders (tools/generate-core-shaders.sh).
 auto_compile_flags="$auto_compile_flags ${WHEELHOUSE_CFLAGS:-}"
+# core_shaders: draw rects and blurs with the shaders generated from Slang
+# (native/src/shaders, tools/generate-core-shaders.sh) on every backend.
+if [ -n "${core_shaders+x}" ]; then
+  auto_compile_flags="$auto_compile_flags -DR_OGL_CORE_SHADERS=1 -DR_MTL_CORE_SHADERS=1"
+  echo "[rect and blur shaders generated from Slang]"
+fi
 clang_common="-I../native/src/ -I/usr/include/freetype2/ -I../local/ -D_GNU_SOURCE -g -DBUILD_GIT_HASH=\"$git_hash\" -DBUILD_GIT_HASH_FULL=\"$git_hash_full\" -Wno-unknown-warning-option -fdiagnostics-absolute-paths -Wall -Wno-missing-braces -Wno-unused-function -Wno-writable-strings -Wno-unused-value -Wno-unused-variable -Wno-unused-local-typedef -Wno-deprecated-register -Wno-deprecated-declarations -Wno-unused-but-set-variable -Wno-single-bit-bitfield-constant-conversion -Wno-compare-distinct-pointer-types -Wno-initializer-overrides -Wno-incompatible-pointer-types-discards-qualifiers -Wno-for-loop-analysis -Xclang -flto-visibility-public-std -D_USE_MATH_DEFINES -Dstrdup=_strdup -Dgnu_printf=printf"
 if [ "$host_os" = "Darwin" ]; then
   clang_common="$clang_common -x objective-c"
