@@ -241,12 +241,12 @@ uishell_check_blur_mask(U32 *failures)
 internal F32
 uishell_rect_semantics_linear(R_Readback *pixels, S32 x, S32 y, U32 channel)
 {
-  // BGRA bytes. OpenGL reads back its linear stage; D3D11 and Metal read back
-  // their sRGB-encoded final target.
+  // BGRA bytes. OpenGL reads back its linear stage and D3D11 copies its
+  // linear stage into a UNORM target; only Metal's final target is sRGB.
   U8 *p = pixels->data.str + ((U64)y*pixels->size.x + x)*4;
   U8 bgra_index[] = {2, 1, 0, 3}; // channel 0..3 = r, g, b, a
   F32 v = (F32)p[bgra_index[channel]]/255.f;
-#if R_BACKEND != R_BACKEND_OPENGL
+#if R_BACKEND == R_BACKEND_METAL
   if(channel < 3)
   {
     v = (v <= 0.04045f) ? v/12.92f : pow_f32((v + 0.055f)/1.055f, 2.4f);
@@ -259,7 +259,7 @@ internal void
 uishell_check_rect_semantics(U32 *failures)
 {
   Temp scratch = scratch_begin(0, 0);
-  Vec2S32 size = v2s32(128, 64);
+  Vec2S32 size = v2s32(192, 64);
   DR_Bucket *bucket = dr_bucket_make();
   DR_BucketScope(bucket)
   {
@@ -278,12 +278,15 @@ uishell_check_rect_semantics(U32 *failures)
     // GLSL and HLSL.
     dr_rect(r2f32p(64, 8, 88, 32), v4f32(1, 1, 1, 1), 8, 0, 0);
 
-    // C: a transform that doubles size doubles the radius too, so zoomed
-    // content looks the same, only larger. (50,20)-(60,30) lands at
-    // (100,40)-(120,60) with a radius of 8 on screen, not 4.
+    // C: a transform that doubles size doubles the radius and softness too,
+    // so zoomed content looks the same, only larger. (66,2)-(86,22) lands at
+    // (132,4)-(172,44) with a radius of 16 and softness 2 on screen. The
+    // probe 5.5 px in from the corner along the diagonal is cut by that, but
+    // filled by an unscaled radius of 8 and softness of 1. (The softness inset
+    // matters: a probe nearer the corner is cut either way.)
     DR_XForm2DScope(make_scale_3x3f32(v2f32(2, 2)))
     {
-      dr_rect(r2f32p(50, 20, 60, 30), v4f32(1, 1, 1, 1), 4, 0, 1);
+      dr_rect(r2f32p(66, 2, 86, 22), v4f32(1, 1, 1, 1), 8, 0, 1);
     }
 
     // D: group transparency 0.5 halves coverage once, not colour and
@@ -319,8 +322,9 @@ fprintf(stderr, "%.*s rect %s: %s (" fmt ")\n", str8_varg(backend), (label), _pa
     RectCase("B zero softness keeps the inside", L(76, 20, 0) > 0.9f, "r %.2f", L(76, 20, 0));
     RectCase("B zero softness cuts the corner", L(65, 9, 0) < 0.1f, "r %.2f", L(65, 9, 0));
     // C
-    RectCase("C scaled rect fills its middle", L(110, 50, 0) > 0.9f, "r %.2f", L(110, 50, 0));
-    RectCase("C radius scales with the transform", L(101, 41, 0) < 0.2f, "r at corner %.2f", L(101, 41, 0));
+    RectCase("C scaled rect fills its middle", L(152, 24, 0) > 0.9f, "r %.2f", L(152, 24, 0));
+    RectCase("C scaled corner fills further in", L(142, 14, 0) > 0.9f, "r 10.5 px in %.2f", L(142, 14, 0));
+    RectCase("C radius scales with the transform", L(137, 9, 0) < 0.2f, "r 5.5 px in %.2f", L(137, 9, 0));
     // D
     RectCase("D transparency 0.5 gives half", L(106, 20, 0) > 0.42f && L(106, 20, 0) < 0.58f, "r %.2f", L(106, 20, 0));
     // E
