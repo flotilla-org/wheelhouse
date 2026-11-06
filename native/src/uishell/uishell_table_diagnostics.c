@@ -736,6 +736,24 @@ uishell_table_diagnostics(RD_WindowState *ws)
     TableCheck(wm_take_wait_timeout_us() == max_U64, "a wait deadline bounds one wait");
   }
 
+  // An empty table says "No rows" in its body, unless its status line is
+  // saying why it has none; a table with rows says nothing.
+  {
+    WheelhouseText header[] = {{(U8 *)"A", 1}, {(U8 *)"B", 1}};
+    WheelhouseTable *empty = wheelhouse_table_open_cells(header, 2, 1, 0, line, digit);
+    BinnacleSnapshot none = uishell_table_diag_frame(empty, 900, 600, 0);
+    TableCheck(empty != 0 && str8_match(uishell_table_empty_message(&none, str8_zero()), str8_lit("No rows"), 0),
+               "an empty table says No rows");
+    TableCheck(uishell_table_empty_message(&none, str8_lit("Connecting…")).size == 0,
+               "a table still connecting leaves it to the status line");
+    wheelhouse_table_free(empty);
+    WheelhouseTable *records = wheelhouse_table_open((WheelhouseText){(U8 *)"records", 7}, line, digit, 0, 0);
+    BinnacleSnapshot some = uishell_table_diag_frame(records, 900, 600, 0);
+    TableCheck(some.axes[BINNACLE_ROWS].count != 0 && uishell_table_empty_message(&some, str8_zero()).size == 0,
+               "a table with rows says nothing in its body");
+    wheelhouse_table_free(records);
+  }
+
   // Frame cost: the 10^15-row table costs about what 1,000 rows do.
   F64 records_us = uishell_table_diag_bench(str8_lit("records"), line, digit);
   F64 huge_us = uishell_table_diag_bench(str8_lit("huge"), line, digit);
