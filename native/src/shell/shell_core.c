@@ -11117,6 +11117,10 @@ rd_window_frame(void)
     }
     
     //- rjf: draw border/overlay color to signify error
+    // Only beside the status bar, which says what the error was and fades it
+    // (#536); without one there is nothing to explain the border, and the
+    // error is in the log.
+    if(!rd_setting_b32_from_name(str8_lit("show_status_bar"))) { ws->error_t = 0; }
     if(ws->error_t > 0.01f) UI_TagF("bad")
     {
       Vec4F32 color = ui_color_from_name(str8_lit("text"));
