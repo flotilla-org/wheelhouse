@@ -143,6 +143,16 @@ uishell_table_rect(Rng2F32 origin, BinnacleRect r)
   return r2f32p(origin.x0+r.x, origin.y0+r.y, origin.x0+r.x+r.width, origin.y0+r.y+r.height);
 }
 
+// What an empty table says in its body, as on the web: "No rows" once it
+// has no rows or no columns, but nothing while its status line says why
+// (connecting, loading, retrying, failed).
+internal String8
+uishell_table_empty_message(BinnacleSnapshot *snap, String8 status)
+{
+  B32 empty = snap->axes[BINNACLE_ROWS].count == 0 || snap->axes[BINNACLE_COLS].count == 0;
+  return empty && status.size == 0 ? str8_lit("No rows") : str8_zero();
+}
+
 internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
 {
   UIShell_TableDraw *d = (UIShell_TableDraw *)user_data;
@@ -614,7 +624,7 @@ WH_VIEW_UI_FUNCTION_DEF(table)
       uishell_table_find_step(state, -1);
     }
   }
-  // A described table's state (connecting, retrying, failed, partly shown)
+  // A described table's state (connecting, loading, retrying, failed, partly shown)
   // takes a line above the Grid, as of the last frame.
   String8 status = push_str8_copy(scratch.arena, uishell_table_text(wheelhouse_table_status(state->table)));
   F32 status_h = status.size != 0 ? line : 0;
@@ -775,6 +785,17 @@ WH_VIEW_UI_FUNCTION_DEF(table)
     state->content_px[axis] = !(thumb.size > 0 && thumb.size < 1) ? 0 : a->extent - body + (F32)(body/thumb.size);
   }
   ui_box_equip_custom_draw(box, uishell_table_draw, draw);
+  String8 empty = uishell_table_empty_message(&draw->snap, uishell_table_text(wheelhouse_table_status(state->table)));
+  if(empty.size != 0) UI_Parent(box) UI_TagF("weak") UI_TextAlignment(UI_TextAlign_Center)
+  {
+    F32 left = draw->snap.axes[BINNACLE_COLS].header, top = draw->snap.axes[BINNACLE_ROWS].header;
+    ui_set_next_fixed_x(left);
+    ui_set_next_fixed_y(top);
+    ui_set_next_fixed_width(Max(grid_dim.x - left, 0));
+    ui_set_next_fixed_height(Max(grid_dim.y - top, 0));
+    UI_Box *message = ui_build_box_from_string(UI_BoxFlag_DrawText, str8_lit("table_empty"));
+    ui_box_equip_display_string(message, empty);
+  }
   // A drag can autoscroll and a pending view fills next frame; a live
   // table only changes at its next tick.
   if(draw->snap.capturing || draw->snap.view_pending) { rd_request_frame(); }
