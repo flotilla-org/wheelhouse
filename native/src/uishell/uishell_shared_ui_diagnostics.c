@@ -167,6 +167,74 @@ uishell_check_metal_blur_kernel_bounds(U32 *failures)
 }
 #endif
 
+#if R_BACKEND == R_BACKEND_OPENGL
+// Blur a field of one-pixel stripes through a rounded rect and read it back.
+// Where the blur applies, neighbouring pixels converge; where it doesn't,
+// they keep the stripes' full contrast. Catches the blur shader's corner
+// mask discarding the inside of the rect instead of the outside, and a clip
+// that leaves nothing on the target blurring the whole rect anyway.
+internal S32
+uishell_opengl_blur_contrast(R_Readback *pixels, S32 x, S32 y)
+{
+  U8 *a = pixels->data.str + ((U64)y*pixels->size.x + x)*4;
+  U8 *b = a + 4;
+  S32 result = (S32)a[1] - (S32)b[1];
+  return result < 0 ? -result : result;
+}
+
+internal void
+uishell_check_opengl_blur_mask(U32 *failures)
+{
+  Temp scratch = scratch_begin(0, 0);
+  Vec2S32 size = v2s32(96, 64);
+  Rng2F32 blur_rect = r2f32p(24, 16, 72, 48);
+  Rng2F32 clips[] =
+  {
+    {0},                         // unclipped
+    r2f32p(200, 200, 300, 300),  // entirely off the target: blurs nothing
+  };
+  for EachElement(clip_idx, clips)
+  {
+    DR_Bucket *bucket = dr_bucket_make();
+    DR_BucketScope(bucket)
+    {
+      for(S32 x = 0; x < size.x; x += 1)
+      {
+        F32 v = (F32)(x & 1);
+        dr_rect(r2f32p((F32)x, 0, (F32)x + 1, (F32)size.y), v4f32(v, v, v, 1), 0, 0, 0);
+      }
+      DR_ClipScope(clips[clip_idx])
+      {
+        dr_blur(blur_rect, 8, 8);
+      }
+    }
+    R_Readback pixels = r_pass_list_readback(scratch.arena, size, &bucket->passes);
+    UIImportCheck(pixels.format == R_Tex2DFormat_BGRA8 && pixels.size.x == size.x && pixels.size.y == size.y &&
+                  pixels.data.size >= (U64)size.x*size.y*4);
+    if(pixels.format != R_Tex2DFormat_BGRA8 || pixels.data.size < (U64)size.x*size.y*4)
+    {
+      continue;
+    }
+    S32 outside = uishell_opengl_blur_contrast(&pixels, 8, 32);
+    S32 center = uishell_opengl_blur_contrast(&pixels, 48, 32);
+    S32 corner = uishell_opengl_blur_contrast(&pixels, 25, 17);  // past the rounded corner
+    fprintf(stderr, "opengl blur clip %d: stripe contrast outside %d, center %d, corner %d\n",
+            (int)clip_idx, outside, center, corner);
+    UIImportCheck(outside > 200);
+    UIImportCheck(corner > 200);
+    if(clip_idx == 0)
+    {
+      UIImportCheck(center < 64);
+    }
+    else
+    {
+      UIImportCheck(center > 200);
+    }
+  }
+  scratch_end(scratch);
+}
+#endif
+
 // Check raster coverage through every platform provider, including descenders.
 internal void
 uishell_check_raster_baselines(Arena *arena, U32 *failures)
@@ -348,6 +416,10 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   fprintf(stderr, "config and folder paths: %u failures\n", failures);
 #if R_BACKEND == R_BACKEND_METAL
   uishell_check_metal_blur_kernel_bounds(&failures);
+#endif
+#if R_BACKEND == R_BACKEND_OPENGL
+  uishell_check_opengl_blur_mask(&failures);
+  fprintf(stderr, "opengl blur mask: %u failures\n", failures);
 #endif
   fprintf(stderr, "shared UI diagnostics: %s (%u failures)\n", failures ? "FAIL" : "PASS", failures);
   scratch_end(scratch);

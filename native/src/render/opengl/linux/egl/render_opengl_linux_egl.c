@@ -191,6 +191,10 @@ internal void
 r_ogl_os_window_unequip(WM_Window os, R_Handle r)
 {
   R_OGL_LNX_Window *w = (R_OGL_LNX_Window *)r.u64[0];
+  if(w == 0)
+  {
+    return;
+  }
   if(eglGetCurrentSurface(EGL_DRAW) == w->surface)
   {
     eglMakeCurrent(r_ogl_lnx_state->display, r_ogl_lnx_state->pbuffer, r_ogl_lnx_state->pbuffer, r_ogl_lnx_state->context);
