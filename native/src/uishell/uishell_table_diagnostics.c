@@ -42,6 +42,13 @@ uishell_table_diag_nav(S32 x, S32 y, UI_EventDeltaUnit unit)
   return (UI_Event){.kind = UI_EventKind_Navigate, .delta_unit = unit, .delta_2s32 = v2s32(x, y)};
 }
 
+// A cell painter that paints nothing, for checks of the rest of the draw.
+internal void
+uishell_table_diag_no_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, String8 text, B32 right, Vec4F32 color)
+{
+  (void)user; (void)box; (void)cell; (void)clip; (void)text; (void)right; (void)color;
+}
+
 internal String8
 uishell_table_diag_cell(Arena *arena, WheelhouseTable *table, U64 row, U64 col)
 {
@@ -334,6 +341,45 @@ uishell_table_diagnostics(RD_WindowState *ws)
       rd_fixture_remove(linked);
       rd_fixture_remove(canned);
       temp_end(temp);
+    }
+    // A table smaller than its View ends at its last row and column, as on
+    // the web: no band, rule or wash is drawn past them.
+    {
+      WheelhouseText cells[] = {{(U8 *)"A", 1}, {(U8 *)"B", 1}, {(U8 *)"1", 1}, {(U8 *)"2", 1}, {(U8 *)"3", 1}, {(U8 *)"4", 1}};
+      WheelhouseTable *table = wheelhouse_table_open_cells(cells, 2, 3, 0, line, digit);
+      UIShell_TableDraw d = {table, uishell_table_diag_frame(table, 900, 600, 0), uishell_table_diag_no_text, 0};
+      BinnacleAxisSnapshot *rows = &d.snap.axes[BINNACLE_ROWS], *cols = &d.snap.axes[BINNACLE_COLS];
+      F32 x_end = cols->header, y_end = rows->header;
+      for(size_t i = 0; i < cols->strip_len; i += 1) { x_end = Max(x_end, cols->strip[i].offset+cols->strip[i].size); }
+      for(size_t i = 0; i < rows->strip_len; i += 1) { y_end = Max(y_end, rows->strip[i].offset+rows->strip[i].size); }
+      UI_EventList no_events = {0};
+      UI_AnimationInfo no_animation = {0};
+      ui_begin_build(ws->os, &no_events, &ws->ui->icon_info, ws->theme, &no_animation, 1.f/60, 1.f/60);
+      UI_Box box = ui_nil_box;
+      box.rect = r2f32p(0, 0, 900, 600);
+      DR_Bucket *bucket = dr_bucket_make();
+      DR_BucketScope(bucket) { uishell_table_draw(&box, &d); }
+      ui_end_build();
+      F32 x_max = 0, y_max = 0;
+      U64 count = 0;
+      for(R_PassNode *pass = bucket->passes.first; pass != 0; pass = pass->next)
+      {
+        if(pass->v.kind != R_PassKind_UI) { continue; }
+        for(R_BatchGroup2DNode *group = pass->v.params_ui->rects.first; group != 0; group = group->next)
+        for(R_BatchNode *batch = group->batches.first; batch != 0; batch = batch->next)
+        {
+          R_Rect2DInst *rects = (R_Rect2DInst *)batch->v.v;
+          U64 n = batch->v.byte_count/group->batches.bytes_per_inst;
+          for(U64 idx = 0; idx < n; idx += 1, count += 1)
+          {
+            x_max = Max(x_max, rects[idx].dst.x1);
+            y_max = Max(y_max, rects[idx].dst.y1);
+          }
+        }
+      }
+      TableCheck(table != 0 && rows->count == 2 && cols->count == 2 && x_end < 900 && y_end < 600, "a small table's cells end inside its View");
+      TableCheck(count != 0 && x_max <= x_end+1.f && y_max <= y_end+1.f, "a small table draws nothing past its last row and column");
+      wheelhouse_table_free(table);
     }
     for EachElement(n, names)
     {
