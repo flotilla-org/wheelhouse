@@ -306,3 +306,10 @@ fn the_claude_translators_goldens_read_as_version_two() {
     assert!(origins.iter().any(|o| o.kind == OriginKind::TaskNotification));
     assert!(origins.iter().any(|o| o.kind == OriginKind::Other("harness".into())));
 }
+
+#[test]
+fn an_interrupt_outcome_without_its_list_still_reads() {
+    let line = br#"{"type":"RunFinished","runId":"r","outcome":{"type":"interrupt"}}"#;
+    let Ok(Some(Event::RunFinished(e))) = parse_line(line) else { panic!() };
+    assert_eq!(e.outcome, Some(Outcome::Interrupt { interrupts: vec![] }));
+}

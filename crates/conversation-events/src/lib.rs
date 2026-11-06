@@ -213,10 +213,12 @@ pub enum Outcome {
     },
     /// The run waits for these; a new run resumes from them.
     Interrupt {
+        #[serde(default)]
         interrupts: Vec<Interrupt>,
     },
     Cancelled,
     /// An outcome this version doesn't know, read as success as AG-UI says.
+    /// Only read: written back, it would be `{"type":"unknown"}`.
     #[serde(other)]
     Unknown,
 }

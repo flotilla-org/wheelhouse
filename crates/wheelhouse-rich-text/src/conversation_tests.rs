@@ -937,3 +937,22 @@ fn a_view_follows_a_growing_conversation(tc: TestCase) {
     let window = view.window(doc);
     assert!(window.at_end && window.new == 0, "jumping to the end re-arms follow");
 }
+
+#[test]
+fn a_late_title_that_backfill_reads_before_its_start_still_wins() {
+    let bytes = [
+        line(HELLO),
+        line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"web_search","title":"first"}"#),
+        line(r#"{"type":"ToolCallEnd","threadId":"t","seq":2,"toolCallId":"c","title":"latest","kind":"web"}"#),
+    ]
+    .concat();
+    let ended = whole(&bytes);
+    let mut tail = RichText::tuned_conversation(&bytes, RING_CAPACITY, Tuning { tail_items: 0, tail_bytes: 1, step: Some(1) });
+    while tail.backfill(Duration::from_secs(1)) > 0 {}
+    let head = |rich: &RichText| match rich.doc().detail(rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap()) {
+        Detail::Section { title, tool, .. } => (title.clone(), *tool),
+        _ => unreachable!(),
+    };
+    assert_eq!(head(&tail), ("latest".into(), ToolKind::Web));
+    assert_eq!(canon(tail.doc()), canon(ended.doc()));
+}

@@ -632,7 +632,9 @@ pub(crate) struct Conversation {
     orphans: HashMap<Key, Vec<(u64, Event)>>,
     /// The subagent threads each tool call started, by the call's key.
     subagents: HashMap<Key, Vec<String>>,
-    /// Each call an open Interrupt names: the Interrupt's id and line.
+    /// Each call an open Interrupt names: the Interrupt's id and line. Only a
+    /// resume entry closes one, `cancelled` included; a cancelled run doesn't.
+    /// (AG-UI: a run resumes its Interrupts through resume entries.)
     waiting: HashMap<Key, (String, u64)>,
     /// The line that answered each Interrupt. Backfill reads an answer
     /// before the Interrupt it answers.
@@ -1008,6 +1010,9 @@ impl Conversation {
 
     /// A title or kind that came after the call's start: the latest wins.
     fn retitle(&mut self, key: Key, title: Option<String>, kind: Option<EventToolKind>) {
+        if title.is_none() && kind.is_none() {
+            return;
+        }
         if let Some(Body::Tool { name, title: t, kind: k, args, nesting, shown, .. }) = self.items.get_mut(&key).map(|i| &mut i.body) {
             if let Some(title) = title {
                 *t = title;
