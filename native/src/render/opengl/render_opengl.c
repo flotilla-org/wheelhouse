@@ -131,6 +131,19 @@ r_ogl_scissor_from_pixel_clip(Rng2F32 clip_px, Vec2S32 attachment_size)
   return 1;
 }
 
+// The blur kernel folds each pair of taps into one bilinear sample between
+// them (see the kernel below), as D3D11's linear, clamped sampler does.
+// Nearest sampling would land every folded tap on one texel and turn fine
+// detail into its negative instead of averaging it.
+internal void
+r_ogl_blur_sampling(void)
+{
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
 // Blurs params->rect of stage in place, through scratch, with the window
 // path's two separable passes. viewport_dim is in points (the units of
 // params->rect and params->clip), pixel_dim the targets' size in pixels.
@@ -220,8 +233,7 @@ r_ogl_blur(R_PassParams_Blur *params, F32 backing_scale, Vec2F32 viewport_dim, V
     glBindFramebufferScope(GL_FRAMEBUFFER, scratch->fbo)
       glBindTextureScope(GL_TEXTURE_2D, stage->color_texture)
     {
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      r_ogl_blur_sampling();
       glUniform2f(glGetUniformLocation(shader, "direction"), 1.f/pixel_dim.x, 0);
       glUniform1i(glGetUniformLocation(shader, "tex"), 0);
       glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -231,8 +243,7 @@ r_ogl_blur(R_PassParams_Blur *params, F32 backing_scale, Vec2F32 viewport_dim, V
     glBindFramebufferScope(GL_FRAMEBUFFER, stage->fbo)
       glBindTextureScope(GL_TEXTURE_2D, scratch->color_texture)
     {
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      r_ogl_blur_sampling();
       glUniform2f(glGetUniformLocation(shader, "direction"), 0, 1.f/pixel_dim.y);
       glUniform1i(glGetUniformLocation(shader, "tex"), 0);
       glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
