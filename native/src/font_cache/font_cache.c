@@ -587,14 +587,15 @@ fnt_hash2style_from_tag_size_raster_scale_flags(FNT_Tag tag, F32 size, F32 raste
   //- rjf: tag * size -> style hash
   U64 style_hash = {0};
   {
-    F64 size_f64 = size;
-    F64 raster_scale_f64 = raster_scale;
+    // Read the F64 bits through unions; a U64 pointer to an F64 breaks strict aliasing.
+    union { F64 f64; U64 u64; } size_bits = {.f64 = (F64)size};
+    union { F64 f64; U64 u64; } raster_scale_bits = {.f64 = (F64)raster_scale};
     U64 buffer[] =
     {
       tag.u64[0],
       tag.u64[1],
-      *(U64 *)(&size_f64),
-      *(U64 *)(&raster_scale_f64),
+      size_bits.u64,
+      raster_scale_bits.u64,
       (U64)flags,
     };
     style_hash = fnt_little_hash_from_string(5381, str8((U8 *)buffer, sizeof(buffer)));

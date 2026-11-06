@@ -532,7 +532,7 @@ entry_point(CmdLine *cmd_line)
                                     "--scroll_region_fixture\nOpen the two-axis scrollbar fixture.\n\n"
                                     "--table[:<name>]\nOpen a table tab over a canned table (records, huge or live), or a described table by its link (http://host:port/tables/<table>?namespace=<ns>).\n\n"
                                     "--managed_content_diagnostics\nRun managed terminal reconciliation checks and exit (Unix).\n\n"
-                                    "--shared_ui_diagnostics --shared_ui_fixture_dir:DIR\nRun config, file-picker and Metal blur regressions using an empty temporary directory.\n\n"
+                                    "--shared_ui_diagnostics --shared_ui_fixture_dir:DIR\nRun config, file-picker and Metal and OpenGL blur regressions using an empty temporary directory.\n\n"
                                     "--panel_diagnostics\nRun panel drop and layout checks and exit.\n\n"
                                     "--jackstay_geometry_diagnostics\nCheck logical viewport and backing-pixel sizes and exit.\n\n"
                                     "--live_resize_diagnostics\nCheck Metal presentation during the native resize tracking loop and exit.\n\n"
