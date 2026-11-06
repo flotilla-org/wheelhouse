@@ -293,7 +293,16 @@ impl View {
         }
     }
 
-    pub(crate) fn anchor_was(&self, doc: &Tree) -> Option<AnchorWas> {
+    /// Before an edit. Where the end held the anchor back, so it shows
+    /// elsewhere than it says, it moves to where it shows: growth keeps
+    /// what is shown, not what the anchor said.
+    pub(crate) fn anchor_was(&mut self, doc: &Tree) -> Option<AnchorWas> {
+        if let Some(wanted) = self.anchor_top(doc) {
+            let shown = wanted.clamp(0.0, self.max_top());
+            if let Some(anchor) = &mut self.anchor {
+                anchor.viewport_offset += wanted - shown;
+            }
+        }
         let anchor = self.anchor?;
         let id = doc.get(anchor.key)?;
         Some(AnchorWas { hash: doc.node(id).hash, entry: doc.entry_of(anchor.key, anchor.part)? })
@@ -363,14 +372,22 @@ impl View {
         depth.clamp(0.0, size)
     }
 
+    /// Where the anchor puts the viewport's top, before clamping; None while
+    /// following or with no anchor.
+    fn anchor_top(&self, doc: &Tree) -> Option<f64> {
+        if self.at_end {
+            return None;
+        }
+        let anchor = self.anchor.as_ref()?;
+        let entry = doc.entry_of(anchor.key, anchor.part)?;
+        Some(self.heights.offset_of(entry) + self.anchor_depth(entry, anchor) - anchor.viewport_offset)
+    }
+
     pub fn top(&self, doc: &Tree) -> f64 {
         if self.at_end {
             return self.max_top();
         }
-        let Some(anchor) = &self.anchor else { return 0.0 };
-        let Some(entry) = doc.entry_of(anchor.key, anchor.part) else { return 0.0 };
-        let top = self.heights.offset_of(entry) + self.anchor_depth(entry, anchor) - anchor.viewport_offset;
-        top.clamp(0.0, self.max_top())
+        self.anchor_top(doc).map_or(0.0, |top| top.clamp(0.0, self.max_top()))
     }
 
     fn anchor_at(&mut self, doc: &Tree, top: f64) {

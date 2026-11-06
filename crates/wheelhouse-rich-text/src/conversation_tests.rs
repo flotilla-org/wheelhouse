@@ -830,7 +830,10 @@ fn a_view_follows_a_growing_conversation(tc: TestCase) {
             continue;
         }
         assert!(!window.at_end, "growth never re-arms follow");
-        assert_eq!(view.anchor(), anchor, "growth never moves a reader's anchor");
+        // Its offset in the viewport can change: where the end held it back,
+        // it moves to where it shows (checked below).
+        let point = |a: Option<Anchor>| a.map(|a| (a.key, a.part, a.position));
+        assert_eq!(point(view.anchor()), point(anchor), "growth never moves a reader's anchor");
         if let (Some(a), Some(was)) = (anchor, anchor_top) {
             let now = window.entries.iter().find(|e| e.key == a.key && e.part == a.part).map(|e| e.top - window.top);
             if window.top > 0.0 && window.top < (window.total - window.viewport).max(0.0) {
