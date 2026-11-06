@@ -323,6 +323,8 @@ fprintf(stderr, "%.*s rect %s: %s (" fmt ")\n", str8_varg(backend), (label), _pa
     RectCase("B zero softness cuts the corner", L(65, 9, 0) < 0.1f, "r %.2f", L(65, 9, 0));
     // C
     RectCase("C scaled rect fills its middle", L(152, 24, 0) > 0.9f, "r %.2f", L(152, 24, 0));
+    // A control: filled whether or not the radius scales. Failing it means
+    // something other than scaling is wrong with C.
     RectCase("C scaled corner fills further in", L(142, 14, 0) > 0.9f, "r 10.5 px in %.2f", L(142, 14, 0));
     RectCase("C radius scales with the transform", L(137, 9, 0) < 0.2f, "r 5.5 px in %.2f", L(137, 9, 0));
     // D
@@ -518,10 +520,12 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
 #if R_BACKEND == R_BACKEND_METAL
   uishell_check_metal_blur_kernel_bounds(&failures);
 #endif
+  U32 failures_before_blur = failures;
   uishell_check_blur_mask(&failures);
-  fprintf(stderr, "blur mask: %u failures\n", failures);
+  fprintf(stderr, "blur mask: %u failures\n", failures - failures_before_blur);
+  U32 failures_before_rect = failures;
   uishell_check_rect_semantics(&failures);
-  fprintf(stderr, "rect semantics: %u failures\n", failures);
+  fprintf(stderr, "rect semantics: %u failures\n", failures - failures_before_rect);
   fprintf(stderr, "shared UI diagnostics: %s (%u failures)\n", failures ? "FAIL" : "PASS", failures);
   scratch_end(scratch);
   return failures == 0;
