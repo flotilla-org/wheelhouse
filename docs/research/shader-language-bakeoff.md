@@ -4,7 +4,8 @@
 stages a common shader language for the core shaders and names a bake-off
 between WGSL and Slang. This note records that bake-off for the rect and blur
 shaders. Slug glyph curves stay out of it until Slug's licence is checked.
-The decision itself goes in the ADR.
+**Outcome:** Slang, for the core shaders and later the effects; recorded in
+ADR 0015 §5.
 
 ## What was built
 
@@ -128,9 +129,10 @@ in authoring and in debugging:
   - Its uniformity rule is a real constraint on shader structure. It cost
     nothing here, but it will shape glyph and SDF code.
 
-The recommendation is **Slang for the core shaders**, keeping WGSL as the
-effect language for now (its contract is user-facing and wgpu-compatible).
-The cost is a pinned 44 MB tool, which is needed only to change a shader.
+The recommendation was **Slang for the core shaders**, and it was taken.
+Effects follow once the core shaders have moved, so there is one shader
+language; until then the effects stay WGSL. The cost is a pinned 44 MB tool,
+which is needed only to change a shader.
 
 ## Not yet done
 
@@ -138,8 +140,9 @@ The cost is a pinned 44 MB tool, which is needed only to change a shader.
   switch, and run `--shared_ui_diagnostics` there. The uniform structs already
   match the layout those backends use, which is Metal's, and the HLSL keeps
   D3D11's input semantics (`POS`, `TEX`, `COL0`…).
-- Pin the tool versions where CI or a script can check them, once one
-  language is chosen.
+- Pin `slangc` and `spirv-cross` where CI or a script can check them.
+- Drop the WGSL ports and their generated output once D3D11 and Metal pass
+  with the Slang ones; port the effects and their contract to Slang.
 - Delete the hand-written rect and blur shaders per backend once the generated
   ones pass there (ADR 0015 §5, stage 2).
 - Metal's blur kernel isn't scaled by the backing scale, unlike OpenGL's, so a
