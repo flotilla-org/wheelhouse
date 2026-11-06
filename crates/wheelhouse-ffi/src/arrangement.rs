@@ -449,6 +449,8 @@ pub const WHEELHOUSE_INTENT_EQUALIZE_PANEL: u32 = 8;
 pub const WHEELHOUSE_OWNER_WORKSPACE: u32 = 0;
 /// A window's sidebar dock.
 pub const WHEELHOUSE_OWNER_SIDEBAR: u32 = 1;
+/// A View Dock's: the panels a View shows inside its own content.
+pub const WHEELHOUSE_OWNER_DOCK: u32 = 2;
 
 /// One intent: `kind`, its owner, and the fields it reads.
 #[repr(C)]
@@ -477,6 +479,7 @@ pub(crate) fn read_intent(i: &WheelhouseArrangementIntent) -> Result<Intent<Whee
         kind: match i.owner_kind {
             WHEELHOUSE_OWNER_WORKSPACE => OwnerKind::Workspace,
             WHEELHOUSE_OWNER_SIDEBAR => OwnerKind::Sidebar,
+            WHEELHOUSE_OWNER_DOCK => OwnerKind::Dock,
             other => return Err(format!("unknown owner kind {other}")),
         },
         id: i.owner.into(),

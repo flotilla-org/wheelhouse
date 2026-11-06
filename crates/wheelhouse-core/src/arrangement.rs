@@ -829,6 +829,9 @@ pub enum OwnerKind {
     Workspace,
     /// The sidebar's dock, as one window shows it.
     Sidebar,
+    /// A View Dock: the panels its host View shows
+    /// inside its own content.
+    Dock,
 }
 
 /// An arrangement's owner: its kind and ID (a Workspace ID; for the

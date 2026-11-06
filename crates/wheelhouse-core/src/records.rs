@@ -189,6 +189,7 @@ mod tests {
                                 children: vec![tabs("2", &["tree", "u:notes"]), tabs("3", &["git"])],
                             },
                         }),
+                        docks: Vec::new(),
                     },
                 },
                 closed: BTreeSet::from(["closed".into()]),

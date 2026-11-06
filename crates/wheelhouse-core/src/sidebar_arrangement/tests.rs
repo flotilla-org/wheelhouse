@@ -36,7 +36,7 @@ fn split(id: &str, weight: f64, axis: Axis, children: Vec<Panel>) -> Panel {
 }
 
 fn dock(children: Vec<Panel>) -> SidebarDoc {
-    SidebarDoc { dock: ArrangementDoc { root: Some(split("root", 1.0, Axis::Column, children)) } }
+    SidebarDoc { dock: ArrangementDoc { root: Some(split("root", 1.0, Axis::Column, children)), docks: Vec::new() } }
 }
 
 fn children(doc: &SidebarDoc) -> &[Panel] {
@@ -149,7 +149,7 @@ fn restore_lifts_a_merged_leaf() {
     // A dock that is one tab panel: its tabs move into a panel of their own
     // beside the restored section, an equal share each.
     let mut arrangement = fresh(&ab());
-    let leaf = SidebarDoc { dock: ArrangementDoc { root: Some(tabs("leaf", 1.0, &["u:text", "a"])) } };
+    let leaf = SidebarDoc { dock: ArrangementDoc { root: Some(tabs("leaf", 1.0, &["u:text", "a"])), docks: Vec::new() } };
     arrangement.commit(&ab(), leaf).unwrap();
     arrangement.restore(&ab(), "b").unwrap();
     let panels = children(&arrangement.doc);

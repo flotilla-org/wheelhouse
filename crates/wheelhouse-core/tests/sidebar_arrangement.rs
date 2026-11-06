@@ -55,6 +55,7 @@ fn dock(children: Vec<Panel>) -> SidebarDoc {
     SidebarDoc {
         dock: ArrangementDoc {
             root: Some(Panel { id: "root".into(), weight: 1.0, node: PanelNode::Split { axis: Axis::Column, children } }),
+            docks: Vec::new(),
         },
     }
 }

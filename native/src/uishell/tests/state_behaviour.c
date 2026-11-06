@@ -571,6 +571,14 @@ state_same_doc(WheelhouseArrangementDoc const *a, WheelhouseArrangementDoc const
             p->tab_count == q->tab_count && p->selected == q->selected);
     for(U64 t = 0; same && t < p->tab_count; t++) { same = str8_match(uishell_sidebar_string(p->tabs[t]), uishell_sidebar_string(q->tabs[t]), 0); }
   }
+  // And the same View Docks: hosts, roots and the slots away from them.
+  same = same && a->dock_count == b->dock_count;
+  for(U64 d = 0; same && d < a->dock_count; d++)
+  {
+    WheelhouseViewDock const *x = &a->docks[d], *y = &b->docks[d];
+    same = str8_match(uishell_sidebar_string(x->host), uishell_sidebar_string(y->host), 0) && x->root == y->root && x->away_count == y->away_count;
+    for(U64 i = 0; same && i < x->away_count; i++) { same = str8_match(uishell_sidebar_string(x->away[i]), uishell_sidebar_string(y->away[i]), 0); }
+  }
   return same;
 }
 
@@ -586,7 +594,7 @@ state_check_committed(RD_WindowState *ws)
     CFG_Node *owner = n->v;
     UIShell_StoreDoc doc = uishell_store_doc(scratch.arena, rd_arrangement_live(uishell_store_owner(owner)));
     WheelhouseWorkspaceArrangement *stored = wheelhouse_arrangement_get(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)), 0);
-    WheelhouseArrangementDoc ours = {doc.panels, doc.panel_count};
+    WheelhouseArrangementDoc ours = uishell_store_doc_out(&doc);
     B32 same = stored && state_same_doc(&stored->doc, &ours) &&
       str8_match(uishell_store_setting(owner, str8_lit("arrangement_generation")), push_str8f(scratch.arena, "%I64u", stored->generation), 0);
     for(U64 i = 0; same && stored && i < stored->note_count; i++) { same = stored->notes[i].kind != WHEELHOUSE_NOTE_GONE; }
@@ -1104,7 +1112,7 @@ entry_point(CmdLine *cmdline)
       F64 declared_weight = resized[1].weight;
       resized[1].weight = declared_weight + 1.0;
       resized[2].weight = 1.0;
-      WheelhouseArrangementDoc resized_doc = {resized, 3};
+      WheelhouseArrangementDoc resized_doc = {resized, 3, 0, 0};
       char *resize_error = 0;
       WheelhouseWorkspaceArrangement *committed = wheelhouse_arrangement_commit(state->core, chip_id, &resized_doc, declared ? declared->generation : 0, &resize_error);
       StateCheck(committed && committed->status == WHEELHOUSE_COMMITTED && !committed->owned &&
@@ -2378,6 +2386,66 @@ entry_point(CmdLine *cmdline)
     wheelhouse_overlay_free(overlay);
     uishell_cmd("select_workspace", .window = window->id, .cfg = state_workspace_labelled(window, str8_lit("Workspace 1"))->id);
     state_frame(ws);
+  }
+
+  //- A View Dock (CONTEXT.md, "View Dock") is its workspace's: a View moved
+  // into its host's dock keeps its Slot and is there after a restart; moved
+  // back out it is away from the dock, after a restart too, and closing it
+  // sends it home.
+  {
+    CFG_Node *dock_ws = state_workspace_labelled(window, str8_lit("reviewer"));
+    CFG_Node *host = state_slot_view(dock_ws, str8_lit("primary"));
+    CFG_Node *notes = state_slot_view(dock_ws, str8_lit("notes"));
+    StateCheck(host != &cfg_nil_node && notes != &cfg_nil_node);
+    RD_PanelAddress main_panel = rd_panel_from_cfg(host);
+    RD_PanelOwner dock = rd_dock_owner_from_view(rd_view_address_from_cfg(host));
+    RD_PanelAddress dock_panel = rd_fixture_leaf(dock);
+    uishell_cmd("move_view", .window = window->id, .panel = rd_panel_from_cfg(notes), .view = rd_view_address_from_cfg(notes),
+                .dst_panel = dock_panel, .prev_tab = rd_nil_view_address);
+    state_frame(ws);
+    state_frame(ws);
+    WheelhouseWorkspaceId id = uishell_sidebar_workspace(uishell_workspace_id_from_cfg(dock_ws));
+    WheelhouseWorkspaceArrangement *stored = wheelhouse_arrangement_get(state->core, id, 0);
+    B32 docked = stored && stored->doc.dock_count == 1 && str8_match(uishell_sidebar_string(stored->doc.docks[0].host), str8_lit("primary"), 0) &&
+      stored->doc.docks[0].root < stored->doc.panel_count && stored->doc.panels[stored->doc.docks[0].root].tab_count == 1 &&
+      str8_match(uishell_sidebar_string(stored->doc.panels[stored->doc.docks[0].root].tabs[0]), str8_lit("notes"), 0);
+    StateCheck(docked);
+    wheelhouse_arrangement_free(stored);
+    state_check_committed(ws);
+    ws = state_restart(ws, &theme, str8_zero());
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    dock_ws = state_workspace_labelled(window, str8_lit("reviewer"));
+    host = state_slot_view(dock_ws, str8_lit("primary"));
+    notes = state_slot_view(dock_ws, str8_lit("notes"));
+    dock = rd_dock_owner_from_view(rd_view_address_from_cfg(host));
+    StateCheck(notes != &cfg_nil_node && rd_panel_owner_match(rd_panel_from_cfg(notes).owner, dock));
+    state_check_committed(ws);
+    // Out to the host's panel: away from the dock, which keeps it so.
+    main_panel = rd_panel_from_cfg(host);
+    uishell_cmd("move_view", .window = window->id, .panel = rd_panel_from_cfg(notes), .view = rd_view_address_from_cfg(notes),
+                .dst_panel = main_panel, .prev_tab = rd_nil_view_address);
+    state_frame(ws);
+    state_frame(ws);
+    stored = wheelhouse_arrangement_get(state->core, id, 0);
+    StateCheck(stored && stored->doc.dock_count == 1 && stored->doc.docks[0].root == WHEELHOUSE_NONE && stored->doc.docks[0].away_count == 1 &&
+               str8_match(uishell_sidebar_string(stored->doc.docks[0].away[0]), str8_lit("notes"), 0));
+    wheelhouse_arrangement_free(stored);
+    state_check_committed(ws);
+    ws = state_restart(ws, &theme, str8_zero());
+    state = ws->sidebar;
+    window = cfg_node_from_id(ws->cfg_id);
+    dock_ws = state_workspace_labelled(window, str8_lit("reviewer"));
+    host = state_slot_view(dock_ws, str8_lit("primary"));
+    notes = state_slot_view(dock_ws, str8_lit("notes"));
+    dock = rd_dock_owner_from_view(rd_view_address_from_cfg(host));
+    StateCheck(notes != &cfg_nil_node && rd_panel_from_cfg(notes).owner.kind == RD_PanelOwnerKind_Workspace);
+    uishell_cmd("close_tab", .window = window->id, .panel = rd_panel_from_cfg(notes), .tab = rd_view_address_from_cfg(notes));
+    state_frame(ws);
+    state_frame(ws);
+    notes = state_slot_view(dock_ws, str8_lit("notes"));
+    StateCheck(notes != &cfg_nil_node && rd_panel_owner_match(rd_panel_from_cfg(notes).owner, dock));
+    state_check_committed(ws);
   }
 
   //- A restart restores them all from the workspace records, and the

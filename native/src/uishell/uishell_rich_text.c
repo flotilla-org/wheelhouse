@@ -5396,6 +5396,7 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
   return gap + card_h + gap + (status ? row_h : 0);
 }
 
+
 WH_VIEW_UI_FUNCTION_DEF(rich_text)
 {
   Temp scratch = scratch_begin(0, 0);
@@ -5520,6 +5521,8 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     s->input_read = 1;
   }
 
+  // A conversation keeps a View Dock at its right (rd_view_dock_ui).
+  if(s->conversation) { ctx->rect = rd_view_dock_ui(ctx->settings.view, ctx->rect); }
   Vec2F32 dim = dim_2f32(ctx->rect);
   UI_Box *root = &ui_nil_box;
   UI_FixedWidth(dim.x) UI_FixedHeight(dim.y) UI_ChildLayoutAxis(Axis2_Y)

@@ -250,6 +250,9 @@ typedef struct BinnacleGrid BinnacleGrid;
 // A window's sidebar dock.
 #define WHEELHOUSE_OWNER_SIDEBAR 1
 
+// A View Dock's: the panels a View shows inside its own content.
+#define WHEELHOUSE_OWNER_DOCK 2
+
 // The sidebar's dock: it accepts sections.
 #define WHEELHOUSE_DOCK_HOST_SIDEBAR 0
 
@@ -1356,10 +1359,27 @@ typedef struct {
   size_t selected;
 } WheelhouseDocPanel;
 
-// Panels, each after its parent. A split has at least one child.
+// A View Dock: the panels a workspace View shows inside its own content.
+typedef struct {
+  // The host View's slot key.
+  WheelhouseText host;
+  // Its root panel, an index into the document's panels, or
+  // WHEELHOUSE_NONE once every View has left it.
+  size_t root;
+  // Slots that left it for the workspace's panels, which closing sends
+  // back to it.
+  const WheelhouseText *away;
+  size_t away_count;
+} WheelhouseViewDock;
+
+// Panels, each after its parent. A split has at least one child. A root
+// that no dock names is the main panels' root; there is at most one. Only a
+// workspace's document has docks.
 typedef struct {
   const WheelhouseDocPanel *panels;
   size_t panel_count;
+  const WheelhouseViewDock *docks;
+  size_t dock_count;
 } WheelhouseArrangementDoc;
 
 typedef struct {

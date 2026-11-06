@@ -137,7 +137,8 @@ fn main() {
                     selected: if tabs.is_empty() { usize::MAX } else { 0 },
                 };
                 let panels = [panel(usize::MAX, "root", 1.0, &[]), panel(0, "1", left, &tabs[..4]), panel(0, "2", 1.0 - left, &tabs[4..])];
-                let doc = WheelhouseArrangementDoc { panels: panels.as_ptr(), panel_count: panels.len() };
+                let doc =
+                    WheelhouseArrangementDoc { panels: panels.as_ptr(), panel_count: panels.len(), docks: ptr::null(), dock_count: 0 };
                 let start = Instant::now();
                 let committed = wheelhouse_arrangement_commit(h, ws, &doc, generation, ptr::null_mut());
                 assert!(!committed.is_null() && (*committed).status == WHEELHOUSE_COMMITTED);
@@ -166,7 +167,9 @@ fn main() {
                 if dock.len() > 1 {
                     dock[1].weight = 0.3 + 0.02 * iteration as f64;
                 }
-                let doc = WheelhouseSidebarDoc { dock: WheelhouseArrangementDoc { panels: dock.as_ptr(), panel_count: dock.len() } };
+                let doc = WheelhouseSidebarDoc {
+                    dock: WheelhouseArrangementDoc { panels: dock.as_ptr(), panel_count: dock.len(), docks: ptr::null(), dock_count: 0 },
+                };
                 let start = Instant::now();
                 let committed = wheelhouse_sidebar_arrangement_commit(h, &doc, generation, ptr::null_mut());
                 assert_eq!((*committed).status, WHEELHOUSE_COMMITTED);

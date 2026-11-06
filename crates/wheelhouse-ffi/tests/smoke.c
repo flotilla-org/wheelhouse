@@ -362,7 +362,7 @@ static void check_workspace(const char *config_path) {
         {WHEELHOUSE_NONE, T("root"), 1.0, WHEELHOUSE_PANEL_SPLIT, WHEELHOUSE_AXIS_ROW, NULL, 0, WHEELHOUSE_NONE},
         {0, T("1"), 1.0, WHEELHOUSE_PANEL_TABS, 0, tabs, 1, 0},
     };
-    WheelhouseArrangementDoc doc = {panels, 2};
+    WheelhouseArrangementDoc doc = {panels, 2, NULL, 0};
     a = wheelhouse_arrangement_commit(h, ws, &doc, 0, &error);
     assert(a && !error && a->status == WHEELHOUSE_COMMITTED && a->owned && a->doc.panel_count == 2);
     assert(a->doc.panels[1].parent == 0 && eq(a->doc.panels[1].tabs[0], "u:1") && a->doc.panels[1].selected == 0);

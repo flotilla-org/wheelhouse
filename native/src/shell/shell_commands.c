@@ -701,6 +701,11 @@ rd_dock_command_allowed(char *action, String8 view, RD_DockRule rule)
 internal B32
 rd_dock_move_allowed(Arena *arena, char *operation, RD_ViewAddress view, RD_PanelAddress destination, Dir2 dir)
 {
+  if(rd_dock_hosted_by(destination.owner, view))
+  {
+    log_user_errorf("Cannot %s a View into its own View Dock.", operation);
+    return 0;
+  }
   B32 unavailable = 0;
   F32 width = rd_dock_target_width(arena, destination, dir, view, &unavailable);
   RD_DockRule rule = rd_dock_placement(rd_dock_view_from_address(view), rd_dock_host_from_panel(destination, width));
@@ -934,6 +939,8 @@ uishell_dispatch_tab_command(String8 name)
     Temp scratch = scratch_begin(0, 0);
     RD_ViewAddress closed = uishell_regs()->tab;
     CFG_Node *tab = rd_cfg_from_view(closed);
+    // A View that left a View Dock goes back to it instead.
+    if(rd_dock_return(closed)) { scratch_end(scratch); return 1; }
     if(!rd_dock_command_allowed("close", tab->string, rd_dock_closure(rd_dock_view_from_address(closed)))) { scratch_end(scratch); return 1; }
     RD_PanelAddress address = rd_panel_from_view(closed);
     RD_Arrangement *arrangement = rd_arrangement_from_panel_owner(scratch.arena, address.owner);

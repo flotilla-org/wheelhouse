@@ -85,7 +85,10 @@ fn tabs(id: &str, keys: &[&str]) -> Panel {
     }
 }
 fn row(children: Vec<Panel>) -> ArrangementDoc {
-    ArrangementDoc { root: Some(Panel { id: "root".into(), weight: 1.0, node: PanelNode::Split { axis: Axis::Row, children } }) }
+    ArrangementDoc {
+        root: Some(Panel { id: "root".into(), weight: 1.0, node: PanelNode::Split { axis: Axis::Row, children } }),
+        docks: Vec::new(),
+    }
 }
 
 #[test]

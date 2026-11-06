@@ -339,6 +339,10 @@ _Avoid_: Presenter, theme, skin
 A **View** laid out inline inside another View's content, such as a table **Block** in **Rich Text** or a text View in a table cell. It resolves through the same **Handlers** by media type, and its state is part of its parent's, never a separate **Slot**.
 _Avoid_: Child view, widget, inline pane
 
+**View Dock**:
+The panels a **View** shows inside its own content, beside it, holding other Views. Its Views are **Slots** of the host's **Workspace**, placed in the dock instead of the Workspace's panels: one dragged out to the Workspace keeps its **View Address** and state, and closing it there sends it back.
+_Avoid_: Inner panel, side panel, sidebar (the sidebar is the **Dashboard**'s)
+
 **Slot**:
 A **View**'s place in a **Workspace**. It is identified by a slot key: the provider's key for a View from a **Suggested Layout**, or a short generated key, in a separate namespace, for a View the user adds. It carries the View's **View Spec** and the progress of resolving it.
 _Avoid_: Tab, pane, panel

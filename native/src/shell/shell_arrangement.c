@@ -172,6 +172,7 @@ rd_panel_owner_kind_name(RD_PanelOwnerKind kind)
     default:{}break;
     case RD_PanelOwnerKind_Workspace:{return str8_lit("workspace");}break;
     case RD_PanelOwnerKind_Sidebar:{return str8_lit("sidebar");}break;
+    case RD_PanelOwnerKind_Dock:{return str8_lit("dock");}break;
   }
   return str8_zero();
 }

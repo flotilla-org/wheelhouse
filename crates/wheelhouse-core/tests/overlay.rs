@@ -380,6 +380,7 @@ fn a_structural_edit_takes_ownership_and_a_provider_change_is_flagged() {
                 }],
             },
         }),
+        docks: Vec::new(),
     };
     let generation = sidebar.arrangement(worker()).unwrap().generation;
     let commit = sidebar.set_arrangement(worker(), moved.clone(), generation).unwrap();
@@ -428,6 +429,7 @@ fn owned_session() -> (Sidebar, ArrangementDoc) {
             weight: 1.0,
             node: PanelNode::Tabs { tabs: vec!["a".into(), "c".into(), "b".into()], selected: Some("c".into()) },
         }),
+        docks: Vec::new(),
     };
     assert!(sidebar.set_arrangement(worker(), moved.clone(), view.generation).unwrap().owned);
     (sidebar, moved)
