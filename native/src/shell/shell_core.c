@@ -3498,7 +3498,8 @@ rd_panel_owner_from_host(RD_PanelOwnerKind kind, CFG_Node *host)
 
 // A View Dock's owner, by its host View (CONTEXT.md, "View Dock"): a hash of
 // the host's View Address, which a workspace View keeps across relaunch (its
-// key is its Slot key). The host is remembered so the owner leads back to it.
+// key is its Slot key). The host is remembered so the owner leads back to it;
+// the list only grows, by one node per host View seen this run.
 internal RD_PanelOwner
 rd_dock_owner_from_view(RD_ViewAddress host)
 {
@@ -3546,8 +3547,6 @@ rd_dock_hosted_by(RD_PanelOwner owner, RD_ViewAddress view)
   return 0;
 }
 
-// Sends `view` back to the View Dock it left (`dock_home`), as a new section
-// at the bottom. False when it has no dock to go back to.
 // Sets arrangements that Views move between, a workspace's main panels and
 // its View Docks: a View one of them takes from another is kept, whichever
 // is set first.
@@ -3561,6 +3560,8 @@ rd_arrangements_set(RD_Arrangement **arrangements, U64 count)
   rd_state->arrangements_setting_count = 0;
 }
 
+// Sends `view` back to the View Dock it left (`dock_home`), as a new section
+// at the bottom. False when it has no dock to go back to.
 internal B32
 rd_dock_return(RD_ViewAddress view)
 {

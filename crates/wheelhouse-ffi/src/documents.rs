@@ -817,6 +817,15 @@ mod tests {
             assert!(wheelhouse_sidebar_arrangement_commit(h, &sidebar, 0, &mut error).is_null());
             assert!(CStr::from_ptr(error).to_str().unwrap().contains("only a workspace's"));
             wheelhouse_string_free(error);
+            // A dock's root must be a root panel no other dock has taken.
+            let dock = |host: &'static str, root| WheelhouseViewDock { host: text(host), root, away: ptr::null(), away_count: 0 };
+            for bad in [[dock("u:1", 0), dock("u:3", 0)], [dock("u:1", 0), dock("u:3", 5)]] {
+                let doc = WheelhouseArrangementDoc { docks: bad.as_ptr(), dock_count: bad.len(), ..committed_doc };
+                let mut error = ptr::null_mut();
+                assert!(wheelhouse_arrangement_commit(h, ws, &doc, 1, &mut error).is_null());
+                assert!(CStr::from_ptr(error).to_str().unwrap().contains("is not a root panel"));
+                wheelhouse_string_free(error);
+            }
             wheelhouse_arrangement_free(committed);
             wheelhouse_destroy(h);
         }

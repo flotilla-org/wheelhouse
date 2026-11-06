@@ -1112,7 +1112,7 @@ entry_point(CmdLine *cmdline)
       F64 declared_weight = resized[1].weight;
       resized[1].weight = declared_weight + 1.0;
       resized[2].weight = 1.0;
-      WheelhouseArrangementDoc resized_doc = {resized, 3};
+      WheelhouseArrangementDoc resized_doc = {resized, 3, 0, 0};
       char *resize_error = 0;
       WheelhouseWorkspaceArrangement *committed = wheelhouse_arrangement_commit(state->core, chip_id, &resized_doc, declared ? declared->generation : 0, &resize_error);
       StateCheck(committed && committed->status == WHEELHOUSE_COMMITTED && !committed->owned &&
