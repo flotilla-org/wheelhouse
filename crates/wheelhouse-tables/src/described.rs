@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use binnacle_core::{Axis, Grid, Key};
-use binnacle_described::{DescribedSource, HostRequest, Received, Scope};
+use binnacle_described::{DescribedSource, HostRequest, Received, Scope, Status};
 use binnacle_described_http::{Endpoint, Event, Options, Transport};
 use binnacle_format::{format, FixedOffset, FormatContext, FormatOptions, Timestamp, Value};
 use binnacle_layout::{JsonId, Layout};
@@ -273,33 +273,9 @@ impl Described {
     }
 
     /// What to say about the table above it, if anything: connecting,
-    /// retrying, failed, or only part of its rows shown.
+    /// loading, retrying, failed, or only part of its rows shown.
     pub fn status(&self) -> Option<String> {
-        let status = self.source.status();
-        match &self.connection {
-            Connection::Failed { status, body } => {
-                return Some(match (status, body.is_empty()) {
-                    (0, _) => format!("Couldn't read the table: {body}"),
-                    (_, true) => format!("Couldn't read the table: HTTP {status}"),
-                    (_, false) => format!("Couldn't read the table: HTTP {status}: {body}"),
-                });
-            }
-            Connection::Retrying { attempt, status, body } => {
-                let why = match status {
-                    Some(status) => format!("HTTP {status}"),
-                    None => body.clone(),
-                };
-                return Some(format!("Reconnecting (attempt {attempt}): {why}"));
-            }
-            Connection::Open => {}
-        }
-        if !status.described {
-            return Some("Connecting…".into());
-        }
-        if status.partial {
-            return Some(format!("Showing the first {} rows", self.source.row_count()));
-        }
-        None
+        status_line(&self.connection, self.source.status(), self.source.row_count())
     }
 
     pub fn cell(&self, row: Key, col: Key) -> Cell {
@@ -325,6 +301,39 @@ impl Described {
     }
 }
 
+/// The status line for a watch as it stands, its source's status, and the
+/// rows it holds. Until the first rows or `synced` come, the table has no
+/// rows yet, which the body must not take for an empty table.
+fn status_line(connection: &Connection, status: &Status, rows: usize) -> Option<String> {
+    match connection {
+        Connection::Failed { status, body } => {
+            return Some(match (status, body.is_empty()) {
+                (0, _) => format!("Couldn't read the table: {body}"),
+                (_, true) => format!("Couldn't read the table: HTTP {status}"),
+                (_, false) => format!("Couldn't read the table: HTTP {status}: {body}"),
+            });
+        }
+        Connection::Retrying { attempt, status, body } => {
+            let why = match status {
+                Some(status) => format!("HTTP {status}"),
+                None => body.clone(),
+            };
+            return Some(format!("Reconnecting (attempt {attempt}): {why}"));
+        }
+        Connection::Open => {}
+    }
+    if !status.described {
+        return Some("Connecting…".into());
+    }
+    if !status.synced && rows == 0 {
+        return Some("Loading…".into());
+    }
+    if status.partial {
+        return Some(format!("Showing the first {rows} rows"));
+    }
+    None
+}
+
 /// The start of a server's answer, as one line of text.
 fn text(body: &[u8]) -> String {
     const MOST: usize = 120;
@@ -333,5 +342,20 @@ fn text(body: &[u8]) -> String {
     match line.char_indices().nth(MOST) {
         Some((at, _)) => format!("{}…", &line[..at]),
         None => line,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_described_table_is_loading_until_its_first_rows_or_synced() {
+        let mut status = Status::default();
+        status.described = true;
+        assert_eq!(status_line(&Connection::Open, &status, 0).as_deref(), Some("Loading…"));
+        assert_eq!(status_line(&Connection::Open, &status, 3), None, "rows have come");
+        status.synced = true;
+        assert_eq!(status_line(&Connection::Open, &status, 0), None, "synced with no rows: an empty table");
     }
 }

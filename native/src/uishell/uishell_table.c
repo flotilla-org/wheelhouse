@@ -145,7 +145,7 @@ uishell_table_rect(Rng2F32 origin, BinnacleRect r)
 
 // What an empty table says in its body, as on the web: "No rows" once it
 // has no rows or no columns, but nothing while its status line says why
-// (connecting, retrying, failed).
+// (connecting, loading, retrying, failed).
 internal String8
 uishell_table_empty_message(BinnacleSnapshot *snap, String8 status)
 {
@@ -616,7 +616,7 @@ WH_VIEW_UI_FUNCTION_DEF(table)
       uishell_table_find_step(state, -1);
     }
   }
-  // A described table's state (connecting, retrying, failed, partly shown)
+  // A described table's state (connecting, loading, retrying, failed, partly shown)
   // takes a line above the Grid, as of the last frame.
   String8 status = push_str8_copy(scratch.arena, uishell_table_text(wheelhouse_table_status(state->table)));
   F32 status_h = status.size != 0 ? line : 0;

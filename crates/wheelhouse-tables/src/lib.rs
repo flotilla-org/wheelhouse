@@ -443,7 +443,8 @@ impl Table {
     }
 
     /// What the host shows about the table above it, if anything: a
-    /// described table connecting, retrying or failed, or partly shown.
+    /// described table connecting, loading, retrying or failed, or partly
+    /// shown.
     pub fn status(&self) -> Option<String> {
         match &self.kind {
             Kind::Described(d) => d.status(),
