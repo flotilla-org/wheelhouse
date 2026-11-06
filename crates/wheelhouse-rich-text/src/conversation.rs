@@ -404,6 +404,23 @@ fn starts(event: &Event) -> usize {
 const FOLD: usize = 80;
 /// A search shows at most this many matches.
 const MATCHES: usize = 500;
+/// Streamed output keeps about this many of its last bytes: each delta
+/// restages what is kept, and the result replaces it whole.
+const STREAMED: usize = 16 * 1024;
+
+/// Drops all but `text`'s last [`STREAMED`] bytes or so, from a line start,
+/// once it has twice that, so each delta costs what it adds.
+fn keep_tail(text: &mut String) {
+    if text.len() <= 2 * STREAMED {
+        return;
+    }
+    let mut cut = text.len() - STREAMED;
+    while !text.is_char_boundary(cut) {
+        cut += 1;
+    }
+    let cut = text[cut..].find('\n').map_or(cut, |at| cut + at + 1);
+    text.drain(..cut);
+}
 
 /// `text` up to `chars` characters, with an ellipsis if it goes on.
 fn folded(text: &str, chars: usize) -> String {
@@ -990,6 +1007,7 @@ impl Conversation {
                         })
                     });
                     streamed.content.push_str(&e.delta);
+                    keep_tail(&mut streamed.content);
                 }
             }
             Event::ToolCallResult(e) => {

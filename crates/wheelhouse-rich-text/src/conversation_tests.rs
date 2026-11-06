@@ -956,3 +956,30 @@ fn a_late_title_that_backfill_reads_before_its_start_still_wins() {
     assert_eq!(head(&tail), ("latest".into(), ToolKind::Web));
     assert_eq!(canon(tail.doc()), canon(ended.doc()));
 }
+
+#[test]
+fn streamed_output_keeps_its_tail() {
+    let call = line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","kind":"shell"}"#);
+    let mut rich = RichText::open_conversation(&[line(HELLO), call].concat());
+    // 40 deltas with no media type of 25 lines each, about 60 KiB.
+    for d in 0..40 {
+        let lines: String = (0..25).map(|l| format!("\\u001b[32mline {:04}\\u001b[0m {}\\n", d * 25 + l, "x".repeat(40))).collect();
+        let delta = format!(r#"{{"type":"ToolCallOutput","threadId":"t","seq":{},"toolCallId":"c","delta":"{lines}"}}"#, d + 2);
+        rich.append(&line(&delta));
+    }
+    let shown = outline(rich.doc());
+    // The oldest lines are gone and the newest shown, and the escapes are
+    // read as colours, as any type but markdown, a diff or an image is.
+    assert!(shown.contains("line 0999") && !shown.contains("line 0000"), "{shown}");
+    assert!(!shown.contains("[32m"));
+    assert!(shown.len() < 3 * 16 * 1024);
+}
+
+#[test]
+fn a_question_read_twice_is_one_notice() {
+    let asked = line(
+        r#"{"type":"RunFinished","threadId":"t","seq":2,"runId":"r","outcome":{"type":"interrupt","interrupts":[{"id":"q","reason":"question","message":"Which branch?"}]}}"#,
+    );
+    let rich = whole(&[line(HELLO), asked.clone(), asked].concat());
+    assert_eq!(outline(rich.doc()).matches("Which branch?").count(), 1);
+}
