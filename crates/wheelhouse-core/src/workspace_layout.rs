@@ -431,7 +431,7 @@ impl LayoutPlan {
             };
             Panel { id: panel.id.clone(), weight: f64::from(panel.weight), node }
         }
-        (ArrangementDoc { root: Some(build(&self.definition.root, &mut held)) }, unplaced)
+        (ArrangementDoc { root: Some(build(&self.definition.root, &mut held)), docks: Vec::new() }, unplaced)
     }
 }
 

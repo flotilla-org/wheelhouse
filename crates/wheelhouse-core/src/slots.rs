@@ -435,6 +435,34 @@ fn check_spec(spec: &ViewSpec) -> Result<(), String> {
 pub struct ArrangementDoc {
     /// `None`: no panels.
     pub root: Option<Panel>,
+    /// The View Docks of the workspace's Views, by host (CONTEXT.md, "View
+    /// Dock"). Their tabs are the workspace's slots like any other, so a
+    /// docked slot is placed, and never placed again in the main panels.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub docks: Vec<ViewDock>,
+}
+
+/// The panels a View shows inside its own content.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ViewDock {
+    /// The host View's slot key.
+    pub host: String,
+    /// `None` once every View has left it; it is kept while `away` names any.
+    pub root: Option<Panel>,
+    /// Slots that left this dock for the workspace's panels, which closing
+    /// sends back here instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub away: Vec<String>,
+}
+
+impl ViewDock {
+    pub fn panels(&self) -> Vec<&Panel> {
+        self.root.iter().flat_map(Panel::preorder).collect()
+    }
+
+    pub fn tabs(&self) -> Vec<&str> {
+        self.root.as_ref().map(Panel::tabs).unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -511,28 +539,48 @@ impl ArrangementDoc {
                 },
             }
         }
-        Self { root: Some(panel(hint, &hint.root)) }
+        Self { root: Some(panel(hint, &hint.root)), docks: Vec::new() }
     }
 
-    /// Panels in preorder.
+    /// The main panels in preorder; a View Dock's are its own.
     pub fn panels(&self) -> Vec<&Panel> {
         self.root.iter().flat_map(Panel::preorder).collect()
     }
 
-    /// Every tab's slot key, in preorder.
+    /// Every tab's slot key: the main panels' in preorder, then each View
+    /// Dock's.
     pub fn tabs(&self) -> Vec<&str> {
-        self.panels()
-            .into_iter()
-            .flat_map(|panel| match &panel.node {
-                PanelNode::Tabs { tabs, .. } => tabs.iter().map(String::as_str).collect(),
-                PanelNode::Split { .. } => Vec::new(),
-            })
-            .collect()
+        let main = self.root.as_ref().map(Panel::tabs).unwrap_or_default();
+        main.into_iter().chain(self.docks.iter().flat_map(ViewDock::tabs)).collect()
     }
 
-    /// The document's shape rules, independent of any slot set.
+    /// The document's shape rules, independent of any slot set. Each View
+    /// Dock's panels follow them on their own (its panel IDs are its own); a
+    /// slot has at most one tab across them all, a host one dock, and no
+    /// View is docked in its own dock.
     pub fn check(&self) -> Result<(), String> {
-        check_panels(self.panels(), false)
+        check_panels(self.panels(), false)?;
+        let mut hosts = BTreeSet::new();
+        for dock in &self.docks {
+            if dock.host.is_empty() {
+                return Err("a View Dock needs a host".into());
+            }
+            if !hosts.insert(dock.host.as_str()) {
+                return Err(format!("{:?} has two View Docks", dock.host));
+            }
+            check_panels(dock.panels(), false)?;
+            if dock.tabs().contains(&dock.host.as_str()) {
+                return Err(format!("{:?} is docked in its own View Dock", dock.host));
+            }
+            if dock.away.iter().any(String::is_empty) {
+                return Err(format!("{:?}'s View Dock has an away slot with no key", dock.host));
+            }
+        }
+        let mut tabs = BTreeSet::new();
+        if let Some(tab) = self.tabs().into_iter().find(|tab| !tabs.insert(*tab)) {
+            return Err(format!("slot {tab:?} has two tabs"));
+        }
+        Ok(())
     }
 
     /// Place every slot in `order` that has no tab by the default rule:
@@ -714,7 +762,12 @@ fn shape(doc: &ArrangementDoc) -> ArrangementDoc {
             },
         }
     }
-    ArrangementDoc { root: doc.root.as_ref().map(walk) }
+    let docks = doc
+        .docks
+        .iter()
+        .map(|dock| ViewDock { host: dock.host.clone(), root: dock.root.as_ref().map(walk), away: dock.away.clone() })
+        .collect();
+    ArrangementDoc { root: doc.root.as_ref().map(walk), docks }
 }
 
 impl ArrangementDoc {
@@ -746,6 +799,16 @@ impl ArrangementDoc {
                 self.root = None;
             }
         }
+        // A removed host's dock goes; its Views, no longer tabbed, are
+        // placed like any untabbed slot.
+        self.docks.retain(|dock| !keys.contains(&dock.host));
+        for dock in &mut self.docks {
+            if dock.root.as_mut().is_some_and(|root| !walk(root, keys)) {
+                dock.root = None;
+            }
+            dock.away.retain(|key| !keys.contains(key));
+        }
+        self.docks.retain(|dock| dock.root.is_some() || !dock.away.is_empty());
     }
 
     fn panel_mut(&mut self, id: &str) -> Option<&mut Panel> {
@@ -897,6 +960,16 @@ impl Arrangement {
         if let Some(tab) = doc.tabs().into_iter().find(|tab| !known.contains(tab) && !tabbed.contains(tab)) {
             return Err(format!("no slot {tab:?}: add a slot before giving it a tab"));
         }
+        if let Some(dock) = doc.docks.iter().find(|dock| !known.contains(dock.host.as_str())) {
+            return Err(format!("no slot {:?} to host a View Dock", dock.host));
+        }
+        // A dock's away slots are those still the workspace's and not back
+        // in it.
+        for dock in &mut doc.docks {
+            let home: BTreeSet<String> = dock.tabs().into_iter().map(str::to_owned).collect();
+            dock.away.retain(|key| known.contains(key.as_str()) && !home.contains(key));
+        }
+        doc.docks.retain(|dock| dock.root.is_some() || !dock.away.is_empty());
         let layout = match stored.as_ref() {
             Some(stored) => stored.layout.clone(),
             None => plan.map(|plan| plan.definition.clone()),

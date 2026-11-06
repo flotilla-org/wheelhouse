@@ -488,6 +488,17 @@ struct RD_ViewCfgCacheSlot
 
 // An owner's live arrangement (shell_core.c, "Live arrangements"), in an
 // arena of its own, and the version it was last set at.
+// A View Dock's owner and the View it is the dock of.
+typedef struct RD_DockHostNode RD_DockHostNode;
+struct RD_DockHostNode
+{
+  RD_DockHostNode *next;
+  RD_PanelOwner owner;
+  RD_ViewAddress host;
+  // Where it was last drawn, which docking measures widths in.
+  Rng2F32 rect;
+};
+
 typedef struct RD_LiveArrangement RD_LiveArrangement;
 struct RD_LiveArrangement
 {
@@ -1168,10 +1179,12 @@ struct RD_State
   Arena *live_arrangement_arena;
   RD_LiveArrangement *first_live_arrangement;
   RD_LiveArrangement *free_live_arrangement;
-  // PROTOTYPE (#697): the host View of each dock owner seen.
-  RD_PanelOwner dock_owners[64];
-  RD_ViewAddress dock_hosts[64];
-  U64 dock_count;
+  // Each View Dock's host, by its owner (rd_dock_owner_from_view).
+  RD_DockHostNode *first_dock_host;
+  // While arrangements are set together, the Views their tabs hold, which
+  // no one of them releases (rd_arrangements_set).
+  RD_Arrangement **arrangements_setting;
+  U64 arrangements_setting_count;
   // How the dock being drawn draws its panels: 0 tab strips with the
   // workspace's borders, 1 a pill per section, 2 one sectioned pill.
   U32 dock_style;
@@ -1567,6 +1580,9 @@ internal RD_PanelOwner rd_panel_owner_from_host(RD_PanelOwnerKind kind, CFG_Node
 internal RD_PanelOwner rd_dock_owner_from_view(RD_ViewAddress host);
 internal RD_ViewAddress rd_dock_host_from_owner_id(RD_PanelOwner owner);
 internal B32 rd_dock_return(RD_ViewAddress view);
+internal B32 rd_dock_hosted_by(RD_PanelOwner owner, RD_ViewAddress view);
+internal Rng2F32 rd_view_dock_ui(RD_ViewAddress host, Rng2F32 rect);
+internal void rd_arrangements_set(RD_Arrangement **arrangements, U64 count);
 // The owner's host: a window or a workspace node.
 internal CFG_Node *rd_cfg_from_panel_owner(RD_PanelOwner owner);
 // Whether `panel` is a panel of its owner's live arrangement.

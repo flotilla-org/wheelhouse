@@ -43,7 +43,7 @@ fn split(id: &str, children: Vec<Panel>) -> Panel {
 }
 
 fn doc(root: Panel) -> ArrangementDoc {
-    ArrangementDoc { root: Some(root) }
+    ArrangementDoc { root: Some(root), docks: Vec::new() }
 }
 
 #[test]
@@ -368,4 +368,79 @@ fn an_empty_panel_committed_at_none_gets_its_weight_back() {
     committed.rescale_to(&stored, false);
     assert_eq!(weights(&committed), [("x".to_owned(), 1.0), ("y".to_owned(), 2.0 / 3.0)]);
     committed.check().unwrap();
+}
+
+fn docked(mut doc: ArrangementDoc, host: &str, root: Option<Panel>, away: &[&str]) -> ArrangementDoc {
+    doc.docks.push(ViewDock { host: host.into(), root, away: away.iter().map(|key| key.to_string()).collect() });
+    doc
+}
+
+#[test]
+fn a_docked_slot_is_placed_and_never_placed_again() {
+    let slots = WorkspaceSlots { baseline: Some(baseline(&["chat", "plan", "tasks"])), ..Default::default() };
+    let infos = slots.slots();
+    let mut stored = None;
+    let host = docked(doc(tabs("1", &["chat"], Some("chat"))), "chat", Some(tabs("1", &["plan"], Some("plan"))), &[]);
+    let placed = Arrangement::commit(&mut stored, host, slots.baseline.as_ref(), &infos, None).unwrap();
+    // tasks had no tab anywhere; plan's tab is in the dock.
+    assert_eq!(placed, ["tasks"]);
+    assert_eq!(arranged(&stored).doc.tabs(), ["chat", "tasks", "plan"]);
+    assert!(arranged(&stored).owned, "a dock is structure");
+    // Following again leaves the docked slot where it is.
+    Arrangement::follow(&mut stored, slots.baseline.as_ref(), &infos, None);
+    assert_eq!(arranged(&stored).doc.docks[0].tabs(), ["plan"]);
+}
+
+#[test]
+fn view_docks_are_checked_with_the_document() {
+    let slots = WorkspaceSlots { baseline: Some(baseline(&["chat", "plan"])), ..Default::default() };
+    let infos = slots.slots();
+    let main = || doc(tabs("1", &["chat"], Some("chat")));
+    for (invalid, reason) in [
+        (docked(doc(tabs("1", &["chat", "plan"], None)), "chat", Some(tabs("1", &["plan"], None)), &[]), "slot \"plan\" has two tabs"),
+        (docked(doc(tabs("1", &["plan"], None)), "chat", Some(tabs("1", &["chat"], None)), &[]), "docked in its own View Dock"),
+        (docked(docked(main(), "chat", None, &["plan"]), "chat", None, &["plan"]), "has two View Docks"),
+        (docked(main(), "nope", Some(tabs("1", &["plan"], None)), &[]), "no slot \"nope\" to host"),
+    ] {
+        let mut stored = None;
+        let error = Arrangement::commit(&mut stored, invalid, slots.baseline.as_ref(), &infos, None).unwrap_err();
+        assert!(error.contains(reason), "{error}");
+        assert!(stored.is_none());
+    }
+}
+
+#[test]
+fn an_emptied_dock_is_kept_while_a_slot_is_away() {
+    let slots = WorkspaceSlots { baseline: Some(baseline(&["chat", "plan"])), ..Default::default() };
+    let infos = slots.slots();
+    let mut stored = None;
+    // plan left the dock for the main panels: the dock remembers it.
+    let away = docked(doc(tabs("1", &["chat", "plan"], Some("chat"))), "chat", None, &["plan", "gone"]);
+    Arrangement::commit(&mut stored, away, slots.baseline.as_ref(), &infos, None).unwrap();
+    assert_eq!(arranged(&stored).doc.docks, [ViewDock { host: "chat".into(), root: None, away: vec!["plan".into()] }]);
+    // Back in its dock, it is no longer away, and nothing else keeps it.
+    let home = docked(doc(tabs("1", &["chat"], Some("chat"))), "chat", Some(tabs("1", &["plan"], None)), &["plan"]);
+    Arrangement::commit(&mut stored, home, slots.baseline.as_ref(), &infos, None).unwrap();
+    assert!(arranged(&stored).doc.docks[0].away.is_empty());
+    let empty = docked(doc(tabs("1", &["chat", "plan"], Some("chat"))), "chat", None, &[]);
+    Arrangement::commit(&mut stored, empty, slots.baseline.as_ref(), &infos, None).unwrap();
+    assert!(arranged(&stored).doc.docks.is_empty());
+}
+
+#[test]
+fn stripping_a_host_drops_its_dock() {
+    let mut d = docked(doc(tabs("1", &["chat", "notes"], Some("chat"))), "chat", Some(tabs("1", &["plan"], None)), &["notes"]);
+    d.strip(&BTreeSet::from(["notes".to_owned()]));
+    assert!(d.docks[0].away.is_empty());
+    d.strip(&BTreeSet::from(["chat".to_owned()]));
+    assert!(d.docks.is_empty());
+    assert_eq!(d.tabs(), Vec::<&str>::new());
+}
+
+#[test]
+fn a_document_without_docks_reads_and_writes_as_before() {
+    let plain = doc(tabs("1", &["a"], Some("a")));
+    let json = serde_json::to_string(&plain).unwrap();
+    assert!(!json.contains("docks"), "{json}");
+    assert_eq!(serde_json::from_str::<ArrangementDoc>(&json).unwrap(), plain);
 }

@@ -67,7 +67,7 @@ fn one_node_per_panel_and_current_view_with_ids_from_view_address(tc: TestCase) 
     let mut keys: Vec<String> = slots.iter().map(|slot| slot.key.clone()).collect();
     // Some tabs name Slots that have gone.
     keys.extend((0..tc.draw(gs::integers::<usize>().max_value(2))).map(|n| format!("gone{n}")));
-    let doc = ArrangementDoc { root: tc.draw(gs::booleans()).then(|| draw_panel(&tc, &mut keys, &mut 0, 3)) };
+    let doc = ArrangementDoc { root: tc.draw(gs::booleans()).then(|| draw_panel(&tc, &mut keys, &mut 0, 3)), docks: Vec::new() };
     let node = workspace_node(workspace, Some("W".into()), None, &doc, &slots);
 
     assert_eq!(

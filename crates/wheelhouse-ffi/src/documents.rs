@@ -10,7 +10,7 @@ use super::*;
 use wheelhouse_core::{
     sidebar::LayoutInfo,
     sidebar_arrangement::{Report, SidebarDoc, SidebarView},
-    slots::{ArrangementDoc, ArrangementView, Panel, PanelNode, Resolve},
+    slots::{ArrangementDoc, ArrangementView, Panel, PanelNode, Resolve, ViewDock},
     suggested_layout::Axis,
     versioned::CommitError,
 };
@@ -49,12 +49,31 @@ pub struct WheelhouseDocPanel {
     pub selected: usize,
 }
 
-/// Panels, each after its parent. A split has at least one child.
+/// A View Dock: the panels a workspace View shows inside its own content.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct WheelhouseViewDock {
+    /// The host View's slot key.
+    pub host: Text,
+    /// Its root panel, an index into the document's panels, or
+    /// WHEELHOUSE_NONE once every View has left it.
+    pub root: usize,
+    /// Slots that left it for the workspace's panels, which closing sends
+    /// back to it.
+    pub away: *const Text,
+    pub away_count: usize,
+}
+
+/// Panels, each after its parent. A split has at least one child. A root
+/// that no dock names is the main panels' root; there is at most one. Only a
+/// workspace's document has docks.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct WheelhouseArrangementDoc {
     pub panels: *const WheelhouseDocPanel,
     pub panel_count: usize,
+    pub docks: *const WheelhouseViewDock,
+    pub dock_count: usize,
 }
 
 /// The sidebar's document: the dock, one tree or none.
@@ -162,6 +181,8 @@ pub struct WheelhouseSidebarArrangement {
 struct Panels {
     panels: Vec<WheelhouseDocPanel>,
     tabs: Vec<Vec<Text>>,
+    docks: Vec<WheelhouseViewDock>,
+    away: Vec<Vec<Text>>,
 }
 
 impl Panels {
@@ -199,20 +220,52 @@ impl Panels {
                 }
             }
         }
-        let mut out = Self { panels: Vec::new(), tabs: Vec::new() };
+        let mut out = Self { panels: Vec::new(), tabs: Vec::new(), docks: Vec::new(), away: Vec::new() };
         for root in roots {
             walk(root, NONE, &mut out);
         }
         out
     }
 
+    /// A workspace's document: its main panels, then each dock's.
+    fn of_doc(doc: &ArrangementDoc) -> Self {
+        let mut out = Self::of(&doc.root);
+        for dock in &doc.docks {
+            let root = match &dock.root {
+                Some(root) => {
+                    let index = out.panels.len();
+                    let more = Self::of([root]);
+                    let base = out.panels.len();
+                    out.panels.extend(more.panels.into_iter().map(|mut panel| {
+                        if panel.parent != NONE {
+                            panel.parent += base;
+                        }
+                        panel
+                    }));
+                    out.tabs.extend(more.tabs);
+                    index
+                }
+                None => NONE,
+            };
+            let away: Vec<Text> = dock.away.iter().map(|key| Text::borrowed(key)).collect();
+            out.docks.push(WheelhouseViewDock { host: Text::borrowed(&dock.host), root, away: away.as_ptr(), away_count: away.len() });
+            out.away.push(away);
+        }
+        out
+    }
+
     fn doc(&self) -> WheelhouseArrangementDoc {
-        WheelhouseArrangementDoc { panels: self.panels.as_ptr(), panel_count: self.panels.len() }
+        WheelhouseArrangementDoc {
+            panels: self.panels.as_ptr(),
+            panel_count: self.panels.len(),
+            docks: self.docks.as_ptr(),
+            dock_count: self.docks.len(),
+        }
     }
 }
 
-/// A host's document as trees, one per root.
-unsafe fn read_doc(doc: &WheelhouseArrangementDoc) -> Result<Vec<Panel>, String> {
+/// A host's document as trees, one per root, each with its root's index.
+unsafe fn read_roots(doc: &WheelhouseArrangementDoc) -> Result<Vec<(usize, Panel)>, String> {
     let views = slice(doc.panels, doc.panel_count)?;
     let mut built: Vec<Option<Panel>> = Vec::with_capacity(views.len());
     for (index, view) in views.iter().enumerate() {
@@ -252,7 +305,33 @@ unsafe fn read_doc(doc: &WheelhouseArrangementDoc) -> Result<Vec<Panel>, String>
             children.insert(0, child);
         }
     }
-    Ok(built.into_iter().flatten().collect())
+    Ok(built.into_iter().enumerate().filter_map(|(index, panel)| Some((index, panel?))).collect())
+}
+
+/// A document with no docks, as trees.
+unsafe fn read_doc(doc: &WheelhouseArrangementDoc) -> Result<Vec<Panel>, String> {
+    if doc.dock_count != 0 {
+        return Err("only a workspace's document has View Docks".into());
+    }
+    Ok(read_roots(doc)?.into_iter().map(|(_, panel)| panel).collect())
+}
+
+/// A workspace's document: the root no dock names, and the docks.
+unsafe fn read_workspace_doc(doc: &WheelhouseArrangementDoc) -> Result<ArrangementDoc, String> {
+    let mut roots = read_roots(doc)?;
+    let mut docks = Vec::new();
+    for dock in slice(doc.docks, doc.dock_count)? {
+        let root = match dock.root {
+            NONE => None,
+            index => {
+                let at = roots.iter().position(|(i, _)| *i == index).ok_or_else(|| format!("dock root {index} is not a root panel"))?;
+                Some(roots.remove(at).1)
+            }
+        };
+        let away = slice(dock.away, dock.away_count)?.iter().map(|key| key.read()).collect::<Result<Vec<_>, _>>()?;
+        docks.push(ViewDock { host: dock.host.read()?, root, away });
+    }
+    Ok(ArrangementDoc { root: one_root(roots.into_iter().map(|(_, panel)| panel).collect())?, docks })
 }
 
 /// At most one root.
@@ -283,7 +362,7 @@ fn status<T>(result: Result<T, CommitError>) -> Result<u32, String> {
 }
 
 fn workspace_c(view: ArrangementView, status: u32) -> *mut WheelhouseWorkspaceArrangement {
-    let panels = Panels::of(&view.doc.root);
+    let panels = Panels::of_doc(&view.doc);
     let mut notes = notes([
         (WHEELHOUSE_NOTE_PLACED, view.placed.iter().collect()),
         (WHEELHOUSE_NOTE_GONE, view.gone.iter().collect()),
@@ -348,7 +427,7 @@ pub unsafe extern "C" fn wheelhouse_arrangement_commit(
 ) -> *mut WheelhouseWorkspaceArrangement {
     run(h, error_out, |h| {
         let doc = doc.as_ref().ok_or("null document")?;
-        let doc = ArrangementDoc { root: one_root(read_doc(doc)?)? };
+        let doc = read_workspace_doc(doc)?;
         let workspace = workspace.into();
         let status = status(h.sidebar.set_arrangement(workspace, doc, expected_generation))?;
         Ok(workspace_c(h.sidebar.arrangement(workspace)?, status))
@@ -530,7 +609,7 @@ pub unsafe extern "C" fn wheelhouse_sidebar_arrangement_commit(
 ) -> *mut WheelhouseSidebarArrangement {
     run(h, error_out, |h| {
         let doc = doc.as_ref().ok_or("null document")?;
-        let doc = SidebarDoc { dock: ArrangementDoc { root: one_root(read_doc(&doc.dock)?)? } };
+        let doc = SidebarDoc { dock: ArrangementDoc { root: one_root(read_doc(&doc.dock)?)?, docks: Vec::new() } };
         let result = h.sidebar.set_sidebar_arrangement(doc, expected_generation);
         sidebar_after(h, result)
     })
@@ -641,7 +720,7 @@ mod tests {
     }
 
     fn doc(panels: &[WheelhouseDocPanel]) -> WheelhouseArrangementDoc {
-        WheelhouseArrangementDoc { panels: panels.as_ptr(), panel_count: panels.len() }
+        WheelhouseArrangementDoc { panels: panels.as_ptr(), panel_count: panels.len(), docks: ptr::null(), dock_count: 0 }
     }
 
     #[test]
@@ -695,6 +774,50 @@ mod tests {
             for result in [committed, got, stale] {
                 wheelhouse_arrangement_free(result);
             }
+            wheelhouse_destroy(h);
+        }
+    }
+    #[test]
+    fn view_docks_round_trip_by_their_root_panels() {
+        unsafe {
+            let config = include_str!("../../wheelhouse-core/tests/fixtures/abbreviation.kdl");
+            let h = wheelhouse_create(config.as_ptr(), config.len(), ptr::null_mut());
+            let ws: WorkspaceIdView = tab_workspace_id(8).into();
+            assert_eq!(wheelhouse_workspace_register(h, ws, ptr::null_mut()), 1);
+            for key in ["u:1", "u:2", "u:3"] {
+                let mut spec: ViewSpecView = std::mem::zeroed();
+                spec.content = WHEELHOUSE_SLOT_URL;
+                spec.url = text("https://example.com");
+                assert_eq!(wheelhouse_slot_set(h, ws, text(key), &spec, 0, ptr::null_mut()), 1);
+            }
+            // u:1's dock holds u:2 and remembers u:3, which is in the main
+            // panels. The dock's root comes first; the main root is the other.
+            let (main, docked, away) = ([text("u:1"), text("u:3")], [text("u:2")], [text("u:3")]);
+            let panels = [panel(NONE, "1", &docked, 0), panel(NONE, "1", &main, 0)];
+            let docks = [WheelhouseViewDock { host: text("u:1"), root: 0, away: away.as_ptr(), away_count: away.len() }];
+            let committed_doc = WheelhouseArrangementDoc {
+                panels: panels.as_ptr(),
+                panel_count: panels.len(),
+                docks: docks.as_ptr(),
+                dock_count: docks.len(),
+            };
+            let committed = wheelhouse_arrangement_commit(h, ws, &committed_doc, 0, ptr::null_mut());
+            let c = &*committed;
+            assert_eq!(c.note_count, 0, "nothing to place: u:2 is docked");
+            // The main panels come first, then each dock's.
+            assert_eq!(shape(c.doc), ["1(-1):u:1,u:3<0>", "1(-1):u:2<0>"]);
+            let docks = slice(c.doc.docks, c.doc.dock_count).unwrap();
+            assert_eq!(docks.len(), 1);
+            assert_eq!((docks[0].host.read().unwrap().as_str(), docks[0].root), ("u:1", 1));
+            let away: Vec<String> = slice(docks[0].away, docks[0].away_count).unwrap().iter().map(|key| key.read().unwrap()).collect();
+            assert_eq!(away, ["u:3"]);
+            // A sidebar document has no docks.
+            let mut error = ptr::null_mut();
+            let sidebar = WheelhouseSidebarDoc { dock: committed_doc };
+            assert!(wheelhouse_sidebar_arrangement_commit(h, &sidebar, 0, &mut error).is_null());
+            assert!(CStr::from_ptr(error).to_str().unwrap().contains("only a workspace's"));
+            wheelhouse_string_free(error);
+            wheelhouse_arrangement_free(committed);
             wheelhouse_destroy(h);
         }
     }

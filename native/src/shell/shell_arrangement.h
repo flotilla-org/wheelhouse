@@ -34,9 +34,9 @@ typedef enum RD_PanelOwnerKind
   RD_PanelOwnerKind_Workspace,
   // The sidebar's dock: the Dashboard's arrangement, as one host shows it.
   RD_PanelOwnerKind_Sidebar,
-  // PROTOTYPE (#697): a View's dock, the panels its host View shows inside
-  // its own content. Its ID hashes the host's View Address, and its Views
-  // are in the host's namespace, so one moved out keeps its address.
+  // A View Dock: the panels its host View shows inside its own content
+  // (CONTEXT.md, "View Dock"). Its ID hashes the host's View Address, and its
+  // Views are in the host's namespace, so one moved out keeps its address.
   RD_PanelOwnerKind_Dock,
 } RD_PanelOwnerKind;
 

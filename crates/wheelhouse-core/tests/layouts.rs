@@ -101,7 +101,10 @@ fn tabs(id: &str, weight: f64, keys: &[&str], selected: Option<&str>) -> Panel {
 }
 
 fn row(children: Vec<Panel>) -> ArrangementDoc {
-    ArrangementDoc { root: Some(Panel { id: "1".into(), weight: 1.0, node: PanelNode::Split { axis: Axis::Row, children } }) }
+    ArrangementDoc {
+        root: Some(Panel { id: "1".into(), weight: 1.0, node: PanelNode::Split { axis: Axis::Row, children } }),
+        docks: Vec::new(),
+    }
 }
 
 fn current(sidebar: &Sidebar) -> Option<String> {
@@ -243,7 +246,7 @@ fn an_edited_layout_keeps_its_panels_matchers() {
 
     // With the agents panel merged away, a new agent is unplaced, not put
     // somewhere arbitrary.
-    let merged = ArrangementDoc { root: Some(tabs("side", 1.0, &["primary", "a", "c", "t:files", "b"], Some("a"))) };
+    let merged = ArrangementDoc { root: Some(tabs("side", 1.0, &["primary", "a", "c", "t:files", "b"], Some("a"))), docks: Vec::new() };
     sidebar.set_arrangement(worker(), merged.clone(), view.generation).unwrap();
     sidebar.feed(300, [layout("3", &[("a", "agent"), ("b", "agent"), ("r", "review"), ("c", "agent"), ("d", "agent")])]);
     let view = sidebar.arrangement(worker()).unwrap();
@@ -251,7 +254,7 @@ fn an_edited_layout_keeps_its_panels_matchers() {
     assert_eq!(view.unplaced, ["r", "d"]);
 
     // Placing an unplaced slot is committing it a tab.
-    let shown = ArrangementDoc { root: Some(tabs("side", 1.0, &["primary", "a", "c", "t:files", "b", "r"], Some("r"))) };
+    let shown = ArrangementDoc { root: Some(tabs("side", 1.0, &["primary", "a", "c", "t:files", "b", "r"], Some("r"))), docks: Vec::new() };
     sidebar.set_arrangement(worker(), shown.clone(), view.generation).unwrap();
     assert_eq!(sidebar.arrangement(worker()).unwrap().unplaced, ["d"]);
 

@@ -418,7 +418,7 @@ workspace kind="vessel" {
                 panel.weight = weight;
             }
             panels[2].selected = 1;
-            let doc = WheelhouseArrangementDoc { panels: panels.as_ptr(), panel_count: panels.len() };
+            let doc = WheelhouseArrangementDoc { panels: panels.as_ptr(), panel_count: panels.len(), docks: ptr::null(), dock_count: 0 };
             let committed = wheelhouse_arrangement_commit(h, id.into(), &doc, (*shown).generation, error);
             wheelhouse_arrangement_free(shown);
             read(committed)

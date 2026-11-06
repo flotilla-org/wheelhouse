@@ -314,7 +314,8 @@ uishell_panel_diagnostics(RD_WindowState *ws)
   failures += cfg_change_gen() != after_repair;
   rd_fixture_remove(selector);
   cfg_node_release(rd_state->cfg, commands_owner);
-  // PROTOTYPE (#697): a workspace View moves into a View's dock and back out.
+  // A workspace View moves into a View Dock and back out, and closing it
+  // there sends it home.
   {
     CFG_Node *dock_ws = cfg_node_new(rd_state->cfg, window, str8_lit("workspace"));
     RD_PanelAddress ws_panel = rd_fixture_leaf(rd_fixture_owner(dock_ws));

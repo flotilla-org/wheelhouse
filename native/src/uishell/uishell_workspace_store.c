@@ -859,6 +859,13 @@ struct UIShell_StoreDoc
   CFG_Node **views;
   String8 *keys;
   U64 tab_count;
+  // The workspace's View Docks (CONTEXT.md, "View Dock"): each one's panels
+  // follow the main panels', a root of their own. A copy of each dock's
+  // arrangement and its host View, by which `docks` names it.
+  WheelhouseViewDock *docks;
+  RD_Arrangement **dock_arrangements;
+  CFG_Node **dock_hosts;
+  U64 dock_count;
 };
 
 // A Slot's previous instance, kept beside its View by a keep-previous rebind
@@ -882,16 +889,83 @@ uishell_store_slot_view(CFG_Node *owner, String8 key, RD_ViewInstance instance)
   return rd_view_address_make(RD_ViewOwnerKind_Workspace, id, key, instance);
 }
 
+// The View Docks of the workspace `a` arranges: the live docks whose host is
+// one of its Views.
+internal U64
+uishell_store_docks(Arena *arena, RD_Arrangement *a, RD_Arrangement ***arrangements_out, CFG_Node ***hosts_out)
+{
+  U64 count = 0;
+  for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0; l = l->next)
+  {
+    RD_ViewAddress host = rd_dock_host_from_owner_id(l->arrangement->owner);
+    count += l->arrangement->owner.kind == RD_PanelOwnerKind_Dock && host.owner == RD_ViewOwnerKind_Workspace &&
+      uishell_workspace_id_match(host.id, a->owner.id) && rd_cfg_from_view(host) != &cfg_nil_node;
+  }
+  *arrangements_out = push_array(arena, RD_Arrangement *, count);
+  *hosts_out = push_array(arena, CFG_Node *, count);
+  U64 n = 0;
+  for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0 && n < count; l = l->next)
+  {
+    RD_ViewAddress host = rd_dock_host_from_owner_id(l->arrangement->owner);
+    if(l->arrangement->owner.kind != RD_PanelOwnerKind_Dock || host.owner != RD_ViewOwnerKind_Workspace ||
+       !uishell_workspace_id_match(host.id, a->owner.id) || rd_cfg_from_view(host) == &cfg_nil_node) { continue; }
+    (*arrangements_out)[n] = rd_arrangement_copy(arena, l->arrangement);
+    (*hosts_out)[n] = rd_cfg_from_view(host);
+    n += 1;
+  }
+  return n;
+}
+
+// Each dock's host slot key and the slots away from it: the workspace's
+// Views that name it their home (`dock_home`) and aren't back in it, once
+// their keys are assigned.
+internal void
+uishell_store_doc_hosts(Arena *arena, UIShell_StoreDoc *doc)
+{
+  for(U64 d = 0; d < doc->dock_count; d++)
+  {
+    String8 host = uishell_store_setting(doc->dock_hosts[d], str8_lit("slot"));
+    doc->docks[d].host = uishell_sidebar_text(host);
+    U64 away = 0;
+    WheelhouseText *keys = push_array(arena, WheelhouseText, doc->tab_count);
+    for(U64 i = 0; i < doc->tab_count; i++)
+    {
+      String8 home = uishell_store_setting(doc->views[i], str8_lit("dock_home"));
+      B32 back = rd_panel_owner_match(rd_panel_from_cfg(doc->views[i]).owner, doc->dock_arrangements[d]->owner);
+      if(host.size && str8_match(home, host, 0) && !back) { keys[away++] = doc->tabs[i]; }
+    }
+    doc->docks[d].away = keys;
+    doc->docks[d].away_count = away;
+  }
+}
+
 // `a`, an arrangement of a workspace's, as the core's document, its tabs
-// named by their Views' slot keys.
+// named by their Views' slot keys: its main panels, then its View Docks'.
 internal UIShell_StoreDoc
 uishell_store_doc(Arena *arena, RD_Arrangement *a)
 {
   UIShell_StoreDoc doc = {a};
-  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+  doc.dock_count = uishell_store_docks(arena, a, &doc.dock_arrangements, &doc.dock_hosts);
+  doc.docks = push_array(arena, WheelhouseViewDock, doc.dock_count);
+  // Each tree: the main panels, then each dock's. A dock no View is in
+  // has no panels in the document.
+  U64 tree_count = 1 + doc.dock_count;
+  RD_Arrangement **trees = push_array(arena, RD_Arrangement *, tree_count);
+  trees[0] = a;
+  for(U64 d = 0; d < doc.dock_count; d++) { trees[1+d] = doc.dock_arrangements[d]; }
+  B32 *shown = push_array(arena, B32, tree_count);
+  for(U64 tr = 0; tr < tree_count; tr++)
   {
-    doc.panel_count += 1;
-    for(RD_ArrangementTab *t = p->first_tab; t; t = t->next) { doc.tab_count += !uishell_store_previous_of(rd_cfg_from_view(t->view)).size; }
+    RD_Arrangement *x = trees[tr];
+    U64 tabs = 0;
+    for(RD_ArrangementPanel *p = x->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(x->root, p))
+    {
+      for(RD_ArrangementTab *t = p->first_tab; t; t = t->next) { tabs += !uishell_store_previous_of(rd_cfg_from_view(t->view)).size; }
+    }
+    shown[tr] = tr == 0 || tabs != 0;
+    if(!shown[tr]) { continue; }
+    doc.tab_count += tabs;
+    for(RD_ArrangementPanel *p = x->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(x->root, p)) { doc.panel_count += 1; }
   }
   doc.panels = push_array(arena, WheelhouseDocPanel, doc.panel_count);
   doc.tabs = push_array(arena, WheelhouseText, doc.tab_count);
@@ -899,46 +973,94 @@ uishell_store_doc(Arena *arena, RD_Arrangement *a)
   doc.keys = push_array(arena, String8, doc.tab_count);
   RD_ArrangementPanel **order = push_array(arena, RD_ArrangementPanel *, doc.panel_count);
   U64 index = 0, tab = 0;
-  for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p), index++)
+  for(U64 tr = 0; tr < tree_count; tr++)
   {
-    order[index] = p;
-    WheelhouseDocPanel *out = &doc.panels[index];
-    out->parent = WHEELHOUSE_NONE;
-    for(U64 j = index; j > 0 && out->parent == WHEELHOUSE_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1; } }
-    // A provider's panel keeps the ID its document gave it.
-    out->id = uishell_sidebar_text(p->doc_id.size ? p->doc_id : push_str8f(arena, "%I64u", p->id));
-    // The core takes finite positive weights; the root's means nothing. A
-    // weight is written as config writes it (0.7, not 0.699999988), which
-    // reads back as the same F32. An empty panel shown without space
-    // commits none, and the core gives it its weight back.
-    F32 weight = p == a->root ? 1.f : p->weight;
-    B32 empty = p->first == &rd_nil_arrangement_panel && p->tab_count == 0;
-    out->weight = (weight > 0 && weight < 1e30f) ? f64_from_str8(rd_arrangement_weight_string(arena, weight)) : (empty && weight == 0) ? 0 : 0.01;
-    out->selected = WHEELHOUSE_NONE;
-    if(p->first != &rd_nil_arrangement_panel)
+    RD_Arrangement *x = trees[tr];
+    U64 first = index;
+    if(tr > 0) { doc.docks[tr-1].root = shown[tr] ? first : WHEELHOUSE_NONE; }
+    if(!shown[tr]) { continue; }
+    for(RD_ArrangementPanel *p = x->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(x->root, p), index++)
     {
-      out->kind = WHEELHOUSE_PANEL_SPLIT;
-      out->axis = rd_arrangement_split_axis(a, p) == Axis2_X ? WHEELHOUSE_AXIS_ROW : WHEELHOUSE_AXIS_COLUMN;
-      continue;
-    }
-    out->kind = WHEELHOUSE_PANEL_TABS;
-    out->tabs = doc.tabs+tab;
-    // A previous instance selected stands for its Slot's View.
-    String8 selected_previous = uishell_store_previous_of(rd_cfg_from_view(p->selected));
-    for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
-    {
-      CFG_Node *view = rd_cfg_from_view(t->view);
-      if(uishell_store_previous_of(view).size) { continue; }
-      doc.views[tab] = view;
-      doc.keys[tab] = uishell_store_setting(view, str8_lit("slot"));
-      doc.tabs[tab] = uishell_sidebar_text(doc.keys[tab]);
-      if(rd_view_address_match(t->view, p->selected) || (selected_previous.size && str8_match(selected_previous, doc.keys[tab], 0)))
-      { out->selected = out->tab_count; }
-      out->tab_count += 1;
-      tab++;
+      order[index] = p;
+      WheelhouseDocPanel *out = &doc.panels[index];
+      out->parent = WHEELHOUSE_NONE;
+      for(U64 j = index; j > first && out->parent == WHEELHOUSE_NONE; j--) { if(order[j-1] == p->parent) { out->parent = j-1; } }
+      // A provider's panel keeps the ID its document gave it.
+      out->id = uishell_sidebar_text(p->doc_id.size ? p->doc_id : push_str8f(arena, "%I64u", p->id));
+      // The core takes finite positive weights; the root's means nothing. A
+      // weight is written as config writes it (0.7, not 0.699999988), which
+      // reads back as the same F32. An empty panel shown without space
+      // commits none, and the core gives it its weight back.
+      F32 weight = p == x->root ? 1.f : p->weight;
+      B32 empty = p->first == &rd_nil_arrangement_panel && p->tab_count == 0;
+      out->weight = (weight > 0 && weight < 1e30f) ? f64_from_str8(rd_arrangement_weight_string(arena, weight)) : (empty && weight == 0) ? 0 : 0.01;
+      out->selected = WHEELHOUSE_NONE;
+      if(p->first != &rd_nil_arrangement_panel)
+      {
+        out->kind = WHEELHOUSE_PANEL_SPLIT;
+        out->axis = rd_arrangement_split_axis(x, p) == Axis2_X ? WHEELHOUSE_AXIS_ROW : WHEELHOUSE_AXIS_COLUMN;
+        continue;
+      }
+      out->kind = WHEELHOUSE_PANEL_TABS;
+      out->tabs = doc.tabs+tab;
+      // A previous instance selected stands for its Slot's View.
+      String8 selected_previous = uishell_store_previous_of(rd_cfg_from_view(p->selected));
+      for(RD_ArrangementTab *t = p->first_tab; t; t = t->next)
+      {
+        CFG_Node *view = rd_cfg_from_view(t->view);
+        if(uishell_store_previous_of(view).size) { continue; }
+        doc.views[tab] = view;
+        doc.keys[tab] = uishell_store_setting(view, str8_lit("slot"));
+        doc.tabs[tab] = uishell_sidebar_text(doc.keys[tab]);
+        if(rd_view_address_match(t->view, p->selected) || (selected_previous.size && str8_match(selected_previous, doc.keys[tab], 0)))
+        { out->selected = out->tab_count; }
+        out->tab_count += 1;
+        tab++;
+      }
     }
   }
+  uishell_store_doc_hosts(arena, &doc);
   return doc;
+}
+
+// The core's document `doc` is committed as.
+internal WheelhouseArrangementDoc
+uishell_store_doc_out(UIShell_StoreDoc *doc)
+{
+  WheelhouseArrangementDoc out = {doc->panels, doc->panel_count, doc->docks, 0};
+  // A dock whose host has no slot key yet waits for the commit after it has
+  // one; a dock with neither Views nor Views away is none.
+  WheelhouseViewDock *docks = doc->docks;
+  for(U64 d = 0; d < doc->dock_count; d++)
+  {
+    if(!docks[d].host.len || (docks[d].root == WHEELHOUSE_NONE && docks[d].away_count == 0)) { continue; }
+    docks[out.dock_count++] = docks[d];
+  }
+  return out;
+}
+
+// Sets `doc`'s arrangement and its docks', which assigning keys readdressed.
+internal void
+uishell_store_doc_set(UIShell_StoreDoc *doc)
+{
+  rd_arrangement_set(doc->arrangement);
+  for(U64 d = 0; d < doc->dock_count; d++) { rd_arrangement_set(doc->dock_arrangements[d]); }
+}
+
+// What `owner`'s arrangement and its docks' versions come to: a commit is
+// due when either changes.
+internal U64
+uishell_store_version(CFG_Node *owner)
+{
+  RD_PanelOwner main = uishell_store_owner(owner);
+  U64 version = rd_arrangement_version(main);
+  for(RD_LiveArrangement *l = rd_state->first_live_arrangement; l != 0; l = l->next)
+  {
+    RD_ViewAddress host = rd_dock_host_from_owner_id(l->arrangement->owner);
+    if(l->arrangement->owner.kind == RD_PanelOwnerKind_Dock && host.owner == RD_ViewOwnerKind_Workspace && uishell_workspace_id_match(host.id, main.id))
+    { version = version*31 + l->version; }
+  }
+  return version;
 }
 
 // Each tab's Slot key, View kind and spec, as one hash: what a commit sends
@@ -1000,8 +1122,10 @@ uishell_store_assign_keys(Arena *arena, CFG_Node *owner, UIShell_StoreDoc *doc, 
     RD_ViewAddress now = rd_view_address_from_cfg(doc->views[i]);
     rd_view_readdress(was, now);
     rd_arrangement_readdress(doc->arrangement, was, now);
+    for(U64 d = 0; d < doc->dock_count; d++) { rd_arrangement_readdress(doc->dock_arrangements[d], was, now); }
     changed = 1;
   }
+  if(changed) { uishell_store_doc_hosts(arena, doc); }
   return changed;
 }
 
@@ -1238,6 +1362,142 @@ uishell_store_noted(WheelhouseWorkspaceArrangement *a, U32 kind, String8 key)
 // made for a slot new here takes its settings, and Slots their previous
 // instances, from the device-local `arrangement_presentation`, which goes.
 // Returns whether the core had a document to follow.
+// The View a document's tab of `key` shows: the one this device has for it
+// (`current`), else a new one from its slot's spec, with this device's
+// settings for it (`device`).
+internal CFG_Node *
+uishell_store_tab_view(Arena *arena, CFG_Node *owner, CFG_Node *device, WheelhouseWorkspaceArrangement *stored, WheelhouseSlots *slots,
+                       UIShell_StoreDoc *current, String8 key)
+{
+  B32 gone = uishell_store_noted(stored, WHEELHOUSE_NOTE_GONE, key);
+  CFG_Node *view = &cfg_nil_node;
+  for(U64 i = 0; i < current->tab_count && view == &cfg_nil_node; i++)
+  { if(str8_match(current->keys[i], key, 0)) { view = current->views[i]; } }
+  WheelhouseSlot slot = {0};
+  B32 known = !gone && uishell_store_slot_find(slots, key, &slot);
+  if(view == &cfg_nil_node)
+  {
+    UIShell_ViewSpec spec = {0};
+    if(known) { spec = uishell_store_spec_from_core(arena, &slot.spec); }
+    view = uishell_store_view_from_spec(owner, key, known ? &spec : 0);
+    // This device's part of its logical settings (a daemon session the core
+    // hasn't saved, the daemon hosting it). Its Presentation State is its
+    // owner's (rd_view_presentation_from_view).
+    for(CFG_Node *c = device->first; c != &cfg_nil_node; c = c->next)
+    {
+      B32 settings = str8_match(c->string, str8_lit("view"), 0) || str8_match(c->string, str8_lit("resolution"), 0);
+      if(!settings || !str8_match(uishell_store_setting(c, str8_lit("slot")), key, 0)) { continue; }
+      for(CFG_Node *setting = c->first; setting != &cfg_nil_node; setting = setting->next)
+      {
+        if(str8_match(setting->string, str8_lit("slot"), 0) || !rd_view_setting_is_logical(setting->string)) { continue; }
+        cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, setting->string));
+        cfg_node_insert_child(rd_state->cfg, view, view->last, cfg_node_deep_copy(rd_state->cfg, setting));
+      }
+    }
+    // A portable resolution the core saved, tried before the View starts
+    // anything of its own.
+    if(known && slot.has_saved) { uishell_store_restore_resolution(view, &slot.saved); }
+  }
+  // Whether it follows its provider, as committing would mark it.
+  if(known && !str8_match(view->string, str8_lit("placeholder"), 0))
+  { uishell_store_mark_follows(view, (slot.in_baseline && !slot.detached) || slot.spec.content == WHEELHOUSE_SLOT_FACET); }
+  return view;
+}
+
+// The core's View Docks of `owner`'s workspace, after its main panels
+// (`main`): each host's dock is rebuilt from its tree of the document, Views
+// the dock shows made as the main panels' are, and the Views away from it
+// told their home (`dock_home`). A live dock the document no longer has is
+// emptied. Returns them all, `main` first, to set together.
+internal U64
+uishell_store_follow_docks(Arena *arena, CFG_Node *owner, UIShell_WorkspaceId id, CFG_Node *device, WheelhouseWorkspaceArrangement *stored,
+                           WheelhouseSlots *slots, UIShell_StoreDoc *current, UIShell_DocShape *shape, U64 *root_of,
+                           RD_Arrangement *main, RD_Arrangement ***out)
+{
+  WheelhouseArrangementDoc *doc = &stored->doc;
+  RD_Arrangement **trees = push_array(arena, RD_Arrangement *, 1 + current->dock_count + doc->dock_count);
+  U64 count = 0;
+  trees[count++] = main;
+  for(U64 d = 0; d < current->dock_count; d++)
+  {
+    String8 host = uishell_store_setting(current->dock_hosts[d], str8_lit("slot"));
+    B32 kept = 0;
+    for(U64 k = 0; k < doc->dock_count && !kept; k++) { kept = str8_match(uishell_sidebar_string(doc->docks[k].host), host, 0); }
+    if(kept) { continue; }
+    rd_arrangement_discard(current->dock_arrangements[d]);
+    trees[count++] = current->dock_arrangements[d];
+  }
+  for(U64 k = 0; k < doc->dock_count; k++)
+  {
+    WheelhouseViewDock *dock = &doc->docks[k];
+    String8 host_key = uishell_sidebar_string(dock->host);
+    RD_ViewAddress host = rd_view_address_make(RD_ViewOwnerKind_Workspace, id, host_key, RD_ViewInstance_Current);
+    if(rd_cfg_from_view(host) == &cfg_nil_node) { continue; }
+    RD_Arrangement *a = rd_arrangement_from_panel_owner(arena, rd_dock_owner_from_view(host));
+    U64 root = dock->root;
+    if(root >= doc->panel_count) { rd_arrangement_discard(a); }
+    else
+    {
+      // A dock's panel IDs are this device's numbers, as its commits named them.
+      U64 max_id = 0;
+      for(U64 i = root; i < doc->panel_count; i++)
+      {
+        String8 text = uishell_sidebar_string(doc->panels[i].id);
+        if(root_of[i] == root && str8_is_integer(text, 10) && text.size < 18) { max_id = Max(max_id, u64_from_str8(text, 10)); }
+      }
+      rd_arrangement_clear(a);
+      a->next_id = max_id + (1ull << 40);
+      if(doc->panels[root].kind == WHEELHOUSE_PANEL_SPLIT) { a->root_axis = doc->panels[root].axis == WHEELHOUSE_AXIS_ROW ? Axis2_X : Axis2_Y; }
+      RD_PanelID *made = push_array(arena, RD_PanelID, doc->panel_count);
+      U64 fresh = max_id+1;
+      for(U64 index = root; index < doc->panel_count; index++)
+      {
+        if(root_of[index] != root) { continue; }
+        WheelhouseDocPanel *src = &doc->panels[index];
+        U64 up = shape->parent[index];
+        if(shape->lifted[index]) { made[index] = made[up]; continue; }
+        F32 weight = shape->weight[index];
+        RD_PanelID panel_id = up != WHEELHOUSE_NONE ? rd_arrangement_add(a, made[up], weight > 0 ? weight : 1.f) : a->root->id;
+        RD_ArrangementPanel *panel = rd_arrangement_panel_from_id(a, panel_id);
+        if(up != WHEELHOUSE_NONE && !(weight > 0)) { panel->weight = 0; }
+        String8 src_id = uishell_sidebar_string(src->id);
+        RD_PanelID wanted = str8_is_integer(src_id, 10) && src_id.size < 18 ? u64_from_str8(src_id, 10) : 0;
+        if(!wanted) { wanted = fresh++; }
+        panel->id = wanted;
+        made[index] = wanted;
+        if(src->kind != WHEELHOUSE_PANEL_TABS) { continue; }
+        RD_ViewAddress prev = rd_nil_view_address, selected = rd_nil_view_address;
+        for(U64 t = 0; t < src->tab_count; t++)
+        {
+          CFG_Node *view = uishell_store_tab_view(arena, owner, device, stored, slots, current, uishell_sidebar_string(src->tabs[t]));
+          RD_ViewAddress address = rd_view_address_from_cfg(view);
+          rd_arrangement_insert_tab(a, address, wanted, prev, 0);
+          if(t == src->selected) { selected = address; }
+          prev = address;
+        }
+        rd_arrangement_select(a, wanted, selected);
+      }
+      a->next_id = Max(fresh, max_id+1);
+      for(RD_ArrangementPanel *p = a->root; p != &rd_nil_arrangement_panel; p = rd_arrangement_next(a->root, p))
+      {
+        if(p->id >= a->next_id) { a->next_id = p->id+1; }
+        F32 total = 0;
+        for(RD_ArrangementPanel *c = p->first; c != &rd_nil_arrangement_panel; c = c->next) { total += c->weight; }
+        if(total <= 0 || abs_f32(total-1.f) <= .0001f) { continue; }
+        for(RD_ArrangementPanel *c = p->first; c != &rd_nil_arrangement_panel; c = c->next) { c->weight = rd_arrangement_quantize(c->weight/total); }
+      }
+    }
+    trees[count++] = a;
+    for(U64 i = 0; i < dock->away_count; i++)
+    {
+      CFG_Node *view = rd_cfg_from_view(rd_view_address_make(RD_ViewOwnerKind_Workspace, id, uishell_sidebar_string(dock->away[i]), RD_ViewInstance_Current));
+      if(view != &cfg_nil_node) { uishell_store_set_setting(view, str8_lit("dock_home"), host_key); }
+    }
+  }
+  *out = trees;
+  return count;
+}
+
 internal B32
 uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_WorkspaceId id, U64 *generation_out)
 {
@@ -1289,6 +1549,18 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
     }
     WheelhouseArrangementDoc *doc = &stored->doc;
     UIShell_DocShape shape = uishell_store_doc_shape(arena, doc);
+    // Each panel's tree, by its root: the main panels' is the root no View
+    // Dock names; the docks' are built after them.
+    U64 *root_of = push_array(arena, U64, doc->panel_count+1);
+    U64 main_root = WHEELHOUSE_NONE;
+    for(U64 i = 0; i < doc->panel_count; i++)
+    {
+      U64 up = doc->panels[i].parent;
+      root_of[i] = up < i ? root_of[up] : i;
+      B32 docked = 0;
+      for(U64 d = 0; d < doc->dock_count && !docked; d++) { docked = doc->docks[d].root == i; }
+      if(up >= i && !docked && main_root == WHEELHOUSE_NONE) { main_root = i; }
+    }
     U64 max_id = 0;
     for(U64 i = 0; i < doc->panel_count; i++)
     {
@@ -1308,12 +1580,12 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
       if(str8_match(c->string, str8_lit("panel"), 0) && str8_is_integer(number, 10) && number.size < 18) { max_id = Max(max_id, u64_from_str8(number, 10)); }
     }
     U64 fresh = max_id+1;
-    if(!doc->panel_count) { rd_arrangement_discard(a); }
+    if(main_root == WHEELHOUSE_NONE) { rd_arrangement_discard(a); }
     else { rd_arrangement_clear(a); }
     // Allocations stay clear of the IDs set below until they are all set.
     a->next_id = max_id + (1ull << 40);
-    if(doc->panel_count && doc->panels[0].kind == WHEELHOUSE_PANEL_SPLIT)
-    { a->root_axis = doc->panels[0].axis == WHEELHOUSE_AXIS_ROW ? Axis2_X : Axis2_Y; }
+    if(main_root != WHEELHOUSE_NONE && doc->panels[main_root].kind == WHEELHOUSE_PANEL_SPLIT)
+    { a->root_axis = doc->panels[main_root].axis == WHEELHOUSE_AXIS_ROW ? Axis2_X : Axis2_Y; }
     U64 ids_used = 0;
     RD_PanelID *ids = push_array(arena, RD_PanelID, doc->panel_count+1);
     // Each panel's panel in the arrangement.
@@ -1322,7 +1594,7 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
     {
       WheelhouseDocPanel *src = &doc->panels[index];
       U64 up = shape.parent[index];
-      if(index && up == WHEELHOUSE_NONE) { continue; }
+      if(root_of[index] != main_root) { continue; }
       if(shape.lifted[index]) { made[index] = made[up]; continue; }
       // A panel the core shows without space (weight 0) has none here, not
       // the equal share rd_arrangement_add gives a weight it can't use.
@@ -1351,38 +1623,7 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
       for(U64 t = 0; t < src->tab_count; t++)
       {
         String8 key = uishell_sidebar_string(src->tabs[t]);
-        B32 gone = uishell_store_noted(stored, WHEELHOUSE_NOTE_GONE, key);
-        CFG_Node *view = &cfg_nil_node;
-        for(U64 i = 0; i < current.tab_count && view == &cfg_nil_node; i++)
-        { if(str8_match(current.keys[i], key, 0)) { view = current.views[i]; } }
-        WheelhouseSlot slot = {0};
-        B32 known = !gone && uishell_store_slot_find(slots, key, &slot);
-        if(view == &cfg_nil_node)
-        {
-          UIShell_ViewSpec spec = {0};
-          if(known) { spec = uishell_store_spec_from_core(arena, &slot.spec); }
-          view = uishell_store_view_from_spec(owner, key, known ? &spec : 0);
-          // This device's part of its logical settings (a daemon session
-          // the core hasn't saved, the daemon hosting it). Its Presentation
-          // State is its owner's (rd_view_presentation_from_view).
-          for(CFG_Node *c = device->first; c != &cfg_nil_node; c = c->next)
-          {
-            B32 settings = str8_match(c->string, str8_lit("view"), 0) || str8_match(c->string, str8_lit("resolution"), 0);
-            if(!settings || !str8_match(uishell_store_setting(c, str8_lit("slot")), key, 0)) { continue; }
-            for(CFG_Node *setting = c->first; setting != &cfg_nil_node; setting = setting->next)
-            {
-              if(str8_match(setting->string, str8_lit("slot"), 0) || !rd_view_setting_is_logical(setting->string)) { continue; }
-              cfg_node_release(rd_state->cfg, cfg_node_child_from_string(view, setting->string));
-              cfg_node_insert_child(rd_state->cfg, view, view->last, cfg_node_deep_copy(rd_state->cfg, setting));
-            }
-          }
-          // A portable resolution the core saved, tried before the View
-          // starts anything of its own.
-          if(known && slot.has_saved) { uishell_store_restore_resolution(view, &slot.saved); }
-        }
-        // Whether it follows its provider, as committing would mark it.
-        if(known && !str8_match(view->string, str8_lit("placeholder"), 0))
-        { uishell_store_mark_follows(view, (slot.in_baseline && !slot.detached) || slot.spec.content == WHEELHOUSE_SLOT_FACET); }
+        CFG_Node *view = uishell_store_tab_view(arena, owner, device, stored, slots, &current, key);
         RD_ViewAddress address = rd_view_address_from_cfg(view);
         rd_arrangement_insert_tab(a, address, wanted, prev, 0);
         if(t == src->selected) { selected = address; }
@@ -1410,7 +1651,11 @@ uishell_store_follow(UIShell_SidebarState *state, CFG_Node *owner, UIShell_Works
       for(RD_ArrangementPanel *c = p->first; c != &rd_nil_arrangement_panel; c = c->next)
       { c->weight = rd_arrangement_quantize(c->weight/total); }
     }
-    rd_arrangement_set(a);
+    // The main panels and the docks are set together, so a View the document
+    // moved between them is kept.
+    RD_Arrangement **trees = 0;
+    U64 tree_count = uishell_store_follow_docks(arena, owner, id, device, stored, slots, &current, &shape, root_of, a, &trees);
+    rd_arrangements_set(trees, tree_count);
     // A kept previous instance whose Slot the document no longer tabs goes.
     for(CFG_NodePtrNode *p = restored.first; p; p = p->next)
     {
@@ -2201,7 +2446,7 @@ uishell_store_show_slot(CFG_Node *owner, RD_PanelID panel, String8 key)
     UIShell_StoreEntry *entry = uishell_store_entry(state, id);
     B32 marked = cfg_node_child_from_string(owner, str8_lit("arrangement_generation")) != &cfg_nil_node;
     U64 expected = marked && entry->generation ? entry->generation : stored->generation;
-    WheelhouseArrangementDoc commit = {doc.panels, doc.panel_count};
+    WheelhouseArrangementDoc commit = uishell_store_doc_out(&doc);
     char *error = 0;
     WheelhouseWorkspaceArrangement *after = 0;
     // Stale, as in uishell_store_sync_owner: committing at the new
@@ -2575,7 +2820,7 @@ uishell_store_entry(UIShell_SidebarState *state, UIShell_WorkspaceId id)
 internal void
 uishell_store_saw(UIShell_SidebarState *state, UIShell_StoreEntry *entry, CFG_Node *owner, UIShell_StoreDoc *doc)
 {
-  entry->version = rd_arrangement_version(uishell_store_owner(owner));
+  entry->version = uishell_store_version(owner);
   entry->specs = uishell_store_specs(doc);
   if(doc->tab_count > entry->seen_capacity)
   {
@@ -2651,7 +2896,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   { keyed = uishell_store_key_valid(doc.keys[i]) && !uishell_store_key_in(doc.keys[i], doc.keys, i); }
   UIShell_StoreEntry *entry = uishell_store_entry(state, id);
   B32 marked = cfg_node_child_from_string(owner, str8_lit("arrangement_generation")) != &cfg_nil_node;
-  B32 changed = !keyed || entry->version != rd_arrangement_version(uishell_store_owner(owner)) || entry->specs != uishell_store_specs(&doc);
+  B32 changed = !keyed || entry->version != uishell_store_version(owner) || entry->specs != uishell_store_specs(&doc);
   // An empty workspace never committed has nothing to keep.
   if(changed && !marked && doc.panel_count == 0) { changed = 0; uishell_store_saw(state, entry, owner, &doc); }
   if(!changed && !revision_moved) { scratch_end(scratch); return; }
@@ -2680,7 +2925,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     wheelhouse_overlay_free(overlay);
     if(stored->doc.panel_count && suggests)
     {
-      if(uishell_store_assign_keys(arena, owner, &doc, slots)) { rd_arrangement_set(a); }
+      if(uishell_store_assign_keys(arena, owner, &doc, slots)) { uishell_store_doc_set(&doc); }
       wheelhouse_arrangement_free(stored);
       wheelhouse_slots_free(slots);
       uishell_store_follow(state, owner, id, &entry->generation);
@@ -2702,7 +2947,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
     scratch_end(scratch);
     return;
   }
-  if(uishell_store_assign_keys(arena, owner, &doc, slots)) { rd_arrangement_set(a); }
+  if(uishell_store_assign_keys(arena, owner, &doc, slots)) { uishell_store_doc_set(&doc); }
 
   // New and changed slots. A slot following its provider is the provider's,
   // and a placeholder's keeps the spec it was made from.
@@ -2760,7 +3005,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   // The document, at the generation this device last saw.
   U64 expected = marked && entry->generation ? entry->generation : stored->generation;
   wheelhouse_arrangement_free(stored);
-  WheelhouseArrangementDoc out = {doc.panels, doc.panel_count};
+  WheelhouseArrangementDoc out = uishell_store_doc_out(&doc);
   WheelhouseWorkspaceArrangement *after = 0;
   char *error = 0;
   for(U32 attempt = 0; ok && attempt < 2; attempt++)
@@ -2780,7 +3025,7 @@ uishell_store_sync_owner(UIShell_SidebarState *state, CFG_Node *owner, B32 revis
   wheelhouse_string_free(error);
   wheelhouse_slots_free(slots);
   // Tried: not tried again until it changes.
-  entry->version = rd_arrangement_version(uishell_store_owner(owner));
+  entry->version = uishell_store_version(owner);
   entry->specs = uishell_store_specs(&doc);
   if(committed)
   {
@@ -2838,7 +3083,7 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
     CFG_Node *owner = n->v;
     if(str8_match(owner->string, str8_lit("detached_workspace"), 0)) { continue; }
     UIShell_StoreEntry *entry = uishell_store_entry(state, uishell_workspace_id_from_cfg(owner));
-    U64 version = rd_arrangement_version(uishell_store_owner(owner));
+    U64 version = uishell_store_version(owner);
     UIShell_StoreDoc before = uishell_store_doc(scratch.arena, rd_arrangement_live(uishell_store_owner(owner)));
     U64 specs = uishell_store_specs(&before);
     uishell_store_plan_owner(state, owner);

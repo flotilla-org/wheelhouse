@@ -449,7 +449,7 @@ pub const WHEELHOUSE_INTENT_EQUALIZE_PANEL: u32 = 8;
 pub const WHEELHOUSE_OWNER_WORKSPACE: u32 = 0;
 /// A window's sidebar dock.
 pub const WHEELHOUSE_OWNER_SIDEBAR: u32 = 1;
-/// PROTOTYPE (#697): a View's dock.
+/// A View Dock's: the panels a View shows inside its own content.
 pub const WHEELHOUSE_OWNER_DOCK: u32 = 2;
 
 /// One intent: `kind`, its owner, and the fields it reads.
