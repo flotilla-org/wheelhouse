@@ -240,7 +240,12 @@ r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_n
 // The blur pass keeps filling R_MTL_BlurUniforms; the generated shader reads
 // it as R_CoreBlurUniforms, whose texcoord_flip_y is that struct's zeroed padding.
 StaticAssert(sizeof(R_MTL_BlurUniforms) == sizeof(R_CoreBlurUniforms), r_mtl_core_blur_uniforms_size);
+StaticAssert(OffsetOf(R_MTL_BlurUniforms, rect) == OffsetOf(R_CoreBlurUniforms, rect), r_mtl_core_blur_rect_offset);
+StaticAssert(OffsetOf(R_MTL_BlurUniforms, corner_radii) == OffsetOf(R_CoreBlurUniforms, corner_radii), r_mtl_core_blur_corner_radii_offset);
+StaticAssert(OffsetOf(R_MTL_BlurUniforms, direction) == OffsetOf(R_CoreBlurUniforms, direction), r_mtl_core_blur_direction_offset);
+StaticAssert(OffsetOf(R_MTL_BlurUniforms, viewport_size) == OffsetOf(R_CoreBlurUniforms, viewport_size), r_mtl_core_blur_viewport_size_offset);
 StaticAssert(OffsetOf(R_MTL_BlurUniforms, blur_count) == OffsetOf(R_CoreBlurUniforms, blur_count), r_mtl_core_blur_count_offset);
+StaticAssert(OffsetOf(R_MTL_BlurUniforms, _padding0_) == OffsetOf(R_CoreBlurUniforms, texcoord_flip_y), r_mtl_core_blur_flip_is_padding);
 StaticAssert(OffsetOf(R_MTL_BlurUniforms, kernel) == OffsetOf(R_CoreBlurUniforms, kernel), r_mtl_core_blur_kernel_offset);
 
 internal id<MTLLibrary>

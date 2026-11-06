@@ -106,6 +106,10 @@ struct R_Rect2DInst
   F32 shear;
 };
 
+// The generated rect shader reads an instance as eight float4s (Metal through
+// a vertex descriptor, D3D11 and OpenGL through their input layouts).
+StaticAssert(sizeof(R_Rect2DInst) == 8*sizeof(Vec4F32), r_rect2d_inst_is_eight_vec4s);
+
 typedef struct R_Mesh3DInst R_Mesh3DInst;
 struct R_Mesh3DInst
 {
