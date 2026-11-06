@@ -1322,6 +1322,180 @@ r_window_end_frame(WM_Window window, R_Handle window_equip)
 
 //- rjf: render pass submission
 
+// Blurs params->rect of the stage in place, through scratch: the horizontal
+// pass writes scratch, the vertical pass writes back to the stage. Both
+// targets are resolution pixels; params are in the same pixels.
+internal void
+r_d3d11_blur(R_PassParams_Blur *params, Vec2S32 resolution,
+             ID3D11RenderTargetView *stage_rtv, ID3D11ShaderResourceView *stage_srv,
+             ID3D11RenderTargetView *scratch_rtv, ID3D11ShaderResourceView *scratch_srv)
+{
+  ID3D11DeviceContext1 *d_ctx = r_d3d11_state->device_ctx;
+  ID3D11SamplerState *sampler   = r_d3d11_state->samplers[R_Tex2DSampleKind_Linear];
+  ID3D11VertexShader *vshad     = r_d3d11_state->vshads[R_D3D11_VShadKind_Blur];
+  ID3D11PixelShader *pshad      = r_d3d11_state->pshads[R_D3D11_PShadKind_Blur];
+  ID3D11Buffer *uniforms_buffer = r_d3d11_state->uniform_type_kind_buffers[R_D3D11_VShadKind_Blur];
+  
+  // rjf: setup output merger
+  d_ctx->lpVtbl->OMSetDepthStencilState(d_ctx, r_d3d11_state->noop_depth_stencil, 0);
+  d_ctx->lpVtbl->OMSetBlendState(d_ctx, r_d3d11_state->no_blend_state, 0, 0xffffffff);
+  
+  // rjf: set up viewport
+  D3D11_VIEWPORT viewport = { 0.0f, 0.0f, (F32)resolution.x, (F32)resolution.y, 0.0f, 1.0f };
+  d_ctx->lpVtbl->RSSetViewports(d_ctx, 1, &viewport);
+  d_ctx->lpVtbl->RSSetState(d_ctx, (ID3D11RasterizerState *)r_d3d11_state->main_rasterizer);
+  
+  // rjf: setup input assembly
+  d_ctx->lpVtbl->IASetPrimitiveTopology(d_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+  d_ctx->lpVtbl->IASetInputLayout(d_ctx, 0);
+  
+  // rjf: setup shaders
+  d_ctx->lpVtbl->VSSetShader(d_ctx, vshad, 0, 0);
+  d_ctx->lpVtbl->VSSetConstantBuffers(d_ctx, 0, 1, &uniforms_buffer);
+  d_ctx->lpVtbl->PSSetShader(d_ctx, pshad, 0, 0);
+  d_ctx->lpVtbl->PSSetSamplers(d_ctx, 0, 1, &sampler);
+  
+  // rjf: setup scissor rect
+  {
+    D3D11_RECT rect = { 0 };
+    rect.left = 0;
+    rect.right = (LONG)resolution.x;
+    rect.top = 0;
+    rect.bottom = (LONG)resolution.y;
+    d_ctx->lpVtbl->RSSetScissorRects(d_ctx, 1, &rect);
+  }
+  
+  // rjf: set up uniforms
+  R_D3D11_Uniforms_Blur uniforms = { 0 };
+  {
+    F32 weights[ArrayCount(uniforms.kernel)*2] = {0};
+    
+    F32 blur_size = Min(params->blur_size, ArrayCount(weights));
+    U64 blur_count = (U64)round_f32(blur_size);
+    
+    F32 stdev = (blur_size-1.f)/2.f;
+    F32 one_over_root_2pi_stdev2 = 1/sqrt_f32(2*pi32*stdev*stdev);
+    F32 euler32 = 2.718281828459045f;
+    
+    weights[0] = 1.f;
+    if(stdev > 0.f)
+    {
+      for(U64 idx = 0; idx < blur_count; idx += 1)
+      {
+        F32 kernel_x = (F32)idx;
+        weights[idx] = one_over_root_2pi_stdev2*pow_f32(euler32, -kernel_x*kernel_x/(2.f*stdev*stdev)); 
+      }
+    }
+    if(weights[0] > 1.f)
+    {
+      MemoryZeroArray(weights);
+      weights[0] = 1.f;
+    }
+    else
+    {
+      // prepare weights & offsets for bilinear lookup
+      // blur filter wants to calculate w0*pixel[pos] + w1*pixel[pos+1] + ...
+      // with bilinear filter we can do this calulation by doing only w*sample(pos+t) = w*((1-t)*pixel[pos] + t*pixel[pos+1])
+      // we can see w0=w*(1-t) and w1=w*t
+      // thus w=w0+w1 and t=w1/w
+      for (U64 idx = 1; idx < blur_count; idx += 2)
+      {
+        F32 w0 = weights[idx + 0];
+        F32 w1 = weights[idx + 1];
+        F32 w = w0 + w1;
+        F32 t = w1 / w;
+        
+        // each kernel element is float2(weight, offset)
+        // weights & offsets are adjusted for bilinear sampling
+        // zw elements are not used, a bit of waste but it allows for simpler shader code
+        uniforms.kernel[(idx+1)/2] = v4f32(w, (F32)idx + t, 0, 0);
+      }
+    }
+    uniforms.kernel[0].x = weights[0];
+    
+    // technically we need just direction be different
+    // but there are 256 bytes of usable space anyway for each constant buffer chunk
+    
+    uniforms.passes[Axis2_X].viewport_size = v2f32(resolution.x, resolution.y);
+    uniforms.passes[Axis2_X].rect          = params->rect;
+    uniforms.passes[Axis2_X].direction     = v2f32(1.f / resolution.x, 0);
+    uniforms.passes[Axis2_X].blur_count    = 1 + blur_count / 2; // 2x smaller because of bilinear sampling
+    MemoryCopyArray(uniforms.passes[Axis2_X].corner_radii.v, params->corner_radii);
+    
+    uniforms.passes[Axis2_Y].viewport_size = v2f32(resolution.x, resolution.y);
+    uniforms.passes[Axis2_Y].rect          = params->rect;
+    uniforms.passes[Axis2_Y].direction     = v2f32(0, 1.f / resolution.y);
+    uniforms.passes[Axis2_Y].blur_count    = 1 + blur_count / 2; // 2x smaller because of bilinear sampling
+    MemoryCopyArray(uniforms.passes[Axis2_Y].corner_radii.v, params->corner_radii);
+    
+    D3D11_MAPPED_SUBRESOURCE sub_rsrc = {0};
+    d_ctx->lpVtbl->Map(d_ctx, (ID3D11Resource *)uniforms_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub_rsrc);
+    MemoryCopy((U8 *)sub_rsrc.pData, &uniforms, sizeof(uniforms));
+    d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)uniforms_buffer, 0);
+  }
+  
+  ID3D11Buffer *uniforms_buffers[] = { uniforms_buffer, uniforms_buffer };
+  
+  U32 uniform_offset[Axis2_COUNT][2] =
+  {
+    { 0 * sizeof(R_D3D11_Uniforms_BlurPass) / 16, (U32)OffsetOf(R_D3D11_Uniforms_Blur, kernel) / 16 },
+    { 1 * sizeof(R_D3D11_Uniforms_BlurPass) / 16, (U32)OffsetOf(R_D3D11_Uniforms_Blur, kernel) / 16 },
+  };
+  
+  U32 uniform_count[Axis2_COUNT][2] =
+  {
+    { sizeof(R_D3D11_Uniforms_BlurPass) / 16, sizeof(uniforms.kernel) / 16 },
+    { sizeof(R_D3D11_Uniforms_BlurPass) / 16, sizeof(uniforms.kernel) / 16 },
+  };
+  
+  // rjf: setup scissor rect
+  {
+    Rng2F32 clip = params->clip;
+    D3D11_RECT rect = {0};
+    {
+      if(clip.x0 == 0 && clip.y0 == 0 && clip.x1 == 0 && clip.y1 == 0)
+      {
+        rect.left = 0;
+        rect.right = (LONG)resolution.x;
+        rect.top = 0;
+        rect.bottom = (LONG)resolution.y;
+      }
+      else if(clip.x0 > clip.x1 || clip.y0 > clip.y1)
+      {
+        rect.left = 0;
+        rect.right = 0;
+        rect.top = 0;
+        rect.bottom = 0;
+      }
+      else
+      {
+        rect.left = (LONG)clip.x0;
+        rect.right = (LONG)clip.x1;
+        rect.top = (LONG)clip.y0;
+        rect.bottom = (LONG)clip.y1;
+      }
+    }
+    d_ctx->lpVtbl->RSSetScissorRects(d_ctx, 1, &rect);
+  }
+  
+  // rjf: for unsetting srv
+  ID3D11ShaderResourceView* srv = 0;
+  
+  // horizontal pass
+  d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, &scratch_rtv, 0);
+  d_ctx->lpVtbl->PSSetConstantBuffers1(d_ctx, 0, ArrayCount(uniforms_buffers), uniforms_buffers, uniform_offset[Axis2_X], uniform_count[Axis2_X]);
+  d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &stage_srv);
+  d_ctx->lpVtbl->Draw(d_ctx, 4, 0);
+  d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &srv);
+  
+  // vertical pass
+  d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, &stage_rtv, 0);
+  d_ctx->lpVtbl->PSSetConstantBuffers1(d_ctx, 0, ArrayCount(uniforms_buffers), uniforms_buffers, uniform_offset[Axis2_Y], uniform_count[Axis2_Y]);
+  d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &scratch_srv);
+  d_ctx->lpVtbl->Draw(d_ctx, 4, 0);
+  d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &srv);
+}
+
 r_hook void
 r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
 {
@@ -1613,171 +1787,9 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
         //
         case R_PassKind_Blur:
         {
-          R_PassParams_Blur *params = pass->params_blur;
-          ID3D11SamplerState *sampler   = r_d3d11_state->samplers[R_Tex2DSampleKind_Linear];
-          ID3D11VertexShader *vshad     = r_d3d11_state->vshads[R_D3D11_VShadKind_Blur];
-          ID3D11PixelShader *pshad      = r_d3d11_state->pshads[R_D3D11_PShadKind_Blur];
-          ID3D11Buffer *uniforms_buffer = r_d3d11_state->uniform_type_kind_buffers[R_D3D11_VShadKind_Blur];
-          
-          // rjf: setup output merger
-          d_ctx->lpVtbl->OMSetDepthStencilState(d_ctx, r_d3d11_state->noop_depth_stencil, 0);
-          d_ctx->lpVtbl->OMSetBlendState(d_ctx, r_d3d11_state->no_blend_state, 0, 0xffffffff);
-          
-          // rjf: set up viewport
-          Vec2S32 resolution = wnd->last_resolution;
-          D3D11_VIEWPORT viewport = { 0.0f, 0.0f, (F32)resolution.x, (F32)resolution.y, 0.0f, 1.0f };
-          d_ctx->lpVtbl->RSSetViewports(d_ctx, 1, &viewport);
-          d_ctx->lpVtbl->RSSetState(d_ctx, (ID3D11RasterizerState *)r_d3d11_state->main_rasterizer);
-          
-          // rjf: setup input assembly
-          d_ctx->lpVtbl->IASetPrimitiveTopology(d_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-          d_ctx->lpVtbl->IASetInputLayout(d_ctx, 0);
-          
-          // rjf: setup shaders
-          d_ctx->lpVtbl->VSSetShader(d_ctx, vshad, 0, 0);
-          d_ctx->lpVtbl->VSSetConstantBuffers(d_ctx, 0, 1, &uniforms_buffer);
-          d_ctx->lpVtbl->PSSetShader(d_ctx, pshad, 0, 0);
-          d_ctx->lpVtbl->PSSetSamplers(d_ctx, 0, 1, &sampler);
-          
-          // rjf: setup scissor rect
-          {
-            D3D11_RECT rect = { 0 };
-            rect.left = 0;
-            rect.right = (LONG)wnd->last_resolution.x;
-            rect.top = 0;
-            rect.bottom = (LONG)wnd->last_resolution.y;
-            d_ctx->lpVtbl->RSSetScissorRects(d_ctx, 1, &rect);
-          }
-          
-          // rjf: set up uniforms
-          R_D3D11_Uniforms_Blur uniforms = { 0 };
-          {
-            F32 weights[ArrayCount(uniforms.kernel)*2] = {0};
-            
-            F32 blur_size = Min(params->blur_size, ArrayCount(weights));
-            U64 blur_count = (U64)round_f32(blur_size);
-            
-            F32 stdev = (blur_size-1.f)/2.f;
-            F32 one_over_root_2pi_stdev2 = 1/sqrt_f32(2*pi32*stdev*stdev);
-            F32 euler32 = 2.718281828459045f;
-            
-            weights[0] = 1.f;
-            if(stdev > 0.f)
-            {
-              for(U64 idx = 0; idx < blur_count; idx += 1)
-              {
-                F32 kernel_x = (F32)idx;
-                weights[idx] = one_over_root_2pi_stdev2*pow_f32(euler32, -kernel_x*kernel_x/(2.f*stdev*stdev)); 
-              }
-            }
-            if(weights[0] > 1.f)
-            {
-              MemoryZeroArray(weights);
-              weights[0] = 1.f;
-            }
-            else
-            {
-              // prepare weights & offsets for bilinear lookup
-              // blur filter wants to calculate w0*pixel[pos] + w1*pixel[pos+1] + ...
-              // with bilinear filter we can do this calulation by doing only w*sample(pos+t) = w*((1-t)*pixel[pos] + t*pixel[pos+1])
-              // we can see w0=w*(1-t) and w1=w*t
-              // thus w=w0+w1 and t=w1/w
-              for (U64 idx = 1; idx < blur_count; idx += 2)
-              {
-                F32 w0 = weights[idx + 0];
-                F32 w1 = weights[idx + 1];
-                F32 w = w0 + w1;
-                F32 t = w1 / w;
-                
-                // each kernel element is float2(weight, offset)
-                // weights & offsets are adjusted for bilinear sampling
-                // zw elements are not used, a bit of waste but it allows for simpler shader code
-                uniforms.kernel[(idx+1)/2] = v4f32(w, (F32)idx + t, 0, 0);
-              }
-            }
-            uniforms.kernel[0].x = weights[0];
-            
-            // technically we need just direction be different
-            // but there are 256 bytes of usable space anyway for each constant buffer chunk
-            
-            uniforms.passes[Axis2_X].viewport_size = v2f32(resolution.x, resolution.y);
-            uniforms.passes[Axis2_X].rect          = params->rect;
-            uniforms.passes[Axis2_X].direction     = v2f32(1.f / resolution.x, 0);
-            uniforms.passes[Axis2_X].blur_count    = 1 + blur_count / 2; // 2x smaller because of bilinear sampling
-            MemoryCopyArray(uniforms.passes[Axis2_X].corner_radii.v, params->corner_radii);
-            
-            uniforms.passes[Axis2_Y].viewport_size = v2f32(resolution.x, resolution.y);
-            uniforms.passes[Axis2_Y].rect          = params->rect;
-            uniforms.passes[Axis2_Y].direction     = v2f32(0, 1.f / resolution.y);
-            uniforms.passes[Axis2_Y].blur_count    = 1 + blur_count / 2; // 2x smaller because of bilinear sampling
-            MemoryCopyArray(uniforms.passes[Axis2_Y].corner_radii.v, params->corner_radii);
-            
-            D3D11_MAPPED_SUBRESOURCE sub_rsrc = {0};
-            d_ctx->lpVtbl->Map(d_ctx, (ID3D11Resource *)uniforms_buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub_rsrc);
-            MemoryCopy((U8 *)sub_rsrc.pData, &uniforms, sizeof(uniforms));
-            d_ctx->lpVtbl->Unmap(d_ctx, (ID3D11Resource *)uniforms_buffer, 0);
-          }
-          
-          ID3D11Buffer *uniforms_buffers[] = { uniforms_buffer, uniforms_buffer };
-          
-          U32 uniform_offset[Axis2_COUNT][2] =
-          {
-            { 0 * sizeof(R_D3D11_Uniforms_BlurPass) / 16, (U32)OffsetOf(R_D3D11_Uniforms_Blur, kernel) / 16 },
-            { 1 * sizeof(R_D3D11_Uniforms_BlurPass) / 16, (U32)OffsetOf(R_D3D11_Uniforms_Blur, kernel) / 16 },
-          };
-          
-          U32 uniform_count[Axis2_COUNT][2] =
-          {
-            { sizeof(R_D3D11_Uniforms_BlurPass) / 16, sizeof(uniforms.kernel) / 16 },
-            { sizeof(R_D3D11_Uniforms_BlurPass) / 16, sizeof(uniforms.kernel) / 16 },
-          };
-          
-          // rjf: setup scissor rect
-          {
-            Rng2F32 clip = params->clip;
-            D3D11_RECT rect = {0};
-            {
-              if(clip.x0 == 0 && clip.y0 == 0 && clip.x1 == 0 && clip.y1 == 0)
-              {
-                rect.left = 0;
-                rect.right = (LONG)wnd->last_resolution.x;
-                rect.top = 0;
-                rect.bottom = (LONG)wnd->last_resolution.y;
-              }
-              else if(clip.x0 > clip.x1 || clip.y0 > clip.y1)
-              {
-                rect.left = 0;
-                rect.right = 0;
-                rect.top = 0;
-                rect.bottom = 0;
-              }
-              else
-              {
-                rect.left = (LONG)clip.x0;
-                rect.right = (LONG)clip.x1;
-                rect.top = (LONG)clip.y0;
-                rect.bottom = (LONG)clip.y1;
-              }
-            }
-            d_ctx->lpVtbl->RSSetScissorRects(d_ctx, 1, &rect);
-          }
-          
-          // rjf: for unsetting srv
-          ID3D11ShaderResourceView* srv = 0;
-          
-          // horizontal pass
-          d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, &wnd->stage_scratch_color_rtv, 0);
-          d_ctx->lpVtbl->PSSetConstantBuffers1(d_ctx, 0, ArrayCount(uniforms_buffers), uniforms_buffers, uniform_offset[Axis2_X], uniform_count[Axis2_X]);
-          d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &wnd->stage_color_srv);
-          d_ctx->lpVtbl->Draw(d_ctx, 4, 0);
-          d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &srv);
-          
-          // vertical pass
-          d_ctx->lpVtbl->OMSetRenderTargets(d_ctx, 1, &wnd->stage_color_rtv, 0);
-          d_ctx->lpVtbl->PSSetConstantBuffers1(d_ctx, 0, ArrayCount(uniforms_buffers), uniforms_buffers, uniform_offset[Axis2_Y], uniform_count[Axis2_Y]);
-          d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &wnd->stage_scratch_color_srv);
-          d_ctx->lpVtbl->Draw(d_ctx, 4, 0);
-          d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &srv);
+          r_d3d11_blur(pass->params_blur, wnd->last_resolution,
+                       wnd->stage_color_rtv, wnd->stage_color_srv,
+                       wnd->stage_scratch_color_rtv, wnd->stage_scratch_color_srv);
         }break;
         
         
@@ -1955,6 +1967,9 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
       ID3D11Texture2D *final_color = 0;
       ID3D11RenderTargetView *final_color_rtv = 0;
       ID3D11Texture2D *readback_texture = 0;
+      ID3D11Texture2D *scratch_color = 0;
+      ID3D11RenderTargetView *scratch_color_rtv = 0;
+      ID3D11ShaderResourceView *scratch_color_srv = 0;
 
       D3D11_TEXTURE2D_DESC stage_desc = {0};
       stage_desc.Width = (UINT)size.x;
@@ -2016,6 +2031,25 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
         for(R_PassNode *pass_n = passes->first; pass_n != 0; pass_n = pass_n->next)
         {
           R_Pass *pass = &pass_n->v;
+          if(pass->kind == R_PassKind_Blur && pass->params_blur != 0)
+          {
+            // Blur the stage in place, as window submission does, through a
+            // scratch target made the first time a blur needs one.
+            if(scratch_color == 0)
+            {
+              device->lpVtbl->CreateTexture2D(device, &stage_desc, 0, &scratch_color);
+              if(scratch_color != 0)
+              {
+                device->lpVtbl->CreateRenderTargetView(device, (ID3D11Resource *)scratch_color, &stage_rtv_desc, &scratch_color_rtv);
+                device->lpVtbl->CreateShaderResourceView(device, (ID3D11Resource *)scratch_color, &stage_srv_desc, &scratch_color_srv);
+              }
+            }
+            if(scratch_color_rtv != 0 && scratch_color_srv != 0)
+            {
+              r_d3d11_blur(pass->params_blur, size, stage_color_rtv, stage_color_srv, scratch_color_rtv, scratch_color_srv);
+            }
+            continue;
+          }
           if(pass->kind == R_PassKind_UI && pass->params_ui != 0)
           {
             R_PassParams_UI *params = pass->params_ui;
@@ -2183,6 +2217,9 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
         d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &null_srv);
       }
 
+      if(scratch_color_srv != 0) { scratch_color_srv->lpVtbl->Release(scratch_color_srv); }
+      if(scratch_color_rtv != 0) { scratch_color_rtv->lpVtbl->Release(scratch_color_rtv); }
+      if(scratch_color != 0)     { scratch_color->lpVtbl->Release(scratch_color); }
       if(readback_texture != 0) { readback_texture->lpVtbl->Release(readback_texture); }
       if(final_color_rtv != 0)  { final_color_rtv->lpVtbl->Release(final_color_rtv); }
       if(final_color != 0)      { final_color->lpVtbl->Release(final_color); }

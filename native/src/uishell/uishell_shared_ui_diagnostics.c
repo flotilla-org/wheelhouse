@@ -167,14 +167,14 @@ uishell_check_metal_blur_kernel_bounds(U32 *failures)
 }
 #endif
 
-#if R_BACKEND == R_BACKEND_OPENGL
-// Blur a field of one-pixel stripes through a rounded rect and read it back.
-// Where the blur applies, neighbouring pixels converge; where it doesn't,
-// they keep the stripes' full contrast. Catches the blur shader's corner
-// mask discarding the inside of the rect instead of the outside, and a clip
-// that leaves nothing on the target blurring the whole rect anyway.
+// Blur a field of one-pixel stripes through a rounded rect and read it back,
+// on whichever backend this build has. Where the blur applies, neighbouring
+// pixels converge; where it doesn't, they keep the stripes' full contrast.
+// Catches a corner mask that keeps the wrong side of the rounded rect (GL
+// discarded the inside), sampling that doesn't average (GL sampled nearest),
+// and a clip that leaves nothing on the target blurring the rect anyway.
 internal S32
-uishell_opengl_blur_contrast(R_Readback *pixels, S32 x, S32 y)
+uishell_blur_contrast(R_Readback *pixels, S32 x, S32 y)
 {
   U8 *a = pixels->data.str + ((U64)y*pixels->size.x + x)*4;
   U8 *b = a + 4;
@@ -183,7 +183,7 @@ uishell_opengl_blur_contrast(R_Readback *pixels, S32 x, S32 y)
 }
 
 internal void
-uishell_check_opengl_blur_mask(U32 *failures)
+uishell_check_blur_mask(U32 *failures)
 {
   Temp scratch = scratch_begin(0, 0);
   Vec2S32 size = v2s32(96, 64);
@@ -215,11 +215,11 @@ uishell_check_opengl_blur_mask(U32 *failures)
     {
       continue;
     }
-    S32 outside = uishell_opengl_blur_contrast(&pixels, 8, 32);
-    S32 center = uishell_opengl_blur_contrast(&pixels, 48, 32);
-    S32 corner = uishell_opengl_blur_contrast(&pixels, 25, 17);  // past the rounded corner
-    fprintf(stderr, "opengl blur clip %d: stripe contrast outside %d, center %d, corner %d\n",
-            (int)clip_idx, outside, center, corner);
+    S32 outside = uishell_blur_contrast(&pixels, 8, 32);
+    S32 center = uishell_blur_contrast(&pixels, 48, 32);
+    S32 corner = uishell_blur_contrast(&pixels, 25, 17);  // past the rounded corner
+    fprintf(stderr, "%.*s blur clip %d: stripe contrast outside %d, center %d, corner %d\n",
+            str8_varg(r_backend_name()), (int)clip_idx, outside, center, corner);
     UIImportCheck(outside > 200);
     UIImportCheck(corner > 200);
     if(clip_idx == 0)
@@ -233,7 +233,6 @@ uishell_check_opengl_blur_mask(U32 *failures)
   }
   scratch_end(scratch);
 }
-#endif
 
 // Check raster coverage through every platform provider, including descenders.
 internal void
@@ -417,10 +416,8 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
 #if R_BACKEND == R_BACKEND_METAL
   uishell_check_metal_blur_kernel_bounds(&failures);
 #endif
-#if R_BACKEND == R_BACKEND_OPENGL
-  uishell_check_opengl_blur_mask(&failures);
-  fprintf(stderr, "opengl blur mask: %u failures\n", failures);
-#endif
+  uishell_check_blur_mask(&failures);
+  fprintf(stderr, "blur mask: %u failures\n", failures);
   fprintf(stderr, "shared UI diagnostics: %s (%u failures)\n", failures ? "FAIL" : "PASS", failures);
   scratch_end(scratch);
   return failures == 0;
