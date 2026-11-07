@@ -9,7 +9,7 @@
 // GET /threads, GET /threads/{id}/events (?after=N, ?before=N&limit=M), POST
 // /threads/{id}/run and /stop. stdin still works: a line is a prompt;
 // /interrupt stops the turn; y or n answers a pending approval.
-import { chmodSync, unlinkSync } from 'node:fs';
+import { unlinkSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 
@@ -212,9 +212,11 @@ function onNotification(m, p) {
       turnId = p.turn.id; emit('RunStarted', { runId: p.turn.id }); setStatus('running'); say('\n[turn started]\n'); break;
     case 'turn/completed': {
       emit('RunFinished', { runId: p.turn.id, ...outcome(p.turn) });
-      turnId = null; setStatus('idle'); say('\n[turn done]\n> ');
+      turnId = null; say('\n[turn done]\n> ');
+      // A queued prompt starts at once, so the thread doesn't show idle between.
       const next = queued.shift();
-      if (next) prompt(next.text, next.clientId).catch((err) => say(`\n[error] ${err.message}\n> `));
+      if (!next) setStatus('idle');
+      else prompt(next.text, next.clientId).catch((err) => { setStatus('idle'); say(`\n[error] ${err.message}\n> `); });
       break;
     }
     case 'item/started': itemStarted(p.item); if (p.item.type === 'commandExecution') say(`\n$ ${p.item.command}\n`); break;
@@ -293,6 +295,8 @@ async function run(input) {
 
 function serve() {
   try { unlinkSync(socket); } catch {}
+  // Owner-only from the moment it exists: the socket runs prompts and answers approvals.
+  const umask = process.umask(0o177);
   createServer((req, res) => {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
@@ -326,7 +330,7 @@ function serve() {
         return reply(500, { error: err.message });
       }
     });
-  }).listen(socket, () => chmodSync(socket, 0o600));
+  }).listen(socket, () => process.umask(umask));
 }
 
 ws.addEventListener('message', (e) => {
