@@ -183,6 +183,8 @@ lib.wheelhouse_ingress_start_recorded.restype = C.c_void_p
 class IngressTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory(prefix='wh-', dir=None if WINDOWS else '/tmp')
+        # A cleanup, not tearDown: those run last, after the ones that stop the Wheelhouse processes writing into it.
+        self.addCleanup(self.dir.cleanup)
         self.path = r'\\.\pipe\wheelhouse-test-' + uuid.uuid4().hex if WINDOWS else os.path.join(self.dir.name, 'facts.sock')
         self.wake = WAKE(lambda: None)
         config = (ROOT / 'data/sidebar/fixture.kdl').read_bytes()
@@ -226,7 +228,6 @@ class IngressTests(unittest.TestCase):
         lib.wheelhouse_ingress_stop(self.server)
         self.pool.shutdown()
         core.wheelhouse_destroy(self.core)
-        self.dir.cleanup()
 
     def request(self, body=b'', content_type='application/json', chunked=False, poll=True, read=False, path='/v1/metadata/patch', refused=False):
         def send():

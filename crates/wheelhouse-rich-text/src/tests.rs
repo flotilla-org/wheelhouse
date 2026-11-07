@@ -497,12 +497,17 @@ fn the_window_holds_the_viewport_and_half_a_viewport_each_side() {
     let tops: Vec<f64> = window.entries.iter().map(|e| e.top).collect();
     assert_eq!(tops.first(), Some(&450.0));
     assert_eq!(tops.last(), Some(&640.0));
-    let thumb = view.thumb(doc);
+    let thumb = view.thumb(doc, 0);
     assert_eq!((thumb.start, thumb.size, thumb.estimated), (0.5, 0.1, 1.0));
+    // As many items again not loaded yet: as tall again, above, and estimated.
+    let items = doc.children(doc.root().unwrap()).count() as u64;
+    let thumb = view.thumb(doc, items);
+    assert_eq!((thumb.start, thumb.size, thumb.estimated), (0.75, 0.05, 1.0));
+    assert!(!view.near_start(doc));
     for e in &window.entries {
         view.set_height(doc, e.key, e.part, 10.0, 100.0).unwrap();
     }
-    assert_eq!(view.thumb(doc).estimated, 0.8);
+    assert_eq!(view.thumb(doc, 0).estimated, 0.8);
 }
 
 #[test]

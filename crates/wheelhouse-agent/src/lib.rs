@@ -1,9 +1,10 @@
 //! A client of the Agent View protocol, decided on wheelhouse#691: HTTP on a
 //! Local Endpoint, one watch stream per thread, older pages on request.
+use std::collections::HashMap;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -56,7 +57,25 @@ impl Drop for Shared {
     }
 }
 
+/// Every endpoint in use, so each has one client and one thread however
+/// many watches and posts share it, as each Cleat route has one Connection.
+static SHARED: Mutex<Option<HashMap<PathBuf, Weak<Shared>>>> = Mutex::new(None);
+
 impl Endpoint {
+    /// The endpoint at `path`, shared with everything else using it.
+    pub fn shared(path: &Path) -> io::Result<Endpoint> {
+        let mut shared = SHARED.lock().unwrap();
+        let shared = shared.get_or_insert_default();
+        shared.retain(|_, endpoint| endpoint.strong_count() > 0);
+        if let Some(endpoint) = shared.get(path).and_then(Weak::upgrade) {
+            return Ok(Endpoint(endpoint));
+        }
+        let endpoint = Endpoint::open(path)?;
+        shared.insert(path.to_owned(), Arc::downgrade(&endpoint.0));
+        Ok(endpoint)
+    }
+
+    /// An endpoint of its own, shared with nothing else.
     pub fn open(path: &Path) -> io::Result<Endpoint> {
         let client = ReqwestHttpClient::local(path).map_err(io::Error::other)?;
         let runtime = Builder::new_current_thread().enable_all().build()?;
@@ -84,6 +103,11 @@ impl Endpoint {
             }
         });
         Watch { endpoint: self.clone(), thread: thread.to_owned(), updates, sink, _stop: stop }
+    }
+
+    /// Whether both share one client and thread.
+    pub fn same(&self, other: &Endpoint) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
     }
 
     /// POSTs `body` (JSON) to `path`, answered in the background.
@@ -156,6 +180,10 @@ pub struct Watch {
 }
 
 impl Watch {
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
+
     /// What came since the last look; anything after wakes the host again.
     pub fn take(&self) -> impl Iterator<Item = Update> + '_ {
         self.sink.woken.store(false, Ordering::Release);

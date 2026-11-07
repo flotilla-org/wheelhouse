@@ -419,6 +419,9 @@ fn check_spec(spec: &ViewSpec) -> Result<(), String> {
         Content::Local(LocalRecipe::Jackstay { launcher, endpoint }) if launcher.is_empty() || endpoint.is_empty() => {
             return empty("a launcher and an endpoint")
         }
+        Content::Local(LocalRecipe::AgentSession { endpoint, thread }) if endpoint.is_empty() || thread.is_empty() => {
+            return empty("an endpoint and a thread")
+        }
         Content::Local(LocalRecipe::CleatSession { host, runtime_root, daemon, session, .. }) => {
             if let Some(field) = suggested_layout::invalid_cleat_field(host, runtime_root, daemon, session) {
                 return Err(format!("a view spec's Cleat {field} must be one nonempty argument, not starting with -"));

@@ -1,30 +1,96 @@
 #!/usr/bin/env node
-// Prototype (#683): a Codex app-server client that writes Wheelhouse's conversation
-// event contract (#548, version 2 from #690) to a file the rich_text View follows, and takes
-// prompts on stdin. Throwaway; it exists to learn what an agent View needs.
+// Prototype (#683): a Codex app-server client that serves one thread over the Agent
+// View protocol (#691): Wheelhouse's conversation contract (#548, version 2) as a watch
+// stream on a unix socket, and prompts in. Throwaway; Flotilla's connectors own live
+// producers.
 //
-//   node tools/codex-agent-host.mjs --url ws://127.0.0.1:PORT (--new [--cwd DIR] | --thread ID) -o FILE [--watch] [--input SOCKET]
+//   node tools/codex-agent-host.mjs --url ws://127.0.0.1:PORT (--new [--cwd DIR] | --thread ID) --socket PATH [--buffer N] [--page BYTES]
 //
-// stdin: a line is a prompt (turn/start, or turn/steer while a turn runs);
-// /interrupt stops the turn; y or n answers a pending approval. With
-// --input, the same over HTTP on a unix socket (POST /run, POST /stop), and
-// the hello names it so a View can show a composer.
-import { appendFileSync, unlinkSync, writeFileSync } from 'node:fs';
+// GET /threads, GET /threads/{id}/events (?after=N, ?before=N&limit=M), POST
+// /threads/{id}/run and /stop. stdin still works: a line is a prompt;
+// /interrupt stops the turn; y or n answers a pending approval.
+import { unlinkSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
+const count = (name, fallback) => {
+  const n = Number(opt(name) ?? fallback);
+  if (!(n > 0)) throw new Error(`${name} takes a positive number`);
+  return n;
+};
 const url = opt('--url') ?? 'ws://127.0.0.1:4599';
-const out = opt('-o') ?? 'codex.events.jsonl';
+const socket = opt('--socket') ?? 'codex-agent.sock';
 const cwd = opt('--cwd') ?? process.cwd();
-const watchOnly = args.includes('--watch');
+// How far back `?after=` can resume; older starts over with a snapshot.
+const buffer = count('--buffer', 100000);
+// A snapshot's newest page, at least this many bytes of whole runs.
+const pageBytes = count('--page', 256 * 1024);
 let threadId = opt('--thread');
 
-// ---- contract output
-let seq = 0;
-const write = (ev) => appendFileSync(out, JSON.stringify(ev) + '\n');
-const emit = (type, fields) => write({ type, threadId, seq: ++seq, ...fields });
+// ---- the thread's events, each numbered by its place in the stream. Numbers
+// start past any an earlier bridge gave out, so a watcher resuming from one is
+// sent a snapshot rather than this log's events at its numbers.
+const base = Date.now() * 1024;
+const log = [];
+const watchers = new Set();
+const emit = (type, fields) => {
+  const event = { type, threadId, seq: base + log.length + 1, ...fields };
+  const line = JSON.stringify(event) + '\n';
+  log.push({ event, line });
+  for (const res of watchers) res.write(line);
+};
+
+// Items a snapshot's earlier count and a page's limit count, as Wheelhouse does.
+const STARTS = new Set(['TextMessageStart', 'ToolCallStart', 'ReasoningMessageStart', 'Custom']);
+const itemsIn = (from, to) => log.slice(from, to).filter(({ event }) => STARTS.has(event.type)).length;
+// Snapshots and pages cut only where a run starts, so an open run and its
+// open items always come whole.
+const runStart = (i) => { while (i > 0 && log[i].event.type !== 'RunStarted') i--; return i; };
+
+// Published once the history is read, then on every change.
+let status = null;
+const setStatus = (value) => {
+  if (value === status) return;
+  status = value;
+  emit('StateSnapshot', { key: 'status', mediaType: 'application/json', snapshot: value });
+};
+
+const hello = (snapshot) => ({ type: 'Hello', contract: 2, threadId,
+  capabilities: { input: true, modes: ['steer', 'queue'], commands: false, roots: [{ path: cwd, local: true }] },
+  ...(snapshot ? { snapshot } : {}) });
+
+function watch(res, query) {
+  res.writeHead(200, { 'Content-Type': 'application/jsonl', 'Cache-Control': 'no-store' });
+  const after = query.has('after') ? Number(query.get('after')) - base : NaN;
+  const write = (event) => res.write(JSON.stringify(event) + '\n');
+  if (after >= Math.max(0, log.length - buffer) && after <= log.length) {
+    write(hello());
+    for (const { line } of log.slice(after)) res.write(line);
+  } else {
+    let start = log.length, bytes = 0;
+    while (start > 0 && bytes < pageBytes) bytes += log[--start].line.length;
+    start = runStart(start);
+    write(hello({ earlierItems: itemsIn(0, start), oldestSeq: base + start + 1 }));
+    const restated = log.slice(0, start).findLast(({ event }) => event.type === 'StateSnapshot' && event.key === 'status');
+    if (restated) res.write(restated.line);
+    for (const { line } of log.slice(start)) res.write(line);
+  }
+  watchers.add(res);
+  // The response's close, not the request's: that fires once its body is read.
+  res.on('close', () => watchers.delete(res));
+}
+
+function page(query) {
+  const before = Math.max(0, Math.min(Number(query.get('before') ?? base + log.length + 1) - base - 1, log.length));
+  const asked = Math.trunc(Number(query.get('limit') ?? 50));
+  const limit = Math.min(asked > 0 ? asked : 50, 500);
+  let start = before;
+  while (start > 0 && itemsIn(start, before) < limit) start--;
+  start = runStart(start);
+  return { events: log.slice(start, before).map(({ event }) => event), earlierItems: itemsIn(0, start), oldestSeq: base + start + 1 };
+}
 
 const KINDS = { commandExecution: 'shell', fileChange: 'edit', mcpToolCall: 'mcp', dynamicToolCall: 'other',
   webSearch: 'web', collabAgentToolCall: 'agent', imageView: 'read' };
@@ -148,10 +214,13 @@ function onNotification(m, p) {
   if (p?.threadId && p.threadId !== threadId) return;
   switch (m) {
     case 'turn/started':
-      turnId = p.turn.id; emit('RunStarted', { runId: p.turn.id }); say('\n[turn started]\n'); break;
-    case 'turn/completed':
+      turnId = p.turn.id; emit('RunStarted', { runId: p.turn.id }); setStatus('running'); say('\n[turn started]\n'); break;
+    case 'turn/completed': {
       emit('RunFinished', { runId: p.turn.id, ...outcome(p.turn) });
-      turnId = null; say('\n[turn done]\n> '); break;
+      turnId = null; say('\n[turn done]\n> ');
+      startQueued();
+      break;
+    }
     case 'item/started': itemStarted(p.item); if (p.item.type === 'commandExecution') say(`\n$ ${p.item.command}\n`); break;
     case 'item/completed':
       itemCompleted(p.item, true);
@@ -178,51 +247,107 @@ function onServerRequest(msg) {
   if (msg.method.endsWith('requestApproval') || msg.method === 'applyPatchApproval' || msg.method === 'execCommandApproval') {
     approval = { id: msg.id, method: msg.method };
     const what = p.command ?? p.reason ?? p.itemId;
-    // The chat shows the request as a Flotilla-style Custom event until the contract names one.
-    emit('Custom', { name: 'approval', value: { method: msg.method, itemId: p.itemId, what } });
+    // The chat shows the request as a Flotilla-style Custom event until #695 draws an
+    // Interrupt; a watcher answers it by this id in a resume entry.
+    emit('Custom', { name: 'approval', value: { interruptId: String(msg.id), method: msg.method, itemId: p.itemId, what } });
+    setStatus('requires_action');
     say(`\n[approval: ${msg.method}] ${what ?? ''}\napprove? y/n > `);
   } else {
     ws.send(JSON.stringify({ id: msg.id, error: { code: -32601, message: `agent-host does not handle ${msg.method}` } }));
   }
 }
 
+function answer(yes) {
+  const decision = approval.method.startsWith('item/') ? (yes ? 'accept' : 'decline') : (yes ? 'approved' : 'denied');
+  ws.send(JSON.stringify({ id: approval.id, result: { decision } }));
+  approval = null;
+  setStatus(turnId ? 'running' : 'idle');
+}
+
 // A prompt is the last user message of an AG-UI RunAgentInput; the harness
 // keeps the history, so only new messages count. While a turn runs, it
 // steers that turn.
-async function prompt(text, clientId) {
+// `queue` waits for the running turn to end; `steer`, or no mode, joins it.
+const queued = [];
+// A queued prompt starts at once, so the thread doesn't show idle between;
+// one that fails to start gives way to the next.
+function startQueued() {
+  const next = queued.shift();
+  if (!next) return setStatus('idle');
+  prompt(next.text, next.clientId).catch((err) => { say(`\n[error] ${err.message}\n> `); startQueued(); });
+}
+
+async function prompt(text, clientId, mode) {
   const input = [{ type: 'text', text }];
+  if (turnId && mode === 'queue') return queued.push({ text, clientId });
   if (turnId) return request('turn/steer', { threadId, expectedTurnId: turnId, input, clientUserMessageId: clientId });
   return request('turn/start', { threadId, input, clientUserMessageId: clientId });
 }
 
-// Input over HTTP on a unix socket: POST /run takes a RunAgentInput, POST
-// /stop interrupts the running turn.
-function serveInput(socket) {
+// The first answer to an approval wins; a second gets 409 naming it.
+const answers = new Map();
+
+async function run(input) {
+  const resume = input.resume ?? [];
+  const message = (input.messages ?? []).filter((m) => m.role === 'user').at(-1);
+  const text = typeof message?.content === 'string' ? message.content
+    : (message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+  // All of it is checked before anything is answered, so a refused request
+  // changes nothing.
+  if (message ? !text : !resume.length) return [400, { error: 'no user message' }];
+  for (const entry of resume) {
+    if (answers.has(entry.interruptId)) return [409, { error: 'answered', by: answers.get(entry.interruptId) }];
+    if (!approval || String(approval.id) !== entry.interruptId) return [404, { error: `no interrupt ${entry.interruptId}` }];
+  }
+  if (resume.length > 1) return [400, { error: 'one interrupt waits at a time' }];
+  for (const entry of resume) {
+    answers.set(entry.interruptId, entry);
+    answer(entry.status === 'resolved' && entry.payload?.approve !== false);
+  }
+  if (message) await prompt(text, message.id, input.mode);
+  return [202, { accepted: true }];
+}
+
+function serve() {
   try { unlinkSync(socket); } catch {}
+  // Owner-only from the moment it exists: the socket runs prompts and answers approvals.
+  const umask = process.umask(0o177);
   createServer((req, res) => {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', async () => {
       const reply = (code, value) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
       try {
-        if (req.method !== 'POST') return reply(405, { error: 'POST only' });
-        if (req.url === '/stop') {
-          if (turnId) await request('turn/interrupt', { threadId, turnId });
-          return reply(200, { stopped: !!turnId });
+        const { pathname, searchParams } = new URL(req.url, 'http://agent');
+        const [, threads, id, verb] = pathname.split('/').map(decodeURIComponent);
+        if (threads !== 'threads') return reply(404, { error: pathname });
+        if (id == null || id === '') {
+          const listed = await request('thread/list', { limit: 50 }).catch(() => ({ data: [] }));
+          const all = listed.data.map((t) => ({ threadId: t.id, title: t.name ?? t.preview, cwd: t.cwd }));
+          if (!all.some((t) => t.threadId === threadId)) all.unshift({ threadId, cwd });
+          return reply(200, all);
         }
-        if (req.url !== '/run') return reply(404, { error: req.url });
-        const run = JSON.parse(body || '{}');
-        const message = (run.messages ?? []).filter((m) => m.role === 'user').at(-1);
-        const text = typeof message?.content === 'string' ? message.content
-          : (message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
-        if (!text) return reply(400, { error: 'no user message' });
-        await prompt(text, message.id);
-        return reply(202, { accepted: true });
+        if (id !== threadId) return reply(404, { error: `no thread ${id}` });
+        if (req.method === 'GET' && verb === 'events') {
+          if (!searchParams.has('before')) return watch(res, searchParams);
+          if (!Number.isFinite(Number(searchParams.get('before')))) return reply(400, { error: 'before takes a seq' });
+          return reply(200, page(searchParams));
+        }
+        if (req.method !== 'POST') return reply(405, { error: 'GET events, or POST run or stop' });
+        if (verb === 'stop') {
+          queued.length = 0;
+          // The turn ends, clearing turnId, before the interrupt is answered.
+          const stopping = turnId;
+          if (stopping) await request('turn/interrupt', { threadId, turnId: stopping });
+          return reply(200, { stopped: !!stopping });
+        }
+        if (verb !== 'run') return reply(404, { error: pathname });
+        return reply(...(await run(JSON.parse(body || '{}'))));
       } catch (err) {
         return reply(500, { error: err.message });
       }
     });
-  }).listen(socket);
+  }).listen(socket, () => process.umask(umask));
 }
 
 ws.addEventListener('message', (e) => {
@@ -247,11 +372,8 @@ ws.addEventListener('open', async () => {
   } else {
     await request('thread/resume', { threadId, excludeTurns: true });
   }
-  const socket = opt('--input');
-  if (socket) serveInput(socket);
-  writeFileSync(out, JSON.stringify({ type: 'Hello', contract: 2, ...(socket ? { input: `unix://${socket}` } : {}) }) + '\n');
-  // History: pages newest first, emitted oldest first. The file can't take a
-  // page in front of what it holds, so the whole history is read here.
+  // History: pages newest first, emitted oldest first. It is all read here,
+  // so every event has its `seq` before a watcher pages back through them.
   const turns = [];
   let cursor = null;
   // A new thread has no history until its first prompt.
@@ -266,18 +388,17 @@ ws.addEventListener('open', async () => {
     if (t.status === 'inProgress') { turnId = t.id; continue; }
     emit('RunFinished', { runId: t.id, ...outcome(t) });
   }
-  say(`thread ${threadId}: ${turns.length} turns of history -> ${out}\n> `);
-  if (watchOnly) return;
+  setStatus(turnId ? 'running' : 'idle');
+  serve();
+  say(`thread ${threadId}: ${turns.length} turns of history, ${log.length} events, on ${socket}\n> `);
   const rl = createInterface({ input: process.stdin });
   rl.on('line', async (line) => {
     const text = line.trim();
     if (!text) return;
     try {
       if (approval) {
-        const yes = /^y/i.test(text);
-        const decision = approval.method.startsWith('item/') ? (yes ? 'accept' : 'decline') : (yes ? 'approved' : 'denied');
-        ws.send(JSON.stringify({ id: approval.id, result: { decision } }));
-        approval = null;
+        answers.set(String(approval.id), { status: 'resolved', from: 'stdin' });
+        answer(/^y/i.test(text));
       } else if (text === '/interrupt') {
         if (turnId) await request('turn/interrupt', { threadId, turnId });
       } else {

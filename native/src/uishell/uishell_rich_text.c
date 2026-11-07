@@ -1765,11 +1765,17 @@ struct UIShell_RichTextState
   // The file as it was when opening it failed.
   U64 failed_size;
   DenseTime failed_modified;
-  // Where the conversation's producer takes input, from its hello, and the
-  // composer's draft (the agent View prototype).
-  B32 input_read;
+  // A watched agent thread (#699): the watch, and the Local Endpoint's
+  // socket and thread its View settings name. Its composer posts to the
+  // thread's routes there; `input` is empty while the thread takes none.
+  WheelhouseAgentWatch *watch;
+  U8 agent_endpoint[512];
+  U64 agent_endpoint_size;
+  String8 agent_thread;
+  U64 agent_version;
   U8 input[512];
   U64 input_size;
+  // The composer's draft.
   U8 compose[4096];
   U64 compose_size;
   TxtPt compose_cursor;
@@ -1816,6 +1822,7 @@ uishell_rt_release(void *user_data)
   uishell_rt_model_release(&s->model);
   if(s->match_arena) { arena_release(s->match_arena); s->match_arena = 0; }
   if(s->doc) { wheelhouse_rich_text_free(s->doc); s->doc = 0; }
+  if(s->watch) { wheelhouse_agent_watch_free(s->watch); s->watch = 0; }
   if(s->arena) { arena_release(s->arena); s->arena = 0; }
   for(U64 i = 0; i < s->pending_count; i += 1) { wheelhouse_agent_input_forget(s->pending[i].ticket); }
   s->pending_count = 0;
@@ -4775,6 +4782,93 @@ uishell_rt_reopen(UIShell_RichTextState *s, String8 path, String8 thread)
   s->thread = push_str8_copy(s->arena, thread);
 }
 
+internal void uishell_rt_set_notice(UIShell_RichTextState *s, String8 notice);
+
+internal void
+uishell_rt_agent_wake(void)
+{
+  wm_send_wakeup_event();
+}
+
+// A watched agent thread (#699) streams from its producer: the watch wakes
+// the UI when updates wait, and each frame pumps them into the
+// conversation, which asks for older pages as the View nears them. A
+// producer that starts over with a fresh snapshot gets a fresh
+// conversation; the composer keeps its draft.
+internal void
+uishell_rt_agent_follow(UIShell_RichTextState *s, String8 endpoint, String8 thread)
+{
+  char *error = 0;
+  if(!str8_match(endpoint, str8(s->agent_endpoint, s->agent_endpoint_size), 0) || !str8_match(thread, s->agent_thread, 0))
+  {
+    // Another thread: the draft, its Up and the prompts on their way were
+    // for the last one. The reopen keeps them only across a restart.
+    for(U64 i = 0; i < s->pending_count; i += 1) { wheelhouse_agent_input_forget(s->pending[i].ticket); }
+    s->pending_count = 0;
+    s->compose_size = 0;
+    s->last_prompt_size = 0;
+    uishell_rt_reopen(s, str8_zero(), str8_zero());
+    s->agent_endpoint_size = Min(endpoint.size, sizeof(s->agent_endpoint));
+    MemoryCopy(s->agent_endpoint, endpoint.str, s->agent_endpoint_size);
+    s->agent_thread = push_str8_copy(s->arena, thread);
+  }
+  if(s->watch == 0)
+  {
+    s->watch = wheelhouse_agent_watch_open(uishell_rt_wt(endpoint), uishell_rt_wt(thread), uishell_rt_agent_wake, &error);
+    String8 failure = uishell_rt_error(&error);
+    s->load_error = failure.size ? push_str8_copy(s->arena, failure) : str8_zero();
+    if(s->watch == 0) { return; }
+  }
+  for(U32 pass = 0; pass < 2; pass += 1)
+  {
+    if(s->doc == 0)
+    {
+      s->conversation = 1;
+      s->opened_us = now_time_us();
+      s->doc = wheelhouse_rich_text_watch_conversation(&error);
+      if(s->doc && !wheelhouse_rich_text_subscribe(s->doc, &s->sub, &error)) { wheelhouse_rich_text_free(s->doc); s->doc = 0; }
+      if(s->doc) { wheelhouse_rich_text_scroll_to_end(s->doc, s->sub, &error); }
+      String8 failure = uishell_rt_error(&error);
+      s->load_error = failure.size ? push_str8_copy(s->arena, failure) : str8_zero();
+      if(s->doc == 0) { return; }
+    }
+    U32 flags = wheelhouse_agent_watch_pump(s->watch, s->doc, s->sub, &error);
+    String8 failure = uishell_rt_error(&error);
+    if(failure.size) { s->load_error = push_str8_copy(s->arena, failure); }
+    if(flags & WHEELHOUSE_AGENT_CHANGED) { s->agent_version += 1; }
+    if(!(flags & WHEELHOUSE_AGENT_RESTART)) { break; }
+    // Its watch goes on; only the conversation starts over.
+    WheelhouseAgentWatch *watch = s->watch;
+    s->watch = 0;
+    U8 endpoint_copy[sizeof(s->agent_endpoint)];
+    U64 endpoint_size = s->agent_endpoint_size;
+    MemoryCopy(endpoint_copy, s->agent_endpoint, endpoint_size);
+    uishell_rt_reopen(s, str8_zero(), str8_zero());
+    s->watch = watch;
+    MemoryCopy(s->agent_endpoint, endpoint_copy, endpoint_size);
+    s->agent_endpoint_size = endpoint_size;
+    s->agent_thread = push_str8_copy(s->arena, thread);
+    s->agent_version += 1;
+  }
+  // The composer shows while the thread takes input, and posts to its routes.
+  s->input_size = 0;
+  if(s->doc && wheelhouse_rich_text_conversation_takes_input(s->doc, &error))
+  {
+    String8 input = push_str8f(rd_frame_arena(), "unix://%S", endpoint);
+    s->input_size = Min(input.size, sizeof(s->input));
+    MemoryCopy(s->input, input.str, s->input_size);
+  }
+  uishell_rt_error(&error);
+  // Why it isn't streaming, while it isn't.
+  WheelhouseBytes why = {0};
+  U32 connection = wheelhouse_agent_watch_connection(s->watch, &why, &error);
+  uishell_rt_error(&error);
+  String8 reason = why.data ? push_str8_copy(rd_frame_arena(), str8(why.data, why.len)) : str8_zero();
+  if(why.data) { wheelhouse_bytes_free(why); }
+  if(connection == WHEELHOUSE_AGENT_RETRYING) { uishell_rt_set_notice(s, push_str8f(rd_frame_arena(), "Reconnecting to the agent: %S", reason)); }
+  if(connection == WHEELHOUSE_AGENT_FAILED) { uishell_rt_set_notice(s, push_str8f(rd_frame_arena(), "Can't watch this thread: %S", reason)); }
+}
+
 // A conversation follows its file (#617). It reads the file itself, not
 // through the content cache, so it knows how much the core has, and then
 // reads only what was appended, never the whole file again. A file that
@@ -4864,7 +4958,8 @@ internal U64
 uishell_rt_input_post(UIShell_RichTextState *s, String8 path, String8 body)
 {
   char *error = 0;
-  U64 ticket = wheelhouse_agent_input_post(uishell_rt_wt(str8(s->input, s->input_size)), uishell_rt_wt(path), uishell_rt_wt(body), &error);
+  String8 route = push_str8f(rd_frame_arena(), "/threads/%S%S", s->agent_thread, path);
+  U64 ticket = wheelhouse_agent_input_post(uishell_rt_wt(str8(s->input, s->input_size)), uishell_rt_wt(route), uishell_rt_wt(body), &error);
   uishell_rt_error(&error);
   return ticket;
 }
@@ -4920,8 +5015,8 @@ uishell_rt_send_prompt(UIShell_RichTextState *s, String8 text, Arena *scratch)
   MemoryCopy(p->text, text.str, p->text_size);
   s->last_prompt_size = p->text_size;
   MemoryCopy(s->last_prompt, p->text, p->text_size);
-  String8 body = push_str8f(scratch, "{\"threadId\":\"\",\"runId\":\"%s\",\"messages\":[{\"id\":\"%s\",\"role\":\"user\",\"content\":%S}]}",
-                            p->id, p->id, uishell_rt_json_string(scratch, text));
+  String8 body = push_str8f(scratch, "{\"threadId\":%S,\"runId\":\"%s\",\"messages\":[{\"id\":\"%s\",\"role\":\"user\",\"content\":%S}]}",
+                            uishell_rt_json_string(scratch, s->agent_thread), p->id, p->id, uishell_rt_json_string(scratch, text));
   char *error = 0;
   wheelhouse_rich_text_pend_user_message(s->doc, uishell_rt_wt(str8_cstring(p->id)), uishell_rt_wt(str8(p->text, p->text_size)), &error);
   uishell_rt_error(&error);
@@ -5413,15 +5508,26 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   // the reload keeps the reading position (the core's Scroll Anchor).
   // A conversation shows from its contract file (#616), one thread of it
   // if the View names a subagent's, and follows it as it grows (#617).
-  String8 path = uishell_rt_path_from_expr(scratch.arena, rd_expr_from_cfg(rd_cfg_from_view(ctx->settings.view)));
-  String8 thread = wh_view_setting(ctx, str8_lit("thread"));
+  // A watched agent thread streams from its producer instead (#699).
+  String8 agent_endpoint = wh_view_setting(ctx, str8_lit("agent_endpoint"));
+  String8 agent_thread = wh_view_setting(ctx, str8_lit("agent_thread"));
+  B32 agent = agent_endpoint.size != 0 && agent_thread.size != 0 && agent_endpoint.size <= sizeof(s->agent_endpoint);
+  String8 path = agent ? str8_zero() : uishell_rt_path_from_expr(scratch.arena, rd_expr_from_cfg(rd_cfg_from_view(ctx->settings.view)));
+  String8 thread = agent ? str8_zero() : wh_view_setting(ctx, str8_lit("thread"));
   if((!str8_match(path, str8(s->path, s->path_size), 0) || !str8_match(thread, s->thread, 0)) && path.size <= sizeof(s->path))
   {
     uishell_rt_reopen(s, path, thread);
   }
   B32 conversation = str8_match(wh_media_type_from_path(path), str8_lit(WH_CONVERSATION_MEDIA_TYPE), 0);
   FileProperties props = properties_from_file_path(path);
-  if(conversation)
+  if(agent)
+  {
+    uishell_rt_agent_follow(s, agent_endpoint, agent_thread);
+    rd_workspace_surface_contribute_version(s->agent_version);
+    // Not a file: what follows reads as one that is there.
+    props.modified = 1;
+  }
+  else if(conversation)
   {
     uishell_rt_follow(s, path, thread, props, scratch.arena);
     rd_workspace_surface_contribute_version(s->fed ^ s->file_id.v[0] ^ s->file_id.v[1] ^ s->file_id.v[2]);
@@ -5508,19 +5614,6 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     uishell_rt_error(&error);
   }
 
-  if(s->doc && s->conversation && !s->input_read)
-  {
-    WheelhouseBytes bytes = {0};
-    if(wheelhouse_rich_text_conversation_input(s->doc, &bytes, &error))
-    {
-      s->input_size = Min(bytes.len, sizeof(s->input));
-      MemoryCopy(s->input, bytes.data, s->input_size);
-      wheelhouse_bytes_free(bytes);
-    }
-    uishell_rt_error(&error);
-    s->input_read = 1;
-  }
-
   // A conversation keeps a View Dock at its right (rd_view_dock_ui).
   if(s->conversation) { ctx->rect = rd_view_dock_ui(ctx->settings.view, ctx->rect); }
   Vec2F32 dim = dim_2f32(ctx->rect);
@@ -5535,6 +5628,7 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     UI_Parent(root) UI_PrefWidth(ui_px(dim.x, 1)) UI_PrefHeight(ui_em(3, 1)) UI_TextAlignment(UI_TextAlign_Center) UI_TagF("weak")
     {
       if(props.modified == 0) { ui_labelf("Could not find \"%S\".", path); }
+      else if(agent && s->load_error.size) { ui_labelf("Could not watch thread %S: %S", agent_thread, s->load_error); }
       else if(s->load_error.size) { ui_labelf("Could not show \"%S\": %S", path, s->load_error); }
       else { ui_label(str8_lit("Loading...")); }
     }

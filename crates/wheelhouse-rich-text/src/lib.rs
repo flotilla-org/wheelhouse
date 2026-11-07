@@ -157,11 +157,6 @@ impl RichText {
         self.conversation.is_some()
     }
 
-    /// Where a conversation's producer takes input, if its hello names one.
-    pub fn conversation_input(&self) -> Option<&str> {
-        self.conversation.as_ref()?.input()
-    }
-
     /// Whether a conversation's top-level run is open, and the title of its
     /// running tool; not running for markdown.
     pub fn conversation_activity(&self) -> (bool, Option<&str>) {

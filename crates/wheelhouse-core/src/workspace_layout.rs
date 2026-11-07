@@ -74,6 +74,10 @@ pub enum RecipeTemplate {
         daemon: String,
         session: String,
     },
+    AgentSession {
+        endpoint: String,
+        thread: String,
+    },
 }
 
 /// One named layout of a subject kind's Slots.
@@ -492,6 +496,9 @@ impl RecipeTemplate {
                 }
                 LocalRecipe::CleatSession { transport: CleatTransport::parse(&text(transport)?)?, host, runtime_root, daemon, session }
             }
+            RecipeTemplate::AgentSession { endpoint, thread } => {
+                LocalRecipe::AgentSession { endpoint: text(endpoint)?, thread: text(thread)? }
+            }
         })
     }
 }
@@ -568,6 +575,7 @@ fn parse_slot(node: &KdlNode) -> Result<TemplateSlot, TemplateConfigError> {
             daemon: required("daemon")?,
             session: required("session")?,
         },
+        "agent-session" => RecipeTemplate::AgentSession { endpoint: required("endpoint")?, thread: required("thread")? },
         other => return Err(invalid(format!("template slot {name} has unknown kind {other}"))),
     };
     if !matches!(recipe, RecipeTemplate::Command { .. }) && node.children().is_some() {
@@ -716,6 +724,7 @@ pub(crate) fn validate(kind: &str, slots: &[TemplateSlot], layouts: &[LayoutDefi
                 }
                 vec![transport, host, runtime_root, daemon, session]
             }
+            RecipeTemplate::AgentSession { endpoint, thread } => vec![endpoint, thread],
         };
         if let Some(text) = texts.into_iter().find(|text| !well_formed(text)) {
             return Err(invalid(format!("workspace {kind} template slot {} has unbalanced braces in {text:?}", slot.name)));
