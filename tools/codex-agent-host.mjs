@@ -374,6 +374,7 @@ async function run(input) {
   // All of it is checked before anything is answered, so a refused request
   // changes nothing.
   if (message ? !text : !resume.length) return [400, { error: 'no user message' }];
+  if (new Set(resume.map((e) => e.interruptId)).size !== resume.length) return [400, { error: 'an interrupt answered twice' }];
   for (const entry of resume) {
     if (answers.has(entry.interruptId)) return [409, { error: 'answered', by: answers.get(entry.interruptId) }];
     const waiting = waits.get(entry.interruptId);

@@ -23,8 +23,14 @@ struct Choice {
 #[derive(Debug, Clone, PartialEq)]
 enum Kind {
     Choice { choices: Vec<Choice>, other: bool, multiple: bool },
-    Text { secret: bool, number: bool },
+    Text { number: Option<Number> },
     Bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Number {
+    Integer,
+    Real,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +40,8 @@ struct Field {
     description: Option<String>,
     kind: Kind,
     required: bool,
+    /// `writeOnly`: its text is obscured as typed, and never shown after.
+    secret: bool,
 }
 
 /// A compiled schema: how its surface's data and actions become an answer.
@@ -157,8 +165,9 @@ impl Form {
                 if *other {
                     // With no choices, the text is the answer, not another one.
                     let label = if choices.is_empty() { "Answer" } else { "Other" };
+                    let variant = if field.secret { "obscured" } else { "shortText" };
                     components.push(json!({ "id": format!("{id}.other"), "component": "TextField", "label": label,
-                        "placeholder": label, "value": { "@path": path("other") } }));
+                        "placeholder": label, "variant": variant, "value": { "@path": path("other") } }));
                     children.push(format!("{id}.other"));
                     slot.insert("other".into(), json!(""));
                 }
@@ -171,10 +180,10 @@ impl Form {
                     checks.push(json!({ "condition": condition, "message": format!("Answer {label}") }));
                 }
             }
-            Kind::Text { secret, number } => {
-                let variant = if *secret {
+            Kind::Text { number } => {
+                let variant = if field.secret {
                     "obscured"
-                } else if *number {
+                } else if number.is_some() {
                     "number"
                 } else {
                     "shortText"
@@ -252,8 +261,8 @@ impl Form {
                                 other.or_else(|| chosen.into_iter().next())
                             }
                         }
-                        Kind::Text { number: true, .. } => text("text").map(|t| t.parse::<f64>().map_or(Value::from(t), Value::from)),
-                        Kind::Text { .. } => text("text").map(Value::from),
+                        Kind::Text { number: Some(number) } => text("text").map(|t| parse_number(t, *number)),
+                        Kind::Text { number: None } => text("text").map(Value::from),
                         Kind::Bool => Some(at("check").cloned().unwrap_or(Value::Bool(false))),
                     };
                     match value {
@@ -276,9 +285,9 @@ impl Form {
         let words = |field: &Field, value: &Value| -> String {
             let one = |v: &Value| {
                 match &field.kind {
+                    _ if field.secret => Some("•••".to_owned()),
                     Kind::Choice { choices, .. } => choices.iter().find(|c| &c.value == v).map(|c| c.title.clone()),
                     Kind::Bool => Some(if v.as_bool() == Some(true) { "Yes" } else { "No" }.to_owned()),
-                    Kind::Text { secret: true, .. } => Some("•••".to_owned()),
                     Kind::Text { .. } => None,
                 }
                 .unwrap_or_else(|| v.as_str().map_or_else(|| v.to_string(), str::to_owned))
@@ -318,6 +327,7 @@ fn fields(schema: &Value) -> Vec<Field> {
                 description: text("description"),
                 kind: kind(property),
                 required: required.contains(&name),
+                secret: property.get("writeOnly").and_then(Value::as_bool) == Some(true),
             })
         })
         .collect()
@@ -333,21 +343,43 @@ fn kind(property: &Value) -> Kind {
     match choices(property) {
         Some(choice) => choice,
         None if of_type("boolean") => Kind::Bool,
-        None => Kind::Text {
-            secret: property.get("writeOnly").and_then(Value::as_bool) == Some(true),
-            number: of_type("number") || of_type("integer"),
-        },
+        None if of_type("integer") => Kind::Text { number: Some(Number::Integer) },
+        None if of_type("number") => Kind::Text { number: Some(Number::Real) },
+        None => Kind::Text { number: None },
     }
+}
+
+/// Typed text as the number a field asks for: an integer as one, and only a
+/// finite number, which JSON can carry; anything else stays text, for the
+/// producer to refuse.
+fn parse_number(text: String, number: Number) -> Value {
+    let integer = text.parse::<i64>().ok().map(Value::from);
+    let real = || text.parse::<f64>().ok().and_then(serde_json::Number::from_f64).map(Value::Number);
+    match number {
+        Number::Integer => integer,
+        Number::Real => integer.or_else(real),
+    }
+    .unwrap_or(Value::String(text))
 }
 
 /// A schema's choices: `oneOf`/`anyOf` consts, where a plain `type: string`
 /// entry takes other text, or an `enum` with its `enumNames`.
 fn choices(schema: &Value) -> Option<Kind> {
-    let choice = |value: &Value, title: Option<&str>, description: Option<&str>| {
-        let key = value.as_str().map_or_else(|| value.to_string(), str::to_owned);
+    let mut keys = vec![];
+    // A Picker's values are strings, so the const 1 and "1" would share one.
+    let mut choice = |value: &Value, title: Option<&str>, description: Option<&str>| {
+        let text = value.as_str().map_or_else(|| value.to_string(), str::to_owned);
+        let mut key = text.clone();
+        for n in 2.. {
+            if !keys.contains(&key) {
+                break;
+            }
+            key = format!("{text}#{n}");
+        }
+        keys.push(key.clone());
         Choice {
             value: value.clone(),
-            title: title.map_or_else(|| key.clone(), str::to_owned),
+            title: title.map_or_else(|| text.clone(), str::to_owned),
             key,
             description: description.map(str::to_owned),
         }

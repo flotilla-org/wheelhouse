@@ -130,6 +130,57 @@ fn a_question_takes_a_choice_or_other_text_and_submits_once_answered() {
 }
 
 #[test]
+fn a_secret_question_obscures_its_other_text_and_its_summary() {
+    // What the Codex bridge sends for an isSecret requestUserInput question.
+    let schema = json!({ "type": "object", "required": ["token"], "properties": {
+        "token": { "title": "Token", "writeOnly": true, "anyOf": [{ "const": "none", "title": "None" }, { "type": "string", "title": "Other" }] }
+    } });
+    let (form, create) = Form::compile("i2", &schema, None, None).unwrap();
+    let mut s = Surface::create(create).unwrap();
+    let other = s.items().into_iter().find(|i| i.id == "f0.other").unwrap();
+    assert_eq!(other.variant, Variant::Obscured);
+    form.input(&mut s, "f0.other", Input::Text("hunter2")).unwrap();
+    let action = form.input(&mut s, "submit", Input::Press).unwrap().unwrap();
+    let answer = form.answer(&s, &action).unwrap();
+    assert_eq!(answer, json!({ "token": "hunter2" }));
+    assert_eq!(form.summary(&answer, true), "Token: •••");
+}
+
+#[test]
+fn a_number_is_sent_as_one_only_when_it_is_finite_and_an_integer_as_an_integer() {
+    let schema = json!({ "type": "object", "required": ["count", "ratio"], "properties": {
+        "count": { "type": "integer" }, "ratio": { "type": "number" }
+    } });
+    let (form, create) = Form::compile("n", &schema, None, None).unwrap();
+    let answer = |count: &str, ratio: &str| {
+        let mut s = Surface::create(create.clone()).unwrap();
+        form.input(&mut s, "f0.text", Input::Text(count)).unwrap();
+        form.input(&mut s, "f1.text", Input::Text(ratio)).unwrap();
+        let action = form.input(&mut s, "submit", Input::Press).unwrap().unwrap();
+        form.answer(&s, &action).unwrap()
+    };
+    assert_eq!(answer("3", "0.5"), json!({ "count": 3, "ratio": 0.5 }));
+    assert_eq!(answer("3.5", "2"), json!({ "count": "3.5", "ratio": 2 }));
+    for not_finite in ["NaN", "inf", "-infinity"] {
+        assert_eq!(answer("1", not_finite), json!({ "count": 1, "ratio": not_finite }), "{not_finite}");
+    }
+}
+
+#[test]
+fn consts_that_read_alike_are_still_different_choices() {
+    let schema = json!({ "type": "object", "required": ["n"], "properties": { "n": { "oneOf": [
+        { "const": 1, "title": "One" }, { "const": "1", "title": "The text 1" }, { "const": 2 }, { "const": 3 }
+    ] } } });
+    let (form, create) = Form::compile("k", &schema, None, None).unwrap();
+    let mut s = Surface::create(create).unwrap();
+    let keys: Vec<_> = s.items().into_iter().filter(|i| i.kind == ItemKind::Choice).map(|i| i.value).collect();
+    assert_eq!(keys, ["1", "1#2", "2", "3"]);
+    form.input(&mut s, "f0.choice", Input::Choose("1#2")).unwrap();
+    let action = form.input(&mut s, "submit", Input::Press).unwrap().unwrap();
+    assert_eq!(form.answer(&s, &action), Some(json!({ "n": "1" })));
+}
+
+#[test]
 fn a_compiled_surface_is_an_a2ui_message() {
     let (_, create) = Form::compile("i0", &approval(), None, None).unwrap();
     let line = serde_json::to_string(&Envelope { version: VERSION.into(), message: Message::CreateSurface(create.clone()) }).unwrap();
