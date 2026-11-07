@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 pub use wheelhouse_stream::{ListOp, SubscriptionId, UnknownSubscription};
+pub use wheelhouse_surface::{Input, Item as SurfaceItem, ItemKind as SurfaceKind, Variant as SurfaceVariant};
 
 mod conversation;
 mod find;
@@ -29,7 +30,7 @@ mod scale_tests;
 #[cfg(test)]
 mod tests;
 
-pub use conversation::{Choice, CopyAction, TAIL_BYTES, TAIL_ITEMS};
+pub use conversation::{CopyAction, SURFACE_MEDIA_TYPE, TAIL_BYTES, TAIL_ITEMS};
 pub use find::{Find, FindOptions, FindStatus, Match, FIND_BUDGET, MATCH_LIMIT};
 pub use log::{CHUNK_BYTES, CHUNK_LINES, LINE_CAP};
 pub use pages::PAGE;
@@ -160,14 +161,14 @@ impl RichText {
         Some((key, reason.to_owned()))
     }
 
-    /// Chooses the answer an answer link names (`text` for a field that
-    /// takes text); see [`Choice`].
-    pub fn conversation_choose(&mut self, target: &str, text: Option<&str>) -> Choice {
-        let Some(mut conversation) = self.conversation.take() else { return Choice::None };
-        let mut choice = Choice::None;
-        self.edit(|sink| choice = conversation.choose(target, text, sink));
+    /// Applies an input to an open Interrupt's surface Embed `key`: the
+    /// RunAgentInput to post when it completes an answer.
+    pub fn conversation_surface_input(&mut self, key: Key, component: &str, input: Input) -> Option<String> {
+        let mut conversation = self.conversation.take()?;
+        let mut body = None;
+        self.edit(|sink| body = conversation.surface_input(key, component, input, sink));
         self.conversation = Some(conversation);
-        choice
+        body
     }
 
     pub fn is_conversation(&self) -> bool {

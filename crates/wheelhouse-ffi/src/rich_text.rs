@@ -14,9 +14,9 @@ use std::time::Duration;
 
 use conversation_events::STATUS_REQUIRES_ACTION;
 use wheelhouse_rich_text::{
-    copy_block, Alert, Align, Anchor, Attr, Choice, Color, CopyAction, Delta, Detail, FindOptions, FindStatus, Format, Key, ListOp, Match, Metrics,
-    NodeContent, Op, Part, Point, Position, RichText, Role, SectionKind, SubscriptionId, ToolKind, ToolStatus, Tree, View, Window,
-    BACKFILL_BUDGET, MATCH_LIMIT, NO_STRING,
+    copy_block, Alert, Align, Anchor, Attr, Color, CopyAction, Delta, Detail, FindOptions, FindStatus, Format, Input, Key, ListOp, Match,
+    Metrics, NodeContent, Op, Part, Point, Position, RichText, Role, SectionKind, SubscriptionId, SurfaceKind, SurfaceVariant, ToolKind,
+    ToolStatus, Tree, View, Window, BACKFILL_BUDGET, MATCH_LIMIT, NO_STRING,
 };
 
 /// A node's content, new or changed: read it with wheelhouse_rich_delta_node.
@@ -141,6 +141,29 @@ pub const WHEELHOUSE_RICH_ALERT_IMPORTANT: u32 = 3;
 pub const WHEELHOUSE_RICH_ALERT_WARNING: u32 = 4;
 pub const WHEELHOUSE_RICH_ALERT_CAUTION: u32 = 5;
 
+/// An A2UI surface Item's kind (wheelhouse-surface's ItemKind).
+pub const WHEELHOUSE_RICH_SURFACE_TEXT: u32 = 0;
+pub const WHEELHOUSE_RICH_SURFACE_ROW: u32 = 1;
+pub const WHEELHOUSE_RICH_SURFACE_COLUMN: u32 = 2;
+pub const WHEELHOUSE_RICH_SURFACE_CARD: u32 = 3;
+pub const WHEELHOUSE_RICH_SURFACE_DIVIDER: u32 = 4;
+pub const WHEELHOUSE_RICH_SURFACE_BUTTON: u32 = 5;
+/// A ChoicePicker; its Choices follow it.
+pub const WHEELHOUSE_RICH_SURFACE_PICKER: u32 = 6;
+pub const WHEELHOUSE_RICH_SURFACE_CHOICE: u32 = 7;
+pub const WHEELHOUSE_RICH_SURFACE_TEXT_FIELD: u32 = 8;
+pub const WHEELHOUSE_RICH_SURFACE_CHECK_BOX: u32 = 9;
+pub const WHEELHOUSE_RICH_SURFACE_UNSUPPORTED: u32 = 10;
+
+pub const WHEELHOUSE_RICH_SURFACE_VARIANT_DEFAULT: u32 = 0;
+pub const WHEELHOUSE_RICH_SURFACE_VARIANT_PRIMARY: u32 = 1;
+pub const WHEELHOUSE_RICH_SURFACE_VARIANT_BORDERLESS: u32 = 2;
+pub const WHEELHOUSE_RICH_SURFACE_VARIANT_CAPTION: u32 = 3;
+pub const WHEELHOUSE_RICH_SURFACE_VARIANT_MULTIPLE: u32 = 4;
+pub const WHEELHOUSE_RICH_SURFACE_VARIANT_OBSCURED: u32 = 5;
+pub const WHEELHOUSE_RICH_SURFACE_VARIANT_LONG_TEXT: u32 = 6;
+pub const WHEELHOUSE_RICH_SURFACE_VARIANT_NUMBER: u32 = 7;
+
 pub const WHEELHOUSE_RICH_ALIGN_NONE: u32 = 0;
 pub const WHEELHOUSE_RICH_ALIGN_LEFT: u32 = 1;
 pub const WHEELHOUSE_RICH_ALIGN_CENTER: u32 = 2;
@@ -211,6 +234,33 @@ pub struct WheelhouseRichCell {
     pub len: u32,
 }
 
+/// An A2UI surface's component (#695), resolved for drawing, in pre-order:
+/// its children follow it one `depth` deeper.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct WheelhouseRichSurfaceItem {
+    /// Its component's; a Choice's is its Picker's. Inputs name it.
+    pub id: Text,
+    /// WHEELHOUSE_RICH_SURFACE_*.
+    pub kind: u32,
+    pub depth: u32,
+    /// WHEELHOUSE_RICH_SURFACE_VARIANT_*.
+    pub variant: u32,
+    /// A Text's, a Button's label, a Choice's label, a TextField's value.
+    pub text: Text,
+    /// A Picker's, a TextField's or a CheckBox's label.
+    pub label: Text,
+    /// A Choice's description, a TextField's placeholder.
+    pub detail: Text,
+    /// A Choice's value, which choosing it sends.
+    pub value: Text,
+    pub strong: u32,
+    /// A chosen Choice, a checked CheckBox.
+    pub on: u32,
+    /// A Button whose checks pass.
+    pub enabled: u32,
+}
+
 /// A node's content, without its children. An array with a count of 0 has a
 /// pointer that is not NULL but must not be read.
 #[repr(C)]
@@ -251,6 +301,9 @@ pub struct WheelhouseRichNode {
     pub column_count: usize,
     pub cells: *const WheelhouseRichCell,
     pub row_count: usize,
+    /// An A2UI surface Embed's components.
+    pub surface: *const WheelhouseRichSurfaceItem,
+    pub surface_count: usize,
     /// A Turn's WHEELHOUSE_RICH_ROLE_*.
     pub role: u32,
     /// A Section's WHEELHOUSE_RICH_SECTION_*.
@@ -306,6 +359,7 @@ struct NodeArrays {
     objects: (usize, usize),
     alignments: (usize, usize),
     cells: (usize, usize),
+    surface: (usize, usize),
 }
 
 #[derive(Default)]
@@ -315,6 +369,36 @@ struct Buffers {
     objects: Vec<WheelhouseRichObject>,
     alignments: Vec<u32>,
     cells: Vec<WheelhouseRichCell>,
+    surface: Vec<WheelhouseRichSurfaceItem>,
+}
+
+fn surface_kind(kind: SurfaceKind) -> u32 {
+    match kind {
+        SurfaceKind::Text => WHEELHOUSE_RICH_SURFACE_TEXT,
+        SurfaceKind::Row => WHEELHOUSE_RICH_SURFACE_ROW,
+        SurfaceKind::Column => WHEELHOUSE_RICH_SURFACE_COLUMN,
+        SurfaceKind::Card => WHEELHOUSE_RICH_SURFACE_CARD,
+        SurfaceKind::Divider => WHEELHOUSE_RICH_SURFACE_DIVIDER,
+        SurfaceKind::Button => WHEELHOUSE_RICH_SURFACE_BUTTON,
+        SurfaceKind::Picker => WHEELHOUSE_RICH_SURFACE_PICKER,
+        SurfaceKind::Choice => WHEELHOUSE_RICH_SURFACE_CHOICE,
+        SurfaceKind::TextField => WHEELHOUSE_RICH_SURFACE_TEXT_FIELD,
+        SurfaceKind::CheckBox => WHEELHOUSE_RICH_SURFACE_CHECK_BOX,
+        SurfaceKind::Unsupported => WHEELHOUSE_RICH_SURFACE_UNSUPPORTED,
+    }
+}
+
+fn surface_variant(variant: SurfaceVariant) -> u32 {
+    match variant {
+        SurfaceVariant::Default => WHEELHOUSE_RICH_SURFACE_VARIANT_DEFAULT,
+        SurfaceVariant::Primary => WHEELHOUSE_RICH_SURFACE_VARIANT_PRIMARY,
+        SurfaceVariant::Borderless => WHEELHOUSE_RICH_SURFACE_VARIANT_BORDERLESS,
+        SurfaceVariant::Caption => WHEELHOUSE_RICH_SURFACE_VARIANT_CAPTION,
+        SurfaceVariant::Multiple => WHEELHOUSE_RICH_SURFACE_VARIANT_MULTIPLE,
+        SurfaceVariant::Obscured => WHEELHOUSE_RICH_SURFACE_VARIANT_OBSCURED,
+        SurfaceVariant::LongText => WHEELHOUSE_RICH_SURFACE_VARIANT_LONG_TEXT,
+        SurfaceVariant::Number => WHEELHOUSE_RICH_SURFACE_VARIANT_NUMBER,
+    }
 }
 
 fn color_attr(color: Color, background: bool) -> u32 {
@@ -485,7 +569,26 @@ impl Buffers {
             }
             _ => ((0, 0), (0, 0)),
         };
-        NodeArrays { spans, strings, objects, alignments, cells }
+        let surface = match &content.detail {
+            Detail::Embed { surface: Some(items), .. } => push(
+                &mut self.surface,
+                items.iter().map(|i| WheelhouseRichSurfaceItem {
+                    id: Text::borrowed(&i.id),
+                    kind: surface_kind(i.kind),
+                    depth: i.depth,
+                    variant: surface_variant(i.variant),
+                    text: Text::borrowed(&i.text),
+                    label: Text::borrowed(&i.label),
+                    detail: Text::borrowed(&i.detail),
+                    value: Text::borrowed(&i.value),
+                    strong: u32::from(i.strong),
+                    on: u32::from(i.on),
+                    enabled: u32::from(i.enabled),
+                }),
+            ),
+            _ => (0, 0),
+        };
+        NodeArrays { spans, strings, objects, alignments, cells, surface }
     }
 
     fn view(&self, content: &NodeContent, arrays: &NodeArrays) -> WheelhouseRichNode {
@@ -544,6 +647,8 @@ impl Buffers {
             column_count: arrays.alignments.1,
             cells: range(&self.cells, arrays.cells),
             row_count: arrays.cells.1.checked_div(arrays.alignments.1).unwrap_or(0),
+            surface: range(&self.surface, arrays.surface),
+            surface_count: arrays.surface.1,
             role: head.role,
             section: head.section,
             tool: head.tool,
@@ -1402,36 +1507,43 @@ pub unsafe extern "C" fn wheelhouse_rich_text_conversation_takes_input(h: *mut W
     run(h, error_out, |h| Ok(h.rich.conversation_takes_input())).unwrap_or(false) as u32
 }
 
-/// Choosing an answer link sent nothing (it isn't one, its Interrupt is
-/// answered, or other fields wait for choices).
-pub const WHEELHOUSE_RICH_CHOICE_NONE: u32 = 0;
-/// Every field is chosen: post the RunAgentInput written out to the
-/// producer's `/run`.
-pub const WHEELHOUSE_RICH_CHOICE_SEND: u32 = 1;
-/// The field takes text: the composer asks for it with the prompt written out,
-/// then chooses the link again with that text.
-pub const WHEELHOUSE_RICH_CHOICE_TEXT: u32 = 2;
+/// An input to an A2UI surface component (#695): pressing a Button,
+/// choosing a Picker's option by value, checking a CheckBox ("1" or "0"), or
+/// setting a TextField's text.
+pub const WHEELHOUSE_RICH_INPUT_PRESS: u32 = 0;
+pub const WHEELHOUSE_RICH_INPUT_CHOOSE: u32 = 1;
+pub const WHEELHOUSE_RICH_INPUT_CHECK: u32 = 2;
+pub const WHEELHOUSE_RICH_INPUT_TEXT: u32 = 3;
 
-/// Chooses the answer a `wh-interrupt:` link names (#695); `text`, unless
-/// empty, answers a field that takes text. Returns a
-/// WHEELHOUSE_RICH_CHOICE_*; SEND and TEXT write `out`.
+/// Applies a WHEELHOUSE_RICH_INPUT_* to the component `component` of the
+/// open Interrupt surface Embed `key`. Returns 1 when it completes an
+/// answer, with the RunAgentInput to post to the producer's `/run` written
+/// to `out`; else 0, the surface changed or not.
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_rich_text_conversation_choose(
+pub unsafe extern "C" fn wheelhouse_rich_text_conversation_surface_input(
     h: *mut WheelhouseRichText,
-    target: Text,
-    text: Text,
+    key: u64,
+    component: Text,
+    input: u32,
+    value: Text,
     out: *mut Bytes,
     error_out: *mut *mut c_char,
 ) -> u32 {
     run(h, error_out, |h| {
-        let text = text.read()?;
-        match h.rich.conversation_choose(&target.read()?, Some(text.as_str()).filter(|t| !t.is_empty())) {
-            Choice::None => Ok(WHEELHOUSE_RICH_CHOICE_NONE),
-            Choice::Send(body) => write_bytes(out, body.into_bytes()).map(|()| WHEELHOUSE_RICH_CHOICE_SEND),
-            Choice::Text(prompt) => write_bytes(out, prompt.into_bytes()).map(|()| WHEELHOUSE_RICH_CHOICE_TEXT),
+        let value = value.read()?;
+        let input = match input {
+            WHEELHOUSE_RICH_INPUT_PRESS => Input::Press,
+            WHEELHOUSE_RICH_INPUT_CHOOSE => Input::Choose(&value),
+            WHEELHOUSE_RICH_INPUT_CHECK => Input::Check(value == "1"),
+            WHEELHOUSE_RICH_INPUT_TEXT => Input::Text(&value),
+            _ => return Err("unknown input".into()),
+        };
+        match h.rich.conversation_surface_input(Key(key), &component.read()?, input) {
+            Some(body) => write_bytes(out, body.into_bytes()).map(|()| 1),
+            None => Ok(0),
         }
     })
-    .unwrap_or(WHEELHOUSE_RICH_CHOICE_NONE)
+    .unwrap_or(0)
 }
 
 /// The first open Interrupt of a watched thread: 1 with the key of the item

@@ -2761,6 +2761,7 @@ dependencies = [
  "regex",
  "serde_json",
  "wheelhouse-stream",
+ "wheelhouse-surface",
 ]
 
 [[package]]
@@ -2769,6 +2770,15 @@ version = "0.1.0"
 dependencies = [
  "hegeltest",
  "serde",
+]
+
+[[package]]
+name = "wheelhouse-surface"
+version = "0.1.0"
+dependencies = [
+ "hegeltest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

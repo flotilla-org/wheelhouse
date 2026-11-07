@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use wheelhouse_stream::{list_ops, ListOp};
+use wheelhouse_surface::Item as SurfaceItem;
 
 use super::ingest::{SourceInfo, Staged};
 use super::pages::{Pages, Source, TextRange, PAGE};
@@ -291,6 +292,8 @@ pub enum Detail {
     Embed {
         media_type: String,
         table: Option<Table>,
+        /// An A2UI surface's components, resolved for drawing (#695).
+        surface: Option<Vec<SurfaceItem>>,
     },
     Turn {
         role: Role,

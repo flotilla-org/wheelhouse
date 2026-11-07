@@ -242,6 +242,24 @@ uishell_rt_pool_release(UIShell_RtBlobPool *pool)
 ////////////////////////////////
 //~ Model: the document as the deltas build it
 
+// A surface Item as the core resolved it (WheelhouseRichSurfaceItem), its
+// strings the model's.
+typedef struct UIShell_RtSurfaceItem UIShell_RtSurfaceItem;
+struct UIShell_RtSurfaceItem
+{
+  String8 id;
+  U32 kind;
+  U32 depth;
+  U32 variant;
+  String8 text;
+  String8 label;
+  String8 detail;
+  String8 value;
+  B32 strong;
+  B32 on;
+  B32 enabled;
+};
+
 typedef struct UIShell_RtNode UIShell_RtNode;
 struct UIShell_RtNode
 {
@@ -271,6 +289,9 @@ struct UIShell_RtNode
   U64 column_count;
   WheelhouseRichCell *cells;
   U64 row_count;
+  // An A2UI surface Embed's components (#695).
+  struct UIShell_RtSurfaceItem *surface;
+  U64 surface_count;
   U64 *children;
   U64 child_count;
   U64 child_cap;
@@ -377,7 +398,7 @@ uishell_rt_node_bytes(UIShell_RtNode *n)
   return (n->text.size + n->language.size + n->label.size + n->media_type.size + n->name.size + n->title.size + n->summary.size +
           n->span_count*sizeof(WheelhouseRichSpan) + n->string_count*sizeof(String8) +
           n->column_count*sizeof(U32) + n->column_count*n->row_count*sizeof(WheelhouseRichCell) +
-          n->child_cap*sizeof(U64));
+          n->surface_count*sizeof(UIShell_RtSurfaceItem) + n->child_cap*sizeof(U64));
 }
 
 internal void
@@ -402,6 +423,17 @@ uishell_rt_node_copy_content(Arena *arena, UIShell_RtNode *n)
   WheelhouseRichCell *cells = push_array_no_zero(arena, WheelhouseRichCell, n->column_count*n->row_count);
   MemoryCopy(cells, n->cells, sizeof(*cells)*n->column_count*n->row_count);
   n->cells = cells;
+  UIShell_RtSurfaceItem *surface = push_array_no_zero(arena, UIShell_RtSurfaceItem, n->surface_count);
+  for(U64 i = 0; i < n->surface_count; i += 1)
+  {
+    surface[i] = n->surface[i];
+    surface[i].id = push_str8_copy(arena, n->surface[i].id);
+    surface[i].text = push_str8_copy(arena, n->surface[i].text);
+    surface[i].label = push_str8_copy(arena, n->surface[i].label);
+    surface[i].detail = push_str8_copy(arena, n->surface[i].detail);
+    surface[i].value = push_str8_copy(arena, n->surface[i].value);
+  }
+  n->surface = surface;
   U64 *children = push_array_no_zero(arena, U64, n->child_cap);
   MemoryCopy(children, n->children, sizeof(U64)*n->child_count);
   n->children = children;
@@ -444,6 +476,15 @@ uishell_rt_node_set(UIShell_RtModel *m, UIShell_RtNode *n, WheelhouseRichNode *c
   n->column_count = c->column_count;
   n->cells = (WheelhouseRichCell *)c->cells;
   n->row_count = c->row_count;
+  n->surface = push_array(scratch.arena, UIShell_RtSurfaceItem, c->surface_count);
+  for(U64 i = 0; i < c->surface_count; i += 1)
+  {
+    const WheelhouseRichSurfaceItem *from = &c->surface[i];
+    n->surface[i] = (UIShell_RtSurfaceItem){uishell_rt_s8(from->id), from->kind, from->depth, from->variant, uishell_rt_s8(from->text),
+                                            uishell_rt_s8(from->label), uishell_rt_s8(from->detail), uishell_rt_s8(from->value),
+                                            from->strong, from->on, from->enabled};
+  }
+  n->surface_count = c->surface_count;
   // The child list is the node's own: it changes by CHILDREN ops only.
   U64 *children = n->children;
   uishell_rt_node_copy_content(m->arena, n);
@@ -880,6 +921,8 @@ struct UIShell_RtFrame
   B32 code_embed;
   B32 rule;
   B32 table;
+  // An A2UI surface (#695), its widgets laid out here.
+  B32 surface;
   // A break in a conversation: its text centred between two rules.
   B32 divider;
   B32 weak;
@@ -907,6 +950,15 @@ uishell_rt_line_px(UIShell_RtTheme *t)
 // A code Block's media type: it is an Embedded View while a Handler shows
 // it, laid out as text otherwise.
 #define UISHELL_RT_CODE_MEDIA_TYPE "application/vnd.flotilla.code"
+
+// An open Interrupt's Embed (#695): an A2UI surface, drawn as widgets.
+#define UISHELL_RT_SURFACE_MEDIA_TYPE "application/vnd.a2ui+json"
+
+internal B32
+uishell_rt_surface_embedded(UIShell_RtNode *n)
+{
+  return n->kind == WHEELHOUSE_RICH_KIND_EMBED && str8_match(n->media_type, str8_lit(UISHELL_RT_SURFACE_MEDIA_TYPE), 0);
+}
 
 // A diff is laid out here, its lines coloured by their first character
 // (#667): the code view has no lexer for one.
@@ -1051,6 +1103,7 @@ uishell_rt_frame(Arena *arena, UIShell_RtModel *m, UIShell_RtTheme *t, UIShell_R
     case WHEELHOUSE_RICH_KIND_EMBED:
     {
       f.table = n->column_count != 0;
+      f.surface = uishell_rt_surface_embedded(n);
       f.pad_top = floor_f32(px*0.15f);
       f.pad_bottom = floor_f32(px*0.75f);
     } break;
@@ -1602,6 +1655,8 @@ enum
   UIShell_RtStop_Toggle,
   UIShell_RtStop_Thread,
   UIShell_RtStop_Open,
+  // A surface Item that takes input: `start` is its index.
+  UIShell_RtStop_Surface,
 };
 
 typedef struct UIShell_RtStop UIShell_RtStop;
@@ -1667,6 +1722,11 @@ struct UIShell_RichTextState
   UIShell_RtBucket *free_bucket;
   UIShell_RtTable *tables;
   UIShell_RtCode *codes;
+  struct UIShell_RtSurface *surfaces;
+  // The surface whose TextField is being typed in, or 0.
+  U64 edit_surface;
+  // The mouse in the content box, as of the last pointer pass.
+  Vec2F32 pointer_local;
   C_Root code_root;
   UIShell_RtTheme theme;
   F32 width;
@@ -1796,12 +1856,6 @@ struct UIShell_RichTextState
   U64 last_prompt_size;
   // When the open run was first seen running, for its elapsed time.
   U64 running_since_us;
-  // An answer the composer is asked for (#695): the answer link it goes
-  // to, and the question.
-  U8 answer_target[512];
-  U64 answer_target_size;
-  U8 answer_prompt[256];
-  U64 answer_prompt_size;
   // An answer on its way: one another window gave first is refused.
   U64 answer_ticket;
 };
@@ -1816,11 +1870,14 @@ uishell_rt_free_tables(UIShell_RichTextState *s)
   s->tables = 0;
 }
 
+internal void uishell_rt_free_surfaces(UIShell_RichTextState *s);
+
 internal void
 uishell_rt_release(void *user_data)
 {
   UIShell_RichTextState *s = (UIShell_RichTextState *)user_data;
   uishell_rt_free_tables(s);
+  uishell_rt_free_surfaces(s);
   s->codes = 0;
   if(s->code_root.u64[0] != 0) { c_root_release(s->code_root); s->code_root = (C_Root){0}; }
   for(UIShell_RtBucket *b = s->buckets; b != 0; b = b->next) { if(b->arena) { arena_release(b->arena); } }
@@ -1899,7 +1956,10 @@ uishell_rt_collapse_default(UIShell_RichTextState *s, UIShell_RtNode *n)
     wheelhouse_rich_text_set_collapsed(s->doc, s->sub, n->key, 1, &error);
     uishell_rt_error(&error);
   }
-  else if(waiting)
+  // A card waiting on an answer opens once, so its decisions show; the
+  // reader may close it again. The salt keeps that apart from the
+  // inserted-collapsed default for the same key.
+  else if(waiting && uishell_rt_defaulted_insert(s, n->key ^ 0x9e3779b97f4a7c15ull))
   {
     char *error = 0;
     wheelhouse_rich_text_set_collapsed(s->doc, s->sub, n->key, 0, &error);
@@ -2375,6 +2435,370 @@ uishell_rt_cap(UIShell_RichTextState *s, UIShell_RtNode *n, UIShell_RtFrame *f, 
   return c;
 }
 
+////////////////////////////////
+//~ Surface Embeds (#695)
+
+// An open Interrupt's surface: A2UI components the core resolved into
+// Items in pre-order, laid out here and drawn with UI boxes. Presses,
+// choices and text go back to the core, which answers the Interrupt once
+// one completes.
+
+internal U64 uishell_rt_input_post(UIShell_RichTextState *s, String8 path, String8 body);
+
+typedef struct UIShell_RtSurfaceMetrics UIShell_RtSurfaceMetrics;
+struct UIShell_RtSurfaceMetrics
+{
+  FNT_Tag font;
+  FNT_Tag strong;
+  F32 size;
+  F32 line;
+  F32 gap;
+  F32 button_h;
+  F32 pad;
+  // A Choice's or CheckBox's mark, and the indent its text starts at.
+  F32 mark;
+  F32 indent;
+};
+
+internal UIShell_RtSurfaceMetrics
+uishell_rt_surface_metrics(void)
+{
+  UIShell_RtSurfaceMetrics m = {0};
+  m.font = rd_font_from_slot(RD_FontSlot_Main);
+  m.strong = rd_font_from_slot(RD_FontSlot_MainSemibold);
+  m.size = rd_font_size();
+  m.line = floor_f32(m.size*1.6f);
+  m.gap = floor_f32(m.size*0.6f);
+  m.button_h = floor_f32(m.size*2.1f);
+  m.pad = floor_f32(m.size*1.1f);
+  m.mark = floor_f32(m.size*1.1f);
+  m.indent = m.mark + floor_f32(m.size*0.7f);
+  return m;
+}
+
+// Where an Item sits in its Block, from the top left of the Block's
+// content; its text wrapped to its width.
+typedef struct UIShell_RtWidget UIShell_RtWidget;
+struct UIShell_RtWidget
+{
+  Rng2F32 rect;
+  String8Array lines;
+  // A Choice's description, under its label.
+  String8Array detail;
+};
+
+typedef struct UIShell_RtSurface UIShell_RtSurface;
+struct UIShell_RtSurface
+{
+  UIShell_RtSurface *next;
+  U64 key;
+  // What its layout was for.
+  U64 version;
+  F32 width;
+  F32 size;
+  Arena *arena;
+  // One per Item.
+  UIShell_RtWidget *widgets;
+  F32 height;
+  // The TextField being typed in, by Item, or -1; its text and cursor.
+  S64 edit;
+  U8 edit_buffer[1024];
+  U64 edit_size;
+  TxtPt cursor;
+  TxtPt mark;
+};
+
+internal String8Array
+uishell_rt_surface_wrap(Arena *arena, FNT_Tag font, F32 size, String8 text, F32 width)
+{
+  String8List lines = {0};
+  U8 split = '\n';
+  String8List paragraphs = str8_split(arena, text, &split, 1, StringSplitFlag_KeepEmpties);
+  for(String8Node *p = paragraphs.first; p != 0; p = p->next)
+  {
+    String8List wrapped = fnt_wrapped_string_lines_from_font_size_string_max(arena, font, size, 0, size*4, p->string, width);
+    if(wrapped.node_count == 0) { str8_list_push(arena, &lines, str8_zero()); }
+    for(String8Node *w = wrapped.first; w != 0; w = w->next) { str8_list_push(arena, &lines, w->string); }
+  }
+  return str8_array_from_list(arena, &lines);
+}
+
+// The Item after `i`'s subtree.
+internal U64
+uishell_rt_surface_after(UIShell_RtNode *n, U64 i)
+{
+  U64 j = i + 1;
+  while(j < n->surface_count && n->surface[j].depth > n->surface[i].depth) { j += 1; }
+  return j;
+}
+
+// Lays out Item `i` and its subtree at (x, y) in width `w`; in a Row it
+// takes the width it needs. Returns its height, its width in `width_out`.
+internal F32
+uishell_rt_surface_place(UIShell_RtSurface *sf, UIShell_RtNode *n, UIShell_RtSurfaceMetrics *m, U64 i, F32 x, F32 y, F32 w, B32 in_row, F32 *width_out)
+{
+  UIShell_RtSurfaceItem *item = &n->surface[i];
+  UIShell_RtWidget *wd = &sf->widgets[i];
+  F32 h = 0, used = w;
+  switch(item->kind)
+  {
+    case WHEELHOUSE_RICH_SURFACE_TEXT:
+    case WHEELHOUSE_RICH_SURFACE_UNSUPPORTED:
+    {
+      String8 text = item->kind == WHEELHOUSE_RICH_SURFACE_TEXT ? item->text : str8_lit("Unsupported component");
+      FNT_Tag font = item->strong ? m->strong : m->font;
+      if(in_row)
+      {
+        used = Min(w, fnt_dim_from_tag_size_string(font, m->size, 0, 0, text).x);
+        String8List one = {0};
+        str8_list_push(sf->arena, &one, text);
+        wd->lines = str8_array_from_list(sf->arena, &one);
+      }
+      else { wd->lines = uishell_rt_surface_wrap(sf->arena, font, m->size, text, w); }
+      h = wd->lines.count*m->line;
+    } break;
+    case WHEELHOUSE_RICH_SURFACE_BUTTON:
+    {
+      used = Min(w, fnt_dim_from_tag_size_string(m->font, m->size, 0, 0, item->text).x + 2*m->pad);
+      h = m->button_h;
+    } break;
+    case WHEELHOUSE_RICH_SURFACE_DIVIDER: { h = m->gap; } break;
+    case WHEELHOUSE_RICH_SURFACE_TEXT_FIELD:
+    {
+      // A label that only repeats the placeholder isn't shown twice.
+      if(item->label.size && !str8_match(item->label, item->detail, 0))
+      {
+        wd->lines = uishell_rt_surface_wrap(sf->arena, m->font, m->size, item->label, w);
+      }
+      used = in_row ? Min(w, m->size*16) : w;
+      h = wd->lines.count*m->line + m->button_h;
+    } break;
+    case WHEELHOUSE_RICH_SURFACE_CHECK_BOX:
+    case WHEELHOUSE_RICH_SURFACE_CHOICE:
+    {
+      String8 label = item->kind == WHEELHOUSE_RICH_SURFACE_CHOICE ? item->text : item->label;
+      wd->lines = uishell_rt_surface_wrap(sf->arena, m->font, m->size, label, Max(w - m->indent, m->size));
+      if(item->detail.size) { wd->detail = uishell_rt_surface_wrap(sf->arena, m->font, m->size, item->detail, Max(w - m->indent, m->size)); }
+      h = (wd->lines.count + wd->detail.count)*m->line + floor_f32(m->size*0.5f);
+    } break;
+    case WHEELHOUSE_RICH_SURFACE_ROW:
+    {
+      // Children side by side, wrapping onto a new line when out of room.
+      F32 cx = x, cy = y, line_h = 0, right = x;
+      for(U64 c = i + 1; c < n->surface_count && n->surface[c].depth > item->depth; c = uishell_rt_surface_after(n, c))
+      {
+        // Measured at the Row's width, so one that doesn't fit wraps.
+        F32 cw = 0;
+        F32 ch = uishell_rt_surface_place(sf, n, m, c, cx, cy, w, 1, &cw);
+        if(cx > x && cx + cw > x + w)
+        {
+          cy += line_h + m->gap;
+          cx = x;
+          line_h = 0;
+          ch = uishell_rt_surface_place(sf, n, m, c, cx, cy, w, 1, &cw);
+        }
+        cx += cw + m->gap;
+        right = Max(right, cx - m->gap);
+        line_h = Max(line_h, ch);
+      }
+      h = cy - y + line_h;
+      if(in_row) { used = right - x; }
+    } break;
+    default:
+    case WHEELHOUSE_RICH_SURFACE_COLUMN:
+    case WHEELHOUSE_RICH_SURFACE_CARD:
+    case WHEELHOUSE_RICH_SURFACE_PICKER:
+    {
+      // Children stacked; a Card's inside its border, a Picker's under its label.
+      F32 inset = item->kind == WHEELHOUSE_RICH_SURFACE_CARD ? m->pad : 0;
+      F32 cy = y + inset;
+      if(item->kind == WHEELHOUSE_RICH_SURFACE_PICKER && item->label.size)
+      {
+        wd->lines = uishell_rt_surface_wrap(sf->arena, m->font, m->size, item->label, w);
+        cy += wd->lines.count*m->line;
+      }
+      B32 first = 1;
+      F32 child_gap = item->kind == WHEELHOUSE_RICH_SURFACE_PICKER ? 0 : m->gap;
+      for(U64 c = i + 1; c < n->surface_count && n->surface[c].depth > item->depth; c = uishell_rt_surface_after(n, c))
+      {
+        if(!first) { cy += child_gap; }
+        first = 0;
+        F32 cw = 0;
+        cy += uishell_rt_surface_place(sf, n, m, c, x + inset, cy, w - 2*inset, 0, &cw);
+      }
+      h = cy - y + inset;
+    } break;
+  }
+  wd->rect = r2f32p(x, y, x + used, y + h);
+  if(width_out) { *width_out = used; }
+  return h;
+}
+
+internal UIShell_RtSurface *
+uishell_rt_surface_of(UIShell_RichTextState *s, U64 key)
+{
+  for(UIShell_RtSurface *sf = s->surfaces; sf != 0; sf = sf->next) { if(sf->key == key) { return sf; } }
+  return 0;
+}
+
+// The surface's layout at `width`, made again when its Items or the font
+// size change.
+internal UIShell_RtSurface *
+uishell_rt_surface(UIShell_RichTextState *s, UIShell_RtNode *n, F32 width)
+{
+  UIShell_RtSurface *sf = uishell_rt_surface_of(s, n->key);
+  if(sf == 0)
+  {
+    sf = push_array(s->arena, UIShell_RtSurface, 1);
+    sf->key = n->key;
+    sf->arena = arena_alloc();
+    sf->edit = -1;
+    SLLStackPush(s->surfaces, sf);
+  }
+  UIShell_RtSurfaceMetrics m = uishell_rt_surface_metrics();
+  if(sf->widgets == 0 || sf->version != n->version || sf->width != width || sf->size != m.size)
+  {
+    arena_clear(sf->arena);
+    sf->widgets = push_array(sf->arena, UIShell_RtWidget, Max(n->surface_count, 1));
+    sf->height = n->surface_count ? uishell_rt_surface_place(sf, n, &m, 0, 0, 0, width, 0, 0) : 0;
+    sf->version = n->version;
+    sf->width = width;
+    sf->size = m.size;
+    // The text being typed stays, if its field still is one.
+    if(sf->edit >= (S64)n->surface_count || (sf->edit >= 0 && n->surface[sf->edit].kind != WHEELHOUSE_RICH_SURFACE_TEXT_FIELD)) { sf->edit = -1; }
+  }
+  return sf;
+}
+
+internal void
+uishell_rt_prune_surfaces(UIShell_RichTextState *s)
+{
+  for(UIShell_RtSurface **at = &s->surfaces; *at != 0;)
+  {
+    UIShell_RtNode *n = uishell_rt_node(&s->model, (*at)->key);
+    if(n == 0 || !uishell_rt_surface_embedded(n))
+    {
+      if(s->edit_surface == (*at)->key) { s->edit_surface = 0; }
+      arena_release((*at)->arena);
+      *at = (*at)->next;
+    }
+    else { at = &(*at)->next; }
+  }
+}
+
+internal void
+uishell_rt_free_surfaces(UIShell_RichTextState *s)
+{
+  for(UIShell_RtSurface *sf = s->surfaces; sf != 0; sf = sf->next) { arena_release(sf->arena); }
+  s->surfaces = 0;
+}
+
+// Whether a press, Tab or Enter can act on the Item.
+internal B32
+uishell_rt_surface_interactive(UIShell_RtSurfaceItem *item)
+{
+  switch(item->kind)
+  {
+    case WHEELHOUSE_RICH_SURFACE_BUTTON: return item->enabled;
+    case WHEELHOUSE_RICH_SURFACE_CHOICE:
+    case WHEELHOUSE_RICH_SURFACE_CHECK_BOX:
+    case WHEELHOUSE_RICH_SURFACE_TEXT_FIELD: return 1;
+  }
+  return 0;
+}
+
+// Sends one input to the core; an answer it completes goes to the producer.
+internal void
+uishell_rt_surface_input(UIShell_RichTextState *s, U64 key, String8 id, U32 input, String8 value)
+{
+  char *error = 0;
+  WheelhouseBytes body = {0};
+  if(wheelhouse_rich_text_conversation_surface_input(s->doc, key, uishell_rt_wt(id), input, uishell_rt_wt(value), &body, &error))
+  {
+    wheelhouse_agent_input_forget(s->answer_ticket);
+    s->answer_ticket = uishell_rt_input_post(s, str8_lit("/run"), str8(body.data, body.len));
+  }
+  if(body.data) { wheelhouse_bytes_free(body); }
+  uishell_rt_error(&error);
+}
+
+internal void
+uishell_rt_surface_end_edit(UIShell_RichTextState *s)
+{
+  UIShell_RtSurface *sf = uishell_rt_surface_of(s, s->edit_surface);
+  if(sf) { sf->edit = -1; }
+  s->edit_surface = 0;
+}
+
+// Presses a Button, chooses a Choice, toggles a CheckBox, or starts typing
+// in a TextField.
+internal void
+uishell_rt_surface_act(UIShell_RichTextState *s, U64 key, U64 i)
+{
+  UIShell_RtNode *n = uishell_rt_node(&s->model, key);
+  if(n == 0 || i >= n->surface_count || !uishell_rt_surface_interactive(&n->surface[i])) { return; }
+  UIShell_RtSurfaceItem *item = &n->surface[i];
+  if(item->kind != WHEELHOUSE_RICH_SURFACE_TEXT_FIELD) { uishell_rt_surface_end_edit(s); }
+  switch(item->kind)
+  {
+    case WHEELHOUSE_RICH_SURFACE_BUTTON: { uishell_rt_surface_input(s, key, item->id, WHEELHOUSE_RICH_INPUT_PRESS, str8_zero()); } break;
+    case WHEELHOUSE_RICH_SURFACE_CHOICE: { uishell_rt_surface_input(s, key, item->id, WHEELHOUSE_RICH_INPUT_CHOOSE, item->value); } break;
+    case WHEELHOUSE_RICH_SURFACE_CHECK_BOX: { uishell_rt_surface_input(s, key, item->id, WHEELHOUSE_RICH_INPUT_CHECK, item->on ? str8_lit("0") : str8_lit("1")); } break;
+    case WHEELHOUSE_RICH_SURFACE_TEXT_FIELD:
+    {
+      UIShell_RtSurface *sf = uishell_rt_surface_of(s, key);
+      if(sf == 0 || sf->edit == (S64)i) { break; }
+      uishell_rt_surface_end_edit(s);
+      sf->edit = (S64)i;
+      sf->edit_size = Min(item->text.size, sizeof(sf->edit_buffer));
+      MemoryCopy(sf->edit_buffer, item->text.str, sf->edit_size);
+      sf->cursor = sf->mark = txt_pt(1, 1 + sf->edit_size);
+      s->edit_surface = key;
+      // The composer lets go of the keys.
+      s->compose_blur = 1;
+    } break;
+  }
+}
+
+// Keys for the TextField being typed in: Esc and Enter stop typing, and
+// the rest edit its text, which goes to the core as it changes.
+internal B32
+uishell_rt_surface_key(UIShell_RichTextState *s, UI_Event *evt)
+{
+  UIShell_RtSurface *sf = uishell_rt_surface_of(s, s->edit_surface);
+  UIShell_RtNode *n = uishell_rt_node(&s->model, s->edit_surface);
+  if(sf == 0 || n == 0 || sf->edit < 0) { return 0; }
+  if(evt->kind == UI_EventKind_Press && (evt->slot == UI_EventActionSlot_Cancel || evt->key == WM_Key_Esc ||
+                                         evt->slot == UI_EventActionSlot_Accept || evt->key == WM_Key_Return))
+  {
+    uishell_rt_surface_end_edit(s);
+    return 1;
+  }
+  if(evt->kind != UI_EventKind_Edit && evt->kind != UI_EventKind_Navigate && evt->kind != UI_EventKind_Text) { return 0; }
+  Temp scratch = scratch_begin(0, 0);
+  UI_TxtOp op = ui_single_line_txt_op_from_event(scratch.arena, evt, str8(sf->edit_buffer, sf->edit_size), sf->cursor, sf->mark);
+  String8 before = push_str8_copy(scratch.arena, str8(sf->edit_buffer, sf->edit_size));
+  ui_apply_text_edit_op(scratch.arena, op, sf->edit_buffer, sizeof(sf->edit_buffer), &sf->edit_size, &sf->cursor, &sf->mark);
+  String8 text = str8(sf->edit_buffer, sf->edit_size);
+  if(!str8_match(before, text, 0)) { uishell_rt_surface_input(s, s->edit_surface, n->surface[sf->edit].id, WHEELHOUSE_RICH_INPUT_TEXT, text); }
+  scratch_end(scratch);
+  return 1;
+}
+
+// The interactive Item under `at`, in the Block's content, or -1.
+internal S64
+uishell_rt_surface_hit(UIShell_RtSurface *sf, UIShell_RtNode *n, Vec2F32 at)
+{
+  for(U64 i = 0; sf && sf->widgets && i < n->surface_count; i += 1)
+  {
+    if(uishell_rt_surface_interactive(&n->surface[i]) && contains_2f32(sf->widgets[i].rect, at)) { return (S64)i; }
+  }
+  return -1;
+}
+
+////////////////////////////////
+//~ Block heights
+
 // A Block's height at content width `content_width`, laying it out if it
 // isn't already: what set_height reports.
 internal F32
@@ -2401,6 +2825,10 @@ uishell_rt_block_height(UIShell_RichTextState *s, UIShell_RtNode *n, F32 content
   {
     B32 capped = 0;
     inner = uishell_rt_code_height(uishell_rt_code(s, n), &capped);
+  }
+  else if(f.surface)
+  {
+    inner = uishell_rt_surface(s, n, uishell_rt_text_width(&f, content_width))->height;
   }
   else
   {
@@ -3363,36 +3791,9 @@ uishell_rt_resolve_link(Arena *arena, UIShell_RichTextState *s, String8 target, 
 
 internal U64 uishell_rt_input_post(UIShell_RichTextState *s, String8 path, String8 body);
 
-// An answer link (#695): the conversation keeps its choice, and once every
-// field the Interrupt asks is chosen, the answer goes to the producer. A
-// field that takes text asks for it in the composer.
-internal void
-uishell_rt_answer(UIShell_RichTextState *s, String8 target, String8 text)
-{
-  char *error = 0;
-  WheelhouseBytes out = {0};
-  U32 choice = wheelhouse_rich_text_conversation_choose(s->doc, uishell_rt_wt(target), uishell_rt_wt(text), &out, &error);
-  uishell_rt_error(&error);
-  String8 got = str8(out.data, out.len);
-  if(choice == WHEELHOUSE_RICH_CHOICE_SEND)
-  {
-    wheelhouse_agent_input_forget(s->answer_ticket);
-    s->answer_ticket = uishell_rt_input_post(s, str8_lit("/run"), got);
-  }
-  if(choice == WHEELHOUSE_RICH_CHOICE_TEXT && target.size <= sizeof(s->answer_target))
-  {
-    MemoryCopy(s->answer_target, target.str, target.size);
-    s->answer_target_size = target.size;
-    s->answer_prompt_size = Min(got.size, sizeof(s->answer_prompt));
-    MemoryCopy(s->answer_prompt, got.str, s->answer_prompt_size);
-  }
-  if(out.data) { wheelhouse_bytes_free(out); }
-}
-
 internal void
 uishell_rt_follow_link(UIShell_RichTextState *s, String8 target)
 {
-  if(str8_match(str8_prefix(target, 13), str8_lit("wh-interrupt:"), 0)) { uishell_rt_answer(s, target, str8_zero()); return; }
   Temp scratch = scratch_begin(0, 0);
   String8 resolved = str8_zero();
   U64 heading = 0;
@@ -3788,6 +4189,188 @@ uishell_rt_place(Arena *arena, UIShell_RichTextState *s, F32 content_x, F32 cont
 }
 
 ////////////////////////////////
+//~ Surface Embeds: drawing (#695)
+
+// Where a surface's content starts in its Block.
+internal Vec2F32
+uishell_rt_surface_origin(UIShell_RtPlaced *p)
+{
+  return v2f32(p->frame.indent + p->frame.inset_x, p->frame.pad_top + p->frame.inset_y);
+}
+
+// The cursor and selection of the TextField being typed in, in its text
+// box.
+typedef struct UIShell_RtFieldDraw UIShell_RtFieldDraw;
+struct UIShell_RtFieldDraw
+{
+  Rng2F32 cursor;
+  Rng2F32 selection;
+};
+
+internal UI_BOX_CUSTOM_DRAW(uishell_rt_field_draw)
+{
+  UIShell_RtFieldDraw *d = (UIShell_RtFieldDraw *)user_data;
+  Vec4F32 select = ui_color_from_tags_key_name(box->tags_key, str8_lit("selection"));
+  Vec4F32 cursor = ui_color_from_tags_key_name(box->tags_key, str8_lit("cursor"));
+  if(d->selection.x1 > d->selection.x0) { dr_rect(shift_2f32(d->selection, box->rect.p0), select, 0, 0, 1.f); }
+  dr_rect(shift_2f32(d->cursor, box->rect.p0), cursor, 0, 0, 0);
+}
+
+// Characters, not bytes: an obscured field shows a dot for each.
+internal U64
+uishell_rt_char_count(String8 text)
+{
+  U64 count = 0;
+  for(U64 b = 0; b < text.size; b += 1) { count += (text.str[b] & 0xC0) != 0x80; }
+  return count;
+}
+
+internal void
+uishell_rt_surface_lines(String8Array lines, Rng2F32 at, F32 line, FNT_Tag font, F32 size, char *tag, U64 key, U64 item, U64 part)
+{
+  for(U64 k = 0; k < lines.count; k += 1)
+  {
+    F32 y = at.y0 + k*line;
+    UI_Rect(r2f32p(at.x0, y, at.x1, y + line)) UI_Font(font) UI_FontSize(size) UI_TagF("%s", tag) UI_TextPadding(0)
+    {
+      UI_Box *b = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc, "###rt_surface_%llx_%llu_%llu_%llu",
+                                            (unsigned long long)key, (unsigned long long)item, (unsigned long long)part, (unsigned long long)k);
+      ui_box_equip_display_string(b, lines.v[k]);
+    }
+  }
+}
+
+// Builds the surface's widgets in its Block's box, at its content's origin.
+// Presses reach them through uishell_rt_pointer, which hits the same layout.
+internal void
+uishell_rt_surface_build(UIShell_RichTextState *s, UIShell_RtPlaced *p, UI_Box *box, Vec2F32 origin, B32 stop_here)
+{
+  UIShell_RtNode *n = p->node;
+  UIShell_RtSurfaceMetrics m = uishell_rt_surface_metrics();
+  UIShell_RtSurface *sf = uishell_rt_surface(s, n, uishell_rt_text_width(&p->frame, dim_2f32(p->rect).x));
+  Vec2F32 mouse = sub_2f32(sub_2f32(s->pointer_local, p->rect.p0), origin);
+  if(s->edit_surface == n->key && sf->edit >= 0) { ui_take_text_field_focus(); rd_state->text_edit_mode = 1; }
+  UI_Parent(box)
+  {
+    for(U64 i = 0; i < n->surface_count; i += 1)
+    {
+      UIShell_RtSurfaceItem *item = &n->surface[i];
+      UIShell_RtWidget *wd = &sf->widgets[i];
+      Rng2F32 r = shift_2f32(wd->rect, origin);
+      B32 lit = uishell_rt_surface_interactive(item) &&
+                (contains_2f32(wd->rect, mouse) ||
+                 (stop_here && s->focus_stop_value.kind == UIShell_RtStop_Surface && s->focus_stop_value.start == i));
+      U64 key = n->key;
+      switch(item->kind)
+      {
+        case WHEELHOUSE_RICH_SURFACE_TEXT:
+        {
+          uishell_rt_surface_lines(wd->lines, r, m.line, item->strong ? m.strong : m.font, m.size,
+                                   item->variant == WHEELHOUSE_RICH_SURFACE_VARIANT_CAPTION ? "weak" : "", key, i, 0);
+        } break;
+        case WHEELHOUSE_RICH_SURFACE_UNSUPPORTED: { uishell_rt_surface_lines(wd->lines, r, m.line, m.font, m.size, "weak", key, i, 0); } break;
+        case WHEELHOUSE_RICH_SURFACE_PICKER: { uishell_rt_surface_lines(wd->lines, r, m.line, m.font, m.size, "", key, i, 0); } break;
+        case WHEELHOUSE_RICH_SURFACE_CARD:
+        {
+          UI_Rect(r) UI_CornerRadius(floor_f32(m.size*0.5f))
+          {
+            ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground, "###rt_surface_%llx_%llu", (unsigned long long)key, (unsigned long long)i);
+          }
+        } break;
+        case WHEELHOUSE_RICH_SURFACE_DIVIDER:
+        {
+          F32 y = floor_f32((r.y0 + r.y1)/2);
+          UI_Rect(r2f32p(r.x0, y, r.x1, y + 1)) UI_TagF("weak")
+          {
+            ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawBorder, "###rt_surface_%llx_%llu", (unsigned long long)key, (unsigned long long)i);
+          }
+        } break;
+        case WHEELHOUSE_RICH_SURFACE_BUTTON:
+        {
+          char *tag = !item->enabled ? "weak" : lit ? "hover" : item->variant == WHEELHOUSE_RICH_SURFACE_VARIANT_PRIMARY ? "pop" : "";
+          UI_BoxFlags flags = UI_BoxFlag_Floating|UI_BoxFlag_DrawText|
+                           (item->variant == WHEELHOUSE_RICH_SURFACE_VARIANT_BORDERLESS && !lit ? 0 : UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground);
+          UI_Rect(r) UI_CornerRadius(floor_f32(m.button_h/2)) UI_TextAlignment(UI_TextAlign_Center) UI_Font(m.font) UI_FontSize(m.size) UI_TagF("%s", tag)
+          {
+            UI_Box *b = ui_build_box_from_stringf(flags, "###rt_surface_%llx_%llu", (unsigned long long)key, (unsigned long long)i);
+            ui_box_equip_display_string(b, item->text);
+          }
+        } break;
+        case WHEELHOUSE_RICH_SURFACE_CHOICE:
+        case WHEELHOUSE_RICH_SURFACE_CHECK_BOX:
+        {
+          if(lit)
+          {
+            UI_Rect(r2f32p(r.x0 - m.size*0.4f, r.y0, r.x1, r.y1)) UI_CornerRadius(floor_f32(m.size*0.4f)) UI_TagF("hover")
+            {
+              ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawBackground, "###rt_surface_%llx_%llu_lit", (unsigned long long)key, (unsigned long long)i);
+            }
+          }
+          // A round mark for one of several, a square one for any number.
+          B32 round = item->kind == WHEELHOUSE_RICH_SURFACE_CHOICE && item->variant != WHEELHOUSE_RICH_SURFACE_VARIANT_MULTIPLE;
+          F32 my = r.y0 + floor_f32((m.line - m.mark)/2);
+          UI_Rect(r2f32p(r.x0, my, r.x0 + m.mark, my + m.mark)) UI_CornerRadius(round ? m.mark/2 : floor_f32(m.mark*0.2f)) UI_TagF(item->on ? "pop" : "")
+          {
+            ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawBorder|(item->on ? UI_BoxFlag_DrawBackground : 0),
+                                      "###rt_surface_%llx_%llu_mark", (unsigned long long)key, (unsigned long long)i);
+          }
+          Rng2F32 text = r2f32p(r.x0 + m.indent, r.y0, r.x1, r.y1);
+          uishell_rt_surface_lines(wd->lines, text, m.line, m.font, m.size, "", key, i, 0);
+          text.y0 += wd->lines.count*m.line;
+          uishell_rt_surface_lines(wd->detail, text, m.line, m.font, m.size, "weak", key, i, 1);
+        } break;
+        case WHEELHOUSE_RICH_SURFACE_TEXT_FIELD:
+        {
+          uishell_rt_surface_lines(wd->lines, r, m.line, m.font, m.size, "", key, i, 0);
+          Rng2F32 field = r2f32p(r.x0, r.y0 + wd->lines.count*m.line, r.x1, r.y1);
+          B32 editing = s->edit_surface == key && sf->edit == (S64)i;
+          F32 inset = floor_f32(m.size*0.6f);
+          String8 text = editing ? str8(sf->edit_buffer, sf->edit_size) : item->text;
+          B32 obscured = item->variant == WHEELHOUSE_RICH_SURFACE_VARIANT_OBSCURED;
+          if(obscured)
+          {
+            U8 *dots = push_array(ui_build_arena(), U8, text.size*3);
+            U64 count = uishell_rt_char_count(text);
+            for(U64 c = 0; c < count; c += 1) { MemoryCopy(dots + 3*c, "\xE2\x80\xA2", 3); }
+            text = str8(dots, 3*count);
+          }
+          UI_Box *f = &ui_nil_box;
+          UI_Rect(field) UI_CornerRadius(floor_f32(m.size*0.4f)) UI_TagF(editing || lit ? "hover" : "")
+          {
+            f = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Clip,
+                                          "###rt_surface_%llx_%llu", (unsigned long long)key, (unsigned long long)i);
+          }
+          UI_Parent(f) UI_Rect(r2f32p(inset, 0, dim_2f32(field).x - inset, dim_2f32(field).y)) UI_Font(m.font) UI_FontSize(m.size)
+            UI_TextPadding(0) UI_TagF(text.size ? "" : "weak")
+          {
+            UI_Box *b = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText|UI_BoxFlag_DisableTextTrunc, "###rt_surface_text");
+            ui_box_equip_display_string(b, text.size ? text : item->detail);
+            if(editing)
+            {
+              // Offsets in the obscured text count its dots, a character each.
+              String8 measured = obscured ? text : str8(sf->edit_buffer, sf->edit_size);
+              U64 cursor = (U64)(sf->cursor.column - 1), mark = (U64)(sf->mark.column - 1);
+              if(obscured)
+              {
+                cursor = 3*uishell_rt_char_count(str8_prefix(str8(sf->edit_buffer, sf->edit_size), cursor));
+                mark = 3*uishell_rt_char_count(str8_prefix(str8(sf->edit_buffer, sf->edit_size), mark));
+              }
+              F32 cx = fnt_dim_from_tag_size_string(m.font, m.size, 0, 0, str8_prefix(measured, cursor)).x;
+              F32 mx = fnt_dim_from_tag_size_string(m.font, m.size, 0, 0, str8_prefix(measured, mark)).x;
+              F32 h = dim_2f32(field).y;
+              UIShell_RtFieldDraw *d = push_array(ui_build_arena(), UIShell_RtFieldDraw, 1);
+              d->cursor = r2f32p(cx, h*0.2f, cx + ClampBot(1.f, floor_f32(m.size/10.f)), h*0.8f);
+              d->selection = r2f32p(Min(cx, mx), h*0.2f, Max(cx, mx), h*0.8f);
+              ui_box_equip_custom_draw(b, uishell_rt_field_draw, d);
+            }
+          }
+        } break;
+      }
+    }
+  }
+}
+
+////////////////////////////////
 //~ Tab stops
 
 internal U64
@@ -3824,6 +4407,10 @@ uishell_rt_stops(Arena *arena, UIShell_RichTextState *s, UIShell_RtPlacement *pl
     }
     else if(p->frame.code) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_CopyButton, p->key, 0, 0}; }
     if(p->node && p->cap.control) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Expand, p->key, 1, 0}; }
+    for(U64 i = 0; p->frame.surface && p->node && i < p->node->surface_count && more_count < ArrayCount(more); i += 1)
+    {
+      if(uishell_rt_surface_interactive(&p->node->surface[i])) { more[more_count++] = (UIShell_RtStop){UIShell_RtStop_Surface, p->key, (U32)i, 0}; }
+    }
     for(U64 sp = 0; p->node && sp < p->node->span_count && more_count < ArrayCount(more); sp += 1)
     {
       WheelhouseRichSpan *span = &p->node->spans[sp];
@@ -3873,6 +4460,7 @@ uishell_rt_activate_stop(UIShell_RichTextState *s, UIShell_RtStop *stop)
       if(owner) { uishell_rt_toggle_opened(s, owner); }
     } break;
     case UIShell_RtStop_Open: { uishell_rt_code_open(s, stop->key); } break;
+    case UIShell_RtStop_Surface: { uishell_rt_surface_act(s, stop->key, stop->start); } break;
     case UIShell_RtStop_CopyButton:
     {
       Temp scratch = scratch_begin(0, 0);
@@ -4109,6 +4697,7 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
   F32 line = uishell_rt_line_px(t);
   Vec2F32 mouse = ui_mouse();
   s->hover_key = contains_2f32(content, mouse) ? uishell_rt_hovered(s, pl, sub_2f32(mouse, content.p0)) : 0;
+  s->pointer_local = sub_2f32(mouse, content.p0);
   UIShell_RtAction actions[3];
   U64 action_count = uishell_rt_actions(s, pl, actions, ArrayCount(actions));
   for(UI_Event *evt = 0; ui_next_event(&evt);)
@@ -4212,6 +4801,19 @@ uishell_rt_pointer(UIShell_RichTextState *s, UIShell_RtPlacement *pl, Rng2F32 co
         acted = 1;
       }
       if(acted) { continue; }
+      if(under && under->frame.surface)
+      {
+        UIShell_RtSurface *sf = uishell_rt_surface_of(s, under->key);
+        S64 hit = sf ? uishell_rt_surface_hit(sf, under->node, sub_2f32(in_block, uishell_rt_surface_origin(under))) : -1;
+        if(hit >= 0)
+        {
+          s->focus_embed = 0;
+          s->focus_stop = -1;
+          uishell_rt_surface_act(s, under->key, (U64)hit);
+          continue;
+        }
+      }
+      uishell_rt_surface_end_edit(s);
       if(code)
       {
         if(contains_2f32(uishell_rt_control_rect(under, t, UIShell_RtControl_Copy), in_block))
@@ -4525,6 +5127,13 @@ uishell_rt_keys(UIShell_RichTextState *s, UIShell_RtPlacement *pl, UIShell_RtSto
     B32 accept = evt->kind == UI_EventKind_Press && (evt->slot == UI_EventActionSlot_Accept || evt->key == WM_Key_Return ||
                                                     (evt->key == WM_Key_Space && s->focus_stop >= 0 &&
                                                      (s->focus_stop_value.kind == UIShell_RtStop_Toggle || s->focus_stop_value.kind == UIShell_RtStop_Thread)));
+    // A surface's TextField takes what it types.
+    if(tab) { uishell_rt_surface_end_edit(s); }
+    else if(s->edit_surface && uishell_rt_surface_key(s, evt))
+    {
+      ui_eat_event(evt);
+      continue;
+    }
     // A focused Embed owns the keys but Tab and Esc (#542, decision 4).
     if(s->focus_embed != 0 && !tab)
     {
@@ -5303,7 +5912,7 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
   if(s->compose_blur && !ui_box_is_nil(last_card)) { last_card->default_nav_focus_next_active_key = ui_key_zero(); }
   s->compose_blur = 0;
   B32 active = (last_card->flags & UI_BoxFlag_FocusActive) && ui_key_match(last_card->default_nav_focus_active_key, key) &&
-               !ui_key_match(last_card->default_nav_focus_next_active_key, ui_key_zero());
+               !ui_key_match(last_card->default_nav_focus_next_active_key, ui_key_zero()) && s->edit_surface == 0;
 
   //- Keys, while the field has them.
   B32 send = 0, stop = 0;
@@ -5481,10 +6090,8 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
       {
         UI_Rect(r2f32p(0, 0, text_w, line_h)) UI_TagF("weak")
         {
-          String8 hint = s->answer_target_size ? push_str8f(scratch, "Answer: %S", str8(s->answer_prompt, s->answer_prompt_size))
-                                               : str8_lit("Message the agent");
           UI_Box *placeholder = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText, "###rt_compose_placeholder");
-          ui_box_equip_display_string(placeholder, hint);
+          ui_box_equip_display_string(placeholder, str8_lit("Message the agent"));
         }
       }
       for(U64 i = s->compose_first_line; i < s->compose_first_line + shown; i += 1)
@@ -5529,6 +6136,7 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
       s->compose_cursor = txt_pt(1, 1 + byte);
       if(ui_pressed(sig))
       {
+        uishell_rt_surface_end_edit(s);
         s->compose_mark = s->compose_cursor;
         s->compose_goal_x = -1;
         s->compose_moved_us = now;
@@ -5562,15 +6170,7 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
   //- What the keys and the button asked for.
   if(stop) { wheelhouse_agent_input_forget(uishell_rt_input_post(s, str8_lit("/stop"), str8_lit("{}"))); }
   String8 prompt = str8_skip_chop_whitespace(str8(s->compose, s->compose_size));
-  if(send && prompt.size && s->answer_target_size)
-  {
-    uishell_rt_answer(s, str8(s->answer_target, s->answer_target_size), prompt);
-    s->answer_target_size = s->answer_prompt_size = 0;
-    s->compose_size = 0;
-    s->compose_cursor = s->compose_mark = txt_pt(1, 1);
-    s->compose_first_line = 0;
-  }
-  else if(send && prompt.size)
+  if(send && prompt.size)
   {
     uishell_rt_send_prompt(s, prompt, asked, scratch);
     s->compose_size = 0;
@@ -5694,6 +6294,7 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       }
       wheelhouse_rich_delta_release(delta);
       uishell_rt_prune_tables(s);
+      uishell_rt_prune_surfaces(s);
       uishell_rt_prune_codes(s);
       for(U64 i = 0; i < s->opened_count;)
       {
@@ -5876,8 +6477,9 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   }
   B32 focused = 0;
   // While the composer has the keyboard, the content's keys and edit
-  // commands are its.
-  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && !ui_text_field_focus())
+  // commands are its; a surface's TextField takes the text focus for the
+  // content's own keys.
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && (!ui_text_field_focus() || s->edit_surface))
   {
     focused = 1;
     UIShell_RtStop *stops = 0;
@@ -6025,6 +6627,10 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
       ui_box_equip_custom_draw(box, uishell_rt_block_draw, d);
       s->stats.blocks_boxed += 1;
       B32 stop_here = s->focus_stop >= 0 && s->focus_stop_value.key == p->key;
+      if(p->frame.surface)
+      {
+        uishell_rt_surface_build(s, p, box, uishell_rt_surface_origin(p), stop_here);
+      }
       if(p->frame.code_embed)
       {
         UIShell_RtCode *c = uishell_rt_code(s, p->node);
