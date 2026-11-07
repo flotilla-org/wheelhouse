@@ -23,50 +23,9 @@
 #include "generated/render_d3d11.meta.h"
 
 ////////////////////////////////
-//~ rjf: C-side Shader Types
-
-typedef struct R_D3D11_Uniforms_Rect R_D3D11_Uniforms_Rect;
-struct R_D3D11_Uniforms_Rect
-{
-  Vec2F32 viewport_size;
-  F32 opacity;
-  F32 sample_is_surface;
-  Mat4x4F32 texture_sample_channel_map;
-  Vec2F32 texture_t2d_size;
-  Vec2F32 translate;
-  Vec4F32 xform[3];
-  Vec2F32 xform_scale;
-};
-
-typedef struct R_D3D11_Uniforms_BlurPass R_D3D11_Uniforms_BlurPass;
-struct R_D3D11_Uniforms_BlurPass
-{
-  Rng2F32 rect;
-  Vec4F32 corner_radii;
-  Vec2F32 direction;
-  Vec2F32 viewport_size;
-  U32 blur_count;
-  U8 _padding0_[204];
-};
-StaticAssert(sizeof(R_D3D11_Uniforms_BlurPass) % 256 == 0, NotAligned); // constant count/offset must be aligned to 256 bytes
-
-typedef struct R_D3D11_Uniforms_Blur R_D3D11_Uniforms_Blur;
-struct R_D3D11_Uniforms_Blur
-{
-  R_D3D11_Uniforms_BlurPass passes[Axis2_COUNT];
-  Vec4F32 kernel[32];
-};
-
-typedef struct R_D3D11_Uniforms_Mesh R_D3D11_Uniforms_Mesh;
-struct R_D3D11_Uniforms_Mesh
-{
-  Mat4x4F32 xform;
-};
-
-////////////////////////////////
 //~ rjf: Main State Types
 
-// mirrors EffectUniforms in native/src/effects/effect_prelude.wgsl
+// mirrors EffectUniforms in native/src/effects/effect_prelude.slang
 typedef struct R_D3D11_EffectUniforms R_D3D11_EffectUniforms;
 struct R_D3D11_EffectUniforms
 {
@@ -170,6 +129,7 @@ struct R_D3D11_State
   IDXGIAdapter            *dxgi_adapter;
   IDXGIFactory2           *dxgi_factory;
   ID3D11RasterizerState1  *main_rasterizer;
+  ID3D11RasterizerState1  *mesh_rasterizer; // no culling: a mirrored mesh (a reflection) winds the other way
   ID3D11BlendState        *main_blend_state;
   ID3D11BlendState        *surface_blend_state;
   ID3D11Buffer            *effect_uniforms_buffer;
@@ -186,7 +146,11 @@ struct R_D3D11_State
   ID3D11VertexShader *vshads[R_D3D11_VShadKind_COUNT];
   ID3D11InputLayout *ilays[R_D3D11_VShadKind_COUNT];
   ID3D11PixelShader *pshads[R_D3D11_PShadKind_COUNT];
-  ID3D11Buffer *uniform_type_kind_buffers[R_D3D11_UniformTypeKind_COUNT];
+  ID3D11Buffer *core_rect_cbuffer;       // R_CoreRectUniforms, for the rect shader
+  ID3D11Buffer *core_blur_cbuffer;       // R_CoreBlurUniforms, for the blur shader
+  ID3D11Buffer *core_mesh_cbuffer;       // R_CoreMeshUniforms, b0 of the mesh shader
+  ID3D11Buffer *core_mesh_group_cbuffer; // R_CoreMeshGroupUniforms, b1 of the mesh shader
+  ID3D11Buffer *core_composite_cbuffer;  // R_CoreCompositeUniforms, for the Geo3D composite
   
   // rjf: buffers to flush at subsequent frame
   Arena *buffer_flush_arena;

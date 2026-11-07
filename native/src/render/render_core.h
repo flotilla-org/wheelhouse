@@ -106,6 +106,10 @@ struct R_Rect2DInst
   F32 shear;
 };
 
+// The generated rect shader reads an instance as eight float4s (Metal through
+// a vertex descriptor, D3D11 and OpenGL through their input layouts).
+StaticAssert(sizeof(R_Rect2DInst) == 8*sizeof(Vec4F32), r_rect2d_inst_is_eight_vec4s);
+
 typedef struct R_Mesh3DInst R_Mesh3DInst;
 struct R_Mesh3DInst
 {
@@ -235,7 +239,7 @@ struct R_PassParams_Geo3D
   B32 preserve;         // target content is up-to-date; skip rendering this pass entirely
 };
 
-// effect contract v1 (native/src/effects/effect_prelude.wgsl): one fullscreen-triangle
+// effect contract (native/src/effects/effect_prelude.slang): one fullscreen-triangle
 // fragment pass, source texture -> target, premultiplied in & out, no blending
 typedef struct R_PassParams_Effect R_PassParams_Effect;
 struct R_PassParams_Effect
@@ -299,6 +303,73 @@ struct R_EffectSources
 };
 
 ////////////////////////////////
+//~ Core Shader Uniforms
+//
+// The uniform blocks of the core shaders, which are generated from
+// native/src/shaders/*.slang (tools/generate-shaders.sh). Every backend
+// fills these same bytes: std140 for OpenGL, a cbuffer for D3D11, a constant
+// buffer for Metal.
+
+typedef struct R_CoreRectUniforms R_CoreRectUniforms;
+struct R_CoreRectUniforms
+{
+  Vec2F32 viewport_size;
+  F32 opacity;
+  F32 sample_is_surface;
+  Mat4x4F32 texture_sample_channel_map; // each v[i] is a column
+  Vec2F32 texture_size;
+  Vec2F32 xform_scale;
+  Vec4F32 xform[3];                     // rows
+  F32 surface_flip_y;                   // 1 where surface textures are stored bottom-up (OpenGL)
+  F32 _padding0_[3];
+};
+StaticAssert(sizeof(R_CoreRectUniforms) == 160, r_core_rect_uniforms_size);
+
+typedef struct R_CoreBlurUniforms R_CoreBlurUniforms;
+struct R_CoreBlurUniforms
+{
+  Rng2F32 rect;
+  Vec4F32 corner_radii;
+  Vec2F32 direction;
+  Vec2F32 viewport_size;
+  U32 blur_count;
+  F32 texcoord_flip_y;                  // 1 where the stage is stored bottom-up (OpenGL)
+  F32 _padding0_[2];
+  Vec4F32 kernel[32];
+};
+StaticAssert(sizeof(R_CoreBlurUniforms) == 576, r_core_blur_uniforms_size);
+
+typedef struct R_CoreMeshUniforms R_CoreMeshUniforms;
+struct R_CoreMeshUniforms
+{
+  Mat4x4F32 view_projection;            // each v[i] is a column
+};
+StaticAssert(sizeof(R_CoreMeshUniforms) == 64, r_core_mesh_uniforms_size);
+
+typedef struct R_CoreMeshGroupUniforms R_CoreMeshGroupUniforms;
+struct R_CoreMeshGroupUniforms
+{
+  F32 has_albedo;
+  F32 albedo_sample_is_surface;
+  F32 _padding0_[2];
+};
+StaticAssert(sizeof(R_CoreMeshGroupUniforms) == 16, r_core_mesh_group_uniforms_size);
+
+typedef struct R_CoreCompositeUniforms R_CoreCompositeUniforms;
+struct R_CoreCompositeUniforms
+{
+  Vec4F32 dst_ndc;                      // x0 y0 x1 y1 in the target's clip space
+  Vec4F32 src_uv;                       // x0 y0 x1 y1 in the Geo3D colour texture
+};
+StaticAssert(sizeof(R_CoreCompositeUniforms) == 32, r_core_composite_uniforms_size);
+
+// The mesh shader reads each vertex as 11 floats (position, normal, texcoord,
+// rgb) and each instance as an R_Mesh3DInst: a column-major transform, then
+// the albedo uv remap.
+#define R_CORE_MESH_VERTEX_STRIDE (11*sizeof(F32))
+StaticAssert(sizeof(R_Mesh3DInst) == 5*sizeof(Vec4F32), r_mesh3d_inst_size);
+
+////////////////////////////////
 //~ rjf: Helpers
 
 internal U64 r_bytes_per_pixel_from_tex2dfmt(R_Tex2DFmt fmt);
@@ -322,6 +393,16 @@ internal void *r_batch_list_push_inst(Arena *arena, R_BatchList *list, U64 batch
 
 internal R_Pass *r_pass_push(Arena *arena, R_PassList *list, R_PassKind kind);
 internal R_Pass *r_pass_from_kind(Arena *arena, R_PassList *list, R_PassKind kind);
+
+////////////////////////////////
+//~ Core Shader Uniform Functions
+
+internal R_CoreRectUniforms r_core_rect_uniforms(Vec2F32 viewport_dim, R_BatchGroup2DParams *group_params, Mat3x3F32 xform,
+                                                 R_Tex2DFormat texture_fmt, Vec2S32 texture_size, B32 surface_flip_y);
+internal R_CoreBlurUniforms r_core_blur_uniforms(R_PassParams_Blur *params, Vec2F32 viewport_dim, F32 blur_size_texels, B32 texcoord_flip_y);
+internal void r_core_blur_pass(R_CoreBlurUniforms *uniforms, R_PassParams_Blur *params, Axis2 axis, Vec2F32 viewport_dim, Vec2S32 pixel_dim);
+internal R_CoreCompositeUniforms r_core_composite_uniforms(Rng2F32 viewport, Vec2F32 target_origin, F32 target_scale, Vec2S32 target_size,
+                                                           F32 src_scale, Vec2S32 src_size, B32 src_flip_y);
 
 ////////////////////////////////
 //~ Adapter Identity
@@ -349,7 +430,7 @@ r_hook R_Handle          r_window_equip(WM_Window window);
 r_hook void              r_window_unequip(WM_Window window, R_Handle window_equip);
 
 //- rjf: effects (runtime-compiled fullscreen passes; sources are the
-// per-backend translations of one WGSL effect - see `native/build.sh effects`)
+// per-backend translations of one Slang effect - see tools/generate-shaders.sh)
 r_hook R_Handle          r_effect_alloc(String8 name, R_EffectSources *sources);
 
 //- rjf: textures

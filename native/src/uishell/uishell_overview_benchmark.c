@@ -200,9 +200,7 @@ uishell_overview_benchmark_readback(Arena *arena, RD_WindowState *ws)
       pass.colorAttachments[0].loadAction = MTLLoadActionClear;
       pass.colorAttachments[0].storeAction = MTLStoreActionStore;
       id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
-      R_MTL_FinalizeUniforms uniforms = {v2f32(width, height)};
       [encoder setRenderPipelineState:r_mtl_state->finalize_pipeline];
-      [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:0];
       [encoder setFragmentTexture:stage atIndex:0];
       [encoder setFragmentSamplerState:r_mtl_state->samplers[R_Tex2DSampleKind_Nearest] atIndex:0];
       [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
