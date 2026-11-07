@@ -683,3 +683,29 @@ fn copy_as_markdown_from_a_crlf_source_has_lf_line_endings() {
     let code = find(doc, "fn main");
     assert_eq!(copy_block(doc, code, Format::Markdown).unwrap(), "```rust\nfn main() {\n    println!(\"fenced\");\n}\n```");
 }
+
+/// A height measured above an anchor can push it past where the View can
+/// scroll, so it shows lower than it says; growth must keep it there.
+#[test]
+fn growth_keeps_an_anchor_where_it_shows_after_the_end_held_it_back() {
+    let mut rich = RichText::open("alpha\n\nbravo\n");
+    let id = rich.subscribe();
+    let shown = |rich: &mut RichText| {
+        let (doc, view) = rich.view_mut(id).unwrap();
+        let window = view.window(doc);
+        let bravo = find(doc, "bravo");
+        window.entries.iter().find(|e| e.key == bravo).map(|e| e.top - window.top)
+    };
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.set_metrics(doc, Metrics { width: 200.0, line_height: 10.0, chars_per_line: 20.0 });
+    view.set_viewport(25.0);
+    let bravo = find(doc, "bravo");
+    let anchor = Anchor { key: bravo, part: Part::Block, position: Position::Text { byte: 0, line_offset: 0.0 }, viewport_offset: 10.0 };
+    view.scroll_to(doc, anchor).unwrap();
+    assert_eq!(shown(&mut rich), Some(10.0));
+    let (doc, view) = rich.view_mut(id).unwrap();
+    view.set_height(doc, find(doc, "alpha"), Part::Block, 40.0, 200.0).unwrap();
+    assert_eq!(shown(&mut rich), Some(15.0), "held back by the end");
+    rich.reload(&format!("alpha\n\nbravo\n\n{}\n", "c".repeat(100)));
+    assert_eq!(shown(&mut rich), Some(15.0), "growth below doesn't move it");
+}
