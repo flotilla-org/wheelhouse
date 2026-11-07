@@ -3641,6 +3641,10 @@ WheelhouseText wheelhouse_table_header(WheelhouseTable *table,
 // once until the query or the data changes, and where the last step landed.
 WheelhouseTableFind wheelhouse_table_find(WheelhouseTable *table);
 
+// 0 when the Table Source left out the rows' quick filter last asked for
+// (an invalid regex, say), keeping the one before; 1 otherwise.
+uint32_t wheelhouse_table_quick_filter_applied(WheelhouseTable *table);
+
 // Marks which cells of the block rows by cols (row and column Keys,
 // rows_len and cols_len of them) match the Find Query in force: out, of
 // rows_len*cols_len bytes, gets 1 for a match and 0 otherwise, row by row;

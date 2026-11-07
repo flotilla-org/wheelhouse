@@ -63,6 +63,17 @@ uishell_table_diag_filled(BinnacleSnapshot *snap)
   return filled;
 }
 
+// Whether box was built from string, keyed under one of its ancestors.
+internal B32
+uishell_table_diag_keyed(UI_Box *box, String8 string)
+{
+  for(UI_Box *seed = box->parent; !ui_box_is_nil(seed); seed = seed->parent)
+  {
+    if(ui_key_match(box->key, ui_key_from_string(seed->key, string))) { return 1; }
+  }
+  return 0;
+}
+
 // Frame cost of a table: 2000 frames of fill, Snapshot and a one-row scroll.
 internal F64
 uishell_table_diag_bench(String8 name, F32 line, F32 digit)
@@ -691,6 +702,85 @@ uishell_table_diagnostics(RD_WindowState *ws)
       rd_state->cmds[0] = saved_cmds;
       rd_state->cmds_gen = saved_gen;
     }
+    // The filter bar (#535): a press on its field gives it the keys, typing
+    // filters the rows and the bar counts them of the total, Escape clears
+    // the text and then hands the keys back; a regex the source rejects is
+    // not applied, the rows kept; find's Filter copies its text.
+    {
+      CFG_Node *view = rd_fixture_view(panel, str8_lit("table"), str8_lit("records"), 1);
+      RD_ViewAddress address = rd_view_address_from_cfg(view);
+      UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = address, .view = address)
+      {
+        UI_Event none = {0};
+        Vec2F32 away = v2f32(450, 300);
+        UI_Box *part = &ui_nil_box;
+        for(U32 frame = 0; frame < 3; frame += 1) { uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+        UIShell_TableState *state = (UIShell_TableState *)rd_view_state_from_view(address, 0)->user_data;
+        UI_Box *bar = &ui_nil_box;
+        UI_Box *field = &ui_nil_box;
+        for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
+        {
+          if(uishell_table_diag_keyed(box, str8_lit("table_filter_bar"))) { bar = box; }
+          if(uishell_table_diag_keyed(box, str8_lit("###table_filter"))) { field = box; }
+        }
+        U64 all = state ? state->rows_count : 0;
+        TableCheck(state && (state->filter_support & BINNACLE_QUICK_FILTER) && !ui_box_is_nil(bar) && !ui_box_is_nil(field),
+                   "a table whose rows take a quick filter has a filter bar");
+        TableCheck(all > 1 && str8_match(uishell_table_row_count(scratch.arena, all, state->rows_has_total, state->rows_total),
+                                         push_str8f(scratch.arena, "%S rows", str8_from_u64(scratch.arena, all, 10, 0, ',')), 0),
+                   "unfiltered, the bar counts the rows");
+        if(state && !ui_box_is_nil(field))
+        {
+          Vec2F32 at = center_2f32(field->rect);
+          UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = at};
+          UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at};
+          uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, press, at, UIShell_TableDiagBar_Thumb, &part);
+          uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, release, at, UIShell_TableDiagBar_Thumb, &part);
+          TableCheck(state->filter_focused, "a press on the field gives it the keys");
+          UI_Event typed = {.kind = UI_EventKind_Text, .string = str8_lit("bergen")};
+          uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, typed, away, UIShell_TableDiagBar_Thumb, &part);
+          for(U32 frame = 0; frame < 2; frame += 1) { uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          U64 bergen = state->rows_count;
+          TableCheck(str8_match(str8(state->filter_buffer, state->filter_size), str8_lit("bergen"), 0) && bergen > 0 && bergen < all,
+                     "typing in the field filters the rows");
+          TableCheck(str8_match(uishell_table_row_count(scratch.arena, bergen, state->rows_has_total, state->rows_total),
+                                push_str8f(scratch.arena, "%S of %S", str8_from_u64(scratch.arena, bergen, 10, 0, ','),
+                                           str8_from_u64(scratch.arena, all, 10, 0, ',')), 0),
+                     "filtered, the bar counts the rows shown of the total");
+          // Matching case: the data spells it Bergen.
+          state->filter_case = 1;
+          for(U32 frame = 0; frame < 2; frame += 1) { uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          TableCheck(state->rows_count == 0, "matching case keeps no rows for the wrong case");
+          state->filter_case = 0;
+          for(U32 frame = 0; frame < 2; frame += 1) { uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          // A regex the source rejects: the rows stay as they were.
+          state->filter_regex = 1;
+          state->filter_size = 5;
+          MemoryCopy(state->filter_buffer, "berg(", 5);
+          for(U32 frame = 0; frame < 2; frame += 1) { uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          TableCheck(state->filter_rejected && state->rows_count == bergen,
+                     "an invalid regex is not applied, and the rows stay filtered");
+          state->filter_regex = 0;
+          UI_Event escape = {.kind = UI_EventKind_Press, .key = WM_Key_Esc, .slot = UI_EventActionSlot_Cancel};
+          uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, escape, away, UIShell_TableDiagBar_Thumb, &part);
+          for(U32 frame = 0; frame < 2; frame += 1) { uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          TableCheck(state->filter_size == 0 && state->filter_focused && state->rows_count == all && !state->filter_rejected,
+                     "Escape clears the filter and keeps the keys");
+          uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, escape, away, UIShell_TableDiagBar_Thumb, &part);
+          TableCheck(!state->filter_focused, "Escape in an empty field hands the keys back to the Grid");
+          uishell_table_filter_from_find(state, str8_lit("halifax"));
+          for(U32 frame = 0; frame < 2; frame += 1) { uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          TableCheck(state->rows_count > 0 && state->rows_count < all, "find's Filter shows only the rows matching its text");
+          U8 long_text[sizeof(state->filter_buffer) + 1];
+          MemorySet(long_text, 'a', sizeof(long_text) - 2);
+          long_text[sizeof(long_text) - 2] = 0xC3;
+          long_text[sizeof(long_text) - 1] = 0xA9;
+          uishell_table_filter_from_find(state, str8(long_text, sizeof(long_text)));
+          TableCheck(state->filter_size == sizeof(long_text) - 2, "find's Filter cuts a long text on a character");
+          state->filter_size = 0;
+        }
+      }
+    }
     // What the row says of a count, partial or in collapsed groups.
     {
       WheelhouseTableFind one = {.open = 1, .total = 1};
@@ -797,6 +887,11 @@ uishell_table_diagnostics(RD_WindowState *ws)
     BinnacleSnapshot some = uishell_table_diag_frame(records, 900, 600, 0);
     TableCheck(some.axes[BINNACLE_ROWS].count != 0 && uishell_table_empty_message(&some, str8_zero()).size == 0,
                "a table with rows says nothing in its body");
+    BinnacleTextQuery nothing = {.text = {(U8 *)"no such text", 12}};
+    binnacle_grid_set_quick_filter(wheelhouse_table_grid(records), BINNACLE_ROWS, &nothing);
+    BinnacleSnapshot filtered = uishell_table_diag_frame(records, 900, 600, 0);
+    TableCheck(str8_match(uishell_table_empty_message(&filtered, str8_zero()), str8_lit("No rows match the filter"), 0),
+               "a table whose filter keeps no rows says so");
     wheelhouse_table_free(records);
   }
 
