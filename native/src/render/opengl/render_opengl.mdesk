@@ -12,6 +12,8 @@ R_OGL_ShaderTable:
 {
   {Rect        rect          r_ogl_rect_input_attributes         r_ogl_single_color_output_attributes}
   {Blur        blur          0                                   r_ogl_single_color_output_attributes}
+  {Mesh        mesh          0                                   r_ogl_single_color_output_attributes}
+  {Composite   composite     0                                   r_ogl_single_color_output_attributes}
 }
 
 @enum R_OGL_ShaderKind:

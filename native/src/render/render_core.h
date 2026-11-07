@@ -305,7 +305,7 @@ struct R_EffectSources
 ////////////////////////////////
 //~ Core Shader Uniforms
 //
-// The uniform blocks of the rect and blur shaders, which are generated from
+// The uniform blocks of the core shaders, which are generated from
 // native/src/shaders/*.slang (tools/generate-shaders.sh). Every backend
 // fills these same bytes: std140 for OpenGL, a cbuffer for D3D11, a constant
 // buffer for Metal.
@@ -339,6 +339,36 @@ struct R_CoreBlurUniforms
 };
 StaticAssert(sizeof(R_CoreBlurUniforms) == 576, r_core_blur_uniforms_size);
 
+typedef struct R_CoreMeshUniforms R_CoreMeshUniforms;
+struct R_CoreMeshUniforms
+{
+  Mat4x4F32 view_projection;            // each v[i] is a column
+};
+StaticAssert(sizeof(R_CoreMeshUniforms) == 64, r_core_mesh_uniforms_size);
+
+typedef struct R_CoreMeshGroupUniforms R_CoreMeshGroupUniforms;
+struct R_CoreMeshGroupUniforms
+{
+  F32 has_albedo;
+  F32 albedo_sample_is_surface;
+  F32 _padding0_[2];
+};
+StaticAssert(sizeof(R_CoreMeshGroupUniforms) == 16, r_core_mesh_group_uniforms_size);
+
+typedef struct R_CoreCompositeUniforms R_CoreCompositeUniforms;
+struct R_CoreCompositeUniforms
+{
+  Vec4F32 dst_ndc;                      // x0 y0 x1 y1 in the target's clip space
+  Vec4F32 src_uv;                       // x0 y0 x1 y1 in the Geo3D colour texture
+};
+StaticAssert(sizeof(R_CoreCompositeUniforms) == 32, r_core_composite_uniforms_size);
+
+// The mesh shader reads each vertex as 11 floats (position, normal, texcoord,
+// rgb) and each instance as an R_Mesh3DInst: a column-major transform, then
+// the albedo uv remap.
+#define R_CORE_MESH_VERTEX_STRIDE (11*sizeof(F32))
+StaticAssert(sizeof(R_Mesh3DInst) == 5*sizeof(Vec4F32), r_mesh3d_inst_size);
+
 ////////////////////////////////
 //~ rjf: Helpers
 
@@ -371,6 +401,8 @@ internal R_CoreRectUniforms r_core_rect_uniforms(Vec2F32 viewport_dim, R_BatchGr
                                                  R_Tex2DFormat texture_fmt, Vec2S32 texture_size, B32 surface_flip_y);
 internal R_CoreBlurUniforms r_core_blur_uniforms(R_PassParams_Blur *params, Vec2F32 viewport_dim, F32 blur_size_texels, B32 texcoord_flip_y);
 internal void r_core_blur_pass(R_CoreBlurUniforms *uniforms, R_PassParams_Blur *params, Axis2 axis, Vec2F32 viewport_dim, Vec2S32 pixel_dim);
+internal R_CoreCompositeUniforms r_core_composite_uniforms(Rng2F32 viewport, Vec2F32 target_origin, F32 target_scale, Vec2S32 target_size,
+                                                           F32 src_scale, Vec2S32 src_size, B32 src_flip_y);
 
 ////////////////////////////////
 //~ Adapter Identity

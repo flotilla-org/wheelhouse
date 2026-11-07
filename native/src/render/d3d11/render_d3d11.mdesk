@@ -4,180 +4,28 @@
 ////////////////////////////////
 //~ rjf: Pipeline Tables
 
-// Rect and Blur are generated from native/src/shaders/*.slang into
-// shaders/generated/core_shaders_hlsl.h (tools/generate-shaders.sh).
+// Every shader is generated from native/src/shaders/*.slang into
+// shaders/generated/core_shaders_hlsl.h (tools/generate-shaders.sh), with
+// entry points vs_main and fs_main.
 @table(name, source, ilay_table)
 R_D3D11_VShadTable:
 {
   {Rect                r_core_rect_vs_hlsl                     r_d3d11_g_rect_ilay_elements }
   {Blur                r_core_blur_vs_hlsl                     0                            }
-  {Mesh                r_d3d11_g_mesh_shader_src               r_d3d11_g_mesh_ilay_elements }
-  {Geo3DComposite      r_d3d11_g_geo3dcomposite_shader_src     0                            }
-  {Finalize            r_d3d11_g_finalize_shader_src           0                            }
+  {Mesh                r_core_mesh_vs_hlsl                     r_d3d11_g_mesh_ilay_elements }
+  {Geo3DComposite      r_core_composite_vs_hlsl                0                            }
+  {Finalize            r_core_finalize_vs_hlsl                 0                            }
 }
 
-@table(name, source, entry_point)
+@table(name, source)
 R_D3D11_PShadTable:
 {
-  {Rect                r_core_rect_fs_hlsl                    fs_main }
-  {Blur                r_core_blur_fs_hlsl                    fs_main }
-  {Mesh                r_d3d11_g_mesh_shader_src              ps_main }
-  {Geo3DComposite      r_d3d11_g_geo3dcomposite_shader_src    ps_main }
-  {Finalize            r_d3d11_g_finalize_shader_src          ps_main }
+  {Rect                r_core_rect_fs_hlsl     }
+  {Blur                r_core_blur_fs_hlsl     }
+  {Mesh                r_core_mesh_fs_hlsl     }
+  {Geo3DComposite      r_core_composite_fs_hlsl}
+  {Finalize            r_core_finalize_fs_hlsl }
 }
-
-@table(name)
-R_D3D11_UniformTypeTable:
-{
-  {Mesh}
-}
-
-////////////////////////////////
-//~ rjf: Mesh Shaders
-
-@embed_string r_d3d11_g_mesh_shader_src:
-"""
-cbuffer Uniforms : register(b0)
-{
-  row_major float4x4 xform;
-}
-
-struct CPU2Vertex
-{
-  float3 position : POS;
-  float3 normal   : NOR;
-  float2 texcoord : TEX;
-  float3 color    : COL;
-};
-
-struct Vertex2Pixel
-{
-  float4 position : SV_POSITION;
-  float2 texcoord : TEX;
-  float4 color    : COL;
-};
-
-Vertex2Pixel vs_main(CPU2Vertex c2v)
-{
-  Vertex2Pixel v2p;
-  v2p.position = mul(float4(c2v.position, 1.f), xform);
-  v2p.texcoord = c2v.texcoord;
-  v2p.color    = float4(c2v.color, 1.f);
-  return v2p;
-}
-
-float4 ps_main(Vertex2Pixel v2p) : SV_TARGET
-{
-  return v2p.color;
-}
-""";
-
-////////////////////////////////
-//~ rjf: Geo3D Composition Shaders
-
-@embed_string r_d3d11_g_geo3dcomposite_shader_src:
-"""
-struct CPU2Vertex
-{
-  uint vertex_id         : SV_VertexID;
-};
-
-struct Vertex2Pixel
-{
-  float4 position        : SV_POSITION;
-  float2 texcoord        : TEX;
-};
-
-Texture2D    stage_t2d     : register(t0);
-SamplerState stage_sampler : register(s0);
-
-//- rjf: vertex shader
-
-Vertex2Pixel
-vs_main(CPU2Vertex c2v)
-{
-  float4 vertex_positions__modl[] =
-  {
-    float4(0, 0, 0, 1),
-    float4(0, 1, 0, 1),
-    float4(1, 0, 0, 1),
-    float4(1, 1, 0, 1),
-  };
-  float4 vertex_position__modl = vertex_positions__modl[c2v.vertex_id];
-  float4 vertex_position__clip = float4(2*vertex_position__modl.x - 1, 2*vertex_position__modl.y - 1, 0, 1);
-  float2 texcoord              = float2(vertex_position__modl.x, vertex_position__modl.y);
-  texcoord.y = 1-texcoord.y;
-  Vertex2Pixel v2p;
-  {
-    v2p.position = vertex_position__clip;
-    v2p.texcoord = texcoord;
-  }
-  return v2p;
-}
-
-//- rjf: pixel shader
-
-float4
-ps_main(Vertex2Pixel v2p) : SV_TARGET
-{
-  float4 final_color = stage_t2d.Sample(stage_sampler, v2p.texcoord);
-  return final_color;
-}
-"""
-
-////////////////////////////////
-//~ rjf: Finalize Shaders
-
-@embed_string r_d3d11_g_finalize_shader_src:
-"""
-struct CPU2Vertex
-{
-  uint vertex_id         : SV_VertexID;
-};
-
-struct Vertex2Pixel
-{
-  float4 position        : SV_POSITION;
-  float2 texcoord        : TEX;
-};
-
-Texture2D    stage_t2d     : register(t0);
-SamplerState stage_sampler : register(s0);
-
-//- rjf: vertex shader
-
-Vertex2Pixel
-vs_main(CPU2Vertex c2v)
-{
-  float4 vertex_positions__modl[] =
-  {
-    float4(0, 0, 0, 1),
-    float4(0, 1, 0, 1),
-    float4(1, 0, 0, 1),
-    float4(1, 1, 0, 1),
-  };
-  float4 vertex_position__modl = vertex_positions__modl[c2v.vertex_id];
-  float4 vertex_position__clip = float4(2*vertex_position__modl.x - 1, 2*vertex_position__modl.y - 1, 0, 1);
-  float2 texcoord              = float2(vertex_position__modl.x, vertex_position__modl.y);
-  texcoord.y = 1-texcoord.y;
-  Vertex2Pixel v2p;
-  {
-    v2p.position = vertex_position__clip;
-    v2p.texcoord = texcoord;
-  }
-  return v2p;
-}
-
-//- rjf: pixel shader
-
-float4
-ps_main(Vertex2Pixel v2p) : SV_TARGET
-{
-  float4 final_color = stage_t2d.Sample(stage_sampler, v2p.texcoord);
-  final_color.a = 1;
-  return final_color;
-}
-"""
 
 ////////////////////////////////
 //~ rjf: Table Generators
@@ -191,12 +39,6 @@ ps_main(Vertex2Pixel v2p) : SV_TARGET
 @enum R_D3D11_PShadKind:
 {
   @expand(R_D3D11_PShadTable a) `$(a.name)`,
-  COUNT,
-}
-
-@enum R_D3D11_UniformTypeKind:
-{
-  @expand(R_D3D11_UniformTypeTable a) `$(a.name)`,
   COUNT,
 }
 
@@ -230,19 +72,9 @@ r_d3d11_g_pshad_kind_source_table:
   @expand(R_D3D11_PShadTable a) `&$(a.source)`;
 }
 
-@c_file @data(`char *`)
-r_d3d11_g_pshad_kind_entry_point_table:
-{
-  @expand(R_D3D11_PShadTable a) `"$(a.entry_point)"`;
-}
 @c_file @data(String8)
 r_d3d11_g_pshad_kind_source_name_table:
 {
   @expand(R_D3D11_PShadTable a) `str8_lit_comp("$(a.source)")`;
 }
 
-@c_file @data(U64)
-r_d3d11_g_uniform_type_kind_size_table:
-{
-  @expand(R_D3D11_UniformTypeTable a) `sizeof(R_D3D11_Uniforms_$(a.name))`;
-}

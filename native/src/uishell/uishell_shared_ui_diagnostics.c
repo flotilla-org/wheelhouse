@@ -255,6 +255,69 @@ uishell_rect_semantics_linear(R_Readback *pixels, S32 x, S32 y, U32 channel)
   return v;
 }
 
+// A Geo3D pass through readback: one textured quad, drawn into a viewport
+// that covers only the right two thirds of the target, then composited.
+// Probes catch a missing instance transform, a misplaced or flipped
+// composite, an ignored albedo remap and a missing albedo:
+//
+//   target 96x64; viewport x 32..96. The mesh quad spans clip x -0.5..0.5,
+//   y 0..1 (the top half); the instance moves it right by 0.5, to x 0..1,
+//   which is target x 64..96, y 0..32. The albedo is 2x1, red then green,
+//   remapped to its left half, so the whole quad is red.
+internal void
+uishell_check_geo3d(U32 *failures)
+{
+  Temp scratch = scratch_begin(0, 0);
+  Vec2S32 size = v2s32(96, 64);
+  F32 quad[] =
+  {
+    // position          normal     uv     rgb
+    -0.5f, 1.f, 0.f,     0, 0, 1,   0, 0,  1, 1, 1,
+     0.5f, 1.f, 0.f,     0, 0, 1,   1, 0,  1, 1, 1,
+     0.5f, 0.f, 0.f,     0, 0, 1,   1, 1,  1, 1, 1,
+    -0.5f, 0.f, 0.f,     0, 0, 1,   0, 1,  1, 1, 1,
+  };
+  U32 indices[] = {0, 1, 2, 0, 2, 3};
+  U32 albedo_pixels[] = {0xff0000ffu, 0xff00ff00u}; // RGBA8: red, green
+  R_Handle vertices = r_buffer_alloc(R_ResourceKind_Static, sizeof(quad), quad);
+  R_Handle index_buffer = r_buffer_alloc(R_ResourceKind_Static, sizeof(indices), indices);
+  R_Handle albedo = r_tex2d_alloc(R_ResourceKind_Static, v2s32(2, 1), R_Tex2DFormat_RGBA8, albedo_pixels);
+  DR_Bucket *bucket = dr_bucket_make();
+  DR_BucketScope(bucket)
+  {
+    dr_rect(r2f32p(0, 0, (F32)size.x, (F32)size.y), v4f32(0, 0, 0, 1), 0, 0, 0);
+    dr_geo3d_begin(r2f32p(32, 0, 96, 64), mat_4x4f32(1.f), mat_4x4f32(1.f));
+    DR_Tex2DSampleKindScope(R_Tex2DSampleKind_Nearest)
+    {
+      R_Mesh3DInst *inst = dr_mesh(vertices, index_buffer, R_GeoTopologyKind_Triangles, R_GeoVertexFlag_TexCoord|R_GeoVertexFlag_RGB,
+                                   albedo, 0, make_translate_4x4f32(v3f32(0.5f, 0, 0)));
+      inst->albedo_tex_remap = v4f32(0, 0, 0.5f, 1);
+    }
+  }
+  R_Readback pixels = r_pass_list_readback(scratch.arena, size, &bucket->passes);
+  B32 ok = (pixels.format == R_Tex2DFormat_BGRA8 && pixels.size.x == size.x && pixels.size.y == size.y &&
+            pixels.data.size >= (U64)size.x*size.y*4);
+  UIImportCheck(ok);
+  if(ok)
+  {
+    String8 backend = r_backend_name();
+#define Geo3DCase(label, x, y, want_r, want_g) do { \
+F32 _r = uishell_rect_semantics_linear(&pixels, (x), (y), 0), _g = uishell_rect_semantics_linear(&pixels, (x), (y), 1); \
+B32 _pass = ((want_r) ? _r > 0.8f : _r < 0.1f) && ((want_g) ? _g > 0.8f : _g < 0.1f); if(!_pass) { *failures += 1; } \
+fprintf(stderr, "%.*s geo3d %s: %s (rg %.2f %.2f)\n", str8_varg(backend), (label), _pass ? "ok" : "DIFFERS", _r, _g); } while(0)
+    Geo3DCase("textured quad is drawn", 72, 16, 1, 0);
+    Geo3DCase("albedo remap keeps to the red texel", 92, 16, 1, 0);
+    Geo3DCase("quad is the right way up", 72, 48, 0, 0);
+    Geo3DCase("instance transform moves the quad", 52, 16, 0, 0);
+    Geo3DCase("nothing outside the viewport", 16, 16, 0, 0);
+#undef Geo3DCase
+  }
+  r_tex2d_release(albedo);
+  r_buffer_release(index_buffer);
+  r_buffer_release(vertices);
+  scratch_end(scratch);
+}
+
 internal void
 uishell_check_rect_semantics(U32 *failures)
 {
@@ -542,6 +605,9 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   U32 failures_before_rect = failures;
   uishell_check_rect_semantics(&failures);
   fprintf(stderr, "rect semantics: %u failures\n", failures - failures_before_rect);
+  U32 failures_before_geo3d = failures;
+  uishell_check_geo3d(&failures);
+  fprintf(stderr, "geo3d: %u failures\n", failures - failures_before_geo3d);
   fprintf(stderr, "shared UI diagnostics: %s (%u failures)\n", failures ? "FAIL" : "PASS", failures);
   scratch_end(scratch);
   return failures == 0;

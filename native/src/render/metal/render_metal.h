@@ -23,7 +23,6 @@
 # undef nil
 #endif
 
-#include "render/metal/generated/render_metal.meta.h"
 
 typedef struct R_MTL_Window R_MTL_Window;
 @interface R_MTL_DisplayDelegate : NSObject<CAMetalDisplayLinkDelegate>
@@ -93,13 +92,7 @@ struct R_MTL_RetiredObject
   id object;
 };
 
-typedef struct R_MTL_FinalizeUniforms R_MTL_FinalizeUniforms;
-struct R_MTL_FinalizeUniforms
-{
-  Vec2F32 viewport_size;
-};
-
-// mirrors EffectUniforms in native/src/effects/effect_prelude.wgsl
+// mirrors EffectUniforms in native/src/effects/effect_prelude.slang
 typedef struct R_MTL_EffectUniforms R_MTL_EffectUniforms;
 struct R_MTL_EffectUniforms
 {
@@ -116,30 +109,12 @@ struct R_MTL_Effect
   id<MTLRenderPipelineState> pipeline;
 };
 
-typedef struct R_MTL_MeshUniforms R_MTL_MeshUniforms;
-struct R_MTL_MeshUniforms
-{
-  Mat4x4F32 xform;
-};
-
-typedef struct R_MTL_MeshGroupUniforms R_MTL_MeshGroupUniforms;
-struct R_MTL_MeshGroupUniforms
-{
-  F32 has_albedo;
-  F32 albedo_sample_is_surface;
-  F32 _padding0_[2];
-};
-
-typedef struct R_MTL_Geo3DCompositeUniforms R_MTL_Geo3DCompositeUniforms;
-struct R_MTL_Geo3DCompositeUniforms
-{
-  Vec4F32 dst_ndc; // x0 y0 x1 y1, clip space
-  Vec4F32 src_uv;  // x0 y0 x1 y1, geo3d color texture uv
-};
-
 // The rect shader reads its instances as vertex attributes from this buffer;
 // its uniforms (R_CoreRectUniforms) and the blur's are at buffer 0.
 #define R_MTL_CORE_RECT_INSTANCE_BUFFER 30
+// The mesh shader reads its vertices and instances as attributes from these.
+#define R_MTL_CORE_MESH_VERTEX_BUFFER 30
+#define R_MTL_CORE_MESH_INSTANCE_BUFFER 29
 
 typedef struct R_MTL_State R_MTL_State;
 struct R_MTL_State

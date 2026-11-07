@@ -155,11 +155,21 @@ The comparison above is as it was run. After the decision:
   gives only the build's own backend real sources.
 - The uniform blocks and the blur kernel are filled once, in `render_core`
   (`r_core_rect_uniforms`, `r_core_blur_uniforms`, `r_core_blur_pass`).
+- The rest of the core shaders followed: `mesh.slang` (instanced Geo3D
+  meshes), `composite.slang` (a Geo3D target into the stage or a surface) and
+  `finalize.slang` (the stage to the back buffer; OpenGL blits instead). The
+  generator takes every `native/src/shaders/*.slang` except `common`, writes
+  into a temporary directory and replaces the generated files only once all
+  of them succeed. Metal's `.mdesk` shader library and D3D11's embedded HLSL
+  are gone.
+- Geo3D now behaves the same on all three backends. OpenGL had no Geo3D pass
+  or GPU buffers; it gained both. D3D11's pass ignored instance transforms and
+  albedo textures, and now matches Metal. Readback runs Geo3D passes on every
+  backend, and `--shared_ui_diagnostics` draws a textured, instanced quad and
+  checks its placement, orientation and texture remap (`geo3d:` lines).
 
 ## Still open
 
-- Move the remaining core shaders (mesh, 3D composite, finalize) over, each
-  behind a parity check.
 - Metal's blur kernel isn't scaled by the backing scale, unlike OpenGL's, so a
   blur on a Retina display is half as wide in points. Both keep their current
   widths; which is meant is a separate decision.

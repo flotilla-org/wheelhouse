@@ -251,3 +251,31 @@ r_core_blur_pass(R_CoreBlurUniforms *uniforms, R_PassParams_Blur *params, Axis2 
     uniforms->direction = v2f32(0, 1.f/(F32)Max(pixel_dim.y, 1));
   }
 }
+
+// Where a Geo3D pass's colour target lands. viewport is the pass's rect in
+// window points. The destination is that rect in the target (the stage, or a
+// surface whose top-left is at target_origin), in target_scale pixels per
+// point; the source is the same rect of the window-sized Geo3D colour texture,
+// at src_scale pixels per point. src_flip_y where that texture is stored
+// bottom-up (OpenGL).
+internal R_CoreCompositeUniforms
+r_core_composite_uniforms(Rng2F32 viewport, Vec2F32 target_origin, F32 target_scale, Vec2S32 target_size,
+                          F32 src_scale, Vec2S32 src_size, B32 src_flip_y)
+{
+  R_CoreCompositeUniforms u = {0};
+  Rng2F32 dst_px = shift_2f32(viewport, v2f32(-target_origin.x, -target_origin.y));
+  F32 tw = (F32)Max(target_size.x, 1);
+  F32 th = (F32)Max(target_size.y, 1);
+  u.dst_ndc = v4f32(2.f*dst_px.x0*target_scale/tw - 1.f, 1.f - 2.f*dst_px.y0*target_scale/th,
+                    2.f*dst_px.x1*target_scale/tw - 1.f, 1.f - 2.f*dst_px.y1*target_scale/th);
+  F32 sw = (F32)Max(src_size.x, 1);
+  F32 sh = (F32)Max(src_size.y, 1);
+  u.src_uv = v4f32(viewport.x0*src_scale/sw, viewport.y0*src_scale/sh,
+                   viewport.x1*src_scale/sw, viewport.y1*src_scale/sh);
+  if(src_flip_y)
+  {
+    u.src_uv.y = 1.f - u.src_uv.y;
+    u.src_uv.w = 1.f - u.src_uv.w;
+  }
+  return u;
+}

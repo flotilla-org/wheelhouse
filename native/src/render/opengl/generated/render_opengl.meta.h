@@ -10,15 +10,17 @@ typedef enum R_OGL_ShaderKind
 {
 R_OGL_ShaderKind_Rect,
 R_OGL_ShaderKind_Blur,
+R_OGL_ShaderKind_Mesh,
+R_OGL_ShaderKind_Composite,
 R_OGL_ShaderKind_COUNT,
 } R_OGL_ShaderKind;
 
 C_LINKAGE_BEGIN
-extern String8 r_ogl_shader_kind_name_table[2];
-extern String8 * r_ogl_shader_kind_vshad_src_table[2];
-extern String8 * r_ogl_shader_kind_pshad_src_table[2];
-extern R_OGL_AttributeArray r_ogl_shader_kind_input_attributes_table[2];
-extern R_OGL_AttributeArray r_ogl_shader_kind_output_attributes_table[2];
+extern String8 r_ogl_shader_kind_name_table[4];
+extern String8 * r_ogl_shader_kind_vshad_src_table[4];
+extern String8 * r_ogl_shader_kind_pshad_src_table[4];
+extern R_OGL_AttributeArray r_ogl_shader_kind_input_attributes_table[4];
+extern R_OGL_AttributeArray r_ogl_shader_kind_output_attributes_table[4];
 
 C_LINKAGE_END
 
