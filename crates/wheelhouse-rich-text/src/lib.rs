@@ -195,7 +195,7 @@ impl RichText {
     }
 
     fn edit<T>(&mut self, f: impl FnOnce(&mut conversation::Sink) -> T) -> T {
-        let anchors: Vec<(SubscriptionId, _)> = self.subscribers.iter_mut().map(|(&id, s)| (id, s.view.anchor_was(&self.doc))).collect();
+        let anchors: Vec<(SubscriptionId, _)> = self.subscribers.iter_mut().map(|(&id, s)| (id, s.view.before_edit(&self.doc))).collect();
         let mut sink = conversation::Sink {
             doc: &mut self.doc,
             ring: &mut self.ring,
@@ -222,7 +222,7 @@ impl RichText {
         assert!(u32::try_from(markdown.len()).is_ok(), "markdown under 4 GiB");
         let markdown = &*ingest::lf_line_endings(markdown);
         let before = view::was(&self.doc);
-        let anchors: Vec<(SubscriptionId, _)> = self.subscribers.iter_mut().map(|(&id, s)| (id, s.view.anchor_was(&self.doc))).collect();
+        let anchors: Vec<(SubscriptionId, _)> = self.subscribers.iter_mut().map(|(&id, s)| (id, s.view.before_edit(&self.doc))).collect();
         let staged = ingest::parse(markdown);
         let changed = self.doc.reconcile(staged, markdown, &mut self.ring, self.generation + 1);
         if changed {

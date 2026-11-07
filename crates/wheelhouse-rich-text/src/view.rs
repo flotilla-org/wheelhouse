@@ -293,10 +293,10 @@ impl View {
         }
     }
 
-    /// Before an edit. Where the end held the anchor back, so it shows
-    /// elsewhere than it says, it moves to where it shows: growth keeps
-    /// what is shown, not what the anchor said.
-    pub(crate) fn anchor_was(&mut self, doc: &Tree) -> Option<AnchorWas> {
+    /// Where the anchor was, for after the edit. An anchor the end held
+    /// back, so it shows elsewhere than it says, first moves to where it
+    /// shows: growth keeps what is shown, not what the anchor said.
+    pub(crate) fn before_edit(&mut self, doc: &Tree) -> Option<AnchorWas> {
         if let Some(wanted) = self.anchor_top(doc) {
             let shown = wanted.clamp(0.0, self.max_top());
             if let Some(anchor) = &mut self.anchor {
