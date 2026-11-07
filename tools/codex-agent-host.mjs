@@ -60,7 +60,7 @@ function watch(res, query) {
   res.writeHead(200, { 'Content-Type': 'application/jsonl', 'Cache-Control': 'no-store' });
   const after = query.has('after') ? Number(query.get('after')) - base : NaN;
   const write = (event) => res.write(JSON.stringify(event) + '\n');
-  if (after >= log.length - buffer && after <= log.length) {
+  if (after >= Math.max(0, log.length - buffer) && after <= log.length) {
     write(hello());
     for (const { line } of log.slice(after)) res.write(line);
   } else {

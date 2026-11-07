@@ -102,11 +102,12 @@ impl Endpoint {
         Watch { endpoint: self.clone(), thread: thread.to_owned(), updates, sink, _stop: stop }
     }
 
-    /// POSTs `body` (JSON) to `path`, answered in the background.
+    /// Whether both share one client and thread.
     pub fn same(&self, other: &Endpoint) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    /// POSTs `body` (JSON) to `path`, answered in the background.
     pub fn post(&self, path: &str, body: Vec<u8>) -> Post {
         let status = Arc::new(Mutex::new(PostStatus::Sending));
         let settled = status.clone();
