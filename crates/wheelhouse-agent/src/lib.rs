@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use conversation_events::{Event, Hello, Page};
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
@@ -15,7 +15,7 @@ use rigging_http_client::{http_channel_label, HttpClient, ReqwestHttpClient};
 use rigging_http_wire::{Encoding, Items, LIMITS};
 use serde_json::Value;
 use tokio::runtime::{Builder, Handle};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Notify};
 use tokio::time::sleep;
 
 /// Called from the endpoint's thread when something arrives.
@@ -25,6 +25,11 @@ pub type Wake = Arc<dyn Fn() + Send + Sync>;
 const POST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_FIRST: Duration = Duration::from_millis(250);
 const RETRY_MOST: Duration = Duration::from_secs(5);
+
+/// The most events a watch holds for a host that isn't taking them, as while
+/// its View is hidden. Past it the watch lets its stream go, and once the host
+/// has taken half of them it starts over from a snapshot.
+pub const MOST_PENDING: usize = 4096;
 
 /// One Local Endpoint: its client and the thread its requests run on. Clones
 /// share both; the thread ends with the last.
@@ -39,6 +44,8 @@ struct Shared {
 }
 
 impl Drop for Shared {
+    // Joins the endpoint's thread, so the last clone mustn't drop on it: tasks
+    // there hold the client, never an Endpoint.
     fn drop(&mut self) {
         self.stop.take();
         if let Some(thread) = self.thread.take() {
@@ -83,7 +90,7 @@ impl Endpoint {
     /// updates wait in the watch.
     pub fn watch(&self, thread: &str, wake: Wake) -> Watch {
         let (sender, updates) = mpsc::channel();
-        let sink = Sink { sender, woken: Arc::new(AtomicBool::new(false)), wake };
+        let sink = Sink { sender, woken: Arc::new(AtomicBool::new(false)), wake, pending: Arc::default(), taken: Arc::default() };
         let (stop, stopped) = oneshot::channel();
         let follow = follow(self.0.client.clone(), thread.to_owned(), sink.clone());
         self.0.runtime.spawn(async move {
@@ -174,9 +181,13 @@ impl Watch {
     }
 
     /// What came since the last look; anything after wakes the host again.
-    pub fn take(&self) -> mpsc::TryIter<'_, Update> {
+    pub fn take(&self) -> impl Iterator<Item = Update> + '_ {
         self.sink.woken.store(false, Ordering::Release);
-        self.updates.try_iter()
+        self.updates.try_iter().inspect(|update| {
+            if matches!(update, Update::Event(_)) && self.sink.pending.fetch_sub(1, Ordering::AcqRel) == MOST_PENDING / 2 + 1 {
+                self.sink.taken.notify_one();
+            }
+        })
     }
 
     /// Asks for up to `limit` completed items before `seq`; the answer comes
@@ -197,12 +208,30 @@ struct Sink {
     /// thousands of events wakes it once.
     woken: Arc<AtomicBool>,
     wake: Wake,
+    /// Events sent and not yet taken.
+    pending: Arc<AtomicUsize>,
+    /// Signalled as the host takes `pending` down to half of [`MOST_PENDING`].
+    taken: Arc<Notify>,
 }
 
 impl Sink {
-    fn send(&self, update: Update) {
+    /// False, with nothing sent, for an event past [`MOST_PENDING`].
+    fn send(&self, update: Update) -> bool {
+        if matches!(update, Update::Event(_)) {
+            if self.pending.load(Ordering::Acquire) >= MOST_PENDING {
+                return false;
+            }
+            self.pending.fetch_add(1, Ordering::AcqRel);
+        }
         if self.sender.send(update).is_ok() && !self.woken.swap(true, Ordering::AcqRel) {
             (self.wake)();
+        }
+        true
+    }
+
+    async fn caught_up(&self) {
+        while self.pending.load(Ordering::Acquire) > MOST_PENDING / 2 {
+            self.taken.notified().await;
         }
     }
 }
@@ -213,14 +242,25 @@ async fn follow(client: Arc<ReqwestHttpClient>, thread: String, sink: Sink) {
     let mut last = None;
     let mut attempt = 0;
     loop {
-        let why = match stream(&client, &thread, &mut last, &mut attempt, &sink).await {
+        let mut opened = None;
+        let why = match stream(&client, &thread, &mut last, &mut opened, &sink).await {
             Ok(()) => "the stream ended".to_owned(),
             Err(Refusal::Retry(why)) => why,
+            Err(Refusal::Behind) => {
+                // What waits still reads in order; the snapshot restates the rest.
+                last = None;
+                sink.caught_up().await;
+                continue;
+            }
             Err(Refusal::Fatal(why)) => {
                 sink.send(Update::Connection(Connection::Failed(why)));
                 return;
             }
         };
+        // A stream that stayed up a while was no failed attempt.
+        if opened.is_some_and(|at: Instant| at.elapsed() >= RETRY_MOST) {
+            attempt = 0;
+        }
         attempt += 1;
         sink.send(Update::Connection(Connection::Retrying { attempt, why }));
         sleep(RETRY_FIRST.saturating_mul(1 << attempt.min(5)).min(RETRY_MOST)).await;
@@ -230,9 +270,17 @@ async fn follow(client: Arc<ReqwestHttpClient>, thread: String, sink: Sink) {
 enum Refusal {
     Retry(String),
     Fatal(String),
+    /// The host has more than [`MOST_PENDING`] events to take.
+    Behind,
 }
 
-async fn stream(client: &ReqwestHttpClient, thread: &str, last: &mut Option<u64>, attempt: &mut u32, sink: &Sink) -> Result<(), Refusal> {
+async fn stream(
+    client: &ReqwestHttpClient,
+    thread: &str,
+    last: &mut Option<u64>,
+    opened: &mut Option<Instant>,
+    sink: &Sink,
+) -> Result<(), Refusal> {
     let query = last.map(|seq| format!("after={seq}")).unwrap_or_default();
     let mut request = Request::new(Method::GET, thread_url(thread, &query));
     let accept = format!("{}, {};q=0.5", Encoding::Cbor.sequence_type(), Encoding::Json.sequence_type());
@@ -257,16 +305,22 @@ async fn stream(client: &ReqwestHttpClient, thread: &str, last: &mut Option<u64>
     while let Some(chunk) = body.chunk().await.map_err(Refusal::Retry)? {
         items.push(&chunk);
         while let Some(value) = items.take::<Value>().map_err(Refusal::Retry)? {
-            // An event this version can't read is skipped, as in a file.
-            let Ok(event) = serde_json::from_value::<Event>(value) else { continue };
+            // A stream starts with a hello, and one that doesn't won't on a
+            // retry either. Past it, an event this version can't read is
+            // skipped, as in a file.
+            let event = match serde_json::from_value::<Event>(value) {
+                Ok(event) => event,
+                Err(error) if resumed.is_none() => return Err(Refusal::Fatal(format!("no hello this version reads: {error}"))),
+                Err(_) => continue,
+            };
             match event {
                 Event::Hello(hello) => {
                     resumed = Some(hello.snapshot.is_none() && last.is_some());
-                    *attempt = 0;
+                    *opened = Some(Instant::now());
                     sink.send(Update::Hello(hello));
                     sink.send(Update::Connection(Connection::Open));
                 }
-                event if resumed.is_none() => return Err(Refusal::Retry(format!("{} before the hello", type_of(&event)))),
+                event if resumed.is_none() => return Err(Refusal::Fatal(format!("{} before the hello", type_of(&event)))),
                 event => {
                     let seq = event.seq();
                     if resumed == Some(true) && seq > 0 && last.is_some_and(|last| seq <= last) {
@@ -275,7 +329,9 @@ async fn stream(client: &ReqwestHttpClient, thread: &str, last: &mut Option<u64>
                     if seq > 0 {
                         *last = Some(last.map_or(seq, |last| last.max(seq)));
                     }
-                    sink.send(Update::Event(event));
+                    if !sink.send(Update::Event(event)) {
+                        return Err(Refusal::Behind);
+                    }
                 }
             }
         }

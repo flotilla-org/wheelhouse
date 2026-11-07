@@ -4,6 +4,7 @@
 
 use std::convert::Infallible;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -20,7 +21,7 @@ use rigging_http_wire::Encoding;
 use serde::Deserialize;
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, watch};
-use wheelhouse_agent::{Connection, Endpoint, PostStatus, Update, Watch};
+use wheelhouse_agent::{Connection, Endpoint, PostStatus, Update, Watch, MOST_PENDING};
 
 const THREAD: &str = "t1";
 
@@ -44,6 +45,19 @@ struct Producer {
     json_only: bool,
     /// A resume starts one event early, so the client must drop the repeat.
     overlap: bool,
+    /// Streams start with their events, no hello.
+    no_hello: bool,
+    /// Streams that have ended, by a cut or the client letting go.
+    ended: AtomicUsize,
+}
+
+/// Counts its stream as ended when dropped.
+struct Ending(Arc<Producer>);
+
+impl Drop for Ending {
+    fn drop(&mut self) {
+        self.0.ended.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 impl Producer {
@@ -57,6 +71,8 @@ impl Producer {
             queries: Mutex::default(),
             json_only: false,
             overlap: false,
+            no_hello: false,
+            ended: AtomicUsize::new(0),
         })
     }
 
@@ -108,13 +124,14 @@ async fn events(State(p): State<Arc<Producer>>, Path(thread): Path<String>, Quer
         }
     };
     let sent = first.iter().map(Event::seq).max().unwrap_or(0);
-    let head = stream::iter(std::iter::once(Event::Hello(hello)).chain(first));
-    let tail = stream::unfold((live, cut), move |(mut live, mut cut)| async move {
+    let head = stream::iter((!p.no_hello).then_some(Event::Hello(hello)).into_iter().chain(first));
+    let ending = Ending(p.clone());
+    let tail = stream::unfold((live, cut, ending), move |(mut live, mut cut, ending)| async move {
         loop {
             tokio::select! {
                 event = live.recv() => match event {
                     Ok(event) if event.seq() <= sent => continue,
-                    Ok(event) => return Some((event, (live, cut))),
+                    Ok(event) => return Some((event, (live, cut, ending))),
                     Err(_) => return None,
                 },
                 _ = cut.changed() => return None,
@@ -281,6 +298,44 @@ fn a_thread_the_producer_does_not_have_fails_for_good() {
     let mut watcher = Watcher::open(&endpoint, "t2");
     watcher.until("failure", |seen| seen.iter().any(|u| matches!(u, Update::Connection(Connection::Failed(_)))));
     assert_eq!(watcher.seen, [Update::Connection(Connection::Failed("no thread t2".into()))]);
+}
+
+#[test]
+fn a_stream_with_no_hello_fails_for_good() {
+    let mut producer = Producer::new(3, 3);
+    Arc::get_mut(&mut producer).unwrap().no_hello = true;
+    let socket = serve("no-hello", producer.clone());
+    let endpoint = Endpoint::open(&socket).unwrap();
+    let mut watcher = Watcher::open(&endpoint, THREAD);
+    watcher.until("failure", |seen| seen.iter().any(|u| matches!(u, Update::Connection(Connection::Failed(_)))));
+    assert_eq!(watcher.seen, [Update::Connection(Connection::Failed("TextMessageContent before the hello".into()))]);
+}
+
+#[test]
+fn a_host_that_stops_taking_catches_up_from_a_snapshot() {
+    let producer = Producer::new(10, 10);
+    let socket = serve("behind", producer.clone());
+    let endpoint = Endpoint::open(&socket).unwrap();
+    let mut watcher = Watcher::open(&endpoint, THREAD);
+    watcher.until("snapshot", has_seq(10));
+    // More than the watch holds, sent while the host doesn't look.
+    let last = 10 + 2 * MOST_PENDING as u64;
+    for seq in 11..=last {
+        producer.events.lock().unwrap().push(content(seq));
+    }
+    producer.drop_streams();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while producer.ended.load(Ordering::Acquire) < 2 {
+        assert!(Instant::now() < deadline, "the watch never let its stream go");
+        thread::sleep(Duration::from_millis(5));
+    }
+    watcher.until("a fresh snapshot", |seen| seen.iter().filter(|u| matches!(u, Update::Hello(_))).count() == 3);
+    watcher.until("its events", has_seq(last));
+    let snapshots: Vec<bool> = watcher.hellos().iter().map(|h| h.snapshot.is_some()).collect();
+    assert_eq!(snapshots, [true, false, true]);
+    let held: Vec<u64> = (1..=10 + MOST_PENDING as u64).chain(last - 9..=last).collect();
+    assert_eq!(watcher.seqs(), held);
+    assert_eq!(*producer.queries.lock().unwrap(), ["", "after=10", ""]);
 }
 
 #[test]
