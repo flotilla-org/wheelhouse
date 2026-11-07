@@ -339,6 +339,25 @@ fn a_host_that_stops_taking_catches_up_from_a_snapshot() {
 }
 
 #[test]
+fn a_snapshot_larger_than_the_watch_holds_reaches_a_slow_host() {
+    let last = 3 * MOST_PENDING as u64;
+    let producer = Producer::new(last, last as usize);
+    let socket = serve("large", producer.clone());
+    let endpoint = Endpoint::open(&socket).unwrap();
+    let mut watcher = Watcher::open(&endpoint, THREAD);
+    // A host that takes in batches, slower than the snapshot comes but well
+    // within the time a watch gives it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !has_seq(last)(&watcher.seen) {
+        assert!(Instant::now() < deadline, "the snapshot never arrived whole");
+        thread::sleep(Duration::from_millis(250));
+        watcher.seen.extend(watcher.watch.take());
+    }
+    assert_eq!(watcher.seqs(), (1..=last).collect::<Vec<_>>());
+    assert_eq!(*producer.queries.lock().unwrap(), [""]);
+}
+
+#[test]
 fn a_producer_that_is_not_there_yet_is_retried() {
     let dir = std::env::temp_dir().join(format!("wh-agent-absent-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
