@@ -467,10 +467,12 @@ internal void
 uishell_table_filter_from_find(UIShell_TableState *state, String8 text)
 {
   state->filter_size = Min(text.size, sizeof(state->filter_buffer));
+  // Cut on a character, not inside one.
+  while(state->filter_size < text.size && state->filter_size > 0 && (text.str[state->filter_size] & 0xC0) == 0x80) { state->filter_size -= 1; }
   MemoryCopy(state->filter_buffer, text.str, state->filter_size);
   state->filter_cursor = state->filter_mark = txt_pt(1, state->filter_size+1);
   state->filter_case = state->find_case;
-  state->filter_regex = state->find_regex && (state->filter_support & BINNACLE_QUICK_FILTER_REGEX);
+  state->filter_regex = state->find_regex;
   rd_request_frame();
 }
 

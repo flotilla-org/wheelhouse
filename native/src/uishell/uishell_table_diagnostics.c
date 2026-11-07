@@ -771,6 +771,13 @@ uishell_table_diagnostics(RD_WindowState *ws)
           uishell_table_filter_from_find(state, str8_lit("halifax"));
           for(U32 frame = 0; frame < 2; frame += 1) { uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
           TableCheck(state->rows_count > 0 && state->rows_count < all, "find's Filter shows only the rows matching its text");
+          U8 long_text[sizeof(state->filter_buffer) + 1];
+          MemorySet(long_text, 'a', sizeof(long_text) - 2);
+          long_text[sizeof(long_text) - 2] = 0xC3;
+          long_text[sizeof(long_text) - 1] = 0xA9;
+          uishell_table_filter_from_find(state, str8(long_text, sizeof(long_text)));
+          TableCheck(state->filter_size == sizeof(long_text) - 2, "find's Filter cuts a long text on a character");
+          state->filter_size = 0;
         }
       }
     }
