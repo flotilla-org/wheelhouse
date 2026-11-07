@@ -4827,7 +4827,8 @@ uishell_rt_agent_follow(UIShell_RichTextState *s, String8 endpoint, String8 thre
       if(s->doc == 0) { return; }
     }
     U32 flags = wheelhouse_agent_watch_pump(s->watch, s->doc, s->sub, &error);
-    uishell_rt_error(&error);
+    String8 failure = uishell_rt_error(&error);
+    if(failure.size) { s->load_error = push_str8_copy(s->arena, failure); }
     if(flags & WHEELHOUSE_AGENT_CHANGED) { s->agent_version += 1; }
     if(!(flags & WHEELHOUSE_AGENT_RESTART)) { break; }
     // Its watch goes on; only the conversation starts over.

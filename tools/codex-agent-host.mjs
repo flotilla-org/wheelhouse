@@ -9,7 +9,7 @@
 // GET /threads, GET /threads/{id}/events (?after=N, ?before=N&limit=M), POST
 // /threads/{id}/run and /stop. stdin still works: a line is a prompt;
 // /interrupt stops the turn; y or n answers a pending approval.
-import { unlinkSync } from 'node:fs';
+import { chmodSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 
@@ -79,7 +79,8 @@ function watch(res, query) {
 
 function page(query) {
   const before = Math.max(0, Math.min(Number(query.get('before') ?? base + log.length + 1) - base - 1, log.length));
-  const limit = Number(query.get('limit') ?? 50);
+  const asked = Math.trunc(Number(query.get('limit') ?? 50));
+  const limit = Math.min(asked > 0 ? asked : 50, 500);
   let start = before;
   while (start > 0 && itemsIn(start, before) < limit) start--;
   start = runStart(start);
@@ -325,7 +326,7 @@ function serve() {
         return reply(500, { error: err.message });
       }
     });
-  }).listen(socket);
+  }).listen(socket, () => chmodSync(socket, 0o600));
 }
 
 ws.addEventListener('message', (e) => {
