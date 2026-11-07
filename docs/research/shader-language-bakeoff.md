@@ -168,8 +168,7 @@ The comparison above is as it was run. After the decision:
   backend, and `--shared_ui_diagnostics` draws a textured, instanced quad and
   checks its placement, orientation and texture remap (`geo3d:` lines).
 
-## Still open
-
-- Metal's blur kernel isn't scaled by the backing scale, unlike OpenGL's, so a
-  blur on a Retina display is half as wide in points. Both keep their current
-  widths; which is meant is a separate decision.
+- Metal's blur kernel wasn't scaled by the backing scale, unlike OpenGL's, so
+  a blur on a Retina display was half as wide in points. The blur size is in
+  points like the rect it blurs (ADR 0015: the renderer draws points x backing
+  scale), so Metal now scales it too.

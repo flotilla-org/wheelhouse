@@ -689,9 +689,9 @@ r_mtl_encode_blur(id<MTLCommandBuffer> command_buffer, R_PassParams_Blur *params
                   id<MTLTexture> stage, id<MTLTexture> scratch,
                   MTLRenderPassDescriptor *pass_descriptor)
 {
-  // The kernel steps in params->blur_size texels, unscaled by the backing
-  // scale, as Metal always has (OpenGL scales it; settling that is separate).
-  R_CoreBlurUniforms uniforms = r_core_blur_uniforms(params, viewport_dim, params->blur_size, 0);
+  // params->blur_size is in points, like the rect; the kernel steps in texels
+  // of the drawable, so scale it as OpenGL does (ADR 0015: points x backing scale).
+  R_CoreBlurUniforms uniforms = r_core_blur_uniforms(params, viewport_dim, params->blur_size*scale, 0);
   MTLScissorRect scissor = {0};
   B32 has_scissor = 0;
   if(params->clip.x0 != 0 ||
