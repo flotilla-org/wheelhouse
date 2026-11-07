@@ -15,7 +15,7 @@ use rigging_http_wire::{Encoding, Items, LIMITS};
 use serde_json::Value;
 use tokio::runtime::{Builder, Handle};
 use tokio::sync::{oneshot, Notify};
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 
 /// Called from the endpoint's thread when something arrives.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -25,10 +25,13 @@ const POST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_FIRST: Duration = Duration::from_millis(250);
 const RETRY_MOST: Duration = Duration::from_secs(5);
 
-/// The most events a watch holds for a host that isn't taking them, as while
-/// its View is hidden. Past it the watch lets its stream go, and once the host
-/// has taken half of them it starts over from a snapshot.
+/// The most events a watch holds for its host. Past it the watch waits for the
+/// host to take half; one that doesn't within [`HOST_AWAY`], as while its View
+/// is hidden, loses the stream, and once it has taken half the watch starts
+/// over from a snapshot.
 pub const MOST_PENDING: usize = 4096;
+/// A host taking events, if slower than they come, does so within this.
+const HOST_AWAY: Duration = Duration::from_secs(1);
 
 /// One Local Endpoint: its client and the thread its requests run on. Clones
 /// share both; the thread ends with the last.
@@ -188,18 +191,17 @@ struct Sink {
 }
 
 impl Sink {
-    /// False, with nothing sent, for an event past [`MOST_PENDING`].
-    fn send(&self, update: Update) -> bool {
+    fn send(&self, update: Update) {
         if matches!(update, Update::Event(_)) {
-            if self.pending.load(Ordering::Acquire) >= MOST_PENDING {
-                return false;
-            }
             self.pending.fetch_add(1, Ordering::AcqRel);
         }
         if self.sender.send(update).is_ok() && !self.woken.swap(true, Ordering::AcqRel) {
             (self.wake)();
         }
-        true
+    }
+
+    fn full(&self) -> bool {
+        self.pending.load(Ordering::Acquire) >= MOST_PENDING
     }
 
     async fn caught_up(&self) {
@@ -302,9 +304,10 @@ async fn stream(
                     if seq > 0 {
                         *last = Some(last.map_or(seq, |last| last.max(seq)));
                     }
-                    if !sink.send(Update::Event(event)) {
+                    if sink.full() && timeout(HOST_AWAY, sink.caught_up()).await.is_err() {
                         return Err(Refusal::Behind);
                     }
+                    sink.send(Update::Event(event));
                 }
             }
         }
