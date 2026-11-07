@@ -264,6 +264,70 @@ uishell_rect_semantics_linear(R_Readback *pixels, S32 x, S32 y, U32 channel)
 //   y 0..1 (the top half); the instance moves it right by 0.5, to x 0..1,
 //   which is target x 64..96, y 0..32. The albedo is 2x1, red then green,
 //   remapped to its left half, so the whole quad is red.
+// Batch groups (one draw call each) split only where the state they carry
+// changes: pushing & popping the value already on top keeps one group, a
+// different clip, transform, transparency or texture starts a new one, & a
+// surface sample always gets its own.
+internal U64
+uishell_batch_group_count(DR_Bucket *bucket)
+{
+  U64 count = 0;
+  for(R_PassNode *n = bucket->passes.first; n != 0; n = n->next)
+  {
+    if(n->v.kind == R_PassKind_UI)
+    {
+      count += n->v.params_ui->rects.count;
+    }
+  }
+  return count;
+}
+
+internal void
+uishell_check_batch_groups(U32 *failures)
+{
+  Rng2F32 r = r2f32p(0, 0, 8, 8);
+  Vec4F32 c = v4f32(1, 1, 1, 1);
+  U32 pixels[4] = {0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu};
+  R_Handle tex_a = r_tex2d_alloc(R_ResourceKind_Static, v2s32(2, 2), R_Tex2DFormat_RGBA8, pixels);
+  R_Handle tex_b = r_tex2d_alloc(R_ResourceKind_Static, v2s32(2, 2), R_Tex2DFormat_RGBA8, pixels);
+  struct { char *label; U64 want; U64 got; } cases[8] = {0};
+  U64 case_count = 0;
+#define BatchCase(label_, want_, ...) do { DR_Bucket *_b = dr_bucket_make(); DR_BucketScope(_b) { __VA_ARGS__; } \
+  cases[case_count].label = (label_); cases[case_count].want = (want_); cases[case_count].got = uishell_batch_group_count(_b); case_count += 1; } while(0)
+  BatchCase("rects in one state share a group", 1, {
+    dr_rect(r, c, 0, 0, 0); dr_rect(r, c, 0, 0, 0); });
+  BatchCase("re-pushing the same clip keeps the group", 1, {
+    DR_ClipScope(r2f32p(0, 0, 50, 50)) { dr_rect(r, c, 0, 0, 0);
+      DR_ClipScope(r2f32p(0, 0, 50, 50)) { dr_rect(r, c, 0, 0, 0); }
+      dr_rect(r, c, 0, 0, 0); } });
+  BatchCase("re-pushing the same transform & transparency keeps the group", 1, {
+    dr_rect(r, c, 0, 0, 0);
+    DR_XForm2DScope(dr_top_xform2d()) DR_TransparencyScope(dr_top_transparency()) { dr_rect(r, c, 0, 0, 0); }
+    dr_rect(r, c, 0, 0, 0); });
+  BatchCase("a different clip splits, & popping it splits back", 3, {
+    dr_rect(r, c, 0, 0, 0);
+    DR_ClipScope(r2f32p(0, 0, 4, 4)) { dr_rect(r, c, 0, 0, 0); }
+    dr_rect(r, c, 0, 0, 0); });
+  BatchCase("a different transparency splits", 2, {
+    dr_rect(r, c, 0, 0, 0);
+    DR_TransparencyScope(0.5f) { dr_rect(r, c, 0, 0, 0); } });
+  BatchCase("images share a group per texture", 2, {
+    dr_img(r, r, tex_a, c, 0, 0, 0); dr_rect(r, c, 0, 0, 0); dr_img(r, r, tex_a, c, 0, 0, 0);
+    dr_img(r, r, tex_b, c, 0, 0, 0); });
+  BatchCase("a surface sample gets its own group", 3, {
+    dr_img(r, r, tex_a, c, 0, 0, 0); dr_surface_img(tex_a, r, c, 0, 0, 0); dr_img(r, r, tex_a, c, 0, 0, 0); });
+#undef BatchCase
+  for(U64 idx = 0; idx < case_count; idx += 1)
+  {
+    B32 pass = (cases[idx].got == cases[idx].want);
+    *failures += !pass;
+    fprintf(stderr, "batch groups, %s: %s (%llu, want %llu)\n", cases[idx].label, pass ? "ok" : "DIFFERS",
+            (unsigned long long)cases[idx].got, (unsigned long long)cases[idx].want);
+  }
+  r_tex2d_release(tex_a);
+  r_tex2d_release(tex_b);
+}
+
 internal void
 uishell_check_geo3d(U32 *failures)
 {
@@ -605,6 +669,9 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   U32 failures_before_rect = failures;
   uishell_check_rect_semantics(&failures);
   fprintf(stderr, "rect semantics: %u failures\n", failures - failures_before_rect);
+  U32 failures_before_batch = failures;
+  uishell_check_batch_groups(&failures);
+  fprintf(stderr, "batch groups: %u failures\n", failures - failures_before_batch);
   U32 failures_before_geo3d = failures;
   uishell_check_geo3d(&failures);
   fprintf(stderr, "geo3d: %u failures\n", failures - failures_before_geo3d);
