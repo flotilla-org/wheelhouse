@@ -289,7 +289,12 @@ const answers = new Map();
 
 async function run(input) {
   const resume = input.resume ?? [];
-  // Every entry is checked before any is answered, so a refused request changes nothing.
+  const message = (input.messages ?? []).filter((m) => m.role === 'user').at(-1);
+  const text = typeof message?.content === 'string' ? message.content
+    : (message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+  // All of it is checked before anything is answered, so a refused request
+  // changes nothing.
+  if (message ? !text : !resume.length) return [400, { error: 'no user message' }];
   for (const entry of resume) {
     if (answers.has(entry.interruptId)) return [409, { error: 'answered', by: answers.get(entry.interruptId) }];
     if (!approval || String(approval.id) !== entry.interruptId) return [404, { error: `no interrupt ${entry.interruptId}` }];
@@ -299,12 +304,7 @@ async function run(input) {
     answers.set(entry.interruptId, entry);
     answer(entry.status === 'resolved' && entry.payload?.approve !== false);
   }
-  const message = (input.messages ?? []).filter((m) => m.role === 'user').at(-1);
-  if (!message) return input.resume?.length ? [202, { accepted: true }] : [400, { error: 'no user message' }];
-  const text = typeof message.content === 'string' ? message.content
-    : (message.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
-  if (!text) return [400, { error: 'no user message' }];
-  await prompt(text, message.id, input.mode);
+  if (message) await prompt(text, message.id, input.mode);
   return [202, { accepted: true }];
 }
 
@@ -317,9 +317,9 @@ function serve() {
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', async () => {
       const reply = (code, value) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
-      const { pathname, searchParams } = new URL(req.url, 'http://agent');
-      const [, threads, id, verb] = pathname.split('/').map(decodeURIComponent);
       try {
+        const { pathname, searchParams } = new URL(req.url, 'http://agent');
+        const [, threads, id, verb] = pathname.split('/').map(decodeURIComponent);
         if (threads !== 'threads') return reply(404, { error: pathname });
         if (id == null || id === '') {
           const listed = await request('thread/list', { limit: 50 }).catch(() => ({ data: [] }));
@@ -329,7 +329,9 @@ function serve() {
         }
         if (id !== threadId) return reply(404, { error: `no thread ${id}` });
         if (req.method === 'GET' && verb === 'events') {
-          return searchParams.has('before') ? reply(200, page(searchParams)) : watch(res, searchParams);
+          if (!searchParams.has('before')) return watch(res, searchParams);
+          if (!Number.isFinite(Number(searchParams.get('before')))) return reply(400, { error: 'before takes a seq' });
+          return reply(200, page(searchParams));
         }
         if (req.method !== 'POST') return reply(405, { error: 'GET events, or POST run or stop' });
         if (verb === 'stop') {

@@ -4801,6 +4801,12 @@ uishell_rt_agent_follow(UIShell_RichTextState *s, String8 endpoint, String8 thre
   char *error = 0;
   if(!str8_match(endpoint, str8(s->agent_endpoint, s->agent_endpoint_size), 0) || !str8_match(thread, s->agent_thread, 0))
   {
+    // Another thread: the draft, its Up and the prompts on their way were
+    // for the last one. The reopen keeps them only across a restart.
+    for(U64 i = 0; i < s->pending_count; i += 1) { wheelhouse_agent_input_forget(s->pending[i].ticket); }
+    s->pending_count = 0;
+    s->compose_size = 0;
+    s->last_prompt_size = 0;
     uishell_rt_reopen(s, str8_zero(), str8_zero());
     s->agent_endpoint_size = Min(endpoint.size, sizeof(s->agent_endpoint));
     MemoryCopy(s->agent_endpoint, endpoint.str, s->agent_endpoint_size);
