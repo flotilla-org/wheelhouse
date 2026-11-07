@@ -1,29 +1,20 @@
 //! Input to a conversation's producer (the agent View prototype, #683): a
-//! JSON body POSTed to the HTTP server its hello names, on a background
-//! thread. A post is a ticket the host asks after, so it can tell a send in
-//! flight from one the producer accepted; what the producer does with it
-//! shows in the conversation's own stream.
+//! JSON body POSTed to the HTTP server its hello names. A post is a ticket
+//! the host asks after, so it can tell a send in flight from one the
+//! producer accepted; what the producer does with it shows in the
+//! conversation's own stream.
 use super::*;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Mutex;
-use std::thread;
-use std::time::Duration;
+use wheelhouse_agent::{Endpoint, Post, PostStatus};
 
 pub const WHEELHOUSE_AGENT_INPUT_SENDING: u32 = 0;
 pub const WHEELHOUSE_AGENT_INPUT_ACCEPTED: u32 = 1;
 pub const WHEELHOUSE_AGENT_INPUT_FAILED: u32 = 2;
 
-/// Each ticket's status and, once failed, why.
-static TICKETS: Mutex<Option<HashMap<u64, (u32, String)>>> = Mutex::new(None);
+static TICKETS: Mutex<Option<HashMap<u64, Post>>> = Mutex::new(None);
 static NEXT_TICKET: AtomicU64 = AtomicU64::new(1);
-/// How long a post waits on the producer, each way.
-const POST_TIMEOUT: Duration = Duration::from_secs(30);
-
-fn settle(ticket: u64, status: u32, why: String) {
-    if let Some(tickets) = TICKETS.lock().unwrap().as_mut() {
-        tickets.insert(ticket, (status, why));
-    }
-}
 
 /// Posts `body` to `path` on `endpoint` (`unix://PATH`) and returns its
 /// ticket at once: 0 for an endpoint that isn't `unix://`. Ask after it
@@ -33,14 +24,10 @@ fn settle(ticket: u64, status: u32, why: String) {
 pub unsafe extern "C" fn wheelhouse_agent_input_post(endpoint: Text, path: Text, body: Text, error_out: *mut *mut c_char) -> u64 {
     pure(error_out, || {
         let endpoint = endpoint.read()?;
-        let socket = endpoint.strip_prefix("unix://").ok_or_else(|| format!("unsupported input endpoint {endpoint}"))?.to_owned();
-        let (path, body) = (path.read()?, body.read()?);
+        let socket = endpoint.strip_prefix("unix://").ok_or_else(|| format!("unsupported input endpoint {endpoint}"))?;
+        let post = Endpoint::open(Path::new(socket)).map_err(|error| error.to_string())?.post(&path.read()?, body.read()?.into_bytes());
         let ticket = NEXT_TICKET.fetch_add(1, Ordering::Relaxed);
-        TICKETS.lock().unwrap().get_or_insert_default().insert(ticket, (WHEELHOUSE_AGENT_INPUT_SENDING, String::new()));
-        thread::spawn(move || match post(&socket, &path, &body) {
-            Ok(()) => settle(ticket, WHEELHOUSE_AGENT_INPUT_ACCEPTED, String::new()),
-            Err(error) => settle(ticket, WHEELHOUSE_AGENT_INPUT_FAILED, error.to_string()),
-        });
+        TICKETS.lock().unwrap().get_or_insert_default().insert(ticket, post);
         Ok(ticket)
     })
     .unwrap_or(0)
@@ -51,16 +38,20 @@ pub unsafe extern "C" fn wheelhouse_agent_input_post(endpoint: Text, path: Text,
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_agent_input_status(ticket: u64, why_out: *mut Bytes, error_out: *mut *mut c_char) -> u32 {
     pure(error_out, || {
-        let (status, why) = TICKETS
+        let status = TICKETS
             .lock()
             .unwrap()
             .as_ref()
-            .and_then(|t| t.get(&ticket).cloned())
-            .unwrap_or((WHEELHOUSE_AGENT_INPUT_FAILED, "unknown ticket".into()));
-        if status == WHEELHOUSE_AGENT_INPUT_FAILED {
-            write_bytes(why_out, why.into_bytes())?;
-        }
-        Ok(status)
+            .and_then(|t| t.get(&ticket).map(Post::status))
+            .unwrap_or(PostStatus::Failed("unknown ticket".into()));
+        Ok(match status {
+            PostStatus::Sending => WHEELHOUSE_AGENT_INPUT_SENDING,
+            PostStatus::Accepted => WHEELHOUSE_AGENT_INPUT_ACCEPTED,
+            PostStatus::Failed(why) => {
+                write_bytes(why_out, why.into_bytes())?;
+                WHEELHOUSE_AGENT_INPUT_FAILED
+            }
+        })
     })
     .unwrap_or(WHEELHOUSE_AGENT_INPUT_FAILED)
 }
@@ -72,44 +63,12 @@ pub extern "C" fn wheelhouse_agent_input_forget(ticket: u64) {
     }
 }
 
-#[cfg(unix)]
-fn post(socket: &str, path: &str, body: &str) -> std::io::Result<()> {
-    use std::io::{Read, Write};
-    use std::os::unix::net::UnixStream;
-
-    let mut stream = UnixStream::connect(socket)?;
-    // A producer that takes the connection and never answers fails the send,
-    // rather than leaving it sending for good.
-    stream.set_read_timeout(Some(POST_TIMEOUT))?;
-    stream.set_write_timeout(Some(POST_TIMEOUT))?;
-    write!(stream, "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())?;
-    // Bytes, not a string: a body that isn't UTF-8 mustn't fail an accepted
-    // send.
-    let mut reply = vec![];
-    stream.read_to_end(&mut reply)?;
-    let reply = String::from_utf8_lossy(&reply);
-    let status = reply.lines().next().unwrap_or_default();
-    if status.split(' ').nth(1).is_some_and(|code| code.starts_with('2')) {
-        Ok(())
-    } else {
-        // The producer's JSON error says why, after the headers.
-        let why = reply.split("\r\n\r\n").nth(1).unwrap_or(status);
-        Err(std::io::Error::other(why.to_owned()))
-    }
-}
-
-// Windows has AF_UNIX too, but std has no stream for it; the prototype is
-// Unix-only.
-#[cfg(not(unix))]
-fn post(_socket: &str, _path: &str, _body: &str) -> std::io::Result<()> {
-    Err(std::io::Error::other("agent input needs a Unix socket"))
-}
-
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::os::unix::net::UnixListener;
+    use std::thread;
     use std::time::{Duration, Instant};
 
     fn settled(ticket: u64) -> (u32, String) {

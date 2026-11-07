@@ -1,0 +1,319 @@
+//! A client of the Agent View protocol, decided on wheelhouse#691: HTTP on a
+//! Local Endpoint, one watch stream per thread, older pages on request.
+use std::io;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+use conversation_events::{Event, Hello, Page};
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use reqwest::{Method, Request, StatusCode, Url};
+use rigging_http_client::{http_channel_label, HttpClient, ReqwestHttpClient};
+use rigging_http_wire::{Encoding, Items, LIMITS};
+use serde_json::Value;
+use tokio::runtime::{Builder, Handle};
+use tokio::sync::oneshot;
+use tokio::time::sleep;
+
+/// Called from the endpoint's thread when something arrives.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// How long a post waits on the producer.
+const POST_TIMEOUT: Duration = Duration::from_secs(30);
+const RETRY_FIRST: Duration = Duration::from_millis(250);
+const RETRY_MOST: Duration = Duration::from_secs(5);
+
+/// One Local Endpoint: its client and the thread its requests run on. Clones
+/// share both; the thread ends with the last.
+#[derive(Clone)]
+pub struct Endpoint(Arc<Shared>);
+
+struct Shared {
+    client: Arc<ReqwestHttpClient>,
+    runtime: Handle,
+    stop: Option<oneshot::Sender<()>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        self.stop.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Endpoint {
+    pub fn open(path: &Path) -> io::Result<Endpoint> {
+        let client = ReqwestHttpClient::local(path).map_err(io::Error::other)?;
+        let runtime = Builder::new_current_thread().enable_all().build()?;
+        let handle = runtime.handle().clone();
+        let (stop, stopped) = oneshot::channel::<()>();
+        let thread = thread::Builder::new().name("wheelhouse-agent".into()).spawn(move || {
+            let _ = runtime.block_on(stopped);
+            // Not a plain drop, which would wait on a stream that never ends.
+            runtime.shutdown_background();
+        })?;
+        Ok(Endpoint(Arc::new(Shared { client: Arc::new(client), runtime: handle, stop: Some(stop), thread: Some(thread) })))
+    }
+
+    /// Follows `thread` from its newest page; `wake` is called whenever
+    /// updates wait in the watch.
+    pub fn watch(&self, thread: &str, wake: Wake) -> Watch {
+        let (sender, updates) = mpsc::channel();
+        let sink = Sink { sender, woken: Arc::new(AtomicBool::new(false)), wake };
+        let (stop, stopped) = oneshot::channel();
+        let follow = follow(self.0.client.clone(), thread.to_owned(), sink.clone());
+        self.0.runtime.spawn(async move {
+            tokio::select! {
+                _ = stopped => {}
+                _ = follow => {}
+            }
+        });
+        Watch { endpoint: self.clone(), thread: thread.to_owned(), updates, sink, _stop: stop }
+    }
+
+    /// POSTs `body` (JSON) to `path`, answered in the background.
+    pub fn post(&self, path: &str, body: Vec<u8>) -> Post {
+        let status = Arc::new(Mutex::new(PostStatus::Sending));
+        let settled = status.clone();
+        let client = self.0.client.clone();
+        let path = path.to_owned();
+        self.0.runtime.spawn(async move {
+            let outcome = post(&client, &path, body).await;
+            *settled.lock().unwrap() = match outcome {
+                Ok(()) => PostStatus::Accepted,
+                Err(why) => PostStatus::Failed(why),
+            };
+        });
+        Post { _endpoint: self.clone(), status }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PostStatus {
+    Sending,
+    Accepted,
+    /// Why: the producer's error body, or the transport's.
+    Failed(String),
+}
+
+/// A post in flight or settled; it keeps its endpoint open until dropped.
+pub struct Post {
+    _endpoint: Endpoint,
+    status: Arc<Mutex<PostStatus>>,
+}
+
+impl Post {
+    pub fn status(&self) -> PostStatus {
+        self.status.lock().unwrap().clone()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Update {
+    /// The stream (re)started. With a snapshot, what was read before is
+    /// superseded: the events that follow restate the thread.
+    Hello(Hello),
+    Event(Event),
+    /// The answer to [`Watch::older`].
+    Page(Result<Page, String>),
+    Connection(Connection),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Connection {
+    Open,
+    /// Dropped or refused for now; the watch connects again by itself.
+    Retrying {
+        attempt: u32,
+        why: String,
+    },
+    /// Refused for good, as for a thread the producer doesn't have.
+    Failed(String),
+}
+
+/// A thread's watch stream. Dropping it ends the stream.
+pub struct Watch {
+    endpoint: Endpoint,
+    thread: String,
+    updates: mpsc::Receiver<Update>,
+    sink: Sink,
+    _stop: oneshot::Sender<()>,
+}
+
+impl Watch {
+    /// What came since the last look; anything after wakes the host again.
+    pub fn take(&self) -> mpsc::TryIter<'_, Update> {
+        self.sink.woken.store(false, Ordering::Release);
+        self.updates.try_iter()
+    }
+
+    /// Asks for up to `limit` completed items before `seq`; the answer comes
+    /// as an [`Update::Page`].
+    pub fn older(&self, before: u64, limit: u32) {
+        let (client, sink) = (self.endpoint.0.client.clone(), self.sink.clone());
+        let url = thread_url(&self.thread, &format!("before={before}&limit={limit}"));
+        self.endpoint.0.runtime.spawn(async move {
+            sink.send(Update::Page(page(&client, url).await));
+        });
+    }
+}
+
+#[derive(Clone)]
+struct Sink {
+    sender: mpsc::Sender<Update>,
+    /// A wake is on its way and the host hasn't looked since: a snapshot of
+    /// thousands of events wakes it once.
+    woken: Arc<AtomicBool>,
+    wake: Wake,
+}
+
+impl Sink {
+    fn send(&self, update: Update) {
+        if self.sender.send(update).is_ok() && !self.woken.swap(true, Ordering::AcqRel) {
+            (self.wake)();
+        }
+    }
+}
+
+/// The stream, connected again after each drop: `?after=` the last `seq`
+/// read, so nothing repeats unless the producer re-snapshots.
+async fn follow(client: Arc<ReqwestHttpClient>, thread: String, sink: Sink) {
+    let mut last = None;
+    let mut attempt = 0;
+    loop {
+        let why = match stream(&client, &thread, &mut last, &mut attempt, &sink).await {
+            Ok(()) => "the stream ended".to_owned(),
+            Err(Refusal::Retry(why)) => why,
+            Err(Refusal::Fatal(why)) => {
+                sink.send(Update::Connection(Connection::Failed(why)));
+                return;
+            }
+        };
+        attempt += 1;
+        sink.send(Update::Connection(Connection::Retrying { attempt, why }));
+        sleep(RETRY_FIRST.saturating_mul(1 << attempt.min(5)).min(RETRY_MOST)).await;
+    }
+}
+
+enum Refusal {
+    Retry(String),
+    Fatal(String),
+}
+
+async fn stream(client: &ReqwestHttpClient, thread: &str, last: &mut Option<u64>, attempt: &mut u32, sink: &Sink) -> Result<(), Refusal> {
+    let query = last.map(|seq| format!("after={seq}")).unwrap_or_default();
+    let mut request = Request::new(Method::GET, thread_url(thread, &query));
+    let accept = format!("{}, {};q=0.5", Encoding::Cbor.sequence_type(), Encoding::Json.sequence_type());
+    request.headers_mut().insert(ACCEPT, accept.parse().unwrap());
+    let label = http_channel_label("GET", request.url().as_str());
+    let response = client.execute_streaming(request, &label).await.map_err(Refusal::Retry)?;
+    let status = response.status();
+    let encoding = response.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).and_then(Encoding::of_sequence);
+    let mut body = response.into_body();
+    if !status.is_success() {
+        let why = body.chunk().await.ok().flatten().map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+        let why = if why.is_empty() { status.to_string() } else { why };
+        // A producer that is starting or overloaded may answer later; one
+        // that refuses the request won't.
+        let fatal = status.is_client_error() && status.as_u16() != 408 && status.as_u16() != 429;
+        return Err(if fatal { Refusal::Fatal(why) } else { Refusal::Retry(why) });
+    }
+    let mut items = Items::new(encoding.unwrap_or(Encoding::Json));
+    // In a stream that resumes, an event at or before `last` is a repeat; a
+    // snapshot restates open items at their own, earlier `seq`.
+    let mut resumed = None;
+    while let Some(chunk) = body.chunk().await.map_err(Refusal::Retry)? {
+        items.push(&chunk);
+        while let Some(value) = items.take::<Value>().map_err(Refusal::Retry)? {
+            // An event this version can't read is skipped, as in a file.
+            let Ok(event) = serde_json::from_value::<Event>(value) else { continue };
+            match event {
+                Event::Hello(hello) => {
+                    resumed = Some(hello.snapshot.is_none() && last.is_some());
+                    *attempt = 0;
+                    sink.send(Update::Hello(hello));
+                    sink.send(Update::Connection(Connection::Open));
+                }
+                event if resumed.is_none() => return Err(Refusal::Retry(format!("{} before the hello", type_of(&event)))),
+                event => {
+                    let seq = event.seq();
+                    if resumed == Some(true) && seq > 0 && last.is_some_and(|last| seq <= last) {
+                        continue;
+                    }
+                    if seq > 0 {
+                        *last = Some(last.map_or(seq, |last| last.max(seq)));
+                    }
+                    sink.send(Update::Event(event));
+                }
+            }
+        }
+    }
+    if items.is_empty() {
+        Ok(())
+    } else {
+        Err(Refusal::Retry("the stream ended mid-event".into()))
+    }
+}
+
+fn type_of(event: &Event) -> String {
+    serde_json::to_value(event).ok().and_then(|v| v.get("type").and_then(Value::as_str).map(str::to_owned)).unwrap_or_default()
+}
+
+async fn page(client: &ReqwestHttpClient, url: Url) -> Result<Page, String> {
+    let mut request = Request::new(Method::GET, url);
+    request.headers_mut().insert(ACCEPT, "application/cbor, application/json;q=0.5".parse().unwrap());
+    let label = http_channel_label("GET", request.url().as_str());
+    let response = client.execute(request, &label).await?;
+    if !response.status().is_success() {
+        return Err(failure(response.status(), response.body()));
+    }
+    let cbor = response.headers().get(CONTENT_TYPE).is_some_and(|v| v.as_bytes().starts_with(b"application/cbor"));
+    if cbor {
+        flotilla_cbor::from_slice(response.body(), &LIMITS).map_err(|error| error.to_string())
+    } else {
+        serde_json::from_slice(response.body()).map_err(|error| error.to_string())
+    }
+}
+
+async fn post(client: &ReqwestHttpClient, path: &str, body: Vec<u8>) -> Result<(), String> {
+    let mut url = base();
+    url.set_path(path);
+    let mut request = Request::new(Method::POST, url);
+    request.headers_mut().insert(CONTENT_TYPE, "application/json".parse().unwrap());
+    *request.timeout_mut() = Some(POST_TIMEOUT);
+    *request.body_mut() = Some(body.into());
+    let label = http_channel_label("POST", request.url().as_str());
+    let response = client.execute(request, &label).await?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(failure(response.status(), response.body()))
+    }
+}
+
+/// The producer's error body says why; a bare status if it sent none.
+fn failure(status: StatusCode, body: &[u8]) -> String {
+    if body.is_empty() {
+        status.to_string()
+    } else {
+        String::from_utf8_lossy(body).into_owned()
+    }
+}
+
+/// The client reaches its endpoint whatever the host; the URL carries only
+/// the path and query.
+fn base() -> Url {
+    Url::parse("http://agent/").unwrap()
+}
+
+fn thread_url(thread: &str, query: &str) -> Url {
+    let mut url = base();
+    url.path_segments_mut().unwrap().extend(["threads", thread, "events"]);
+    url.set_query((!query.is_empty()).then_some(query));
+    url
+}

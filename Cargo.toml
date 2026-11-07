@@ -15,6 +15,7 @@ members = [
     "crates/wheelhouse-wasm",
     "crates/wheelhouse-text",
     "crates/conversation-events",
+    "crates/wheelhouse-agent",
 ]
 # tools/scenario is a workspace of its own: it pins Flotilla's crates by git
 # revision, which normal builds shouldn't fetch.
@@ -36,8 +37,10 @@ binnacle-layout = { git = "https://github.com/flotilla-org/binnacle.git", rev = 
 binnacle-format = { git = "https://github.com/flotilla-org/binnacle.git", rev = "ba9f371a50205cc6b95fee5118802c5365d524af" }
 binnacle-testkit = { git = "https://github.com/flotilla-org/binnacle.git", rev = "ba9f371a50205cc6b95fee5118802c5365d524af" }
 # Shared crates (flotilla ADR 0068), pinned once here.
-flotilla-cbor = { git = "https://github.com/flotilla-org/rigging", rev = "8c5fef84c6ce9c01ea56fb680a83986c1f14941d" }
-rigging-http-serve = { git = "https://github.com/flotilla-org/rigging", rev = "8c5fef84c6ce9c01ea56fb680a83986c1f14941d" }
+flotilla-cbor = { git = "https://github.com/flotilla-org/rigging", rev = "0bc92eb3ea17d4a94af57bd6fcb661e3a41cc2ee" }
+rigging-http-serve = { git = "https://github.com/flotilla-org/rigging", rev = "0bc92eb3ea17d4a94af57bd6fcb661e3a41cc2ee" }
+rigging-http-client = { git = "https://github.com/flotilla-org/rigging", rev = "0bc92eb3ea17d4a94af57bd6fcb661e3a41cc2ee" }
+rigging-http-wire = { git = "https://github.com/flotilla-org/rigging", rev = "0bc92eb3ea17d4a94af57bd6fcb661e3a41cc2ee" }
 ansi_term = "0.12"
 crossterm = "0.28.1"
 insta = "1"
@@ -48,6 +51,7 @@ serde_json = "1"
 unicode-width = "0.1.14"
 
 conversation-events = { path = "crates/conversation-events" }
+wheelhouse-agent = { path = "crates/wheelhouse-agent" }
 wheelhouse-core = { path = "crates/wheelhouse-core" }
 wheelhouse-rich-text = { path = "crates/wheelhouse-rich-text" }
 wheelhouse-stream = { path = "crates/wheelhouse-stream" }

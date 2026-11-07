@@ -196,7 +196,7 @@ impl Fold {
 
 /// One JSON Patch operation: add, remove and replace. The others are
 /// skipped, as an unknown event would be.
-fn patch(doc: &mut Value, op: &Value) {
+pub fn patch(doc: &mut Value, op: &Value) {
     let (Some(kind), Some(path)) = (op.get("op").and_then(Value::as_str), op.get("path").and_then(Value::as_str)) else { return };
     let value = op.get("value").cloned().unwrap_or(Value::Null);
     if path.is_empty() {

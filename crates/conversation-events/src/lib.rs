@@ -10,7 +10,7 @@ use serde_json::Value;
 mod fold;
 mod jsonl;
 
-pub use fold::Fold;
+pub use fold::{patch, Fold};
 pub use jsonl::{parse_line, read, to_line, write, LineError, Lines};
 
 /// The contract's major version, which a stream's [`Hello`] carries.
@@ -37,6 +37,8 @@ pub enum Event {
     ReasoningMessageEnd(ReasoningMessageEnd),
     ReasoningEnd(ReasoningEnd),
     MessagesSnapshot(MessagesSnapshot),
+    StateSnapshot(StateSnapshot),
+    StateDelta(StateDelta),
     ActivitySnapshot(ActivitySnapshot),
     ActivityDelta(ActivityDelta),
     Custom(Custom),
@@ -68,6 +70,8 @@ impl Event {
             Event::ReasoningMessageEnd(e) => &e.thread_id,
             Event::ReasoningEnd(e) => &e.thread_id,
             Event::MessagesSnapshot(e) => &e.thread_id,
+            Event::StateSnapshot(e) => &e.thread_id,
+            Event::StateDelta(e) => &e.thread_id,
             Event::ActivitySnapshot(e) => &e.thread_id,
             Event::ActivityDelta(e) => &e.thread_id,
             Event::Custom(e) => &e.thread_id,
@@ -96,6 +100,8 @@ impl Event {
             Event::ReasoningMessageEnd(e) => e.seq,
             Event::ReasoningEnd(e) => e.seq,
             Event::MessagesSnapshot(e) => e.seq,
+            Event::StateSnapshot(e) => e.seq,
+            Event::StateDelta(e) => e.seq,
             Event::ActivitySnapshot(e) => e.seq,
             Event::ActivityDelta(e) => e.seq,
             Event::Custom(e) => e.seq,
@@ -104,14 +110,79 @@ impl Event {
     }
 }
 
-/// A stream's first event.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// A stream's first event. A session log's has no thread and no
+/// capabilities; a watch stream's names both (wheelhouse#691).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Hello {
     pub contract: u32,
-    /// Where the producer takes input (a prototype, not yet in #548's
-    /// contract): `unix://PATH`, an HTTP server on a socket.
+    /// Where an events file's producer takes input, before the watch stream
+    /// (#683): `unix://PATH`. Goes with the bridge's move to the stream.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub thread_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Capabilities>,
+    /// Present when the events that follow start with a snapshot rather than
+    /// resuming after the `seq` the watcher asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<Snapshot>,
+}
+
+/// What a watcher of the thread may do.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Capabilities {
+    /// Whether the thread takes input: a View shows its composer only then.
+    #[serde(default)]
+    pub input: bool,
+    /// The input modes besides the producer's own choice: `steer`, `queue`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modes: Vec<String>,
+    /// Whether the thread publishes a `commands` state document.
+    #[serde(default)]
+    pub commands: bool,
+    /// The files the agent can reach.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roots: Vec<Root>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Root {
+    pub path: String,
+    /// Whether `path` is on the watcher's machine.
+    #[serde(default)]
+    pub local: bool,
+    /// Where the root's files are searched (`GET {search}?q=…&limit=…`); a
+    /// root without one offers no completion (wheelhouse#694).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<String>,
+}
+
+/// A snapshot holds the newest completed items; these say what is older.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    /// Completed items before the snapshot, for estimating their height.
+    #[serde(default)]
+    pub earlier_items: u64,
+    /// The snapshot's oldest `seq`: `?before=` it pages back.
+    #[serde(default)]
+    pub oldest_seq: u64,
+}
+
+/// A page of older completed items (`?before=N&limit=…`), oldest first.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Page {
+    #[serde(default)]
+    pub events: Vec<Event>,
+    #[serde(default)]
+    pub earlier_items: u64,
+    #[serde(default)]
+    pub oldest_seq: u64,
 }
 
 /// A subagent's run names the tool call that started it.
@@ -632,6 +703,42 @@ pub struct MessagesSnapshot {
     #[serde(default)]
     pub messages: Vec<Message>,
 }
+
+/// A state document of the thread, whole. No `key` is AG-UI's single
+/// document; a keyed one (`status`, `commands`) is typed by `mediaType`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StateSnapshot {
+    #[serde(default)]
+    pub thread_id: String,
+    #[serde(default)]
+    pub seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(default)]
+    pub snapshot: Value,
+}
+
+/// `delta` is a JSON Patch (RFC 6902) against the document `key` names.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StateDelta {
+    #[serde(default)]
+    pub thread_id: String,
+    #[serde(default)]
+    pub seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(default)]
+    pub delta: Vec<Value>,
+}
+
+/// The `status` document's `snapshot`: `idle`, `running` or `requires_action`.
+pub const STATUS: &str = "status";
 
 /// Plans and to-dos.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
