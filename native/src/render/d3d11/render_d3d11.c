@@ -366,6 +366,14 @@ r_init(CmdLine *cmdln)
       desc.ScissorEnable = 1;
     }
     error = r_d3d11_state->device->lpVtbl->CreateRasterizerState1(r_d3d11_state->device, &desc, &r_d3d11_state->effect_rasterizer);
+    // without it the default state culls, and every effect draws nothing
+    if(FAILED(error))
+    {
+      char buffer[256] = {0};
+      raddbg_snprintf(buffer, sizeof(buffer), "D3D11 effect rasterizer creation failure (%lx). The process is terminating.", error);
+      wm_graphical_message(1, str8_lit("Fatal Error"), str8_cstring(buffer));
+      abort_self(1);
+    }
   }
   
   //- rjf: create main blend state
