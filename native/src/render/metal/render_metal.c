@@ -293,6 +293,12 @@ r_mtl_build_core_pipelines(void)
   [rect_fs release];
   [blur_vs release];
   [blur_fs release];
+  // Without these the first rect draw would fail inside Metal; stop here instead.
+  if(r_mtl_state->rect_pipeline == 0 || r_mtl_state->rect_surface_pipeline == 0 || r_mtl_state->blur_pipeline == 0)
+  {
+    fprintf(stderr, "raddebugger: Metal could not build the rect and blur pipelines from the generated shaders (R_MTL_CORE_SHADERS); see the errors above.\n");
+    abort_self(1);
+  }
 }
 #endif
 

@@ -610,7 +610,14 @@ r_init(CmdLine *cmdln)
       desc.Usage          = D3D11_USAGE_DYNAMIC;
       desc.BindFlags      = D3D11_BIND_CONSTANT_BUFFER;
       desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-      r_d3d11_state->device->lpVtbl->CreateBuffer(r_d3d11_state->device, &desc, 0, buffers[idx]);
+      error = r_d3d11_state->device->lpVtbl->CreateBuffer(r_d3d11_state->device, &desc, 0, buffers[idx]);
+      if(FAILED(error))
+      {
+        // The generated shaders' only uniforms; nothing could be drawn without them.
+        wm_graphical_message(1, str8_lit("Constant Buffer Creation Failure"),
+                             str8_lit("Could not create the constant buffers for the generated rect and blur shaders (R_D3D11_CORE_SHADERS)."));
+        abort_self(1);
+      }
     }
   }
 #endif
