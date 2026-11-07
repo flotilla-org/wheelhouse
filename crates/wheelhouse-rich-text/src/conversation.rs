@@ -13,8 +13,8 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use conversation_events::{
-    parse_line, Event, Lines, Message, Outcome, Parent, Role as EventRole, ToolCallResult, ToolKind as EventToolKind,
-    ToolStatus as EventToolStatus, Truncated, ANSI, COMPACTION, CONTRACT, DIFF, MARKDOWN,
+    parse_line, patch, Capabilities, Event, Lines, Message, Outcome, Page, Parent, Role as EventRole, ToolCallResult,
+    ToolKind as EventToolKind, ToolStatus as EventToolStatus, Truncated, ANSI, COMPACTION, CONTRACT, DIFF, MARKDOWN, STATUS,
 };
 use serde_json::Value;
 
@@ -631,6 +631,14 @@ pub(crate) struct Conversation {
     unsupported: bool,
     /// Where the producer takes input, from the hello.
     input: Option<String>,
+    /// What a watch stream's hello says the thread offers.
+    capabilities: Option<Capabilities>,
+    /// A watch stream's completed items not loaded yet, and the oldest
+    /// `seq` loaded: older pages are asked for before it.
+    earlier: u64,
+    oldest_seq: u64,
+    /// The thread's state documents, by key ("" for AG-UI's single one).
+    documents: HashMap<String, Value>,
     activity: Activity,
     /// The ids of user messages, so a sent prompt knows it arrived.
     user_messages: HashSet<String>,
@@ -693,6 +701,33 @@ impl Conversation {
 
     pub fn input(&self) -> Option<&str> {
         self.input.as_deref()
+    }
+
+    pub fn takes_input(&self) -> bool {
+        self.capabilities.as_ref().is_some_and(|c| c.input)
+    }
+
+    /// A watch stream's unloaded completed items and the `seq` to page back
+    /// from; (0, 0) when everything is loaded.
+    pub fn earlier(&self) -> (u64, u64) {
+        (self.earlier, self.oldest_seq)
+    }
+
+    /// The `status` document: `idle`, `running` or `requires_action`.
+    pub fn status(&self) -> Option<&str> {
+        self.documents.get(STATUS).and_then(Value::as_str)
+    }
+
+    /// Events from a watch stream, in its order: each `seq` is its place.
+    pub fn receive(&mut self, events: Vec<Event>, sink: &mut Sink) {
+        let events = events.into_iter().map(|event| (event.seq(), event)).collect();
+        self.ingest(events, sink);
+    }
+
+    /// An older page from a watch stream, inserted at the front.
+    pub fn receive_page(&mut self, page: Page, sink: &mut Sink) {
+        self.receive(page.events, sink);
+        (self.earlier, self.oldest_seq) = (page.earlier_items, page.oldest_seq);
     }
 
     /// Whether a top-level run is open, and its running tool's title.
@@ -810,8 +845,9 @@ impl Conversation {
         events
     }
 
+    /// Whether earlier events may still arrive, for items seen so far.
     fn pending(&self) -> bool {
-        self.cut > 0
+        self.cut > 0 || self.earlier > 0
     }
 
     fn ingest(&mut self, events: Vec<(u64, Event)>, sink: &mut Sink) {
@@ -896,6 +932,10 @@ impl Conversation {
         match event {
             Event::Hello(hello) => {
                 self.input = hello.input;
+                self.capabilities = hello.capabilities;
+                if let Some(snapshot) = hello.snapshot {
+                    (self.earlier, self.oldest_seq) = (snapshot.earlier_items, snapshot.oldest_seq);
+                }
                 if hello.contract != CONTRACT {
                     self.unsupported = true;
                     let text = format!("Conversation contract {} isn't supported (this reads {CONTRACT})", hello.contract);
@@ -1019,6 +1059,15 @@ impl Conversation {
                 self.retitle(key, e.title, e.kind);
             }
             Event::MessagesSnapshot(e) => self.snapshot(at, &thread, e.messages),
+            Event::StateSnapshot(e) => {
+                self.documents.insert(e.key.unwrap_or_default(), e.snapshot);
+            }
+            Event::StateDelta(e) => {
+                let document = self.documents.entry(e.key.unwrap_or_default()).or_insert(Value::Null);
+                for op in &e.delta {
+                    patch(document, op);
+                }
+            }
             Event::Custom(e) if e.name == COMPACTION => {
                 self.create(seq_key(&thread, e.seq, at), order, &thread, || Body::Divider { text: COMPACTION.into() });
             }
@@ -1061,6 +1110,7 @@ impl Conversation {
     /// A subagent's run ending, kept for its Section until it's known.
     fn subagent_status(&mut self, at: u64, event: Event, status: ToolStatus) {
         let key = subagent_key(event.thread_id());
+        let pending = self.pending();
         match self.items.get_mut(&key) {
             Some(item) => {
                 if let Body::Subagent { status: s } = &mut item.body {
@@ -1069,7 +1119,7 @@ impl Conversation {
                     self.touch(key);
                 }
             }
-            None if self.cut > 0 => self.orphans.entry(key).or_default().push((at, event)),
+            None if pending => self.orphans.entry(key).or_default().push((at, event)),
             None => {}
         }
     }
@@ -1137,6 +1187,7 @@ impl Conversation {
                         truncated: m.truncated.clone(),
                         ended: None,
                     };
+                    let pending = self.pending();
                     match self.items.get_mut(&key) {
                         Some(item) if item.snapshot.is_none_or(|s| s <= at) => {
                             if let Body::Tool { result, .. } = &mut item.body {
@@ -1146,7 +1197,7 @@ impl Conversation {
                             }
                         }
                         Some(_) => {}
-                        None if self.cut > 0 => {
+                        None if pending => {
                             let event = ToolCallResult {
                                 thread_id: thread.to_owned(),
                                 message_id: m.id.clone(),

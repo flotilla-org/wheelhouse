@@ -1,5 +1,6 @@
 //! Rich Text for markdown (#558) and conversations (#614); decided on #538,
 //! #540, #541, #546 and #548.
+use conversation_events::{Event, Page};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -109,6 +110,49 @@ impl RichText {
         rich
     }
 
+    /// A conversation fed by a watch stream (wheelhouse#691) rather than a
+    /// file: [`RichText::receive`] gives it events, newest page first, and
+    /// [`RichText::receive_page`] the older ones.
+    pub fn watch_conversation(thread: Option<&str>) -> RichText {
+        RichText::tuned_thread(b"", RING_CAPACITY, conversation::Tuning::default(), thread)
+    }
+
+    /// Events from a watch stream. Returns whether anything changed; false
+    /// for markdown.
+    pub fn receive(&mut self, events: Vec<Event>) -> bool {
+        self.feed(|conversation, sink| conversation.receive(events, sink))
+    }
+
+    /// An older page, inserted at the front; the anchor keeps each View
+    /// still.
+    pub fn receive_page(&mut self, page: Page) -> bool {
+        self.feed(|conversation, sink| conversation.receive_page(page, sink))
+    }
+
+    fn feed(&mut self, f: impl FnOnce(&mut conversation::Conversation, &mut conversation::Sink)) -> bool {
+        let Some(mut conversation) = self.conversation.take() else { return false };
+        let before = self.generation;
+        self.edit(|sink| f(&mut conversation, sink));
+        self.conversation = Some(conversation);
+        self.generation != before
+    }
+
+    /// Whether the watched thread takes input: its View shows a composer.
+    pub fn conversation_takes_input(&self) -> bool {
+        self.conversation.as_ref().is_some_and(|c| c.takes_input())
+    }
+
+    /// A watched thread's completed items not loaded yet, and the `seq` to
+    /// page back from.
+    pub fn conversation_earlier(&self) -> (u64, u64) {
+        self.conversation.as_ref().map_or((0, 0), |c| c.earlier())
+    }
+
+    /// The watched thread's `status` document, if it publishes one.
+    pub fn conversation_status(&self) -> Option<&str> {
+        self.conversation.as_ref()?.status()
+    }
+
     pub fn is_conversation(&self) -> bool {
         self.conversation.is_some()
     }
@@ -150,11 +194,7 @@ impl RichText {
     /// Bytes appended to a conversation's file, in any pieces: a line waits
     /// for its newline. Returns whether anything changed; false for markdown.
     pub fn append(&mut self, bytes: &[u8]) -> bool {
-        let Some(mut conversation) = self.conversation.take() else { return false };
-        let before = self.generation;
-        self.edit(|sink| conversation.append(bytes, sink));
-        self.conversation = Some(conversation);
-        self.generation != before
+        self.feed(|conversation, sink| conversation.append(bytes, sink))
     }
 
     /// Ingests earlier lines for about `budget`, inserting them at the

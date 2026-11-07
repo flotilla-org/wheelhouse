@@ -16,7 +16,7 @@ fn events(bytes: &[u8]) -> Vec<Event> {
 fn the_wire_example_reads_with_our_additions() {
     let events = events(WIRE);
     assert_eq!(events.len(), 25);
-    assert_eq!(events[0], Event::Hello(Hello { contract: CONTRACT, input: None }));
+    assert_eq!(events[0], Event::Hello(Hello { contract: CONTRACT, ..Hello::default() }));
     let Event::ToolCallStart(start) = &events[8] else { panic!("{:?}", events[8]) };
     assert_eq!((start.title.as_deref(), start.kind), (Some("cargo test -p wheelhouse-text"), Some(ToolKind::Shell)));
     let Event::ToolCallOutput(output) = &events[11] else { panic!("{:?}", events[11]) };
@@ -281,7 +281,7 @@ fn a_result_without_a_message_id_gets_one_from_its_call() {
 #[test]
 fn unknown_events_are_not_written() {
     let mut out = vec![];
-    write(&mut out, &[Event::Unknown, Event::Hello(Hello { contract: CONTRACT, input: None })]).unwrap();
+    write(&mut out, &[Event::Unknown, Event::Hello(Hello { contract: CONTRACT, ..Hello::default() })]).unwrap();
     assert_eq!(out, b"{\"type\":\"Hello\",\"contract\":2}\n");
 }
 
@@ -295,7 +295,7 @@ fn the_claude_translators_goldens_read_as_version_two() {
             continue;
         }
         let events = events(&fs::read(&path).unwrap());
-        assert_eq!(events[0], Event::Hello(Hello { contract: CONTRACT, input: None }), "{path:?}");
+        assert_eq!(events[0], Event::Hello(Hello { contract: CONTRACT, ..Hello::default() }), "{path:?}");
         origins.extend(events.into_iter().filter_map(|e| match e {
             Event::TextMessageStart(start) => start.origin,
             _ => None,

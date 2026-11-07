@@ -983,3 +983,98 @@ fn a_question_read_twice_is_one_notice() {
     let rich = whole(&[line(HELLO), asked.clone(), asked].concat());
     assert_eq!(outline(rich.doc()).matches("Which branch?").count(), 1);
 }
+
+/// `events` as one watch stream numbers them: a `seq` each, in order,
+/// whatever thread it belongs to.
+fn numbered(events: &[Event]) -> Vec<Event> {
+    events
+        .iter()
+        .filter(|e| !matches!(e, Event::Hello(_)))
+        .enumerate()
+        .map(|(i, event)| {
+            let mut value = serde_json::to_value(event).unwrap();
+            value["seq"] = (i as u64 + 1).into();
+            serde_json::from_value(value).unwrap()
+        })
+        .collect()
+}
+
+fn watch_hello(earlier: usize, oldest_seq: u64) -> Event {
+    let snapshot = Some(conversation_events::Snapshot { earlier_items: earlier as u64, oldest_seq });
+    Event::Hello(conversation_events::Hello {
+        contract: conversation_events::CONTRACT,
+        thread_id: "t0".into(),
+        snapshot,
+        ..Default::default()
+    })
+}
+
+#[hegel::test(test_cases = 300)]
+fn a_watched_thread_paged_back_in_any_steps_matches_one_read_whole(tc: TestCase) {
+    let mut c = Draws(&tc);
+    let items = 1 + c.below(10);
+    let file = generate::conversation::events(&mut c, items);
+    let events = numbered(&file);
+    let mut reference = RichText::watch_conversation(None);
+    reference.receive([vec![watch_hello(0, 0)], events.clone()].concat());
+    assert_eq!(outline(reference.doc()), outline(whole(&generate::conversation::jsonl(&file)).doc()));
+
+    // The snapshot starts anywhere; pages of any size come back while live
+    // events keep arriving.
+    let mut start = c.below(events.len() + 1);
+    let mut live = start + c.below(events.len() - start + 1);
+    let mut rich = RichText::watch_conversation(None);
+    rich.receive([vec![watch_hello(start, start as u64 + 1)], events[start..live].to_vec()].concat());
+    while start > 0 || live < events.len() {
+        if start > 0 && (live == events.len() || c.chance(2)) {
+            let from = start - 1 - c.below(start);
+            let page = Page { events: events[from..start].to_vec(), earlier_items: from as u64, oldest_seq: from as u64 + 1 };
+            assert_eq!(rich.conversation_earlier(), (start as u64, start as u64 + 1));
+            rich.receive_page(page);
+            start = from;
+        } else {
+            let to = live + 1 + c.below(events.len() - live);
+            rich.receive(events[live..to].to_vec());
+            live = to;
+        }
+    }
+    rich.doc().assert_rows();
+    assert_eq!(rich.conversation_earlier(), (0, 1));
+    assert_eq!(outline(rich.doc()), outline(reference.doc()));
+    assert_eq!(canon(rich.doc()), canon(reference.doc()));
+}
+
+#[test]
+fn a_watched_thread_says_whether_it_takes_input_and_how_it_stands() {
+    let mut rich = RichText::watch_conversation(None);
+    assert!(!rich.conversation_takes_input());
+    let capabilities = conversation_events::Capabilities { input: true, ..Default::default() };
+    let hello =
+        conversation_events::Hello { contract: conversation_events::CONTRACT, capabilities: Some(capabilities), ..Default::default() };
+    let status = |seq, value: &str| {
+        Event::StateSnapshot(conversation_events::StateSnapshot {
+            thread_id: "t0".into(),
+            seq,
+            key: Some("status".into()),
+            media_type: Some("application/json".into()),
+            snapshot: value.into(),
+        })
+    };
+    rich.receive(vec![Event::Hello(hello), status(1, "running")]);
+    assert!(rich.conversation_takes_input());
+    assert_eq!(rich.conversation_status(), Some("running"));
+    let delta = conversation_events::StateDelta {
+        thread_id: "t0".into(),
+        seq: 2,
+        key: Some("status".into()),
+        delta: vec![serde_json::json!({"op": "replace", "path": "", "value": "requires_action"})],
+        ..Default::default()
+    };
+    rich.receive(vec![Event::StateDelta(delta)]);
+    assert_eq!(rich.conversation_status(), Some("requires_action"));
+    // A session log's hello offers nothing.
+    let mut log = RichText::open_conversation(CONVERSATION);
+    assert!(!log.conversation_takes_input());
+    assert_eq!(log.conversation_status(), None);
+    log.backfill(Duration::ZERO);
+}
