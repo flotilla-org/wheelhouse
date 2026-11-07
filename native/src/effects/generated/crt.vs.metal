@@ -1,43 +1,49 @@
 #include <metal_stdlib>
-#include <simd/simd.h>
-
+#include <metal_math>
+#include <metal_texture>
 using namespace metal;
 
-struct EffectUniforms
+#line 37 "effect_prelude.slang"
+struct vs_main_Result_0
 {
-    float2 source_size_px;
-    float2 output_size_px;
-    float4 params0;
-    float4 params1;
+    float4 position_0 [[position]];
+    float2 uv_0 [[user(TEXCOORD)]];
 };
 
-struct V2P
+
+#line 37
+struct V2P_0
 {
-    float4 position;
-    float2 uv;
+    float4 position_1;
+    float2 uv_1;
 };
 
-struct _15
-{
-    EffectUniforms _m0;
-};
 
-struct vs_main_out
+#line 37
+[[vertex]] vs_main_Result_0 vs_main(uint vid_0 [[vertex_id]])
 {
-    float2 uv [[user(locn0)]];
-    float4 gl_Position [[position]];
-};
 
-vertex vs_main_out vs_main(uint gl_VertexIndex [[vertex_id]])
-{
-    V2P _out = V2P{ float4(0.0), float2(0.0) };
-    vs_main_out out = {};
-    float _220 = float((int(gl_VertexIndex & 1u) * 4) - 1);
-    float _225 = float((int(gl_VertexIndex >> 1u) * 4) - 1);
-    _out.position = float4(_220, _225, 0.0, 1.0);
-    _out.uv = float2((_220 + 1.0) * 0.5, 1.0 - ((_225 + 1.0) * 0.5));
-    out.gl_Position = _out.position;
-    out.uv = _out.uv;
-    return out;
+#line 50
+    float x_0 = float(int(vid_0 >> 1U) * int(4) - int(1));
+    float y_0 = float(int(vid_0 & 1U) * int(4) - int(1));
+
+#line 49
+    thread V2P_0 out_0;
+
+
+    (&out_0)->position_1 = float4(x_0, y_0, 0.0f, 1.0f);
+    (&out_0)->uv_1 = float2((x_0 + 1.0f) * 0.5f, 1.0f - (y_0 + 1.0f) * 0.5f);
+
+#line 53
+    thread vs_main_Result_0 _S1;
+
+#line 53
+    (&_S1)->position_0 = out_0.position_1;
+
+#line 53
+    (&_S1)->uv_0 = out_0.uv_1;
+
+#line 53
+    return _S1;
 }
 

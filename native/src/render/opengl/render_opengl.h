@@ -56,6 +56,7 @@ typedef ptrdiff_t GLintptr;
 #define GL_RGBA16F                        0x881A
 #define GL_HALF_FLOAT                     0x140B
 #define GL_UNIFORM_BUFFER                 0x8A11
+#define GL_ACTIVE_UNIFORM_BLOCKS          0x8A36
 #define GL_INVALID_INDEX                  0xFFFFFFFFu
 #define GL_LINK_STATUS                    0x8B82
 
@@ -115,6 +116,18 @@ typedef ptrdiff_t GLintptr;
 
 #define GL_DEBUG_OUTPUT                   0x92E0
 #define GL_DEBUG_OUTPUT_SYNCHRONOUS       0x8242
+#ifndef GL_ELEMENT_ARRAY_BUFFER
+# define GL_ELEMENT_ARRAY_BUFFER          0x8893
+#endif
+#ifndef GL_DEPTH_ATTACHMENT
+# define GL_DEPTH_ATTACHMENT              0x8D00
+#endif
+#ifndef GL_DEPTH_COMPONENT24
+# define GL_DEPTH_COMPONENT24             0x81A6
+#endif
+#ifndef GL_CLAMP_TO_EDGE
+# define GL_CLAMP_TO_EDGE                 0x812F
+#endif
 
 ////////////////////////////////
 //~ rjf: OS Backend Includes
@@ -199,6 +212,7 @@ X(glBindFramebuffer, void, (GLenum target, GLuint fbo))\
 X(glActiveTexture, void, (GLenum texture))\
 X(glVertexAttribDivisor, void, (GLuint index, GLuint divisor))\
 X(glDrawArraysInstanced, void, (GLenum mode, GLint first, GLsizei count, GLsizei instancecount))\
+X(glDrawElementsInstanced, void, (GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instancecount))\
 X(glDebugMessageCallback, void, (void (*)(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam), void *user_data))\
 X(glFramebufferTexture2D, void, (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level))\
 X(glCheckFramebufferStatus, GLenum, (GLenum target))\
@@ -233,6 +247,15 @@ struct R_OGL_Tex2D
   R_ResourceKind resource_kind;
   R_Tex2DFormat fmt;
   Vec2S32 size;
+};
+
+typedef struct R_OGL_Buffer R_OGL_Buffer;
+struct R_OGL_Buffer
+{
+  R_OGL_Buffer *next;
+  GLuint id;
+  R_ResourceKind resource_kind;
+  U64 size;
 };
 
 typedef struct R_OGL_FlushBuffer R_OGL_FlushBuffer;
@@ -278,6 +301,8 @@ struct R_OGL_Window
   F32 last_backing_scale;
   R_OGL_RenderTarget stage_target;
   R_OGL_RenderTarget stage_scratch_target;
+  R_OGL_RenderTarget geo3d_target; // Geo3D passes draw here, then composite into the stage or a surface
+  GLuint geo3d_depth_texture;
 };
 
 typedef struct R_OGL_State R_OGL_State;
@@ -292,6 +317,10 @@ struct R_OGL_State
   GLuint white_texture;
   GLuint surface_fbo; // shared fbo for surface render targets; the target texture is attached per-pass
   GLuint effect_ubo;  // scratch uniform buffer for effect passes
+  GLuint core_ubo;    // scratch uniform buffer for the core shaders, binding point 0
+  GLuint core_ubo1;   // scratch uniform buffer for the core shaders, binding point 1 (the mesh shader's group block)
+  GLuint mesh_vao;    // the mesh pass's vertex and instance attributes
+  R_OGL_Buffer *free_buffer;
   Arena *buffer_flush_arena;
   R_OGL_FlushBuffer *first_buffer_to_flush;
   R_OGL_FlushBuffer *last_buffer_to_flush;
