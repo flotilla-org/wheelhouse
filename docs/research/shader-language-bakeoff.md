@@ -134,17 +134,29 @@ Effects follow once the core shaders have moved, so there is one shader
 language; until then the effects stay WGSL. The cost is a pinned 44 MB tool,
 which is needed only to change a shader.
 
-## Not yet done
+## Since the bake-off
 
-- Wire the generated HLSL into D3D11 and the MSL into Metal behind the same
-  switch, and run `--shared_ui_diagnostics` there. The uniform structs already
-  match the layout those backends use, which is Metal's, and the HLSL keeps
-  D3D11's input semantics (`POS`, `TEX`, `COL0`…).
-- Pin `slangc` and `spirv-cross` where CI or a script can check them.
-- Drop the WGSL ports and their generated output once D3D11 and Metal pass
-  with the Slang ones; port the effects and their contract to Slang.
-- Delete the hand-written rect and blur shaders per backend once the generated
-  ones pass there (ADR 0015 §5, stage 2).
+The comparison above is as it was run. After the decision:
+
+- The Slang shaders were wired into D3D11 and Metal behind the same kind of
+  switch, and passed `--shared_ui_diagnostics` with and without it on
+  Windows (D3D11, AMD iGPU), macOS (Metal, Apple M4) and Linux (OpenGL on an
+  NVIDIA RTX 4090 and on Mesa), with no visible difference (#712).
+- They then became the only rect and blur shaders on all three backends. The
+  switches, the hand-written rect and blur shaders and the WGSL ports were
+  deleted. The sources moved to `native/src/shaders/*.slang`, and
+  `tools/generate-core-shaders.sh` now checks the tools are the pinned
+  versions (`slangc` 2026.17-25-gc7954ebd1 and `spirv-cross` from Vulkan SDK
+  1.4.363), and runs `slangc` from the source directory so its `#line`
+  directives name `rect.slang`, not a checkout path.
+- The uniform blocks and the blur kernel are filled once, in `render_core`
+  (`r_core_rect_uniforms`, `r_core_blur_uniforms`, `r_core_blur_pass`).
+
+## Still open
+
+- Port the effects and their contract (`effect_prelude.wgsl`) to Slang.
+- Move the remaining core shaders (mesh, 3D composite, finalize) over, each
+  behind a parity check.
 - Metal's blur kernel isn't scaled by the backing scale, unlike OpenGL's, so a
-  blur on a Retina display is half as wide in points. The generated OpenGL path
-  keeps OpenGL's scaling; settle which is meant before Metal moves over.
+  blur on a Retina display is half as wide in points. Both keep their current
+  widths; which is meant is a separate decision.

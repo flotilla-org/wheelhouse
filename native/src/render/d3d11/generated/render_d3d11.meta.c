@@ -6,8 +6,8 @@
 C_LINKAGE_BEGIN
 String8* r_d3d11_g_vshad_kind_source_table[5] =
 {
-&r_d3d11_g_rect_shader_src,
-&r_d3d11_g_blur_shader_src,
+&r_core_rect_vs_hlsl,
+&r_core_blur_vs_hlsl,
 &r_d3d11_g_mesh_shader_src,
 &r_d3d11_g_geo3dcomposite_shader_src,
 &r_d3d11_g_finalize_shader_src,
@@ -15,8 +15,8 @@ String8* r_d3d11_g_vshad_kind_source_table[5] =
 
 String8 r_d3d11_g_vshad_kind_source_name_table[5] =
 {
-str8_lit_comp("r_d3d11_g_rect_shader_src"),
-str8_lit_comp("r_d3d11_g_blur_shader_src"),
+str8_lit_comp("r_core_rect_vs_hlsl"),
+str8_lit_comp("r_core_blur_vs_hlsl"),
 str8_lit_comp("r_d3d11_g_mesh_shader_src"),
 str8_lit_comp("r_d3d11_g_geo3dcomposite_shader_src"),
 str8_lit_comp("r_d3d11_g_finalize_shader_src"),
@@ -42,26 +42,33 @@ ArrayCount(r_d3d11_g_mesh_ilay_elements) ,
 
 String8* r_d3d11_g_pshad_kind_source_table[5] =
 {
-&r_d3d11_g_rect_shader_src,
-&r_d3d11_g_blur_shader_src,
+&r_core_rect_fs_hlsl,
+&r_core_blur_fs_hlsl,
 &r_d3d11_g_mesh_shader_src,
 &r_d3d11_g_geo3dcomposite_shader_src,
 &r_d3d11_g_finalize_shader_src,
 };
 
+char * r_d3d11_g_pshad_kind_entry_point_table[5] =
+{
+"fs_main",
+"fs_main",
+"ps_main",
+"ps_main",
+"ps_main",
+};
+
 String8 r_d3d11_g_pshad_kind_source_name_table[5] =
 {
-str8_lit_comp("r_d3d11_g_rect_shader_src"),
-str8_lit_comp("r_d3d11_g_blur_shader_src"),
+str8_lit_comp("r_core_rect_fs_hlsl"),
+str8_lit_comp("r_core_blur_fs_hlsl"),
 str8_lit_comp("r_d3d11_g_mesh_shader_src"),
 str8_lit_comp("r_d3d11_g_geo3dcomposite_shader_src"),
 str8_lit_comp("r_d3d11_g_finalize_shader_src"),
 };
 
-U64 r_d3d11_g_uniform_type_kind_size_table[3] =
+U64 r_d3d11_g_uniform_type_kind_size_table[1] =
 {
-sizeof(R_D3D11_Uniforms_Rect),
-sizeof(R_D3D11_Uniforms_Blur),
 sizeof(R_D3D11_Uniforms_Mesh),
 };
 

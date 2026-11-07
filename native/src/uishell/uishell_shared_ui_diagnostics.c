@@ -136,9 +136,10 @@ uishell_check_folder_picker_paths(Arena *arena, U32 *failures, String8 artifacts
   }
 }
 
-#if R_BACKEND == R_BACKEND_METAL
+// The blur kernel every backend uploads (r_core_blur_uniforms) stays inside
+// its 32 slots and copies the pass parameters through, at any blur size.
 internal void
-uishell_check_metal_blur_kernel_bounds(U32 *failures)
+uishell_check_blur_kernel_bounds(U32 *failures)
 {
   F32 sizes[] = {64, 0, 1, 2, 3, 10, 32, 62, 62.49f, 62.5f, 63, 63.49f, 63.5f, 128};
   R_PassParams_Blur params = {0};
@@ -148,7 +149,7 @@ uishell_check_metal_blur_kernel_bounds(U32 *failures)
   for(U64 size_idx = 0; size_idx < ArrayCount(sizes); size_idx++)
   {
     params.blur_size = sizes[size_idx];
-    R_MTL_BlurUniforms uniforms = r_mtl_blur_uniforms_from_params(&params, viewport);
+    R_CoreBlurUniforms uniforms = r_core_blur_uniforms(&params, viewport, params.blur_size, 0);
     UIImportCheck(uniforms.blur_count >= 1 && uniforms.blur_count <= ArrayCount(uniforms.kernel));
     UIImportCheck(MemoryMatch(&uniforms.rect, &params.rect, sizeof(params.rect)));
     UIImportCheck(uniforms.corner_radii.x == 4 && uniforms.viewport_size.x == 100);
@@ -160,12 +161,11 @@ uishell_check_metal_blur_kernel_bounds(U32 *failures)
     if(sizes[size_idx] >= 63)
     {
       params.blur_size = 63;
-      R_MTL_BlurUniforms capped = r_mtl_blur_uniforms_from_params(&params, viewport);
+      R_CoreBlurUniforms capped = r_core_blur_uniforms(&params, viewport, params.blur_size, 0);
       UIImportCheck(MemoryMatch(&uniforms, &capped, sizeof(capped)));
     }
   }
 }
-#endif
 
 // Blur a field of one-pixel stripes through a rounded rect and read it back,
 // on whichever backend this build has. Where the blur applies, neighbouring
@@ -517,9 +517,7 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   e_select_cache(old_cache);
   e_cache_release(cache);
   fprintf(stderr, "config and folder paths: %u failures\n", failures);
-#if R_BACKEND == R_BACKEND_METAL
-  uishell_check_metal_blur_kernel_bounds(&failures);
-#endif
+  uishell_check_blur_kernel_bounds(&failures);
   U32 failures_before_blur = failures;
   uishell_check_blur_mask(&failures);
   fprintf(stderr, "blur mask: %u failures\n", failures - failures_before_blur);

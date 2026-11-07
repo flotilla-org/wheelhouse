@@ -305,11 +305,10 @@ struct R_EffectSources
 ////////////////////////////////
 //~ Core Shader Uniforms
 //
-// The uniform blocks of the rect and blur shaders generated from
-// native/src/shaders (tools/generate-core-shaders.sh). Every backend fills
-// these same bytes: std140 for OpenGL, a cbuffer for D3D11, a constant buffer
-// for Metal. Backends opt in per build (R_OGL_CORE_SHADERS,
-// R_D3D11_CORE_SHADERS, R_MTL_CORE_SHADERS) until the hand-written shaders go.
+// The uniform blocks of the rect and blur shaders, which are generated from
+// native/src/shaders/*.slang (tools/generate-core-shaders.sh). Every backend
+// fills these same bytes: std140 for OpenGL, a cbuffer for D3D11, a constant
+// buffer for Metal.
 
 typedef struct R_CoreRectUniforms R_CoreRectUniforms;
 struct R_CoreRectUniforms

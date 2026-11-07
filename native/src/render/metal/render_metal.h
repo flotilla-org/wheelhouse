@@ -93,30 +93,6 @@ struct R_MTL_RetiredObject
   id object;
 };
 
-typedef struct R_MTL_RectUniforms R_MTL_RectUniforms;
-struct R_MTL_RectUniforms
-{
-  Vec2F32 viewport_size;
-  F32 opacity;
-  F32 sample_is_surface;
-  Mat4x4F32 texture_sample_channel_map;
-  Vec2F32 texture_size;
-  Vec2F32 xform_scale;
-  Vec4F32 xform[3];
-};
-
-typedef struct R_MTL_BlurUniforms R_MTL_BlurUniforms;
-struct R_MTL_BlurUniforms
-{
-  Rng2F32 rect;
-  Vec4F32 corner_radii;
-  Vec2F32 direction;
-  Vec2F32 viewport_size;
-  U32 blur_count;
-  U32 _padding0_[3];
-  Vec4F32 kernel[32];
-};
-
 typedef struct R_MTL_FinalizeUniforms R_MTL_FinalizeUniforms;
 struct R_MTL_FinalizeUniforms
 {
@@ -161,14 +137,8 @@ struct R_MTL_Geo3DCompositeUniforms
   Vec4F32 src_uv;  // x0 y0 x1 y1, geo3d color texture uv
 };
 
-// R_MTL_CORE_SHADERS selects the rect and blur shaders: 0, the hand-written MSL
-// in render_metal.mdesk; 1, MSL generated from native/src/shaders/slang
-// (tools/generate-core-shaders.sh). The generated shaders read their uniforms
-// (R_CoreRectUniforms, R_CoreBlurUniforms in render_core.h) from buffer 0; the
-// rect shader reads its instances as vertex attributes from the buffer below.
-#if !defined(R_MTL_CORE_SHADERS)
-# define R_MTL_CORE_SHADERS 0
-#endif
+// The rect shader reads its instances as vertex attributes from this buffer;
+// its uniforms (R_CoreRectUniforms) and the blur's are at buffer 0.
 #define R_MTL_CORE_RECT_INSTANCE_BUFFER 30
 
 typedef struct R_MTL_State R_MTL_State;
@@ -234,6 +204,5 @@ internal id<MTLBuffer> r_mtl_upload_buffer(void *data, U64 size, U64 align, U64 
 internal F32 r_mtl_contents_scale_from_window(WM_Window window);
 internal Vec2S32 r_mtl_drawable_size_from_window(WM_Window window);
 internal B32 r_mtl_scissor_from_clip(Rng2F32 clip, Vec2S32 drawable_size, F32 scale, MTLScissorRect *out);
-internal R_MTL_BlurUniforms r_mtl_blur_uniforms_from_params(R_PassParams_Blur *params, Vec2F32 viewport_dim);
 
 #endif // RENDER_METAL_H
