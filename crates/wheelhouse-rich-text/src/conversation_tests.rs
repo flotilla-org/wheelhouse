@@ -312,10 +312,58 @@ fn an_interrupt_leaves_its_call_waiting_until_it_is_answered() {
     );
     let mut rich = RichText::open_conversation(&[line(HELLO), call, line(INTERRUPTED)].concat());
     assert_eq!(tool_status(&rich, "c"), ToolStatus::Waiting);
-    // One that names no call isn't lost before #695 draws it.
-    assert!(outline(rich.doc()).contains(r#"Notice "Which branch?""#), "{}", outline(rich.doc()));
+    // One that names no call shows as a question of its own.
+    assert!(outline(rich.doc()).contains(r#"Paragraph "Which branch?""#), "{}", outline(rich.doc()));
     rich.append(&line(ANSWERED));
     assert_eq!(tool_status(&rich, "c"), ToolStatus::Pending);
+}
+
+const APPROVAL: &str = r#"{"type":"RunFinished","threadId":"t","seq":2,"runId":"r","outcome":{"type":"interrupt","interrupts":[{"id":"i","reason":"approval","toolCallId":"c","responseSchema":{"type":"object","required":["decision"],"properties":{"decision":{"oneOf":[{"const":"accept","title":"Approve"},{"const":"acceptForSession","title":"Approve for this session"},{"const":"decline","title":"Deny"}]}}}}]}}"#;
+
+#[test]
+fn an_approval_offers_the_producers_decisions_on_its_call_and_shows_the_one_made() {
+    let call = line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","title":"cargo build","kind":"shell"}"#);
+    let mut rich = RichText::open_conversation(&[line(HELLO), call, line(APPROVAL)].concat());
+    let shown = outline(rich.doc());
+    assert!(shown.contains(r#"Paragraph "Approve   Approve for this session   Deny" [Link(wh-interrupt:i?decision=accept) "Approve"]"#), "{shown}");
+    let (key, reason) = rich.conversation_open_interrupt().expect("an open Interrupt");
+    assert_eq!((key, reason.as_str()), (Key::named(&["t", "tool", "c"]), "approval"));
+
+    // A choice that isn't offered sends nothing; one that is sends its resume entry.
+    assert_eq!(rich.conversation_choose("wh-interrupt:i?nothing=1", None), Choice::None);
+    let Choice::Send(body) = rich.conversation_choose("wh-interrupt:i?decision=acceptForSession", None) else { panic!("a body to send") };
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["resume"][0], serde_json::json!({"interruptId": "i", "status": "resolved", "payload": {"decision": "acceptForSession"}}));
+
+    // Every View shows the answer the stream carries, whoever chose it.
+    rich.append(&line(r#"{"type":"RunStarted","threadId":"t","seq":3,"runId":"r.1","input":{"resume":[{"interruptId":"i","status":"resolved","payload":{"decision":"acceptForSession"}}]}}"#));
+    let shown = outline(rich.doc());
+    assert!(shown.contains(r#"Paragraph "✓ Approve for this session""#) && !shown.contains("Link(wh-interrupt"), "{shown}");
+    assert_eq!(tool_status(&rich, "c"), ToolStatus::Pending);
+    assert_eq!(rich.conversation_open_interrupt(), None);
+    assert_eq!(rich.conversation_choose("wh-interrupt:i?decision=decline", None), Choice::None);
+}
+
+#[test]
+fn a_question_takes_each_answer_then_sends_them_together() {
+    let question = line(
+        r#"{"type":"RunFinished","threadId":"t","seq":1,"runId":"r","outcome":{"type":"interrupt","interrupts":[{"id":"q","reason":"question","responseSchema":{"type":"object","required":["branch","why"],"properties":{"branch":{"title":"Branch","description":"Which branch?","anyOf":[{"const":"main","title":"main"},{"const":"dev","title":"dev"},{"type":"string","title":"Other"}]},"why":{"title":"Why","description":"Why that one?"}}}}]}}"#,
+    );
+    let mut rich = RichText::open_conversation(&[line(HELLO), question].concat());
+    let shown = outline(rich.doc());
+    assert!(shown.contains(r#"Quote Quote { alert: Some(Important) }"#) && shown.contains(r#"Paragraph "Branch  Which branch?""#), "{shown}");
+    assert!(shown.contains(r#"[Link(wh-interrupt:q?branch) "Other…"]"#), "{shown}");
+
+    assert_eq!(rich.conversation_choose("wh-interrupt:q?branch=main", None), Choice::None);
+    assert!(outline(rich.doc()).contains("✓ main"));
+    // A field with no choices takes text from the composer.
+    assert_eq!(rich.conversation_choose("wh-interrupt:q?why", None), Choice::Text("Why that one?".into()));
+    let Choice::Send(body) = rich.conversation_choose("wh-interrupt:q?why", Some("tests pass there")) else { panic!("a body to send") };
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["resume"][0]["payload"], serde_json::json!({"branch": "main", "why": "tests pass there"}));
+
+    rich.append(&line(r#"{"type":"RunStarted","threadId":"t","seq":2,"runId":"r.1","input":{"resume":[{"interruptId":"q","status":"resolved","payload":{"branch":"main","why":"tests pass there"}}]}}"#));
+    assert!(outline(rich.doc()).contains(r#"Paragraph "✓ Branch: main · Why: tests pass there""#), "{}", outline(rich.doc()));
 }
 
 #[test]

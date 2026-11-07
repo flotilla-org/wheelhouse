@@ -665,6 +665,18 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 #define WHEELHOUSE_RICH_ROOT_KEY 5929344362340505684
 
+// Choosing an answer link sent nothing (it isn't one, its Interrupt is
+// answered, or other fields wait for choices).
+#define WHEELHOUSE_RICH_CHOICE_NONE 0
+
+// Every field is chosen: post the RunAgentInput written out to the
+// producer's `/run`.
+#define WHEELHOUSE_RICH_CHOICE_SEND 1
+
+// The field takes text: the composer asks for it with the prompt written out,
+// then chooses the link again with that text.
+#define WHEELHOUSE_RICH_CHOICE_TEXT 2
+
 // A View Spec's content: a local command (argv when argc is nonzero, else
 // the shell line in command; optional cwd).
 #define WHEELHOUSE_SLOT_COMMAND 0
@@ -3240,6 +3252,22 @@ uint32_t wheelhouse_rich_text_copy(WheelhouseRichText *h,
 // Whether a watched thread takes input, as its hello says: its View shows
 // a composer only then.
 uint32_t wheelhouse_rich_text_conversation_takes_input(WheelhouseRichText *h, char **error_out);
+
+// Chooses the answer a `wh-interrupt:` link names (#695); `text`, unless
+// empty, answers a field that takes text. Returns a
+// WHEELHOUSE_RICH_CHOICE_*; SEND and TEXT write `out`.
+uint32_t wheelhouse_rich_text_conversation_choose(WheelhouseRichText *h,
+                                                  WheelhouseText target,
+                                                  WheelhouseText text,
+                                                  WheelhouseBytes *out,
+                                                  char **error_out);
+
+// The first open Interrupt of a watched thread: 1 with the key of the item
+// it shows in and its reason (such as `approval`), else 0.
+uint32_t wheelhouse_rich_text_conversation_open_interrupt(WheelhouseRichText *h,
+                                                          uint64_t *key_out,
+                                                          WheelhouseBytes *reason_out,
+                                                          char **error_out);
 
 // Whether a watched thread waits on an answer (its `status` document says
 // `requires_action`).

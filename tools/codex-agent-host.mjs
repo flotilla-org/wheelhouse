@@ -5,6 +5,7 @@
 // producers.
 //
 //   node tools/codex-agent-host.mjs --url ws://127.0.0.1:PORT (--new [--cwd DIR] | --thread ID) --socket PATH [--buffer N] [--page BYTES]
+//     [--approval untrusted|on-request|never]
 //
 // GET /threads, GET /threads/{id}/events (?after=N, ?before=N&limit=M), POST
 // /threads/{id}/run and /stop. stdin still works: a line is a prompt;
@@ -28,6 +29,8 @@ const buffer = count('--buffer', 100000);
 // A snapshot's newest page, at least this many bytes of whole runs.
 const pageBytes = count('--page', 256 * 1024);
 let threadId = opt('--thread');
+// Codex's approval policy for the turns it starts: untrusted, on-request or never.
+const approvalPolicy = opt('--approval');
 
 // ---- the thread's events, each numbered by its place in the stream. Numbers
 // start past any an earlier bridge gave out, so a watcher resuming from one is
@@ -38,16 +41,18 @@ const watchers = new Set();
 const emit = (type, fields) => {
   const event = { type, threadId, seq: base + log.length + 1, ...fields };
   const line = JSON.stringify(event) + '\n';
-  log.push({ event, line });
+  const record = { event, line };
+  log.push(record);
   for (const res of watchers) res.write(line);
+  return record;
 };
 
 // Items a snapshot's earlier count and a page's limit count, as Wheelhouse does.
 const STARTS = new Set(['TextMessageStart', 'ToolCallStart', 'ReasoningMessageStart', 'Custom']);
 const itemsIn = (from, to) => log.slice(from, to).filter(({ event }) => STARTS.has(event.type)).length;
-// Snapshots and pages cut only where a run starts, so an open run and its
-// open items always come whole.
-const runStart = (i) => { while (i > 0 && log[i].event.type !== 'RunStarted') i--; return i; };
+// Snapshots and pages cut only where a turn starts, so an open turn and its
+// open items always come whole; the runs an Interrupt cuts it into don't count.
+const runStart = (i) => { while (i > 0 && !log[i].turn) i--; return i; };
 
 // Published once the history is read, then on every change.
 let status = null;
@@ -205,7 +210,12 @@ const notify = (method, params) => ws.send(JSON.stringify(params ? { method, par
 const say = (s) => process.stdout.write(s);
 
 let turnId = null;
-let approval = null; // {id, kind}
+// The AG-UI run: Codex's turn, cut into runs where it waits on an Interrupt.
+let runId = null;
+let runOpen = false;
+let runs = 0;
+// What Codex waits on, by Interrupt id: {msgId, method, interrupt}.
+const waits = new Map();
 const streamed = new Set();
 // No outcome is success; Codex's interrupted turn is AG-UI's cancelled run.
 const outcome = (turn) => (turn.status === 'interrupted' ? { outcome: { type: 'cancelled' } } : {});
@@ -214,9 +224,14 @@ function onNotification(m, p) {
   if (p?.threadId && p.threadId !== threadId) return;
   switch (m) {
     case 'turn/started':
-      turnId = p.turn.id; emit('RunStarted', { runId: p.turn.id }); setStatus('running'); say('\n[turn started]\n'); break;
+      turnId = runId = p.turn.id; runOpen = true;
+      emit('RunStarted', { runId }).turn = true; setStatus('running'); say('\n[turn started]\n'); break;
     case 'turn/completed': {
-      emit('RunFinished', { runId: p.turn.id, ...outcome(p.turn) });
+      // A stopped turn leaves what it waited on unanswered: those are cancelled.
+      if (waits.size) resume_([...waits.keys()].map((interruptId) => ({ interruptId, status: 'cancelled' })), false);
+      if (!runOpen) startRun({});
+      emit('RunFinished', { runId, ...outcome(p.turn) });
+      runOpen = false;
       turnId = null; say('\n[turn done]\n> ');
       startQueued();
       break;
@@ -242,26 +257,90 @@ function onNotification(m, p) {
   }
 }
 
-function onServerRequest(msg) {
-  const p = msg.params ?? {};
-  if (msg.method.endsWith('requestApproval') || msg.method === 'applyPatchApproval' || msg.method === 'execCommandApproval') {
-    approval = { id: msg.id, method: msg.method };
-    const what = p.command ?? p.reason ?? p.itemId;
-    // The chat shows the request as a Flotilla-style Custom event until #695 draws an
-    // Interrupt; a watcher answers it by this id in a resume entry.
-    emit('Custom', { name: 'approval', value: { interruptId: String(msg.id), method: msg.method, itemId: p.itemId, what } });
-    setStatus('requires_action');
-    say(`\n[approval: ${msg.method}] ${what ?? ''}\napprove? y/n > `);
-  } else {
-    ws.send(JSON.stringify({ id: msg.id, error: { code: -32601, message: `agent-host does not handle ${msg.method}` } }));
-  }
+// Codex's decisions for an approval, as the producer offers them (#695): the
+// View draws each as a choice. Its cancel, which also stops the turn, stays
+// the Stop button.
+const DECISIONS = {
+  'item/commandExecution/requestApproval': [['accept', 'Approve'], ['acceptForSession', 'Approve for this session'], ['decline', 'Deny']],
+  'item/fileChange/requestApproval': [['accept', 'Approve'], ['acceptForSession', 'Approve for this session'], ['decline', 'Deny']],
+  execCommandApproval: [['approved', 'Approve'], ['approved_for_session', 'Approve for this session'], ['denied', 'Deny']],
+  applyPatchApproval: [['approved', 'Approve'], ['approved_for_session', 'Approve for this session'], ['denied', 'Deny']],
+};
+
+function approvalInterrupt(id, method, p) {
+  const decision = { title: 'Decision', oneOf: DECISIONS[method].map(([value, title]) => ({ const: value, title })) };
+  return { id, reason: 'approval', ...(p.reason ? { message: p.reason } : {}), toolCallId: p.itemId ?? p.callId,
+    responseSchema: { type: 'object', required: ['decision'], properties: { decision } } };
 }
 
-function answer(yes) {
-  const decision = approval.method.startsWith('item/') ? (yes ? 'accept' : 'decline') : (yes ? 'approved' : 'denied');
-  ws.send(JSON.stringify({ id: approval.id, result: { decision } }));
-  approval = null;
-  setStatus(turnId ? 'running' : 'idle');
+// A question's options are consts; free text, Codex's "Other", is a string.
+function questionInterrupt(id, p) {
+  const properties = {};
+  for (const q of p.questions) {
+    const options = (q.options ?? []).map((o) => ({ const: o.label, title: o.label, description: o.description }));
+    const free = q.isOther || !options.length ? [{ type: 'string', title: 'Other' }] : [];
+    properties[q.id] = { title: q.header, description: q.question, anyOf: [...options, ...free], ...(q.isSecret ? { writeOnly: true } : {}) };
+  }
+  return { id, reason: 'question', responseSchema: { type: 'object', required: Object.keys(properties), properties } };
+}
+
+function startRun(input) {
+  runId = `${turnId}.${++runs}`;
+  runOpen = true;
+  emit('RunStarted', { runId, ...(Object.keys(input).length ? { input } : {}) });
+}
+
+// The run ends on what Codex waits for, every open Interrupt named again.
+function interrupt() {
+  if (!runOpen) startRun({});
+  emit('RunFinished', { runId, outcome: { type: 'interrupt', interrupts: [...waits.values()].map((w) => w.interrupt) } });
+  runOpen = false;
+  setStatus('requires_action');
+}
+
+function onServerRequest(msg) {
+  const p = msg.params ?? {};
+  const id = String(msg.id);
+  if (DECISIONS[msg.method]) {
+    waits.set(id, { msgId: msg.id, method: msg.method, interrupt: approvalInterrupt(id, msg.method, p) });
+    say(`\n[approval ${id}: ${msg.method}] ${p.command ?? p.reason ?? ''}\n> `);
+  } else if (msg.method === 'item/tool/requestUserInput') {
+    waits.set(id, { msgId: msg.id, method: msg.method, interrupt: questionInterrupt(id, p) });
+    say(`\n[question ${id}] ${p.questions.map((q) => q.question).join(' / ')}\n> `);
+  } else {
+    ws.send(JSON.stringify({ id: msg.id, error: { code: -32601, message: `agent-host does not handle ${msg.method}` } }));
+    return;
+  }
+  interrupt();
+}
+
+// Codex's answer to what it waits on, from a resume entry; null if the entry
+// names no choice it offered.
+function codexAnswer(waiting, entry) {
+  const payload = entry.payload ?? {};
+  if (waiting.method === 'item/tool/requestUserInput') {
+    if (entry.status === 'cancelled') return { answers: {} };
+    const answers = {};
+    for (const [qid, value] of Object.entries(payload)) answers[qid] = { answers: [String(value)] };
+    return { answers };
+  }
+  const choices = DECISIONS[waiting.method];
+  const decision = entry.status === 'cancelled' ? choices[2][0] : payload.decision;
+  return choices.some(([value]) => value === decision) ? { decision } : null;
+}
+
+// Answers go to Codex, and a run starts from them, so watchers see them on its
+// RunStarted (#690); anything still waiting ends that run again at once.
+function resume_(entries, reopen = true) {
+  for (const entry of entries) {
+    const waiting = waits.get(entry.interruptId);
+    waits.delete(entry.interruptId);
+    answers.set(entry.interruptId, entry);
+    ws.send(JSON.stringify({ id: waiting.msgId, result: codexAnswer(waiting, entry) }));
+  }
+  startRun({ resume: entries });
+  if (waits.size && reopen) interrupt();
+  else setStatus(turnId ? 'running' : 'idle');
 }
 
 // A prompt is the last user message of an AG-UI RunAgentInput; the harness
@@ -281,7 +360,7 @@ async function prompt(text, clientId, mode) {
   const input = [{ type: 'text', text }];
   if (turnId && mode === 'queue') return queued.push({ text, clientId });
   if (turnId) return request('turn/steer', { threadId, expectedTurnId: turnId, input, clientUserMessageId: clientId });
-  return request('turn/start', { threadId, input, clientUserMessageId: clientId });
+  return request('turn/start', { threadId, input, clientUserMessageId: clientId, ...(approvalPolicy ? { approvalPolicy } : {}) });
 }
 
 // The first answer to an approval wins; a second gets 409 naming it.
@@ -297,13 +376,11 @@ async function run(input) {
   if (message ? !text : !resume.length) return [400, { error: 'no user message' }];
   for (const entry of resume) {
     if (answers.has(entry.interruptId)) return [409, { error: 'answered', by: answers.get(entry.interruptId) }];
-    if (!approval || String(approval.id) !== entry.interruptId) return [404, { error: `no interrupt ${entry.interruptId}` }];
+    const waiting = waits.get(entry.interruptId);
+    if (!waiting) return [404, { error: `no interrupt ${entry.interruptId}` }];
+    if (!codexAnswer(waiting, entry)) return [400, { error: `no such choice for ${entry.interruptId}` }];
   }
-  if (resume.length > 1) return [400, { error: 'one interrupt waits at a time' }];
-  for (const entry of resume) {
-    answers.set(entry.interruptId, entry);
-    answer(entry.status === 'resolved' && entry.payload?.approve !== false);
-  }
+  if (resume.length) resume_(resume);
   if (message) await prompt(text, message.id, input.mode);
   return [202, { accepted: true }];
 }
@@ -383,7 +460,7 @@ ws.addEventListener('open', async () => {
     cursor = page.nextCursor;
   } while (cursor);
   for (const t of turns.reverse()) {
-    emit('RunStarted', { runId: t.id });
+    emit('RunStarted', { runId: t.id }).turn = true;
     for (const item of t.items ?? []) itemCompleted(item, false);
     if (t.status === 'inProgress') { turnId = t.id; continue; }
     emit('RunFinished', { runId: t.id, ...outcome(t) });
@@ -396,9 +473,10 @@ ws.addEventListener('open', async () => {
     const text = line.trim();
     if (!text) return;
     try {
-      if (approval) {
-        answers.set(String(approval.id), { status: 'resolved', from: 'stdin' });
-        answer(/^y/i.test(text));
+      const approval = [...waits.entries()].find(([, w]) => DECISIONS[w.method]);
+      if (approval && /^[yn]/i.test(text)) {
+        const choices = DECISIONS[approval[1].method];
+        resume_([{ interruptId: approval[0], status: 'resolved', payload: { decision: choices[/^y/i.test(text) ? 0 : 2][0] } }]);
       } else if (text === '/interrupt') {
         if (turnId) await request('turn/interrupt', { threadId, turnId });
       } else {

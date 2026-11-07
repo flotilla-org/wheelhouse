@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use conversation_events::STATUS_REQUIRES_ACTION;
 use wheelhouse_rich_text::{
-    copy_block, Alert, Align, Anchor, Attr, Color, CopyAction, Delta, Detail, FindOptions, FindStatus, Format, Key, ListOp, Match, Metrics,
+    copy_block, Alert, Align, Anchor, Attr, Choice, Color, CopyAction, Delta, Detail, FindOptions, FindStatus, Format, Key, ListOp, Match, Metrics,
     NodeContent, Op, Part, Point, Position, RichText, Role, SectionKind, SubscriptionId, ToolKind, ToolStatus, Tree, View, Window,
     BACKFILL_BUDGET, MATCH_LIMIT, NO_STRING,
 };
@@ -1400,6 +1400,56 @@ pub unsafe extern "C" fn wheelhouse_rich_text_copy(
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_rich_text_conversation_takes_input(h: *mut WheelhouseRichText, error_out: *mut *mut c_char) -> u32 {
     run(h, error_out, |h| Ok(h.rich.conversation_takes_input())).unwrap_or(false) as u32
+}
+
+/// Choosing an answer link sent nothing (it isn't one, its Interrupt is
+/// answered, or other fields wait for choices).
+pub const WHEELHOUSE_RICH_CHOICE_NONE: u32 = 0;
+/// Every field is chosen: post the RunAgentInput written out to the
+/// producer's `/run`.
+pub const WHEELHOUSE_RICH_CHOICE_SEND: u32 = 1;
+/// The field takes text: the composer asks for it with the prompt written out,
+/// then chooses the link again with that text.
+pub const WHEELHOUSE_RICH_CHOICE_TEXT: u32 = 2;
+
+/// Chooses the answer a `wh-interrupt:` link names (#695); `text`, unless
+/// empty, answers a field that takes text. Returns a
+/// WHEELHOUSE_RICH_CHOICE_*; SEND and TEXT write `out`.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_conversation_choose(
+    h: *mut WheelhouseRichText,
+    target: Text,
+    text: Text,
+    out: *mut Bytes,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        let text = text.read()?;
+        match h.rich.conversation_choose(&target.read()?, Some(text.as_str()).filter(|t| !t.is_empty())) {
+            Choice::None => Ok(WHEELHOUSE_RICH_CHOICE_NONE),
+            Choice::Send(body) => write_bytes(out, body.into_bytes()).map(|()| WHEELHOUSE_RICH_CHOICE_SEND),
+            Choice::Text(prompt) => write_bytes(out, prompt.into_bytes()).map(|()| WHEELHOUSE_RICH_CHOICE_TEXT),
+        }
+    })
+    .unwrap_or(WHEELHOUSE_RICH_CHOICE_NONE)
+}
+
+/// The first open Interrupt of a watched thread: 1 with the key of the item
+/// it shows in and its reason (such as `approval`), else 0.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_conversation_open_interrupt(
+    h: *mut WheelhouseRichText,
+    key_out: *mut u64,
+    reason_out: *mut Bytes,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        let Some((key, reason)) = h.rich.conversation_open_interrupt() else { return Ok(0) };
+        *key_out.as_mut().ok_or("null key")? = key.0;
+        write_bytes(reason_out, reason.into_bytes())?;
+        Ok(1)
+    })
+    .unwrap_or(0)
 }
 
 /// Whether a watched thread waits on an answer (its `status` document says

@@ -1796,6 +1796,14 @@ struct UIShell_RichTextState
   U64 last_prompt_size;
   // When the open run was first seen running, for its elapsed time.
   U64 running_since_us;
+  // An answer the composer is asked for (#695): the answer link it goes
+  // to, and the question.
+  U8 answer_target[512];
+  U64 answer_target_size;
+  U8 answer_prompt[256];
+  U64 answer_prompt_size;
+  // An answer on its way: one another window gave first is refused.
+  U64 answer_ticket;
 };
 
 internal void
@@ -1826,6 +1834,8 @@ uishell_rt_release(void *user_data)
   if(s->arena) { arena_release(s->arena); s->arena = 0; }
   for(U64 i = 0; i < s->pending_count; i += 1) { wheelhouse_agent_input_forget(s->pending[i].ticket); }
   s->pending_count = 0;
+  wheelhouse_agent_input_forget(s->answer_ticket);
+  s->answer_ticket = 0;
 }
 
 internal String8
@@ -1876,15 +1886,23 @@ uishell_rt_defaulted_insert(UIShell_RichTextState *s, U64 key)
 }
 
 // A Container its style collapses by default is collapsed the first time
-// the View sees it; after that it stays as toggled.
+// the View sees it; after that it stays as toggled. One waiting on an answer
+// opens, since the choices are inside it.
 internal void
 uishell_rt_collapse_default(UIShell_RichTextState *s, UIShell_RtNode *n)
 {
   UIShell_RtContainerStyle *st = uishell_rt_container_style(s->styles, n);
-  if(st && (st->chrome & UIShell_RtChrome_Collapsed) && uishell_rt_defaulted_insert(s, n->key))
+  B32 waiting = n->status == WHEELHOUSE_RICH_STATUS_WAITING;
+  if(st && (st->chrome & UIShell_RtChrome_Collapsed) && uishell_rt_defaulted_insert(s, n->key) && !waiting)
   {
     char *error = 0;
     wheelhouse_rich_text_set_collapsed(s->doc, s->sub, n->key, 1, &error);
+    uishell_rt_error(&error);
+  }
+  else if(waiting)
+  {
+    char *error = 0;
+    wheelhouse_rich_text_set_collapsed(s->doc, s->sub, n->key, 0, &error);
     uishell_rt_error(&error);
   }
 }
@@ -3343,9 +3361,38 @@ uishell_rt_resolve_link(Arena *arena, UIShell_RichTextState *s, String8 target, 
   return UIShell_RtLink_File;
 }
 
+internal U64 uishell_rt_input_post(UIShell_RichTextState *s, String8 path, String8 body);
+
+// An answer link (#695): the conversation keeps its choice, and once every
+// field the Interrupt asks is chosen, the answer goes to the producer. A
+// field that takes text asks for it in the composer.
+internal void
+uishell_rt_answer(UIShell_RichTextState *s, String8 target, String8 text)
+{
+  char *error = 0;
+  WheelhouseBytes out = {0};
+  U32 choice = wheelhouse_rich_text_conversation_choose(s->doc, uishell_rt_wt(target), uishell_rt_wt(text), &out, &error);
+  uishell_rt_error(&error);
+  String8 got = str8(out.data, out.len);
+  if(choice == WHEELHOUSE_RICH_CHOICE_SEND)
+  {
+    wheelhouse_agent_input_forget(s->answer_ticket);
+    s->answer_ticket = uishell_rt_input_post(s, str8_lit("/run"), got);
+  }
+  if(choice == WHEELHOUSE_RICH_CHOICE_TEXT && target.size <= sizeof(s->answer_target))
+  {
+    MemoryCopy(s->answer_target, target.str, target.size);
+    s->answer_target_size = target.size;
+    s->answer_prompt_size = Min(got.size, sizeof(s->answer_prompt));
+    MemoryCopy(s->answer_prompt, got.str, s->answer_prompt_size);
+  }
+  if(out.data) { wheelhouse_bytes_free(out); }
+}
+
 internal void
 uishell_rt_follow_link(UIShell_RichTextState *s, String8 target)
 {
+  if(str8_match(str8_prefix(target, 13), str8_lit("wh-interrupt:"), 0)) { uishell_rt_answer(s, target, str8_zero()); return; }
   Temp scratch = scratch_begin(0, 0);
   String8 resolved = str8_zero();
   U64 heading = 0;
@@ -4999,7 +5046,7 @@ uishell_rt_unsend(UIShell_RichTextState *s, U64 index, String8 why)
 // harness keeps the history. It shows at the conversation's end, pending,
 // until the conversation has a user message with its id.
 internal void
-uishell_rt_send_prompt(UIShell_RichTextState *s, String8 text, Arena *scratch)
+uishell_rt_send_prompt(UIShell_RichTextState *s, String8 text, B32 queue, Arena *scratch)
 {
   if(s->pending_count == UISHELL_RT_PENDING_MAX)
   {
@@ -5015,8 +5062,10 @@ uishell_rt_send_prompt(UIShell_RichTextState *s, String8 text, Arena *scratch)
   MemoryCopy(p->text, text.str, p->text_size);
   s->last_prompt_size = p->text_size;
   MemoryCopy(s->last_prompt, p->text, p->text_size);
-  String8 body = push_str8f(scratch, "{\"threadId\":%S,\"runId\":\"%s\",\"messages\":[{\"id\":\"%s\",\"role\":\"user\",\"content\":%S}]}",
-                            uishell_rt_json_string(scratch, s->agent_thread), p->id, p->id, uishell_rt_json_string(scratch, text));
+  // While the agent waits on an answer, a prompt waits its turn and never answers it (#695).
+  String8 body = push_str8f(scratch, "{\"threadId\":%S,\"runId\":\"%s\",\"messages\":[{\"id\":\"%s\",\"role\":\"user\",\"content\":%S}]%s}",
+                            uishell_rt_json_string(scratch, s->agent_thread), p->id, p->id, uishell_rt_json_string(scratch, text),
+                            queue ? ",\"mode\":\"queue\"" : "");
   char *error = 0;
   wheelhouse_rich_text_pend_user_message(s->doc, uishell_rt_wt(str8_cstring(p->id)), uishell_rt_wt(str8(p->text, p->text_size)), &error);
   uishell_rt_error(&error);
@@ -5215,6 +5264,27 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
   if(running && s->running_since_us == 0) { s->running_since_us = now_time_us(); }
   if(!running) { s->running_since_us = 0; }
   uishell_rt_pending_update(s);
+  // An Interrupt still open, and where its card is (#695).
+  U64 ask_key = 0;
+  WheelhouseBytes reason = {0};
+  B32 asked = wheelhouse_rich_text_conversation_open_interrupt(s->doc, &ask_key, &reason, &error);
+  uishell_rt_error(&error);
+  String8 asking = str8_match(str8(reason.data, reason.len), str8_lit("approval"), 0) ? str8_lit("approval") : str8_lit("an answer");
+  if(reason.data) { wheelhouse_bytes_free(reason); }
+  // An answer another window gave first is refused; the card shows theirs.
+  if(s->answer_ticket)
+  {
+    WheelhouseBytes why = {0};
+    U32 sent = wheelhouse_agent_input_status(s->answer_ticket, &why, &error);
+    uishell_rt_error(&error);
+    if(sent == WHEELHOUSE_AGENT_INPUT_FAILED)
+    {
+      B32 taken = str8_find_needle(str8(why.data, why.len), 0, str8_lit("answered"), 0) < why.len;
+      uishell_rt_set_notice(s, taken ? str8_lit("Already answered") : push_str8f(scratch, "The answer didn't send: %S", str8(why.data, why.len)));
+    }
+    if(why.data) { wheelhouse_bytes_free(why); }
+    if(sent != WHEELHOUSE_AGENT_INPUT_SENDING) { wheelhouse_agent_input_forget(s->answer_ticket); s->answer_ticket = 0; }
+  }
   U64 now = now_time_us();
   // Elapsed time, and "Sending" moving to "Waiting", redraw on their own.
   if(running || s->pending_count) { rd_request_frame_at(now + 250000); }
@@ -5322,7 +5392,7 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
   String8 text = str8(s->compose, s->compose_size);
   U64 shown = Clamp(1, lines.count, UISHELL_RT_COMPOSE_LINES);
   F32 card_h = Max(shown*line_h, button_h) + 2*pad;
-  B32 status = running || s->pending_count;
+  B32 status = running || s->pending_count || asked;
   F32 row_h = floor_f32(size*2.f);
   Rng2F32 card_rect = r2f32p(column_x, bottom - gap - card_h, column_x + column_w, bottom - gap);
   U64 cursor = (U64)(s->compose_cursor.column - 1), mark = (U64)(s->compose_mark.column - 1);
@@ -5336,7 +5406,12 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
   if(status)
   {
     String8 left = str8_zero(), right = str8_zero();
-    if(running)
+    if(asked)
+    {
+      left = push_str8f(scratch, "Waiting for %S", asking);
+      right = str8_lit("Show");
+    }
+    else if(running)
     {
       static const char *dots[] = {"   ", ".  ", ".. ", "..."};
       U64 elapsed = (now - s->running_since_us)/1000000;
@@ -5359,7 +5434,13 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
     UI_Box *row = &ui_nil_box;
     UI_Parent(root) UI_Rect(r2f32p(column_x + pad, card_rect.y0 - row_h, column_x + column_w - pad, card_rect.y0)) UI_ChildLayoutAxis(Axis2_X)
     {
-      row = ui_build_box_from_stringf(UI_BoxFlag_Floating, "###rich_text_compose_status");
+      // While an Interrupt waits, the row takes the View to its card.
+      row = ui_build_box_from_stringf(UI_BoxFlag_Floating|(asked ? UI_BoxFlag_Clickable : 0), "###rich_text_compose_status");
+    }
+    if(asked && ui_clicked(ui_signal_from_box(row)))
+    {
+      wheelhouse_rich_text_reveal(s->doc, s->sub, ask_key, 0, &error);
+      uishell_rt_error(&error);
     }
     UI_Parent(row) UI_PrefHeight(ui_px(row_h, 1)) UI_TagF("weak") UI_TextPadding(0)
     {
@@ -5400,7 +5481,10 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
       {
         UI_Rect(r2f32p(0, 0, text_w, line_h)) UI_TagF("weak")
         {
-          ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText, "Message the agent###rt_compose_placeholder");
+          String8 hint = s->answer_target_size ? push_str8f(scratch, "Answer: %S", str8(s->answer_prompt, s->answer_prompt_size))
+                                               : str8_lit("Message the agent");
+          UI_Box *placeholder = ui_build_box_from_stringf(UI_BoxFlag_Floating|UI_BoxFlag_DrawText, "###rt_compose_placeholder");
+          ui_box_equip_display_string(placeholder, hint);
         }
       }
       for(U64 i = s->compose_first_line; i < s->compose_first_line + shown; i += 1)
@@ -5478,9 +5562,17 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
   //- What the keys and the button asked for.
   if(stop) { wheelhouse_agent_input_forget(uishell_rt_input_post(s, str8_lit("/stop"), str8_lit("{}"))); }
   String8 prompt = str8_skip_chop_whitespace(str8(s->compose, s->compose_size));
-  if(send && prompt.size)
+  if(send && prompt.size && s->answer_target_size)
   {
-    uishell_rt_send_prompt(s, prompt, scratch);
+    uishell_rt_answer(s, str8(s->answer_target, s->answer_target_size), prompt);
+    s->answer_target_size = s->answer_prompt_size = 0;
+    s->compose_size = 0;
+    s->compose_cursor = s->compose_mark = txt_pt(1, 1);
+    s->compose_first_line = 0;
+  }
+  else if(send && prompt.size)
+  {
+    uishell_rt_send_prompt(s, prompt, asked, scratch);
     s->compose_size = 0;
     s->compose_cursor = s->compose_mark = txt_pt(1, 1);
     s->compose_first_line = 0;

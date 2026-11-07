@@ -8,21 +8,22 @@
 //! order, and every item's content, depend only on the lines, so ingesting
 //! the file in any pieces, tail first or not, gives the same tree.
 use std::collections::hash_map::Entry as MapEntry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use conversation_events::{
-    parse_line, patch, Capabilities, Event, Lines, Message, Outcome, Page, Parent, Role as EventRole, ToolCallResult,
+    parse_line, patch, Capabilities, Event, Interrupt, Lines, Message, Outcome, Page, Parent, ResumeEntry, ResumeStatus, Role as EventRole,
+    ToolCallResult,
     ToolKind as EventToolKind, ToolStatus as EventToolStatus, Truncated, ANSI, COMPACTION, CONTRACT, DIFF, MARKDOWN, STATUS, STATUS_IDLE,
 };
-use serde_json::Value;
+use serde_json::{json, to_value, Value};
 
 use super::ingest::{parse_into, Staged};
 use super::log::Log;
 use super::ring::Ring;
 use super::tail::{repair, Fence};
-use super::tree::{Attr, Detail, Key, Kind, Role, RunSummary, SectionKind, Span, ToolKind, ToolStatus, Tree};
+use super::tree::{Alert, Attr, Detail, Key, Kind, Role, RunSummary, SectionKind, Span, ToolKind, ToolStatus, Tree, NO_STRING};
 use super::view::View;
 
 /// The file offset of an item's first line, then its place in that line (a
@@ -216,6 +217,8 @@ enum Body {
         streamed: Option<Box<ToolResult>>,
         /// An open Interrupt names it.
         waiting: bool,
+        /// The Interrupt that asked about it, answered or not (#695).
+        ask: Option<String>,
         started: Option<u64>,
         shown: Shown,
     },
@@ -228,6 +231,35 @@ enum Body {
     Notice {
         text: String,
     },
+    /// An Interrupt that names no call: a question, by its id.
+    Question {
+        id: String,
+    },
+}
+
+/// What an Interrupt asks, where it shows, and its answer once one comes.
+#[derive(Debug)]
+struct Ask {
+    interrupt: Interrupt,
+    key: Key,
+    answer: Option<ResumeEntry>,
+    /// This View's choices so far, by field, for one asking several.
+    chosen: BTreeMap<String, String>,
+}
+
+/// A link that answers an Interrupt: `wh-interrupt:<id>?<field>=<value>`,
+/// or with no `=` a field that takes text.
+const ANSWER_SCHEME: &str = "wh-interrupt:";
+
+/// What choosing an answer link leads to.
+#[derive(Debug, PartialEq)]
+pub enum Choice {
+    /// Nothing to send yet, or nothing to answer.
+    None,
+    /// A RunAgentInput to post: every field the Interrupt asks is chosen.
+    Send(String),
+    /// The field takes text: the composer asks for it with this prompt.
+    Text(String),
 }
 
 #[derive(Debug)]
@@ -266,6 +298,7 @@ impl Item {
             }
             Body::Divider { text } => (Kind::Divider, text, Detail::None),
             Body::Notice { text } => (Kind::Notice, text, Detail::None),
+            Body::Question { .. } => (Kind::Quote, "", Detail::Quote { alert: Some(Alert::Important) }),
         }
     }
 }
@@ -530,6 +563,140 @@ impl Shown {
 }
 
 /// A call's input Block under `parent`, if it has input.
+/// The fields an Interrupt asks for, in order, with their schemas.
+fn fields(interrupt: &Interrupt) -> Vec<(String, &Value)> {
+    let Some(schema) = interrupt.response_schema.as_ref() else { return vec![] };
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let required = schema.get("required").and_then(Value::as_array);
+    let names: Vec<&str> = match required {
+        Some(r) => r.iter().filter_map(Value::as_str).collect(),
+        None => properties.map(|p| p.keys().map(String::as_str).collect()).unwrap_or_default(),
+    };
+    names.into_iter().filter_map(|n| Some((n.to_owned(), properties?.get(n)?))).collect()
+}
+
+fn text_of(schema: &Value, field: &str) -> String {
+    schema.get(field).and_then(Value::as_str).unwrap_or_default().to_owned()
+}
+
+/// A field's choices: each const's value and title; a free-text entry
+/// (`type: string`) has no value.
+fn choices(schema: &Value) -> Vec<(Option<String>, String)> {
+    let options = schema.get("oneOf").or(schema.get("anyOf")).and_then(Value::as_array);
+    let to_choice = |o: &Value| match o.get("const") {
+        Some(c) => {
+            let value = c.as_str().map_or_else(|| c.to_string(), str::to_owned);
+            let title = o.get("title").and_then(Value::as_str).map_or_else(|| value.clone(), str::to_owned);
+            Some((Some(value), title))
+        }
+        None => (o.get("type").and_then(Value::as_str) == Some("string")).then(|| (None, "Other…".to_owned())),
+    };
+    match options {
+        Some(options) => options.iter().filter_map(to_choice).collect(),
+        None => vec![(None, "Answer…".to_owned())],
+    }
+}
+
+fn answer_link(id: &str, field: &str, value: Option<&str>) -> String {
+    let value = value.map(|v| format!("={}", encode(v))).unwrap_or_default();
+    format!("{ANSWER_SCHEME}{}?{}{value}", encode(id), encode(field))
+}
+
+fn parse_answer(target: &str) -> Option<(String, String, Option<String>)> {
+    let (id, rest) = target.strip_prefix(ANSWER_SCHEME)?.split_once('?')?;
+    let (field, value) = match rest.split_once('=') {
+        Some((field, value)) => (field, Some(decode(value))),
+        None => (rest, None),
+    };
+    Some((decode(id), decode(field), value))
+}
+
+fn encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
+}
+
+fn decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(b)) => {
+                out.push(b);
+                i += 3;
+            }
+            (b, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// What an Interrupt asks, under `parent`: each field's question and its
+/// choices as answer links, or once answered, what was chosen (#695).
+fn stage_ask(ask: &Ask, staged: &mut Staged, parent: u32) {
+    let id = &ask.interrupt.id;
+    // Keyed by the Interrupt, so a card staged whole and one updated agree.
+    let mut n = 0;
+    let mut key = || {
+        n += 1;
+        Some(Key::named(&[id, "ask", &n.to_string()]))
+    };
+    if let Some(message) = ask.interrupt.message.as_ref().filter(|_| ask.answer.is_none()) {
+        staged.push(parent, Kind::Paragraph, key(), message, vec![], Detail::None);
+    }
+    let asked = fields(&ask.interrupt);
+    let titled = asked.len() > 1 || ask.interrupt.tool_call_id.is_none();
+    if let Some(entry) = &ask.answer {
+        let text = match entry.status {
+            ResumeStatus::Cancelled => "Not answered: the run stopped".to_owned(),
+            ResumeStatus::Resolved => {
+                let given = |field: &str, schema: &Value| {
+                    let value = entry.payload.as_ref().and_then(|p| p.get(field)).map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned));
+                    let value = value.unwrap_or_default();
+                    let title = choices(schema).into_iter().find(|(v, _)| v.as_deref() == Some(&value)).map_or(value, |(_, t)| t);
+                    if titled { format!("{}: {title}", text_of(schema, "title")) } else { title }
+                };
+                asked.iter().map(|(f, schema)| given(f, schema)).collect::<Vec<_>>().join(" · ")
+            }
+        };
+        let text = format!("✓ {text}");
+        let len = text.len() as u32;
+        staged.push(parent, Kind::Paragraph, key(), &text, vec![Span { start: 0, len, attr: Attr::Emphasis }], Detail::None);
+        return;
+    }
+    for (field, schema) in &asked {
+        if titled {
+            let (title, question) = (text_of(schema, "title"), text_of(schema, "description"));
+            let text = if title.is_empty() { question } else { format!("{title}  {question}") };
+            let bold = text_of(schema, "title").len() as u32;
+            staged.push(parent, Kind::Paragraph, key(), &text, vec![Span { start: 0, len: bold, attr: Attr::Strong }], Detail::None);
+        }
+        let (mut text, mut spans, mut strings) = (String::new(), vec![], vec![]);
+        for (value, title) in choices(schema) {
+            if !text.is_empty() {
+                text.push_str("   ");
+            }
+            let chosen = value.is_some() && ask.chosen.get(field) == value.as_ref();
+            let label = if chosen { format!("✓ {title}") } else { title };
+            let start = text.len() as u32;
+            text.push_str(&label);
+            let len = label.len() as u32;
+            strings.push(answer_link(id, field, value.as_deref()));
+            spans.push(Span { start, len, attr: Attr::Link { target: strings.len() as u32 - 1, reference: NO_STRING } });
+            if chosen {
+                spans.push(Span { start, len, attr: Attr::Strong });
+            }
+        }
+        staged.push_with_strings(parent, Kind::Paragraph, key(), &text, spans, strings);
+    }
+}
+
 fn stage_input(call: Key, shown: &Shown, staged: &mut Staged, parent: u32) -> Option<u32> {
     let (text, language) = shown.input.as_ref()?;
     Some(staged.push(parent, Kind::Input, Some(input_key(call)), text, vec![], Detail::Code { language: (*language).into() }))
@@ -610,7 +777,7 @@ fn stage_result(r: &ToolResult, kind: ToolKind, path: &str, staged: &mut Staged,
         let mut log = Log::default();
         log.feed(&r.content);
         for chunk in log.chunks() {
-            staged.push_with_strings(parent, Kind::Log, &chunk.text, chunk.spans, chunk.strings);
+            staged.push_with_strings(parent, Kind::Log, None, &chunk.text, chunk.spans, chunk.strings);
         }
     }
     if let Some(truncated) = &r.truncated {
@@ -661,7 +828,9 @@ pub(crate) struct Conversation {
     waiting: HashMap<Key, (String, u64)>,
     /// The line that answered each Interrupt. Backfill reads an answer
     /// before the Interrupt it answers.
-    answered: HashMap<String, u64>,
+    answered: HashMap<String, (u64, ResumeEntry)>,
+    /// What each Interrupt asks, by its id.
+    asks: HashMap<String, Ask>,
     touched: Vec<Key>,
     touched_set: HashSet<Key>,
     created: Vec<Key>,
@@ -940,7 +1109,12 @@ impl Conversation {
             }
             Event::RunStarted(e) => {
                 for entry in e.input.iter().flat_map(|input| &input.resume) {
-                    self.answered.insert(entry.interrupt_id.clone(), at);
+                    self.answered.insert(entry.interrupt_id.clone(), (at, entry.clone()));
+                    if let Some(ask) = self.asks.get_mut(&entry.interrupt_id) {
+                        ask.answer = Some(entry.clone());
+                        let key = ask.key;
+                        self.dirty(key);
+                    }
                     let answered: Vec<Key> =
                         self.waiting.iter().filter(|(_, (id, from))| *id == entry.interrupt_id && *from < at).map(|(k, _)| *k).collect();
                     for key in answered {
@@ -969,18 +1143,21 @@ impl Conversation {
                     }
                     Some(Outcome::Interrupt { interrupts }) => {
                         for (i, interrupt) in interrupts.iter().enumerate() {
+                            let open = self.answered.get(&interrupt.id).is_none_or(|(answer, _)| *answer < at);
                             match &interrupt.tool_call_id {
-                                Some(call) if self.answered.get(&interrupt.id).is_none_or(|&answer| answer < at) => {
+                                Some(call) => {
                                     let key = tool_key(&thread, call);
-                                    self.waiting.insert(key, (interrupt.id.clone(), at));
-                                    self.set_waiting(key, true);
+                                    self.ask(key, interrupt);
+                                    if open {
+                                        self.waiting.insert(key, (interrupt.id.clone(), at));
+                                        self.set_waiting(key, true);
+                                    }
                                 }
-                                Some(_) => {}
-                                // Drawing what it asks is #695's; until then it's a notice.
                                 None => {
-                                    let text = interrupt.message.clone().unwrap_or_else(|| interrupt.reason.clone());
                                     let key = Key::named(&[&thread, &interrupt.id, "interrupt"]);
-                                    self.create(key, (at, i as u32), &thread, || Body::Notice { text });
+                                    self.ask(key, interrupt);
+                                    let id = interrupt.id.clone();
+                                    self.create(key, (at, i as u32), &thread, || Body::Question { id });
                                 }
                             }
                         }
@@ -1087,6 +1264,76 @@ impl Conversation {
         }
     }
 
+    /// Records what `interrupt` asks, shown in the item `key`; a restated
+    /// one keeps its answer and this View's choices.
+    fn ask(&mut self, key: Key, interrupt: &Interrupt) {
+        let answer = self.answered.get(&interrupt.id).map(|(_, entry)| entry.clone());
+        let ask = self.asks.entry(interrupt.id.clone()).or_insert_with(|| Ask {
+            interrupt: interrupt.clone(),
+            key,
+            answer,
+            chosen: BTreeMap::new(),
+        });
+        ask.interrupt = interrupt.clone();
+        if let Some(item) = self.items.get_mut(&key) {
+            if let Body::Tool { ask, .. } = &mut item.body {
+                *ask = Some(interrupt.id.clone());
+            }
+        }
+        self.dirty(key);
+    }
+
+    fn dirty(&mut self, key: Key) {
+        if let Some(item) = self.items.get_mut(&key) {
+            item.dirty = true;
+            self.touch(key);
+        }
+    }
+
+    /// The first Interrupt still open, where it shows, and its reason.
+    pub fn open_interrupt(&self) -> Option<(Key, &str)> {
+        let open = self.asks.values().filter(|a| a.answer.is_none() && self.items.contains_key(&a.key));
+        open.min_by_key(|a| self.items[&a.key].order).map(|a| (a.key, a.interrupt.reason.as_str()))
+    }
+
+    /// Chooses the answer an answer link names, with `text` for a field that
+    /// takes text.
+    pub fn choose(&mut self, target: &str, text: Option<&str>, sink: &mut Sink) -> Choice {
+        let Some((id, field, value)) = parse_answer(target) else { return Choice::None };
+        let Some(ask) = self.asks.get_mut(&id) else { return Choice::None };
+        if ask.answer.is_some() {
+            return Choice::None;
+        }
+        // Only a field it asks, with a choice it offers or text where it takes it.
+        let asked = fields(&ask.interrupt);
+        let Some((_, schema)) = asked.iter().find(|(f, _)| *f == field) else { return Choice::None };
+        let offered = choices(schema);
+        let free = offered.iter().any(|(v, _)| v.is_none());
+        let value = match (value, text) {
+            (_, Some(text)) if free => text.to_owned(),
+            (Some(value), None) if offered.iter().any(|(v, _)| v.as_ref() == Some(&value)) => value,
+            (None, None) if free => {
+                let prompt = schema.get("description").or(schema.get("title")).and_then(Value::as_str).unwrap_or(&field);
+                return Choice::Text(prompt.to_owned());
+            }
+            _ => return Choice::None,
+        };
+        let complete = asked.iter().all(|(f, _)| *f == field || ask.chosen.contains_key(f));
+        ask.chosen.insert(field, value);
+        let body = complete.then(|| {
+            let entry = ResumeEntry {
+                interrupt_id: id.clone(),
+                status: ResumeStatus::Resolved,
+                payload: Some(to_value(&ask.chosen).expect("choices serialize")),
+            };
+            json!({ "messages": [], "resume": [entry] }).to_string()
+        });
+        let key = ask.key;
+        self.dirty(key);
+        self.settle(sink);
+        body.map_or(Choice::None, Choice::Send)
+    }
+
     fn set_waiting(&mut self, key: Key, waiting: bool) {
         if let Some(item) = self.items.get_mut(&key) {
             if let Body::Tool { waiting: w, .. } = &mut item.body {
@@ -1142,6 +1389,7 @@ impl Conversation {
             result: None,
             streamed: None,
             waiting: self.waiting.contains_key(&key),
+            ask: self.asks.iter().find(|(_, a)| a.key == key).map(|(id, _)| id.clone()),
             started,
             shown,
         };
@@ -1276,7 +1524,7 @@ impl Conversation {
         let node = staged.push(parent, kind, Some(key), text, vec![], detail);
         match &mut item.body {
             Body::Text { md, .. } | Body::Reasoning { md } => md.stage(staged, node, doc),
-            Body::Tool { kind, result, streamed, shown, .. } => {
+            Body::Tool { kind, result, streamed, shown, ask, .. } => {
                 if let Some(r) = result.as_ref().or(streamed.as_deref()) {
                     stage_result(r, *kind, &shown.title, staged, node);
                 }
@@ -1284,6 +1532,14 @@ impl Conversation {
                 // an update stages them, then moved first.
                 if stage_input(key, shown, staged, node).is_some() {
                     staged.nodes[node as usize].children.rotate_right(1);
+                }
+                if let Some(ask) = ask.as_ref().and_then(|id| self.asks.get(id)) {
+                    stage_ask(ask, staged, node);
+                }
+            }
+            Body::Question { id } => {
+                if let Some(ask) = self.asks.get(id) {
+                    stage_ask(ask, staged, node);
                 }
             }
             _ => {}
@@ -1535,7 +1791,7 @@ impl Conversation {
             sink.update(&head, 1);
             match &mut item.body {
                 Body::Text { md, .. } | Body::Reasoning { md } => md.stream(key, sink),
-                Body::Tool { kind, result, streamed, shown, .. } => {
+                Body::Tool { kind, result, streamed, shown, ask, .. } => {
                     // Only an input that changed is staged again.
                     let was = lead(sink.doc, key);
                     let current =
@@ -1554,7 +1810,17 @@ impl Conversation {
                     if let Some(r) = result.as_ref().or(streamed.as_deref()) {
                         stage_result(r, *kind, &shown.title, &mut staged, 0);
                     }
+                    if let Some(ask) = ask.as_ref().and_then(|id| self.asks.get(id)) {
+                        stage_ask(ask, &mut staged, 0);
+                    }
                     sink.splice(key, lead(sink.doc, key) + own, None, staged);
+                }
+                Body::Question { id } => {
+                    let mut staged = Staged::under(key, 0);
+                    if let Some(ask) = self.asks.get(id) {
+                        stage_ask(ask, &mut staged, 0);
+                    }
+                    sink.splice(key, 0, None, staged);
                 }
                 _ => {}
             }
@@ -1693,6 +1959,12 @@ impl Conversation {
                 // setext heading.
                 Body::Divider { text } => parts.push(format!("*— {} —*", text.replace('*', "\\*"))),
                 Body::Notice { text } => parts.push(text.split('\n').map(|line| format!("> {line}")).collect::<Vec<_>>().join("\n")),
+                Body::Question { id } => {
+                    if let Some(ask) = self.asks.get(id) {
+                        let asked: Vec<String> = fields(&ask.interrupt).into_iter().map(|(_, p)| text_of(p, "description")).collect();
+                        parts.push(asked.iter().map(|q| format!("> {q}")).collect::<Vec<_>>().join("\n"));
+                    }
+                }
             }
             self.transcript_into(key, parts);
         }

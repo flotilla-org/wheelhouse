@@ -29,7 +29,7 @@ mod scale_tests;
 #[cfg(test)]
 mod tests;
 
-pub use conversation::{CopyAction, TAIL_BYTES, TAIL_ITEMS};
+pub use conversation::{Choice, CopyAction, TAIL_BYTES, TAIL_ITEMS};
 pub use find::{Find, FindOptions, FindStatus, Match, FIND_BUDGET, MATCH_LIMIT};
 pub use log::{CHUNK_BYTES, CHUNK_LINES, LINE_CAP};
 pub use pages::PAGE;
@@ -151,6 +151,23 @@ impl RichText {
     /// The watched thread's `status` document, if it publishes one.
     pub fn conversation_status(&self) -> Option<&str> {
         self.conversation.as_ref()?.status()
+    }
+
+    /// The first open Interrupt of a watched thread: the item it shows in,
+    /// and its reason, such as `approval`.
+    pub fn conversation_open_interrupt(&self) -> Option<(Key, String)> {
+        let (key, reason) = self.conversation.as_ref()?.open_interrupt()?;
+        Some((key, reason.to_owned()))
+    }
+
+    /// Chooses the answer an answer link names (`text` for a field that
+    /// takes text); see [`Choice`].
+    pub fn conversation_choose(&mut self, target: &str, text: Option<&str>) -> Choice {
+        let Some(mut conversation) = self.conversation.take() else { return Choice::None };
+        let mut choice = Choice::None;
+        self.edit(|sink| choice = conversation.choose(target, text, sink));
+        self.conversation = Some(conversation);
+        choice
     }
 
     pub fn is_conversation(&self) -> bool {
