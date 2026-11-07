@@ -470,7 +470,7 @@ typedef struct BinnacleGrid BinnacleGrid;
 #define WHEELHOUSE_RICH_KIND_LOG 21
 
 // A break in a conversation; its text says why (`compaction`, or a run's
-// outcome such as `interrupted`).
+// outcome such as `cancelled`).
 #define WHEELHOUSE_RICH_KIND_DIVIDER 22
 
 // A note standing in for content, such as output that was cut.
@@ -577,9 +577,10 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 #define WHEELHOUSE_RICH_STATUS_FAILED 3
 
-#define WHEELHOUSE_RICH_STATUS_INTERRUPTED 4
+#define WHEELHOUSE_RICH_STATUS_CANCELLED 4
 
-#define WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL 5
+// Named by an Interrupt that hasn't been answered, such as an approval.
+#define WHEELHOUSE_RICH_STATUS_WAITING 5
 
 // A Section's `duration_ms` when its call's start or end time isn't known:
 // compare against it before showing a duration.
@@ -1694,7 +1695,7 @@ typedef struct {
   // A Tool Run's calls by kind, such as "Ran 3 commands · edited 2 files ·
   // 1 failed".
   WheelhouseText summary;
-  // How many of a Tool Run's calls failed or were interrupted.
+  // How many of a Tool Run's calls failed or were cancelled.
   uint32_t failed;
   // Where in `summary` its failures start: its length if none failed.
   uint32_t failed_at;

@@ -1,4 +1,4 @@
-{"type":"Hello","contract":1}
+{"type":"Hello","contract":2}
 {"type":"RunStarted","threadId":"77777777-7777-4777-8777-777777777777","seq":1,"runId":"u0001-77777777","source":{"log":"spilled-output/77777777-7777-4777-8777-777777777777.jsonl","record":"u0001-77777777","line":1}}
 {"type":"TextMessageStart","threadId":"77777777-7777-4777-8777-777777777777","seq":2,"messageId":"u0001-77777777","role":"user","source":{"log":"spilled-output/77777777-7777-4777-8777-777777777777.jsonl","record":"u0001-77777777","line":1}}
 {"type":"TextMessageContent","threadId":"77777777-7777-4777-8777-777777777777","seq":3,"messageId":"u0001-77777777","delta":"Show the whole build log.","source":{"log":"spilled-output/77777777-7777-4777-8777-777777777777.jsonl","record":"u0001-77777777","line":1}}
@@ -14,4 +14,4 @@
 {"type":"TextMessageStart","threadId":"77777777-7777-4777-8777-777777777777","seq":13,"messageId":"msg_sp_c","role":"assistant","source":{"log":"spilled-output/77777777-7777-4777-8777-777777777777.jsonl","record":"u0006-77777777","line":6}}
 {"type":"TextMessageContent","threadId":"77777777-7777-4777-8777-777777777777","seq":14,"messageId":"msg_sp_c","delta":"The log is long.","source":{"log":"spilled-output/77777777-7777-4777-8777-777777777777.jsonl","record":"u0006-77777777","line":6}}
 {"type":"TextMessageEnd","threadId":"77777777-7777-4777-8777-777777777777","seq":15,"messageId":"msg_sp_c","source":{"log":"spilled-output/77777777-7777-4777-8777-777777777777.jsonl","record":"u0006-77777777","line":6}}
-{"type":"RunFinished","threadId":"77777777-7777-4777-8777-777777777777","seq":16,"runId":"u0001-77777777","outcome":"completed","source":{"log":"spilled-output/77777777-7777-4777-8777-777777777777.jsonl"}}
+{"type":"RunFinished","threadId":"77777777-7777-4777-8777-777777777777","seq":16,"runId":"u0001-77777777","source":{"log":"spilled-output/77777777-7777-4777-8777-777777777777.jsonl"}}

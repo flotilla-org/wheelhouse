@@ -143,7 +143,7 @@ fn end(id: &str) -> Vec<u8> {
     line(&format!(r#"{{"type":"TextMessageEnd","threadId":"t","seq":3,"messageId":"{id}"}}"#))
 }
 
-const HELLO: &str = r#"{"type":"Hello","contract":1}"#;
+const HELLO: &str = r#"{"type":"Hello","contract":2}"#;
 
 #[test]
 fn a_streaming_message_upserts_only_its_tail_and_freezes_the_rest() {
@@ -274,10 +274,10 @@ fn keys_come_from_ids_and_last_across_reloads() {
 
 #[test]
 fn another_major_version_shows_a_notice_and_nothing_else() {
-    let rich = whole(&[line(r#"{"type":"Hello","contract":2}"#), start("m", "user"), content("m", "hi"), end("m")].concat());
+    let rich = whole(&[line(r#"{"type":"Hello","contract":1}"#), start("m", "user"), content("m", "hi"), end("m")].concat());
     insta::assert_snapshot!(outline(rich.doc()), @r#"
     Root
-      Notice "Conversation contract 2 isn't supported (this reads 1)"
+      Notice "Conversation contract 1 isn't supported (this reads 2)"
     "#);
 }
 
@@ -291,8 +291,97 @@ fn a_tool_call_is_pending_until_its_result() {
         _ => unreachable!(),
     };
     assert_eq!(status(&rich), ToolStatus::Pending);
-    rich.append(&line(r#"{"type":"ToolCallResult","threadId":"t","seq":2,"toolCallId":"c","status":"awaiting_approval","content":""}"#));
-    assert_eq!(status(&rich), ToolStatus::AwaitingApproval);
+    rich.append(&line(r#"{"type":"ToolCallResult","threadId":"t","seq":2,"toolCallId":"c","status":"ok","content":""}"#));
+    assert_eq!(status(&rich), ToolStatus::Ok);
+}
+
+fn tool_status(rich: &RichText, call: &str) -> ToolStatus {
+    match rich.doc().detail(rich.doc().get(Key::named(&["t", "tool", call])).unwrap()) {
+        Detail::Section { status, .. } => *status,
+        _ => unreachable!(),
+    }
+}
+
+const INTERRUPTED: &str = r#"{"type":"RunFinished","threadId":"t","seq":3,"runId":"r","outcome":{"type":"interrupt","interrupts":[{"id":"i","reason":"tool_approval","toolCallId":"c"},{"id":"q","reason":"question","message":"Which branch?"}]}}"#;
+const ANSWERED: &str = r#"{"type":"RunStarted","threadId":"t","seq":4,"runId":"r2","input":{"resume":[{"interruptId":"i","status":"resolved","payload":true}]}}"#;
+
+#[test]
+fn an_interrupt_leaves_its_call_waiting_until_it_is_answered() {
+    let call = line(
+        r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","title":"rm -rf target","kind":"shell"}"#,
+    );
+    let mut rich = RichText::open_conversation(&[line(HELLO), call, line(INTERRUPTED)].concat());
+    assert_eq!(tool_status(&rich, "c"), ToolStatus::Waiting);
+    // One that names no call isn't lost before #695 draws it.
+    assert!(outline(rich.doc()).contains(r#"Notice "Which branch?""#), "{}", outline(rich.doc()));
+    rich.append(&line(ANSWERED));
+    assert_eq!(tool_status(&rich, "c"), ToolStatus::Pending);
+}
+
+#[test]
+fn an_answer_backfill_reads_first_still_answers_its_interrupt() {
+    let call =
+        line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","title":"rm","kind":"shell"}"#);
+    let bytes = [line(HELLO), call, line(INTERRUPTED), line(ANSWERED)].concat();
+    let ended = whole(&bytes);
+    assert_eq!(tool_status(&ended, "c"), ToolStatus::Pending);
+    // A tail of only the answer: the interrupt comes in with backfill.
+    let mut tail = RichText::tuned_conversation(&bytes, RING_CAPACITY, Tuning { tail_items: 0, tail_bytes: 1, step: Some(1) });
+    while tail.backfill(Duration::from_secs(1)) > 0 {}
+    assert_eq!(tool_status(&tail, "c"), ToolStatus::Pending);
+    assert_eq!(canon(tail.doc()), canon(ended.doc()));
+}
+
+#[test]
+fn streamed_output_shows_until_the_result_replaces_it() {
+    let call = line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","kind":"shell"}"#);
+    let mut rich = RichText::open_conversation(&[line(HELLO), call].concat());
+    rich.append(&line(
+        r#"{"type":"ToolCallOutput","threadId":"t","seq":2,"toolCallId":"c","delta":"compiling\n","mediaType":"text/x-ansi"}"#,
+    ));
+    rich.append(&line(r#"{"type":"ToolCallOutput","threadId":"t","seq":3,"toolCallId":"c","delta":"linking\n"}"#));
+    let shown = outline(rich.doc());
+    assert!(shown.contains("compiling") && shown.contains("linking"), "{shown}");
+    assert_eq!(tool_status(&rich, "c"), ToolStatus::Pending);
+    rich.append(&line(
+        r#"{"type":"ToolCallResult","threadId":"t","seq":4,"toolCallId":"c","status":"ok","mediaType":"text/x-ansi","content":"built\n"}"#,
+    ));
+    let shown = outline(rich.doc());
+    assert!(shown.contains("built") && !shown.contains("compiling"), "{shown}");
+    // Output after the result changes nothing.
+    rich.append(&line(r#"{"type":"ToolCallOutput","threadId":"t","seq":5,"toolCallId":"c","delta":"late\n"}"#));
+    assert!(!outline(rich.doc()).contains("late"));
+}
+
+#[test]
+fn a_title_sent_after_the_start_replaces_it() {
+    let call = line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"web_search"}"#);
+    let mut rich = RichText::open_conversation(&[line(HELLO), call].concat());
+    let head = |rich: &RichText| match rich.doc().detail(rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap()) {
+        Detail::Section { title, tool, .. } => (title.clone(), *tool),
+        _ => unreachable!(),
+    };
+    assert_eq!(head(&rich).1, ToolKind::Other);
+    rich.append(&line(r#"{"type":"ToolCallEnd","threadId":"t","seq":2,"toolCallId":"c","title":"parser recovery","kind":"web"}"#));
+    assert_eq!(head(&rich), ("parser recovery".into(), ToolKind::Web));
+    rich.append(&line(
+        r#"{"type":"ToolCallResult","threadId":"t","seq":3,"toolCallId":"c","status":"ok","content":"","title":"parser error recovery"}"#,
+    ));
+    assert_eq!(head(&rich), ("parser error recovery".into(), ToolKind::Web));
+}
+
+#[test]
+fn a_cancelled_run_reads_as_a_divider() {
+    let run = [
+        line(r#"{"type":"RunStarted","threadId":"t","seq":1,"runId":"r"}"#),
+        line(r#"{"type":"RunFinished","threadId":"t","seq":2,"runId":"r","outcome":{"type":"cancelled"}}"#),
+        line(r#"{"type":"RunFinished","threadId":"t","seq":3,"runId":"r2","outcome":{"type":"success"}}"#),
+    ];
+    let rich = whole(&[line(HELLO), run.concat()].concat());
+    insta::assert_snapshot!(outline(rich.doc()), @r#"
+    Root
+      Divider "cancelled"
+    "#);
 }
 
 #[test]
@@ -502,7 +591,7 @@ fn assert_tool_runs(doc: &Tree) {
                 count(&|k, _| k == ToolKind::Read),
                 count(&|k, _| k == ToolKind::Search),
                 count(&|k, _| matches!(k, ToolKind::Agent | ToolKind::Web | ToolKind::Mcp | ToolKind::Other)),
-                count(&|_, s| matches!(s, ToolStatus::Failed | ToolStatus::Interrupted)),
+                count(&|_, s| matches!(s, ToolStatus::Failed | ToolStatus::Cancelled)),
             ]
         );
         assert_eq!(summary.failed > 0, (summary.failed_at as usize) < summary.text.len());
@@ -548,11 +637,11 @@ fn a_tool_run_counts_its_calls_by_kind_then_failures() {
     use ToolKind::*;
     use ToolStatus::*;
     let summary = |calls: &[(ToolKind, ToolStatus)]| RunSummary::new(calls.iter().copied()).text;
-    let calls = [(Shell, Ok), (Read, Ok), (Edit, Failed), (Shell, Interrupted), (Edit, Ok), (Shell, Pending)];
+    let calls = [(Shell, Ok), (Read, Ok), (Edit, Failed), (Shell, Cancelled), (Edit, Ok), (Shell, Pending)];
     assert_eq!(summary(&calls), "Ran 3 commands · edited 2 files · read 1 file · 2 failed");
     let s = RunSummary::new(calls);
     assert_eq!(&s.text[s.failed_at as usize..], "2 failed");
-    assert_eq!(summary(&[(Search, Ok), (Agent, Ok), (Web, AwaitingApproval), (Mcp, Ok)]), "Ran 1 search · called 3 other tools");
+    assert_eq!(summary(&[(Search, Ok), (Agent, Ok), (Web, Waiting), (Mcp, Ok)]), "Ran 1 search · called 3 other tools");
     assert_eq!(summary(&[(Read, Ok), (Read, Ok)]), "Read 2 files");
     let s = RunSummary::new([(Read, Ok), (Read, Ok)]);
     assert_eq!(s.failed_at as usize, s.text.len());
@@ -847,4 +936,50 @@ fn a_view_follows_a_growing_conversation(tc: TestCase) {
     view.scroll_to_end();
     let window = view.window(doc);
     assert!(window.at_end && window.new == 0, "jumping to the end re-arms follow");
+}
+
+#[test]
+fn a_late_title_that_backfill_reads_before_its_start_still_wins() {
+    let bytes = [
+        line(HELLO),
+        line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"web_search","title":"first"}"#),
+        line(r#"{"type":"ToolCallEnd","threadId":"t","seq":2,"toolCallId":"c","title":"latest","kind":"web"}"#),
+    ]
+    .concat();
+    let ended = whole(&bytes);
+    let mut tail = RichText::tuned_conversation(&bytes, RING_CAPACITY, Tuning { tail_items: 0, tail_bytes: 1, step: Some(1) });
+    while tail.backfill(Duration::from_secs(1)) > 0 {}
+    let head = |rich: &RichText| match rich.doc().detail(rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap()) {
+        Detail::Section { title, tool, .. } => (title.clone(), *tool),
+        _ => unreachable!(),
+    };
+    assert_eq!(head(&tail), ("latest".into(), ToolKind::Web));
+    assert_eq!(canon(tail.doc()), canon(ended.doc()));
+}
+
+#[test]
+fn streamed_output_keeps_its_tail() {
+    let call = line(r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","kind":"shell"}"#);
+    let mut rich = RichText::open_conversation(&[line(HELLO), call].concat());
+    // 40 deltas with no media type of 25 lines each, about 60 KiB.
+    for d in 0..40 {
+        let lines: String = (0..25).map(|l| format!("\\u001b[32mline {:04}\\u001b[0m {}\\n", d * 25 + l, "x".repeat(40))).collect();
+        let delta = format!(r#"{{"type":"ToolCallOutput","threadId":"t","seq":{},"toolCallId":"c","delta":"{lines}"}}"#, d + 2);
+        rich.append(&line(&delta));
+    }
+    let shown = outline(rich.doc());
+    // The oldest lines are gone and the newest shown, and the escapes are
+    // read as colours, as any type but markdown, a diff or an image is.
+    assert!(shown.contains("line 0999") && !shown.contains("line 0000"), "{shown}");
+    assert!(!shown.contains("[32m"));
+    assert!(shown.len() < 3 * 16 * 1024);
+}
+
+#[test]
+fn a_question_read_twice_is_one_notice() {
+    let asked = line(
+        r#"{"type":"RunFinished","threadId":"t","seq":2,"runId":"r","outcome":{"type":"interrupt","interrupts":[{"id":"q","reason":"question","message":"Which branch?"}]}}"#,
+    );
+    let rich = whole(&[line(HELLO), asked.clone(), asked].concat());
+    assert_eq!(outline(rich.doc()).matches("Which branch?").count(), 1);
 }

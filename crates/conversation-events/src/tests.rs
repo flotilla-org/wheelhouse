@@ -1,3 +1,5 @@
+use std::fs;
+
 use hegel::generators as gs;
 use hegel::TestCase;
 use serde_json::{json, Value};
@@ -13,18 +15,57 @@ fn events(bytes: &[u8]) -> Vec<Event> {
 #[test]
 fn the_wire_example_reads_with_our_additions() {
     let events = events(WIRE);
-    assert_eq!(events.len(), 14);
+    assert_eq!(events.len(), 25);
     assert_eq!(events[0], Event::Hello(Hello { contract: CONTRACT, input: None }));
     let Event::ToolCallStart(start) = &events[8] else { panic!("{:?}", events[8]) };
     assert_eq!((start.title.as_deref(), start.kind), (Some("cargo test -p wheelhouse-text"), Some(ToolKind::Shell)));
-    let Event::ToolCallResult(result) = &events[11] else { panic!("{:?}", events[11]) };
+    let Event::ToolCallOutput(output) = &events[11] else { panic!("{:?}", events[11]) };
+    assert_eq!((output.delta.as_str(), output.media_type.as_deref()), ("running 3 tests\n", Some(ANSI)));
+    let Event::ToolCallResult(result) = &events[12] else { panic!("{:?}", events[12]) };
     assert_eq!(result.status, Some(ToolStatus::Failed));
     assert_eq!(result.media_type.as_deref(), Some(ANSI));
     assert_eq!(result.content, "\x1b[31merror\x1b[0m: 1 test failed\n");
     assert_eq!(result.truncated, None);
-    assert_eq!((events[11].thread_id(), events[11].seq()), ("t1", 11));
-    let Event::RunFinished(finished) = &events[13] else { panic!() };
-    assert_eq!(finished.outcome.as_deref(), Some(COMPLETED));
+    assert_eq!((events[12].thread_id(), events[12].seq()), ("t1", 12));
+    let Event::ToolCallEnd(end) = &events[14] else { panic!() };
+    assert_eq!((end.title.as_deref(), end.kind), (Some("parser error recovery"), Some(ToolKind::Web)));
+    let Event::ToolCallResult(search) = &events[15] else { panic!() };
+    assert_eq!(search.media_type.as_deref(), Some(SEARCH_RESULTS));
+    let results: Vec<SearchResult> = serde_json::from_value(search.structured.clone().unwrap()).unwrap();
+    assert_eq!((results[0].domain.as_str(), results[0].thumbnail.as_deref()), ("example.com", None));
+    let Event::RunFinished(RunFinished { outcome: Some(Outcome::Interrupt { interrupts }), .. }) = &events[19] else { panic!() };
+    assert_eq!((interrupts[0].id.as_str(), interrupts[0].tool_call_id.as_deref()), ("i1", Some("c3")));
+    let Event::RunStarted(RunStarted { input: Some(input), .. }) = &events[20] else { panic!() };
+    assert_eq!(input.resume, [ResumeEntry { interrupt_id: "i1".into(), status: ResumeStatus::Cancelled, payload: None }]);
+    let Event::TextMessageStart(peer) = &events[21] else { panic!() };
+    let origin = peer.origin.as_ref().unwrap();
+    assert_eq!((&origin.kind, &origin.fields["name"]), (&OriginKind::Peer, &json!("reviewer")));
+    let Event::RunFinished(finished) = &events[24] else { panic!() };
+    assert_eq!(finished.outcome, Some(Outcome::Cancelled));
+}
+
+#[test]
+fn outcomes_read_as_ag_ui_writes_them() {
+    let outcome = |line: &str| match parse_line(line.as_bytes()) {
+        Ok(Some(Event::RunFinished(e))) => e.outcome,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(outcome(r#"{"type":"RunFinished","runId":"r"}"#), None);
+    assert_eq!(
+        outcome(r#"{"type":"RunFinished","runId":"r","outcome":{"type":"success","pendingToolCallIds":["c1"]}}"#),
+        Some(Outcome::Success { pending_tool_call_ids: vec!["c1".into()] })
+    );
+    // AG-UI reads an outcome it doesn't know as success.
+    assert_eq!(outcome(r#"{"type":"RunFinished","runId":"r","outcome":{"type":"paused"}}"#), Some(Outcome::Unknown));
+}
+
+#[test]
+fn origin_kinds_this_version_does_not_know_are_kept() {
+    let origin: Origin = serde_json::from_value(json!({"kind": "crew", "vessel": "v1", "turn": 3})).unwrap();
+    assert_eq!(origin.kind, OriginKind::Other("crew".into()));
+    assert_eq!(serde_json::to_value(&origin).unwrap(), json!({"kind": "crew", "vessel": "v1", "turn": 3}));
+    let note: Origin = serde_json::from_value(json!({"kind": "task-notification"})).unwrap();
+    assert_eq!(note.kind, OriginKind::TaskNotification);
 }
 
 #[test]
@@ -81,7 +122,7 @@ fn lines_are_the_same_however_the_bytes_are_split(tc: TestCase) {
         bytes.pop();
     }
     let whole = lines_of(&[&bytes]);
-    assert_eq!(whole.len(), 14);
+    assert_eq!(whole.len(), 25);
     let mut cuts: Vec<usize> =
         (0..tc.draw(gs::integers::<usize>().max_value(12))).map(|_| tc.draw(gs::integers::<usize>().max_value(bytes.len()))).collect();
     cuts.sort_unstable();
@@ -116,15 +157,33 @@ fn the_fold_turns_the_stream_into_records() {
     }
     let messages = fold.messages("t1");
     let ids: Vec<(&str, Role)> = messages.iter().map(|m| (m.id.as_str(), m.role)).collect();
-    assert_eq!(ids, [("m1", Role::User), ("rs1", Role::Reasoning), ("c1", Role::Assistant), ("m2", Role::Tool)]);
+    assert_eq!(
+        ids,
+        [
+            ("m1", Role::User),
+            ("rs1", Role::Reasoning),
+            ("c1", Role::Assistant),
+            ("m2", Role::Tool),
+            ("c2", Role::Assistant),
+            ("m3", Role::Tool),
+            ("c3", Role::Assistant),
+            ("m4", Role::User),
+        ]
+    );
     assert_eq!(messages[0].text(), "Fix the **failing** test");
     let call = &messages[2].tool_calls[0];
     assert_eq!((call.function.name.as_str(), call.function.arguments.as_str()), ("Bash", r#"{"command":"cargo test -p wheelhouse-text"}"#));
     assert_eq!(call.kind, Some(ToolKind::Shell));
     assert_eq!((messages[3].tool_call_id.as_deref(), messages[3].status), (Some("c1"), Some(ToolStatus::Failed)));
+    // Streamed output isn't kept: the result replaces it.
+    assert_eq!(messages[3].text(), "\x1b[31merror\x1b[0m: 1 test failed\n");
+    // A title that came after the start.
+    let search = &messages[4].tool_calls[0];
+    assert_eq!((search.title.as_deref(), search.kind), (Some("parser error recovery"), Some(ToolKind::Web)));
+    assert_eq!(messages[7].origin.as_ref().map(|o| &o.kind), Some(&OriginKind::Peer));
     assert!(!fold.is_open("t1", "m1"));
     let snapshot = fold.snapshot("t1");
-    assert_eq!(snapshot.seq, 13);
+    assert_eq!(snapshot.seq, 24);
     // The record form reads back as the same records.
     let mut again = Fold::default();
     again.push(&Event::MessagesSnapshot(snapshot));
@@ -134,7 +193,13 @@ fn the_fold_turns_the_stream_into_records() {
 #[test]
 fn an_open_message_is_in_the_snapshot_with_its_content_so_far() {
     let mut fold = Fold::default();
-    fold.push(&Event::TextMessageStart(TextMessageStart { thread_id: "t".into(), seq: 1, message_id: "m".into(), role: Role::Assistant }));
+    fold.push(&Event::TextMessageStart(TextMessageStart {
+        thread_id: "t".into(),
+        seq: 1,
+        message_id: "m".into(),
+        role: Role::Assistant,
+        origin: None,
+    }));
     fold.push(&Event::TextMessageContent(TextMessageContent {
         thread_id: "t".into(),
         seq: 2,
@@ -185,10 +250,10 @@ fn a_snapshot_mid_stream_replaces_the_thread_and_later_deltas_extend_it() {
         fold.push(&event);
     }
     let message = Message { id: "m9".into(), role: Role::Assistant, content: Some(json!("Half")), ..Message::default() };
-    fold.push(&Event::MessagesSnapshot(MessagesSnapshot { thread_id: "t1".into(), seq: 20, messages: vec![message] }));
+    fold.push(&Event::MessagesSnapshot(MessagesSnapshot { thread_id: "t1".into(), seq: 30, messages: vec![message] }));
     fold.push(&Event::TextMessageContent(TextMessageContent {
         thread_id: "t1".into(),
-        seq: 21,
+        seq: 31,
         message_id: "m9".into(),
         delta: " done".into(),
     }));
@@ -198,7 +263,7 @@ fn a_snapshot_mid_stream_replaces_the_thread_and_later_deltas_extend_it() {
     // A delta for a message the snapshot dropped goes nowhere.
     fold.push(&Event::TextMessageContent(TextMessageContent {
         thread_id: "t1".into(),
-        seq: 22,
+        seq: 32,
         message_id: "m1".into(),
         delta: "x".into(),
     }));
@@ -217,5 +282,34 @@ fn a_result_without_a_message_id_gets_one_from_its_call() {
 fn unknown_events_are_not_written() {
     let mut out = vec![];
     write(&mut out, &[Event::Unknown, Event::Hello(Hello { contract: CONTRACT, input: None })]).unwrap();
-    assert_eq!(out, b"{\"type\":\"Hello\",\"contract\":1}\n");
+    assert_eq!(out, b"{\"type\":\"Hello\",\"contract\":2}\n");
+}
+
+#[test]
+fn the_claude_translators_goldens_read_as_version_two() {
+    let goldens = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/claude-code");
+    let mut origins = vec![];
+    for entry in fs::read_dir(goldens).unwrap() {
+        let path = entry.unwrap().path();
+        if !path.to_string_lossy().ends_with(".events.jsonl") {
+            continue;
+        }
+        let events = events(&fs::read(&path).unwrap());
+        assert_eq!(events[0], Event::Hello(Hello { contract: CONTRACT, input: None }), "{path:?}");
+        origins.extend(events.into_iter().filter_map(|e| match e {
+            Event::TextMessageStart(start) => start.origin,
+            _ => None,
+        }));
+    }
+    let peer = origins.iter().find(|o| o.kind == OriginKind::Peer).expect("a peer message");
+    assert_eq!(peer.fields["name"], json!("reviewer"));
+    assert!(origins.iter().any(|o| o.kind == OriginKind::TaskNotification));
+    assert!(origins.iter().any(|o| o.kind == OriginKind::Other("harness".into())));
+}
+
+#[test]
+fn an_interrupt_outcome_without_its_list_still_reads() {
+    let line = br#"{"type":"RunFinished","runId":"r","outcome":{"type":"interrupt"}}"#;
+    let Ok(Some(Event::RunFinished(e))) = parse_line(line) else { panic!() };
+    assert_eq!(e.outcome, Some(Outcome::Interrupt { interrupts: vec![] }));
 }

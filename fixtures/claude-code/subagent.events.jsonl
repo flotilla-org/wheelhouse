@@ -1,4 +1,4 @@
-{"type":"Hello","contract":1}
+{"type":"Hello","contract":2}
 {"type":"RunStarted","threadId":"55555555-5555-4555-8555-555555555555","seq":1,"runId":"u0001-55555555","source":{"log":"subagent/55555555-5555-4555-8555-555555555555.jsonl","record":"u0001-55555555","line":1}}
 {"type":"TextMessageStart","threadId":"55555555-5555-4555-8555-555555555555","seq":2,"messageId":"u0001-55555555","role":"user","source":{"log":"subagent/55555555-5555-4555-8555-555555555555.jsonl","record":"u0001-55555555","line":1}}
 {"type":"TextMessageContent","threadId":"55555555-5555-4555-8555-555555555555","seq":3,"messageId":"u0001-55555555","delta":"Survey the repo with a helper.","source":{"log":"subagent/55555555-5555-4555-8555-555555555555.jsonl","record":"u0001-55555555","line":1}}
@@ -32,6 +32,6 @@
 {"type":"TextMessageStart","threadId":"agent-d4e5f6","seq":5,"messageId":"msg_nested_a","role":"assistant","source":{"log":"subagent/55555555-5555-4555-8555-555555555555/subagents/agent-d4e5f6.jsonl","record":"d4e5f6-0002","line":2}}
 {"type":"TextMessageContent","threadId":"agent-d4e5f6","seq":6,"messageId":"msg_nested_a","delta":"Core parses input.","source":{"log":"subagent/55555555-5555-4555-8555-555555555555/subagents/agent-d4e5f6.jsonl","record":"d4e5f6-0002","line":2}}
 {"type":"TextMessageEnd","threadId":"agent-d4e5f6","seq":7,"messageId":"msg_nested_a","source":{"log":"subagent/55555555-5555-4555-8555-555555555555/subagents/agent-d4e5f6.jsonl","record":"d4e5f6-0002","line":2}}
-{"type":"RunFinished","threadId":"55555555-5555-4555-8555-555555555555","seq":12,"runId":"u0001-55555555","outcome":"completed","source":{"log":"subagent/55555555-5555-4555-8555-555555555555.jsonl"}}
-{"type":"RunFinished","threadId":"agent-a1b2c3","seq":16,"runId":"a1b2c3-0001","outcome":"completed","source":{"log":"subagent/55555555-5555-4555-8555-555555555555/subagents/agent-a1b2c3.jsonl"}}
-{"type":"RunFinished","threadId":"agent-d4e5f6","seq":8,"runId":"d4e5f6-0001","outcome":"completed","source":{"log":"subagent/55555555-5555-4555-8555-555555555555/subagents/agent-d4e5f6.jsonl"}}
+{"type":"RunFinished","threadId":"55555555-5555-4555-8555-555555555555","seq":12,"runId":"u0001-55555555","source":{"log":"subagent/55555555-5555-4555-8555-555555555555.jsonl"}}
+{"type":"RunFinished","threadId":"agent-a1b2c3","seq":16,"runId":"a1b2c3-0001","source":{"log":"subagent/55555555-5555-4555-8555-555555555555/subagents/agent-a1b2c3.jsonl"}}
+{"type":"RunFinished","threadId":"agent-d4e5f6","seq":8,"runId":"d4e5f6-0001","source":{"log":"subagent/55555555-5555-4555-8555-555555555555/subagents/agent-d4e5f6.jsonl"}}

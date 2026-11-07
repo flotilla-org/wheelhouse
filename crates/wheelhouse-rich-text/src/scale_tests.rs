@@ -206,7 +206,7 @@ fn stream_arguments(pieces: &[String], input_prefix: &str) {
             line(format!(r#"{{"type":"ToolCallArgs","threadId":"t","seq":{},"toolCallId":"c","delta":{delta}}}"#, i + 2))
         })
         .collect();
-    let mut rich = RichText::open_conversation(&[line(r#"{"type":"Hello","contract":1}"#.into()), line(start.into())].concat());
+    let mut rich = RichText::open_conversation(&[line(r#"{"type":"Hello","contract":2}"#.into()), line(start.into())].concat());
     let (half, mut first, mut last) = (deltas.len() / 2, Duration::ZERO, Duration::ZERO);
     for (i, delta) in deltas.iter().enumerate() {
         let started = Instant::now();

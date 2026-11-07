@@ -52,7 +52,7 @@ see the docs
 - two
 ```
 
-**Screenshot**
+**Screenshot** terminal window
 
 **Task** Find the flaky test
 
@@ -75,8 +75,6 @@ src/a.rs:3: flaky
 **Bash** cargo build
 
 *— compaction —*
-
-*— interrupted —*
 
 ## User
 

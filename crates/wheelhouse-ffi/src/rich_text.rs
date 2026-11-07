@@ -49,7 +49,7 @@ pub const WHEELHOUSE_RICH_KIND_EMBED: u32 = 20;
 /// Lines of tool output, with literal colours.
 pub const WHEELHOUSE_RICH_KIND_LOG: u32 = 21;
 /// A break in a conversation; its text says why (`compaction`, or a run's
-/// outcome such as `interrupted`).
+/// outcome such as `cancelled`).
 pub const WHEELHOUSE_RICH_KIND_DIVIDER: u32 = 22;
 /// A note standing in for content, such as output that was cut.
 pub const WHEELHOUSE_RICH_KIND_NOTICE: u32 = 23;
@@ -121,8 +121,9 @@ pub const WHEELHOUSE_RICH_STATUS_NONE: u32 = 0;
 pub const WHEELHOUSE_RICH_STATUS_PENDING: u32 = 1;
 pub const WHEELHOUSE_RICH_STATUS_OK: u32 = 2;
 pub const WHEELHOUSE_RICH_STATUS_FAILED: u32 = 3;
-pub const WHEELHOUSE_RICH_STATUS_INTERRUPTED: u32 = 4;
-pub const WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL: u32 = 5;
+pub const WHEELHOUSE_RICH_STATUS_CANCELLED: u32 = 4;
+/// Named by an Interrupt that hasn't been answered, such as an approval.
+pub const WHEELHOUSE_RICH_STATUS_WAITING: u32 = 5;
 
 /// A Section's `duration_ms` when its call's start or end time isn't known:
 /// compare against it before showing a duration.
@@ -267,7 +268,7 @@ pub struct WheelhouseRichNode {
     /// A Tool Run's calls by kind, such as "Ran 3 commands · edited 2 files ·
     /// 1 failed".
     pub summary: Text,
-    /// How many of a Tool Run's calls failed or were interrupted.
+    /// How many of a Tool Run's calls failed or were cancelled.
     pub failed: u32,
     /// Where in `summary` its failures start: its length if none failed.
     pub failed_at: u32,
@@ -394,8 +395,8 @@ fn header(detail: &Detail) -> Header<'_> {
                 ToolStatus::Pending => WHEELHOUSE_RICH_STATUS_PENDING,
                 ToolStatus::Ok => WHEELHOUSE_RICH_STATUS_OK,
                 ToolStatus::Failed => WHEELHOUSE_RICH_STATUS_FAILED,
-                ToolStatus::Interrupted => WHEELHOUSE_RICH_STATUS_INTERRUPTED,
-                ToolStatus::AwaitingApproval => WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL,
+                ToolStatus::Cancelled => WHEELHOUSE_RICH_STATUS_CANCELLED,
+                ToolStatus::Waiting => WHEELHOUSE_RICH_STATUS_WAITING,
             };
             (out.name, out.title) = (name, title);
             out.duration_ms = duration_ms.unwrap_or(WHEELHOUSE_RICH_NO_DURATION);

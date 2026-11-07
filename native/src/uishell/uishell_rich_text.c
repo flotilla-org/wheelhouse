@@ -2973,8 +2973,8 @@ uishell_rt_status_icon(U32 status)
   {
     default: break;
     case WHEELHOUSE_RICH_STATUS_FAILED:
-    case WHEELHOUSE_RICH_STATUS_INTERRUPTED: return RD_IconKind_X;
-    case WHEELHOUSE_RICH_STATUS_AWAITING_APPROVAL: return RD_IconKind_QuestionMark;
+    case WHEELHOUSE_RICH_STATUS_CANCELLED: return RD_IconKind_X;
+    case WHEELHOUSE_RICH_STATUS_WAITING: return RD_IconKind_QuestionMark;
   }
   return RD_IconKind_Null;
 }
@@ -2982,7 +2982,7 @@ uishell_rt_status_icon(U32 status)
 internal B32
 uishell_rt_status_bad(U32 status)
 {
-  return status == WHEELHOUSE_RICH_STATUS_FAILED || status == WHEELHOUSE_RICH_STATUS_INTERRUPTED;
+  return status == WHEELHOUSE_RICH_STATUS_FAILED || status == WHEELHOUSE_RICH_STATUS_CANCELLED;
 }
 
 // A call's duration as a header shows it.

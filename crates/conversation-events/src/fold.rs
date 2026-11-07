@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::{Event, FunctionCall, Message, MessagesSnapshot, Role, ToolCall};
+use super::{Event, FunctionCall, Message, MessagesSnapshot, Role, ToolCall, ToolKind};
 
 #[derive(Debug, Default)]
 struct Thread {
@@ -35,6 +35,19 @@ impl Thread {
             match &mut self.messages[at].content {
                 Some(Value::String(s)) => s.push_str(delta),
                 content => *content = Some(Value::String(delta.to_owned())),
+            }
+        }
+    }
+
+    /// A title or kind that came after the call's start; the latest wins.
+    fn retitle(&mut self, call: &str, title: &Option<String>, kind: Option<ToolKind>) {
+        if let Some(&(at, call)) = self.calls.get(call) {
+            let tool = &mut self.messages[at].tool_calls[call];
+            if title.is_some() {
+                tool.title.clone_from(title);
+            }
+            if kind.is_some() {
+                tool.kind = kind;
             }
         }
     }
@@ -76,7 +89,9 @@ impl Fold {
         thread.seq = thread.seq.max(event.seq());
         match event {
             Event::TextMessageStart(e) => {
-                thread.upsert(&e.message_id, e.role).role = e.role;
+                let message = thread.upsert(&e.message_id, e.role);
+                message.role = e.role;
+                message.origin.clone_from(&e.origin);
                 thread.append(&e.message_id, "");
                 thread.open.insert(e.message_id.clone());
             }
@@ -121,6 +136,7 @@ impl Fold {
             }
             Event::ToolCallEnd(e) => {
                 thread.open.remove(&e.tool_call_id);
+                thread.retitle(&e.tool_call_id, &e.title, e.kind);
             }
             Event::ToolCallResult(e) => {
                 let id = if e.message_id.is_empty() { format!("result:{}", e.tool_call_id) } else { e.message_id.clone() };
@@ -132,6 +148,7 @@ impl Fold {
                 message.media_type.clone_from(&e.media_type);
                 message.structured.clone_from(&e.structured);
                 message.truncated.clone_from(&e.truncated);
+                thread.retitle(&e.tool_call_id, &e.title, e.kind);
             }
             Event::MessagesSnapshot(e) => thread.replace(&e.messages),
             Event::ActivitySnapshot(e) => {

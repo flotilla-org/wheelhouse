@@ -1,4 +1,4 @@
-{"type":"Hello","contract":1}
+{"type":"Hello","contract":2}
 {"type":"RunStarted","threadId":"22222222-2222-4222-8222-222222222222","seq":1,"runId":"u0001-22222222","source":{"log":"parallel-tools/22222222-2222-4222-8222-222222222222.jsonl","record":"u0001-22222222","line":1}}
 {"type":"TextMessageStart","threadId":"22222222-2222-4222-8222-222222222222","seq":2,"messageId":"u0001-22222222","role":"user","source":{"log":"parallel-tools/22222222-2222-4222-8222-222222222222.jsonl","record":"u0001-22222222","line":1}}
 {"type":"TextMessageContent","threadId":"22222222-2222-4222-8222-222222222222","seq":3,"messageId":"u0001-22222222","delta":"Find where the config is loaded and run the tests.","source":{"log":"parallel-tools/22222222-2222-4222-8222-222222222222.jsonl","record":"u0001-22222222","line":1}}
@@ -37,4 +37,4 @@
 {"type":"TextMessageStart","threadId":"22222222-2222-4222-8222-222222222222","seq":36,"messageId":"msg_par_b","role":"assistant","source":{"log":"parallel-tools/22222222-2222-4222-8222-222222222222.jsonl","record":"u0014-22222222","line":14}}
 {"type":"TextMessageContent","threadId":"22222222-2222-4222-8222-222222222222","seq":37,"messageId":"msg_par_b","delta":"One test fails; the config loads in `src/config.rs`.","source":{"log":"parallel-tools/22222222-2222-4222-8222-222222222222.jsonl","record":"u0014-22222222","line":14}}
 {"type":"TextMessageEnd","threadId":"22222222-2222-4222-8222-222222222222","seq":38,"messageId":"msg_par_b","source":{"log":"parallel-tools/22222222-2222-4222-8222-222222222222.jsonl","record":"u0014-22222222","line":14}}
-{"type":"RunFinished","threadId":"22222222-2222-4222-8222-222222222222","seq":39,"runId":"u0001-22222222","outcome":"completed","source":{"log":"parallel-tools/22222222-2222-4222-8222-222222222222.jsonl"}}
+{"type":"RunFinished","threadId":"22222222-2222-4222-8222-222222222222","seq":39,"runId":"u0001-22222222","source":{"log":"parallel-tools/22222222-2222-4222-8222-222222222222.jsonl"}}
