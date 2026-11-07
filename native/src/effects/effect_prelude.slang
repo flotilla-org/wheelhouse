@@ -43,10 +43,12 @@ struct V2P
 [shader("vertex")]
 V2P vs_main(uint vid : SV_VertexID)
 {
-  // one triangle covering clip space; uv derived so 0..1 spans the output
+  // one triangle covering clip space; uv derived so 0..1 spans the output.
+  // Wound clockwise in clip space, like the rect quad: D3D11's rasterizer
+  // culls back faces, & a counter-clockwise triangle drew nothing there.
   V2P out;
-  float x = float(int(vid & 1) * 4 - 1);   // -1, 3, -1
-  float y = float(int(vid >> 1) * 4 - 1);  // -1, -1, 3
+  float x = float(int(vid >> 1) * 4 - 1);  // -1, -1, 3
+  float y = float(int(vid & 1) * 4 - 1);   // -1, 3, -1
   out.position = float4(x, y, 0.0, 1.0);
   out.uv = float2((x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5);
   return out;

@@ -23,27 +23,27 @@ struct V2P_0
 [[vertex]] vs_main_Result_0 vs_main(uint vid_0 [[vertex_id]])
 {
 
-#line 48
-    float x_0 = float(int(vid_0 & 1U) * int(4) - int(1));
-    float y_0 = float(int(vid_0 >> 1U) * int(4) - int(1));
+#line 50
+    float x_0 = float(int(vid_0 >> 1U) * int(4) - int(1));
+    float y_0 = float(int(vid_0 & 1U) * int(4) - int(1));
 
-#line 47
+#line 49
     thread V2P_0 out_0;
 
 
     (&out_0)->position_1 = float4(x_0, y_0, 0.0f, 1.0f);
     (&out_0)->uv_1 = float2((x_0 + 1.0f) * 0.5f, 1.0f - (y_0 + 1.0f) * 0.5f);
 
-#line 51
+#line 53
     thread vs_main_Result_0 _S1;
 
-#line 51
+#line 53
     (&_S1)->position_0 = out_0.position_1;
 
-#line 51
+#line 53
     (&_S1)->uv_0 = out_0.uv_1;
 
-#line 51
+#line 53
     return _S1;
 }
 

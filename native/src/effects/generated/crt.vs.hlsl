@@ -20,11 +20,11 @@ struct V2P_0
 V2P_0 vs_main(uint vid_0 : SV_VertexID)
 {
 
+#line 50
+    float x_0 = float(int(vid_0 >> int(1)) * int(4) - int(1));
+    float y_0 = float(int(vid_0 & 1U) * int(4) - int(1));
 
-    float x_0 = float(int(vid_0 & 1U) * int(4) - int(1));
-    float y_0 = float(int(vid_0 >> int(1)) * int(4) - int(1));
-
-#line 47
+#line 49
     V2P_0 out_0;
 
 

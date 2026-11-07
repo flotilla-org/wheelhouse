@@ -22,7 +22,7 @@ struct KernelContext_0
 };
 
 
-#line 55
+#line 57
 float4 src_0(float2 uv_0, KernelContext_0 thread* kernelContext_0)
 {
     return ((kernelContext_0->t_source_0).sample((kernelContext_0->s_source_0), (uv_0)));
@@ -195,26 +195,26 @@ struct pixelInput_0
 };
 
 
-#line 66 "effect_prelude.slang"
+#line 68 "effect_prelude.slang"
 [[fragment]] pixelOutput_0 fs_main(pixelInput_0 _S7 [[stage_in]], float4 position_0 [[position]], EffectUniforms_0 constant* u_1 [[buffer(0)]], texture2d<float, access::sample> t_source_1 [[texture(0)]], sampler s_source_1 [[sampler(0)]])
 {
 
-#line 66
+#line 68
     thread KernelContext_0 kernelContext_3;
 
-#line 66
+#line 68
     (&kernelContext_3)->u_0 = u_1;
 
-#line 66
+#line 68
     (&kernelContext_3)->t_source_0 = t_source_1;
 
-#line 66
+#line 68
     (&kernelContext_3)->s_source_0 = s_source_1;
 
-#line 66
+#line 68
     float4 _S8 = effect_0(_S7.uv_3, position_0.xy, &kernelContext_3);
 
-#line 66
+#line 68
     pixelOutput_0 _S9 = { _S8 };
 
     return _S9;
