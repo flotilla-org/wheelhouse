@@ -255,15 +255,6 @@ uishell_rect_semantics_linear(R_Readback *pixels, S32 x, S32 y, U32 channel)
   return v;
 }
 
-// A Geo3D pass through readback: one textured quad, drawn into a viewport
-// that covers only the right two thirds of the target, then composited.
-// Probes catch a missing instance transform, a misplaced or flipped
-// composite, an ignored albedo remap and a missing albedo:
-//
-//   target 96x64; viewport x 32..96. The mesh quad spans clip x -0.5..0.5,
-//   y 0..1 (the top half); the instance moves it right by 0.5, to x 0..1,
-//   which is target x 64..96, y 0..32. The albedo is 2x1, red then green,
-//   remapped to its left half, so the whole quad is red.
 // Batch groups (one draw call each) split only where the state they carry
 // changes: pushing & popping the value already on top keeps one group, a
 // different clip, transform, transparency or texture starts a new one, & a
@@ -290,10 +281,10 @@ uishell_check_batch_groups(U32 *failures)
   U32 pixels[4] = {0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu};
   R_Handle tex_a = r_tex2d_alloc(R_ResourceKind_Static, v2s32(2, 2), R_Tex2DFormat_RGBA8, pixels);
   R_Handle tex_b = r_tex2d_alloc(R_ResourceKind_Static, v2s32(2, 2), R_Tex2DFormat_RGBA8, pixels);
-  struct { char *label; U64 want; U64 got; } cases[8] = {0};
+  struct { char *label; U64 want; U64 got; } cases[16] = {0};
   U64 case_count = 0;
 #define BatchCase(label_, want_, ...) do { DR_Bucket *_b = dr_bucket_make(); DR_BucketScope(_b) { __VA_ARGS__; } \
-  cases[case_count].label = (label_); cases[case_count].want = (want_); cases[case_count].got = uishell_batch_group_count(_b); case_count += 1; } while(0)
+  AssertAlways(case_count < ArrayCount(cases)); cases[case_count].label = (label_); cases[case_count].want = (want_); cases[case_count].got = uishell_batch_group_count(_b); case_count += 1; } while(0)
   BatchCase("rects in one state share a group", 1, {
     dr_rect(r, c, 0, 0, 0); dr_rect(r, c, 0, 0, 0); });
   BatchCase("re-pushing the same clip keeps the group", 1, {
@@ -314,6 +305,8 @@ uishell_check_batch_groups(U32 *failures)
   BatchCase("images share a group per texture", 2, {
     dr_img(r, r, tex_a, c, 0, 0, 0); dr_rect(r, c, 0, 0, 0); dr_img(r, r, tex_a, c, 0, 0, 0);
     dr_img(r, r, tex_b, c, 0, 0, 0); });
+  BatchCase("a content version change splits", 2, {
+    dr_rect(r, c, 0, 0, 0); _b->content_version = 7; dr_rect(r, c, 0, 0, 0); });
   BatchCase("a surface sample gets its own group", 3, {
     dr_img(r, r, tex_a, c, 0, 0, 0); dr_surface_img(tex_a, r, c, 0, 0, 0); dr_img(r, r, tex_a, c, 0, 0, 0); });
 #undef BatchCase
@@ -328,6 +321,15 @@ uishell_check_batch_groups(U32 *failures)
   r_tex2d_release(tex_b);
 }
 
+// A Geo3D pass through readback: one textured quad, drawn into a viewport
+// that covers only the right two thirds of the target, then composited.
+// Probes catch a missing instance transform, a misplaced or flipped
+// composite, an ignored albedo remap and a missing albedo:
+//
+//   target 96x64; viewport x 32..96. The mesh quad spans clip x -0.5..0.5,
+//   y 0..1 (the top half); the instance moves it right by 0.5, to x 0..1,
+//   which is target x 64..96, y 0..32. The albedo is 2x1, red then green,
+//   remapped to its left half, so the whole quad is red.
 internal void
 uishell_check_geo3d(U32 *failures)
 {
