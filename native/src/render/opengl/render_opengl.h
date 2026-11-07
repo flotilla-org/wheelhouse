@@ -281,20 +281,6 @@ struct R_OGL_Window
   R_OGL_RenderTarget stage_scratch_target;
 };
 
-////////////////////////////////
-//~ Generated Core Shaders (ADR 0015 section 5 bake-off)
-//
-// R_OGL_CORE_SHADERS selects the rect and blur shaders: 0, the hand-written
-// GLSL in render_opengl.mdesk; 1, GLSL generated from native/src/shaders/slang;
-// 2, GLSL generated from native/src/shaders/wgsl (tools/generate-core-shaders.sh).
-// The generated shaders take one std140 uniform block each (R_CoreRectUniforms,
-// R_CoreBlurUniforms in render_core.h).
-
-#if !defined(R_OGL_CORE_SHADERS)
-# define R_OGL_CORE_SHADERS 0
-#endif
-
-
 typedef struct R_OGL_State R_OGL_State;
 struct R_OGL_State
 {
@@ -307,7 +293,7 @@ struct R_OGL_State
   GLuint white_texture;
   GLuint surface_fbo; // shared fbo for surface render targets; the target texture is attached per-pass
   GLuint effect_ubo;  // scratch uniform buffer for effect passes
-  GLuint core_ubo;    // scratch uniform buffer for generated rect and blur shaders
+  GLuint core_ubo;    // scratch uniform buffer for the rect and blur shaders
   Arena *buffer_flush_arena;
   R_OGL_FlushBuffer *first_buffer_to_flush;
   R_OGL_FlushBuffer *last_buffer_to_flush;

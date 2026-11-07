@@ -1,35 +1,49 @@
 #!/usr/bin/env bash
-# Generate the core rect and blur shaders for every backend from both
-# candidate sources, for the ADR 0015 section 5 bake-off between Slang and
-# WGSL. Output: native/src/shaders/generated/<language>/<shader>.<stage>.<ext>
-# and one embed header per language. The generated files are committed, so
-# only someone changing a shader needs the tools.
+# Generate the core rect and blur shaders for every backend from their Slang
+# sources (native/src/shaders/*.slang; ADR 0015 section 5). Output:
+# native/src/shaders/generated/<shader>.<stage>.<ext>, plus one C header per
+# target (core_shaders_glsl.h, _hlsl.h, _msl.h) so each backend embeds only
+# its own sources. The generated files are committed, so only someone
+# changing a shader needs the tools.
 #
-#   SLANGC=...       slangc (Vulkan SDK 1.4.363.1 ships Slang 2026.17)
-#   SPIRV_CROSS=...  spirv-cross (the same SDK)
-#   NAGA=...         naga (cargo install naga-cli; 30.0.1 was used)
+#   SLANGC=...       slangc
+#   SPIRV_CROSS=...  spirv-cross
 #
-# Paths:
-#   Slang -> HLSL SM5 and MSL directly; Slang -> SPIR-V -> spirv-cross -> GLSL 330
-#            (Slang's own GLSL output is Vulkan GLSL, not the 330 core OpenGL needs).
-#   WGSL  -> naga -> SPIR-V -> spirv-cross -> HLSL SM5, MSL and GLSL 330, as the
-#            effects are (native/build.sh effects). WGSL has no includes, so
-#            common.wgsl is concatenated in front of each shader.
+# Both come from the pinned Vulkan SDK (sdk.lunarg.com, Linux tarball
+# vulkansdk-linux-x86_64-1.4.363.1, SHA-256
+# b7867d8ca658563813af666f34b93db87f1b1c7d9d69d97e924c210c7ba33eb8; the macOS
+# and Windows SDKs of the same version carry the same tools). A different
+# version is refused, because its output would differ from the committed
+# files; set ALLOW_SHADER_TOOL_MISMATCH=1 to generate anyway, e.g. when
+# moving the pin.
 #
+# Paths: HLSL SM5 and MSL come straight from slangc. GLSL 330 goes
+# Slang -> SPIR-V -> spirv-cross, because OpenGL is not a Slang target.
 # GLSL 330 links vertex outputs to fragment inputs by name, and the two
-# toolchains name them differently per stage, so every varying is renamed
-# by its location (v0, v1, ...) on both sides.
+# stages name them differently, so every varying is renamed by its location
+# (v0, v1, ...) on both sides.
 set -euo pipefail
+
+pinned_slang="2026.17-25-gc7954ebd1"
+pinned_spirv_cross="vulkan-sdk-1.4.363.0"
 
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 src="$repo_root/native/src/shaders"
 out="$src/generated"
 SLANGC=${SLANGC:-slangc}
 SPIRV_CROSS=${SPIRV_CROSS:-spirv-cross}
-NAGA=${NAGA:-naga}
-for tool in "$SLANGC" "$SPIRV_CROSS" "$NAGA"; do
+for tool in "$SLANGC" "$SPIRV_CROSS"; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool (see the header of $0)"; exit 1; }
 done
+slang_version=$("$SLANGC" -version 2>&1 | head -1)
+spirv_cross_version=$("$SPIRV_CROSS" --revision 2>&1 | sed -n 's/^Git commit: \([^ ]*\).*/\1/p')
+if [ "$slang_version" != "$pinned_slang" ] || [ "$spirv_cross_version" != "$pinned_spirv_cross" ]; then
+  echo "shader tools: slangc $slang_version (pinned $pinned_slang), spirv-cross $spirv_cross_version (pinned $pinned_spirv_cross)"
+  if [ "${ALLOW_SHADER_TOOL_MISMATCH:-}" != "1" ]; then
+    echo "refusing to generate with unpinned tools; set ALLOW_SHADER_TOOL_MISMATCH=1 to override"
+    exit 1
+  fi
+fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -38,39 +52,26 @@ for i in $(seq 0 15); do
   rename_out+=(--rename-interface-variable out "$i" "v$i")
   rename_in+=(--rename-interface-variable in "$i" "v$i")
 done
-glsl()
-{
-  # glsl <spv> <out-prefix>
-  "$SPIRV_CROSS" --version 330 --no-420pack-extension "$1" --entry vs_main --stage vert "${rename_out[@]}" --output "$2.vert"
-  "$SPIRV_CROSS" --version 330 --no-420pack-extension "$1" --entry fs_main --stage frag "${rename_in[@]}" --output "$2.frag"
-}
 
-rm -rf "$out"
-mkdir -p "$out/slang" "$out/wgsl"
+find "$out" -maxdepth 1 -type f -delete 2>/dev/null || true
+mkdir -p "$out"
+# slangc runs inside the source directory with relative paths, so the #line
+# directives in its output name rect.slang, not this machine's checkout path.
+cd "$src"
 for name in rect blur; do
-  # Slang
-  "$SLANGC" "$src/slang/$name.slang" -I "$src/slang" -target spirv -fvk-use-entrypoint-name -o "$tmp/$name.slang.spv"
-  glsl "$tmp/$name.slang.spv" "$out/slang/$name"
-  "$SLANGC" "$src/slang/$name.slang" -I "$src/slang" -target hlsl -entry vs_main -stage vertex -o "$out/slang/$name.vs.hlsl"
-  "$SLANGC" "$src/slang/$name.slang" -I "$src/slang" -target hlsl -entry fs_main -stage fragment -o "$out/slang/$name.fs.hlsl"
-  "$SLANGC" "$src/slang/$name.slang" -I "$src/slang" -target metal -entry vs_main -stage vertex -o "$out/slang/$name.vs.metal"
-  "$SLANGC" "$src/slang/$name.slang" -I "$src/slang" -target metal -entry fs_main -stage fragment -o "$out/slang/$name.fs.metal"
-  # WGSL
-  cat "$src/wgsl/common.wgsl" "$src/wgsl/$name.wgsl" > "$tmp/$name.wgsl"
-  "$NAGA" -g --keep-coordinate-space "$tmp/$name.wgsl" "$tmp/$name.wgsl.spv"
-  glsl "$tmp/$name.wgsl.spv" "$out/wgsl/$name"
-  for stage in "vs_main vert vs" "fs_main frag fs"; do
-    set -- $stage
-    "$SPIRV_CROSS" --hlsl --shader-model 50 "$tmp/$name.wgsl.spv" --entry "$1" --stage "$2" --output "$out/wgsl/$name.$3.hlsl"
-    "$SPIRV_CROSS" --msl "$tmp/$name.wgsl.spv" --entry "$1" --stage "$2" --output "$out/wgsl/$name.$3.metal"
-  done
+  slang_src="$name.slang"
+  "$SLANGC" "$slang_src" -I . -target spirv -fvk-use-entrypoint-name -o "$tmp/$name.spv"
+  "$SPIRV_CROSS" --version 330 --no-420pack-extension "$tmp/$name.spv" --entry vs_main --stage vert "${rename_out[@]}" --output "$out/$name.vert"
+  "$SPIRV_CROSS" --version 330 --no-420pack-extension "$tmp/$name.spv" --entry fs_main --stage frag "${rename_in[@]}" --output "$out/$name.frag"
+  "$SLANGC" "$slang_src" -I . -target hlsl -entry vs_main -stage vertex -o "$out/$name.vs.hlsl"
+  "$SLANGC" "$slang_src" -I . -target hlsl -entry fs_main -stage fragment -o "$out/$name.fs.hlsl"
+  "$SLANGC" "$slang_src" -I . -target metal -entry vs_main -stage vertex -o "$out/$name.vs.metal"
+  "$SLANGC" "$slang_src" -I . -target metal -entry fs_main -stage fragment -o "$out/$name.fs.metal"
 done
 
-# One C header per language and target, so a backend embeds only its own
-# sources: core_shaders_<language>_<glsl|hlsl|msl>.h.
-python3 - "$out" <<'PYEOF'
+python3 - "$out" "$slang_version" "$spirv_cross_version" <<'PYEOF'
 import os, sys
-out = sys.argv[1]
+out, slang_version, spirv_cross_version = sys.argv[1:4]
 def lit(path):
     src = open(path).read()
     return 'str8_lit_comp("%s")' % src.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n"\n"')
@@ -79,12 +80,12 @@ targets = {
     "hlsl": {"vs": "%s.vs.hlsl", "fs": "%s.fs.hlsl"},
     "msl":  {"vs": "%s.vs.metal", "fs": "%s.fs.metal"},
 }
-for lang in ("slang", "wgsl"):
-    for target, files in targets.items():
-        lines = ["// generated by tools/generate-core-shaders.sh from native/src/shaders/%s - do not edit\n" % lang]
-        for name in ("rect", "blur"):
-            for stage in ("vs", "fs"):
-                lines.append("read_only global String8 r_core_%s_%s_%s = %s;\n" % (name, stage, target, lit(os.path.join(out, lang, files[stage] % name))))
-        open(os.path.join(out, "core_shaders_%s_%s.h" % (lang, target)), "w").write("".join(lines))
+for target, files in targets.items():
+    lines = ["// generated by tools/generate-core-shaders.sh from native/src/shaders/*.slang - do not edit\n",
+             "// slangc %s, spirv-cross %s\n" % (slang_version, spirv_cross_version)]
+    for name in ("rect", "blur"):
+        for stage in ("vs", "fs"):
+            lines.append("read_only global String8 r_core_%s_%s_%s = %s;\n" % (name, stage, target, lit(os.path.join(out, files[stage] % name))))
+    open(os.path.join(out, "core_shaders_%s.h" % target), "w").write("".join(lines))
 PYEOF
-echo "generated: $(cd "$out" && ls -1 */* *.h | tr '\n' ' ')"
+echo "generated: $(cd "$out" && ls -1 | tr '\n' ' ')"

@@ -3,7 +3,7 @@
 #include <metal_texture>
 using namespace metal;
 
-#line 9 "/home/user/wheelhouse/native/src/shaders/slang/common.slang"
+#line 9 "common.slang"
 float linear_from_srgb_0(float x_0)
 {
 
@@ -65,7 +65,7 @@ struct pixelInput_0
 };
 
 
-#line 10 "/home/user/wheelhouse/native/src/shaders/slang/rect.slang"
+#line 10 "rect.slang"
 struct RectUniforms_0
 {
     float2 viewport_size_0;

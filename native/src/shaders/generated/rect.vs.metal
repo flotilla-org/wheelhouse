@@ -3,7 +3,7 @@
 #include <metal_texture>
 using namespace metal;
 
-#line 27 "/home/user/wheelhouse/native/src/shaders/slang/common.slang"
+#line 27 "common.slang"
 float2 corner_pct_0(uint vid_0)
 {
 
@@ -89,7 +89,7 @@ struct vertexInput_0
 };
 
 
-#line 10 "/home/user/wheelhouse/native/src/shaders/slang/rect.slang"
+#line 10 "rect.slang"
 struct RectUniforms_0
 {
     float2 viewport_size_1;

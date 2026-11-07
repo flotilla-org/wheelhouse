@@ -3,7 +3,7 @@
 #include <metal_texture>
 using namespace metal;
 
-#line 4 "/home/user/wheelhouse/native/src/shaders/slang/common.slang"
+#line 4 "common.slang"
 float rect_sdf_0(float2 sample_pos_0, float2 rect_half_size_0, float r_0)
 {
     return length(max(abs(sample_pos_0) - rect_half_size_0 + float2(r_0) , float2(0.0f) )) - r_0;
@@ -27,7 +27,7 @@ struct pixelInput_0
 };
 
 
-#line 9 "/home/user/wheelhouse/native/src/shaders/slang/blur.slang"
+#line 9 "blur.slang"
 struct BlurUniforms_0
 {
     float4 rect_0;

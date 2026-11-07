@@ -12,14 +12,14 @@ str8_lit_comp("blur"),
 
 String8 * r_ogl_shader_kind_vshad_src_table[2] =
 {
-&r_ogl_rect_vshad_src,
-&r_ogl_blur_vshad_src,
+&r_core_rect_vs_glsl,
+&r_core_blur_vs_glsl,
 };
 
 String8 * r_ogl_shader_kind_pshad_src_table[2] =
 {
-&r_ogl_rect_pshad_src,
-&r_ogl_blur_pshad_src,
+&r_core_rect_fs_glsl,
+&r_core_blur_fs_glsl,
 };
 
 R_OGL_AttributeArray r_ogl_shader_kind_input_attributes_table[2] =
