@@ -306,7 +306,7 @@ struct R_EffectSources
 //~ Core Shader Uniforms
 //
 // The uniform blocks of the core shaders, which are generated from
-// native/src/shaders/*.slang (tools/generate-shaders.sh). Every backend
+// native/src/shaders/*.slang (tools/generate-shaders.py). Every backend
 // fills these same bytes: std140 for OpenGL, a cbuffer for D3D11, a constant
 // buffer for Metal.
 
@@ -430,7 +430,7 @@ r_hook R_Handle          r_window_equip(WM_Window window);
 r_hook void              r_window_unequip(WM_Window window, R_Handle window_equip);
 
 //- rjf: effects (runtime-compiled fullscreen passes; sources are the
-// per-backend translations of one Slang effect - see tools/generate-shaders.sh)
+// per-backend translations of one Slang effect - see tools/generate-shaders.py)
 r_hook R_Handle          r_effect_alloc(String8 name, R_EffectSources *sources);
 
 //- rjf: textures

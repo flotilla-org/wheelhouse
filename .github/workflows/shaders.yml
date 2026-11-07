@@ -1,0 +1,68 @@
+name: Shaders
+
+# The generated shaders are committed, so a .slang edit that wasn't
+# regenerated would build and pass with the old output. This regenerates them
+# with the pinned tools and fails if anything differs.
+on:
+  pull_request:
+    paths:
+      - 'native/src/shaders/**'
+      - 'native/src/effects/**'
+      - 'tools/generate-shaders.py'
+      - '.github/workflows/shaders.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'native/src/shaders/**'
+      - 'native/src/effects/**'
+      - 'tools/generate-shaders.py'
+      - '.github/workflows/shaders.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shaders-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The pin in tools/generate-shaders.py's docstring.
+  VULKAN_SDK_VERSION: 1.4.363.1
+  VULKAN_SDK_SHA256: b7867d8ca658563813af666f34b93db87f1b1c7d9d69d97e924c210c7ba33eb8
+
+jobs:
+  generated:
+    name: Generated shaders match their sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache shader tools
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/shader-tools
+          key: shader-tools-${{ env.VULKAN_SDK_SHA256 }}
+      # Only slangc, spirv-cross and Slang's libraries, out of a 367 MB SDK.
+      - name: Fetch the pinned Vulkan SDK tools
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sSLf --retry 3 -o "$RUNNER_TEMP/sdk.tar.xz" \
+            "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/linux/vulkansdk-linux-x86_64-$VULKAN_SDK_VERSION.tar.xz"
+          echo "$VULKAN_SDK_SHA256  $RUNNER_TEMP/sdk.tar.xz" | sha256sum -c -
+          mkdir -p ~/shader-tools
+          tar -xJf "$RUNNER_TEMP/sdk.tar.xz" -C ~/shader-tools --strip-components=2 \
+            --wildcards '*/x86_64/bin/slangc' '*/x86_64/bin/spirv-cross' '*/x86_64/lib/libslang*'
+      - name: Regenerate
+        run: |
+          export PATH="$HOME/shader-tools/bin:$PATH"
+          export LD_LIBRARY_PATH="$HOME/shader-tools/lib"
+          python3 tools/generate-shaders.py
+      - name: Compare with the committed files
+        run: |
+          git add -N native/src/shaders/generated native/src/effects/generated
+          if ! git diff --exit-code --stat -- native/src/shaders/generated native/src/effects/generated; then
+            echo "::error::Generated shaders are out of date: run tools/generate-shaders.py with the pinned Vulkan SDK $VULKAN_SDK_VERSION tools and commit the result."
+            exit 1
+          fi

@@ -5,7 +5,7 @@
 //~ rjf: Pipeline Tables
 
 // Every shader is generated from native/src/shaders/*.slang into
-// shaders/generated/core_shaders_hlsl.h (tools/generate-shaders.sh), with
+// shaders/generated/core_shaders_hlsl.h (tools/generate-shaders.py), with
 // entry points vs_main and fs_main.
 @table(name, source, ilay_table)
 R_D3D11_VShadTable:

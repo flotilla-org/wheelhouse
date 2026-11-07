@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Generate every shader for every backend from its Slang source (ADR 0015
+section 5). The generated files are committed, so only someone changing a
+shader needs the tools.
+
+Core shaders: native/src/shaders/*.slang (common.slang is imported, not
+  generated) -> native/src/shaders/generated/<shader>.<stage>.<ext>, plus one
+  C header per target (core_shaders_glsl.h, _hlsl.h, _msl.h), so each backend
+  embeds only its own sources.
+Effects: native/src/effects/*.slang (each includes effect_prelude.slang) ->
+  native/src/effects/generated/<effect>.<stage>.<ext>, plus effects_embed.h,
+  which gives only the build's own backend real sources.
+
+  SLANGC=...       slangc
+  SPIRV_CROSS=...  spirv-cross
+
+Both come from the pinned Vulkan SDK (sdk.lunarg.com, Linux tarball
+vulkansdk-linux-x86_64-1.4.363.1, SHA-256
+b7867d8ca658563813af666f34b93db87f1b1c7d9d69d97e924c210c7ba33eb8; the macOS
+and Windows SDKs of the same version carry the same tools). A different
+version is refused, because its output would differ from the committed files;
+set ALLOW_SHADER_TOOL_MISMATCH=1 to generate anyway, e.g. when moving the pin.
+
+Paths: HLSL SM5 and MSL come straight from slangc. GLSL 330 goes
+Slang -> SPIR-V -> spirv-cross, because OpenGL is not a Slang target. GLSL 330
+links vertex outputs to fragment inputs by name, and the two stages name them
+differently, so every varying is renamed by its location (v0, v1, ...) on both
+sides. Effects' GLSL vertex stage is also flipped (--flip-vert-y): GL surface
+textures are stored bottom-up, and flipping the fullscreen triangle keeps
+effect output in the convention the composite's surface sampling expects
+(effect-space v is mirrored on GL as a result).
+"""
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+PINNED_SLANG = '2026.17-25-gc7954ebd1'
+PINNED_SPIRV_CROSS = 'vulkan-sdk-1.4.363.0'
+
+ROOT = Path(__file__).resolve().parents[1]
+CORE_SRC = ROOT / 'native/src/shaders'
+EFFECTS_SRC = ROOT / 'native/src/effects'
+SLANGC = os.environ.get('SLANGC', 'slangc')
+SPIRV_CROSS = os.environ.get('SPIRV_CROSS', 'spirv-cross')
+
+# per target, the generated file for each stage
+TARGETS = {
+    'glsl': {'vs': '%s.vert', 'fs': '%s.frag'},
+    'hlsl': {'vs': '%s.vs.hlsl', 'fs': '%s.fs.hlsl'},
+    'msl': {'vs': '%s.vs.metal', 'fs': '%s.fs.metal'},
+}
+
+
+def run(args, cwd=None):
+    subprocess.run(args, cwd=cwd, check=True)
+
+
+def output(args):
+    result = subprocess.run(args, capture_output=True, text=True)
+    return result.stdout + result.stderr
+
+
+def check_tools():
+    for tool in (SLANGC, SPIRV_CROSS):
+        if shutil.which(tool) is None:
+            sys.exit('missing tool: %s (see the docstring of %s)' % (tool, __file__))
+    slang = output([SLANGC, '-version']).splitlines()[0].strip()
+    match = re.search(r'^Git commit: (\S+)', output([SPIRV_CROSS, '--revision']), re.M)
+    spirv_cross = match.group(1) if match else '?'
+    if (slang, spirv_cross) != (PINNED_SLANG, PINNED_SPIRV_CROSS):
+        print('shader tools: slangc %s (pinned %s), spirv-cross %s (pinned %s)'
+              % (slang, PINNED_SLANG, spirv_cross, PINNED_SPIRV_CROSS))
+        if os.environ.get('ALLOW_SHADER_TOOL_MISMATCH') != '1':
+            sys.exit('refusing to generate with unpinned tools; set ALLOW_SHADER_TOOL_MISMATCH=1 to override')
+    return slang, spirv_cross
+
+
+def generate(src_dir, name, dst, tmp, flip_vert_y=False):
+    # slangc runs inside the source directory with relative paths, so the
+    # #line directives in its output name rect.slang, not this checkout's path
+    spv = tmp / (name + '.spv')
+    source = name + '.slang'
+    run([SLANGC, source, '-I', '.', '-target', 'spirv', '-fvk-use-entrypoint-name', '-o', spv], cwd=src_dir)
+    for target, slang_target in (('hlsl', 'hlsl'), ('msl', 'metal')):
+        for stage, entry, slang_stage in (('vs', 'vs_main', 'vertex'), ('fs', 'fs_main', 'fragment')):
+            run([SLANGC, source, '-I', '.', '-target', slang_target, '-entry', entry, '-stage', slang_stage,
+                 '-o', dst / (TARGETS[target][stage] % name)], cwd=src_dir)
+    for stage, entry, gl_stage, direction in (('vs', 'vs_main', 'vert', 'out'), ('fs', 'fs_main', 'frag', 'in')):
+        args = [SPIRV_CROSS, '--version', '330', '--no-420pack-extension', spv, '--entry', entry, '--stage', gl_stage]
+        if stage == 'vs' and flip_vert_y:
+            args.append('--flip-vert-y')
+        for location in range(16):
+            args += ['--rename-interface-variable', direction, str(location), 'v%d' % location]
+        run(args + ['--output', dst / (TARGETS['glsl'][stage] % name)])
+
+
+def lit(path):
+    src = path.read_text()
+    return 'str8_lit_comp("%s")' % src.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n"\n"')
+
+
+def write_core_headers(dst, names, stamp):
+    for target, files in TARGETS.items():
+        lines = ['// generated by tools/generate-shaders.py from native/src/shaders/*.slang - do not edit\n', stamp]
+        for name in names:
+            for stage in ('vs', 'fs'):
+                lines.append('read_only global String8 r_core_%s_%s_%s = %s;\n'
+                             % (name, stage, target, lit(dst / (files[stage] % name))))
+        (dst / ('core_shaders_%s.h' % target)).write_text(''.join(lines), newline='\n')
+
+
+def write_effects_header(dst, names, stamp):
+    # R_EffectSources holds every backend's pair; only this build's backend
+    # gets real sources, the rest stay empty
+    lines = ['// generated by tools/generate-shaders.py from native/src/effects/*.slang - do not edit\n', stamp,
+             '#if R_BACKEND == R_BACKEND_METAL\n# define EFX_MSL(s) s\n#else\n# define EFX_MSL(s) {0}\n#endif\n',
+             '#if R_BACKEND == R_BACKEND_OPENGL\n# define EFX_GLSL(s) s\n#else\n# define EFX_GLSL(s) {0}\n#endif\n',
+             '#if R_BACKEND == R_BACKEND_D3D11\n# define EFX_HLSL(s) s\n#else\n# define EFX_HLSL(s) {0}\n#endif\n\n',
+             'typedef struct EFX_EmbeddedEffect EFX_EmbeddedEffect;\n',
+             'struct EFX_EmbeddedEffect { String8 name; R_EffectSources sources; };\n\n',
+             'read_only global EFX_EmbeddedEffect efx_embedded_effects[] =\n{\n']
+    for name in names:
+        lines.append('  {\n    str8_lit_comp("%s"),\n    {\n' % name)
+        for macro, target, stage in (('EFX_MSL', 'msl', 'vs'), ('EFX_MSL', 'msl', 'fs'),
+                                     ('EFX_GLSL', 'glsl', 'vs'), ('EFX_GLSL', 'glsl', 'fs'),
+                                     ('EFX_HLSL', 'hlsl', 'vs'), ('EFX_HLSL', 'hlsl', 'fs')):
+            lines.append('      %s(%s),\n' % (macro, lit(dst / (TARGETS[target][stage] % name))))
+        lines.append('    },\n  },\n')
+    lines.append('};\n#undef EFX_MSL\n#undef EFX_GLSL\n#undef EFX_HLSL\n')
+    (dst / 'effects_embed.h').write_text(''.join(lines), newline='\n')
+
+
+def replace_dir(new, old):
+    # The new files replace the old ones before stale ones are deleted, so an
+    # interrupted run leaves a mix of old and new files, never an empty
+    # directory (git restores either).
+    old.mkdir(exist_ok=True)
+    names = {p.name for p in new.iterdir()}
+    for name in sorted(names):
+        os.replace(new / name, old / name)
+    for path in old.iterdir():
+        if path.is_file() and path.name not in names:
+            path.unlink()
+
+
+def main():
+    slang, spirv_cross = check_tools()
+    stamp = '// slangc %s, spirv-cross %s\n' % (slang, spirv_cross)
+    core_names = sorted(p.stem for p in CORE_SRC.glob('*.slang') if p.stem != 'common')
+    effect_names = sorted(p.stem for p in EFFECTS_SRC.glob('*.slang') if p.stem != 'effect_prelude')
+    # Everything is generated into a temporary directory first and moved into
+    # place only once all of it succeeded, so a failed generation leaves the
+    # committed files untouched.
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        core, effects = tmp / 'core', tmp / 'effects'
+        core.mkdir()
+        effects.mkdir()
+        for name in core_names:
+            generate(CORE_SRC, name, core, tmp)
+        for name in effect_names:
+            generate(EFFECTS_SRC, name, effects, tmp, flip_vert_y=True)
+        write_core_headers(core, core_names, stamp)
+        write_effects_header(effects, effect_names, stamp)
+        replace_dir(core, CORE_SRC / 'generated')
+        replace_dir(effects, EFFECTS_SRC / 'generated')
+    print('generated: %s' % ' '.join(core_names))
+    print('generated effects: %s' % ' '.join(effect_names))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        sys.exit('failed: %s' % ' '.join(map(str, error.cmd)))
