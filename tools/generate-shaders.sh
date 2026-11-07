@@ -79,7 +79,10 @@ generate()
 # slangc runs inside each source directory with relative paths, so the #line
 # directives in its output name rect.slang, not this machine's checkout path.
 # Everything is generated into $tmp first and moved into place only once all of
-# it succeeded, so a failed run leaves the committed files untouched.
+# it succeeded, so a failed generation leaves the committed files untouched.
+# The new files then replace the old ones before stale ones are deleted, so
+# an interrupted move leaves a mix of old and new files, never an empty
+# directory (git restores either).
 core_names=()
 for f in "$src"/*.slang; do
   name=$(basename "$f" .slang)
@@ -142,8 +145,12 @@ PYEOF
 for pair in "$tmp/core:$out" "$tmp/efx:$efx_out"; do
   from=${pair%%:*}; to=${pair#*:}
   mkdir -p "$to"
-  find "$to" -maxdepth 1 -type f -delete
-  mv "$from"/* "$to"/
+  new_files=$(cd "$from" && ls -1)
+  mv -f "$from"/* "$to"/
+  for f in "$to"/*; do
+    [ -f "$f" ] || continue
+    grep -qxF "$(basename "$f")" <<<"$new_files" || rm -f "$f"
+  done
 done
 echo "generated: $(cd "$out" && ls -1 | tr '\n' ' ')"
 echo "generated: $(cd "$efx_out" && ls -1 | tr '\n' ' ')"

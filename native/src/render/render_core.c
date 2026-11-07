@@ -188,7 +188,7 @@ r_core_blur_uniforms(R_PassParams_Blur *params, Vec2F32 viewport_dim, F32 blur_s
   result.texcoord_flip_y = texcoord_flip_y ? 1.f : 0.f;
   F32 weights[ArrayCount(result.kernel)*2] = {0};
   // One kernel slot holds the centre weight; the rest hold pairs.
-  F32 blur_size = Min(blur_size_texels, ArrayCount(weights)-1);
+  F32 blur_size = Clamp(0.f, blur_size_texels, (F32)(ArrayCount(weights)-1));
   U64 blur_count = (U64)round_f32(blur_size);
   F32 stdev = (blur_size-1.f)/2.f;
   F32 one_over_root_2pi_stdev2 = 1/sqrt_f32(2*pi32*stdev*stdev);
@@ -204,8 +204,10 @@ r_core_blur_uniforms(R_PassParams_Blur *params, Vec2F32 viewport_dim, F32 blur_s
   }
   if(weights[0] > 1.f)
   {
+    // too narrow to blur: just the centre tap
     MemoryZeroArray(weights);
     weights[0] = 1.f;
+    blur_count = 0;
   }
   else
   {
