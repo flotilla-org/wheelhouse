@@ -2683,7 +2683,7 @@ rd_window_state_from_cfg__existing(CFG_Node *cfg)
 ////////////////////////////////
 //~ rjf: View Surface Effects
 
-// each effect, generated from native/src/effects/*.slang by tools/generate-shaders.sh;
+// each effect, generated from native/src/effects/*.slang by tools/generate-shaders.py;
 // only this build's backend gets real sources
 #include "effects/generated/effects_embed.h"
 

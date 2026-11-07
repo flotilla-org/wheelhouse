@@ -18,7 +18,7 @@
 // u.params0/u.params1 (meaning documented per effect). u.source_size_px &
 // u.output_size_px are the pass dimensions (equal for now).
 //
-// Build: tools/generate-shaders.sh translates each effect to MSL and HLSL SM5
+// Build: tools/generate-shaders.py translates each effect to MSL and HLSL SM5
 // (slangc) and GLSL 330 (slangc -> SPIR-V -> spirv-cross), into
 // native/src/effects/generated, embedded per backend by effects_embed.h.
 

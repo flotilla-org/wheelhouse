@@ -151,8 +151,9 @@ The comparison above is as it was run. After the decision:
   directives name `rect.slang`, not a checkout path.
 - The effects moved to Slang too (`native/src/effects/*.slang`; each
   includes `effect_prelude.slang` and defines `effect()`), and the script,
-  renamed `tools/generate-shaders.sh`, generates both. `effects_embed.h`
-  gives only the build's own backend real sources.
+  renamed `tools/generate-shaders.sh` (now `tools/generate-shaders.py`),
+  generates both. `effects_embed.h` gives only the build's own backend real
+  sources.
 - The uniform blocks and the blur kernel are filled once, in `render_core`
   (`r_core_rect_uniforms`, `r_core_blur_uniforms`, `r_core_blur_pass`).
 - The rest of the core shaders followed: `mesh.slang` (instanced Geo3D
