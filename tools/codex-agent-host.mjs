@@ -15,13 +15,18 @@ import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
+const count = (name, fallback) => {
+  const n = Number(opt(name) ?? fallback);
+  if (!(n > 0)) throw new Error(`${name} takes a positive number`);
+  return n;
+};
 const url = opt('--url') ?? 'ws://127.0.0.1:4599';
 const socket = opt('--socket') ?? 'codex-agent.sock';
 const cwd = opt('--cwd') ?? process.cwd();
 // How far back `?after=` can resume; older starts over with a snapshot.
-const buffer = Number(opt('--buffer') ?? 100000);
+const buffer = count('--buffer', 100000);
 // A snapshot's newest page, at least this many bytes of whole runs.
-const pageBytes = Number(opt('--page') ?? 256 * 1024);
+const pageBytes = count('--page', 256 * 1024);
 let threadId = opt('--thread');
 
 // ---- the thread's events, each numbered by its place in the stream. Numbers
@@ -213,10 +218,7 @@ function onNotification(m, p) {
     case 'turn/completed': {
       emit('RunFinished', { runId: p.turn.id, ...outcome(p.turn) });
       turnId = null; say('\n[turn done]\n> ');
-      // A queued prompt starts at once, so the thread doesn't show idle between.
-      const next = queued.shift();
-      if (!next) setStatus('idle');
-      else prompt(next.text, next.clientId).catch((err) => { setStatus('idle'); say(`\n[error] ${err.message}\n> `); });
+      startQueued();
       break;
     }
     case 'item/started': itemStarted(p.item); if (p.item.type === 'commandExecution') say(`\n$ ${p.item.command}\n`); break;
@@ -267,6 +269,14 @@ function answer(yes) {
 // steers that turn.
 // `queue` waits for the running turn to end; `steer`, or no mode, joins it.
 const queued = [];
+// A queued prompt starts at once, so the thread doesn't show idle between;
+// one that fails to start gives way to the next.
+function startQueued() {
+  const next = queued.shift();
+  if (!next) return setStatus('idle');
+  prompt(next.text, next.clientId).catch((err) => { say(`\n[error] ${err.message}\n> `); startQueued(); });
+}
+
 async function prompt(text, clientId, mode) {
   const input = [{ type: 'text', text }];
   if (turnId && mode === 'queue') return queued.push({ text, clientId });
@@ -278,9 +288,14 @@ async function prompt(text, clientId, mode) {
 const answers = new Map();
 
 async function run(input) {
-  for (const entry of input.resume ?? []) {
+  const resume = input.resume ?? [];
+  // Every entry is checked before any is answered, so a refused request changes nothing.
+  for (const entry of resume) {
     if (answers.has(entry.interruptId)) return [409, { error: 'answered', by: answers.get(entry.interruptId) }];
     if (!approval || String(approval.id) !== entry.interruptId) return [404, { error: `no interrupt ${entry.interruptId}` }];
+  }
+  if (resume.length > 1) return [400, { error: 'one interrupt waits at a time' }];
+  for (const entry of resume) {
     answers.set(entry.interruptId, entry);
     answer(entry.status === 'resolved' && entry.payload?.approve !== false);
   }
