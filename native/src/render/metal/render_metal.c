@@ -1,6 +1,9 @@
 // Copyright (c) Epic Games Tools
 // Licensed under the MIT license (https://opensource.org/license/mit/)
 
+// The rect and blur shaders, generated from native/src/shaders/*.slang.
+#include "shaders/generated/core_shaders_msl.h"
+
 @implementation R_MTL_DisplayDelegate
 - (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update
 {
@@ -177,17 +180,23 @@ r_mtl_log_command_buffer_error(id<MTLCommandBuffer> command_buffer)
   }
 }
 
+// vertex_descriptor is zero for shaders that read their vertex data from
+// buffers themselves; the generated rect shader takes [[stage_in]] attributes.
 internal id<MTLRenderPipelineState>
-r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat color_pixel_format, MTLPixelFormat depth_pixel_format, B32 blend, B32 coverage_alpha)
+r_mtl_render_pipeline_from_libraries(id<MTLLibrary> vertex_library, NSString *vertex_name, id<MTLLibrary> fragment_library, NSString *fragment_name, MTLVertexDescriptor *vertex_descriptor, MTLPixelFormat color_pixel_format, MTLPixelFormat depth_pixel_format, B32 blend, B32 coverage_alpha)
 {
   id<MTLRenderPipelineState> result = 0;
-  id<MTLFunction> vertex_function = [library newFunctionWithName:vertex_name];
-  id<MTLFunction> fragment_function = [library newFunctionWithName:fragment_name];
+  id<MTLFunction> vertex_function = [vertex_library newFunctionWithName:vertex_name];
+  id<MTLFunction> fragment_function = [fragment_library newFunctionWithName:fragment_name];
   if(vertex_function != 0 && fragment_function != 0)
   {
     MTLRenderPipelineDescriptor *descriptor = [MTLRenderPipelineDescriptor new];
     descriptor.vertexFunction = vertex_function;
     descriptor.fragmentFunction = fragment_function;
+    if(vertex_descriptor != 0)
+    {
+      descriptor.vertexDescriptor = vertex_descriptor;
+    }
     descriptor.colorAttachments[0].pixelFormat = color_pixel_format;
     descriptor.depthAttachmentPixelFormat = depth_pixel_format;
     descriptor.colorAttachments[0].blendingEnabled = blend;
@@ -215,6 +224,66 @@ r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_n
   [vertex_function release];
   [fragment_function release];
   return result;
+}
+
+internal id<MTLRenderPipelineState>
+r_mtl_render_pipeline_from_library_ex(id<MTLLibrary> library, NSString *vertex_name, NSString *fragment_name, MTLPixelFormat color_pixel_format, MTLPixelFormat depth_pixel_format, B32 blend, B32 coverage_alpha)
+{
+  id<MTLRenderPipelineState> result = r_mtl_render_pipeline_from_libraries(library, vertex_name, library, fragment_name, 0, color_pixel_format, depth_pixel_format, blend, coverage_alpha);
+  return result;
+}
+
+internal id<MTLLibrary>
+r_mtl_library_from_source(String8 source, char *label)
+{
+  NSString *source_string = [[NSString alloc] initWithBytes:source.str length:source.size encoding:NSUTF8StringEncoding];
+  NSError *error = 0;
+  id<MTLLibrary> result = [r_mtl_state->device newLibraryWithSource:source_string options:0 error:&error];
+  r_mtl_log_ns_error(label, error);
+  [source_string release];
+  return result;
+}
+
+// The rect and blur pipelines, from the shaders generated from Slang. Each
+// stage is its own library, with entry points vs_main and fs_main. The rect
+// vertex shader reads R_Rect2DInst as eight per-instance float4 attributes
+// from R_MTL_CORE_RECT_INSTANCE_BUFFER; its uniforms are at buffer 0.
+internal void
+r_mtl_build_core_pipelines(void)
+{
+  id<MTLLibrary> rect_vs = r_mtl_library_from_source(r_core_rect_vs_msl, "core rect vs");
+  id<MTLLibrary> rect_fs = r_mtl_library_from_source(r_core_rect_fs_msl, "core rect fs");
+  id<MTLLibrary> blur_vs = r_mtl_library_from_source(r_core_blur_vs_msl, "core blur vs");
+  id<MTLLibrary> blur_fs = r_mtl_library_from_source(r_core_blur_fs_msl, "core blur fs");
+  MTLVertexDescriptor *rect_vertex_descriptor = [MTLVertexDescriptor vertexDescriptor];
+  for(U32 idx = 0; idx < 8; idx += 1)
+  {
+    rect_vertex_descriptor.attributes[idx].format = MTLVertexFormatFloat4;
+    rect_vertex_descriptor.attributes[idx].offset = idx*sizeof(Vec4F32);
+    rect_vertex_descriptor.attributes[idx].bufferIndex = R_MTL_CORE_RECT_INSTANCE_BUFFER;
+  }
+  rect_vertex_descriptor.layouts[R_MTL_CORE_RECT_INSTANCE_BUFFER].stride = sizeof(R_Rect2DInst);
+  rect_vertex_descriptor.layouts[R_MTL_CORE_RECT_INSTANCE_BUFFER].stepFunction = MTLVertexStepFunctionPerInstance;
+  rect_vertex_descriptor.layouts[R_MTL_CORE_RECT_INSTANCE_BUFFER].stepRate = 1;
+  if(rect_vs != 0 && rect_fs != 0)
+  {
+    r_mtl_state->rect_pipeline = r_mtl_render_pipeline_from_libraries(rect_vs, @"vs_main", rect_fs, @"fs_main", rect_vertex_descriptor, MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 0);
+    r_mtl_state->rect_surface_pipeline = r_mtl_render_pipeline_from_libraries(rect_vs, @"vs_main", rect_fs, @"fs_main", rect_vertex_descriptor, MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 1);
+  }
+  if(blur_vs != 0 && blur_fs != 0)
+  {
+    r_mtl_state->blur_pipeline = r_mtl_render_pipeline_from_libraries(blur_vs, @"vs_main", blur_fs, @"fs_main", 0, MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 0);
+  }
+  [rect_vs release];
+  [rect_fs release];
+  [blur_vs release];
+  [blur_fs release];
+  // Without these the first rect draw would fail inside Metal; stop here instead.
+  if(r_mtl_state->rect_pipeline == 0 || r_mtl_state->rect_surface_pipeline == 0 || r_mtl_state->blur_pipeline == 0)
+  {
+    fprintf(stderr, "raddebugger: Metal could not build the rect and blur pipelines; see the shader errors above.\n");
+    abort_self(1);
+  }
 }
 
 internal id<MTLRenderPipelineState>
@@ -405,51 +474,6 @@ r_mtl_scissor_from_clip(Rng2F32 clip, Vec2S32 drawable_size, F32 scale, MTLSciss
   return result;
 }
 
-internal R_MTL_BlurUniforms
-r_mtl_blur_uniforms_from_params(R_PassParams_Blur *params, Vec2F32 viewport_dim)
-{
-  R_MTL_BlurUniforms result = {0};
-  result.rect = params->rect;
-  result.viewport_size = viewport_dim;
-  MemoryCopyArray(result.corner_radii.v, params->corner_radii);
-
-  F32 weights[ArrayCount(result.kernel)*2] = {0};
-  // Reserve one kernel slot for the centre weight; the rest hold pairs.
-  F32 blur_size = Min(params->blur_size, ArrayCount(weights)-1);
-  U64 blur_count = (U64)round_f32(blur_size);
-  F32 stdev = (blur_size-1.f)/2.f;
-  F32 one_over_root_2pi_stdev2 = 1/sqrt_f32(2*pi32*stdev*stdev);
-  F32 euler32 = 2.718281828459045f;
-  weights[0] = 1.f;
-  if(stdev > 0.f)
-  {
-    for(U64 idx = 0; idx < blur_count; idx += 1)
-    {
-      F32 kernel_x = (F32)idx;
-      weights[idx] = one_over_root_2pi_stdev2*pow_f32(euler32, -kernel_x*kernel_x/(2.f*stdev*stdev));
-    }
-  }
-  if(weights[0] > 1.f)
-  {
-    MemoryZeroArray(weights);
-    weights[0] = 1.f;
-  }
-  else
-  {
-    for(U64 idx = 1; idx < blur_count; idx += 2)
-    {
-      F32 w0 = weights[idx + 0];
-      F32 w1 = weights[idx + 1];
-      F32 w = w0 + w1;
-      F32 t = w1 / w;
-      result.kernel[(idx+1)/2] = v4f32(w, (F32)idx + t, 0, 0);
-    }
-  }
-  result.kernel[0].x = weights[0];
-  result.blur_count = 1 + (U32)(blur_count / 2);
-  return result;
-}
-
 // Blurs params->rect of stage in place, through scratch: the horizontal pass
 // writes scratch, the vertical pass writes back to stage. viewport_dim is in
 // points (the units of params->rect and params->clip), drawable_size the
@@ -461,7 +485,9 @@ r_mtl_encode_blur(id<MTLCommandBuffer> command_buffer, R_PassParams_Blur *params
                   id<MTLTexture> stage, id<MTLTexture> scratch,
                   MTLRenderPassDescriptor *pass_descriptor)
 {
-  R_MTL_BlurUniforms uniforms = r_mtl_blur_uniforms_from_params(params, viewport_dim);
+  // The kernel steps in params->blur_size texels, unscaled by the backing
+  // scale, as Metal always has (OpenGL scales it; settling that is separate).
+  R_CoreBlurUniforms uniforms = r_core_blur_uniforms(params, viewport_dim, params->blur_size, 0);
   MTLScissorRect scissor = {0};
   B32 has_scissor = 0;
   if(params->clip.x0 != 0 ||
@@ -482,25 +508,12 @@ r_mtl_encode_blur(id<MTLCommandBuffer> command_buffer, R_PassParams_Blur *params
     {
       id<MTLTexture> src = (axis == Axis2_X ? stage : scratch);
       id<MTLTexture> dst = (axis == Axis2_X ? scratch : stage);
-      uniforms.rect = params->rect;
-      uniforms.direction = (axis == Axis2_X ? v2f32(1.f/(F32)Max(drawable_size.x, 1), 0) : v2f32(0, 1.f/(F32)Max(drawable_size.y, 1)));
+      // The horizontal pass covers the vertical pass's whole input and isn't
+      // clipped; only the vertical pass is clipped and masked.
+      r_core_blur_pass(&uniforms, params, axis, viewport_dim, drawable_size);
       MTLScissorRect pass_scissor = scissor;
       if(axis == Axis2_X)
       {
-        // The vertical pass samples above and below the final rect.
-        // Write its entire input footprint, including bilinear neighbours,
-        // before applying the final pass's clip and rounded-corner mask.
-        F32 sample_radius = 0.f;
-        for(U32 i = 1; i < uniforms.blur_count; i++)
-        {
-          sample_radius = Max(sample_radius, uniforms.kernel[i].y);
-        }
-        F32 pixel_width = viewport_dim.x/(F32)Max(drawable_size.x, 1);
-        F32 pixel_height = viewport_dim.y/(F32)Max(drawable_size.y, 1);
-        uniforms.rect.x0 -= pixel_width;
-        uniforms.rect.x1 += pixel_width;
-        uniforms.rect.y0 -= (ceil_f32(sample_radius)+1.f)*pixel_height;
-        uniforms.rect.y1 += (ceil_f32(sample_radius)+1.f)*pixel_height;
         pass_scissor = (MTLScissorRect){0, 0, (NSUInteger)drawable_size.x, (NSUInteger)drawable_size.y};
       }
       U64 uniform_offset = 0;
@@ -563,9 +576,7 @@ r_init(CmdLine *cmdln)
       r_mtl_log_ns_error("library creation", error);
       if(library != 0)
       {
-        r_mtl_state->rect_pipeline = r_mtl_render_pipeline_from_library(library, @"rect_vertex", @"rect_fragment", MTLPixelFormatRGBA16Float);
-        r_mtl_state->rect_surface_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"rect_vertex", @"rect_fragment", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 1);
-        r_mtl_state->blur_pipeline = r_mtl_render_pipeline_from_library(library, @"blur_vertex", @"blur_fragment", MTLPixelFormatRGBA16Float);
+        r_mtl_build_core_pipelines();
         r_mtl_state->mesh_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"mesh_vertex", @"mesh_fragment", MTLPixelFormatRGBA8Unorm, MTLPixelFormatDepth32Float, 1, 0);
         r_mtl_state->geo3d_composite_pipeline = r_mtl_render_pipeline_from_library(library, @"geo3d_composite_vertex", @"composite_fragment", MTLPixelFormatRGBA16Float);
         r_mtl_state->geo3d_composite_surface_pipeline = r_mtl_render_pipeline_from_library_ex(library, @"geo3d_composite_vertex", @"composite_fragment", MTLPixelFormatRGBA16Float, MTLPixelFormatInvalid, 1, 1);
@@ -1308,18 +1319,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                   {
                     group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
                   }
-                  R_MTL_RectUniforms group_uniforms = {0};
-                  group_uniforms.viewport_size = pass_viewport_dim;
-                  group_uniforms.opacity = 1.f - group_params->transparency;
-                  group_uniforms.sample_is_surface = (F32)!!group_params->tex_sample_is_surface;
-                  group_uniforms.texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture->format);
-                  group_uniforms.texture_size = v2f32((F32)Max(texture->size.x, 1), (F32)Max(texture->size.y, 1));
-                  Vec2F32 xform_2x2_col0 = v2f32(group_xform.v[0][0], group_xform.v[0][1]);
-                  Vec2F32 xform_2x2_col1 = v2f32(group_xform.v[1][0], group_xform.v[1][1]);
-                  group_uniforms.xform_scale = v2f32(length_2f32(xform_2x2_col0), length_2f32(xform_2x2_col1));
-                  group_uniforms.xform[0] = v4f32(group_xform.v[0][0], group_xform.v[1][0], group_xform.v[2][0], 0);
-                  group_uniforms.xform[1] = v4f32(group_xform.v[0][1], group_xform.v[1][1], group_xform.v[2][1], 0);
-                  group_uniforms.xform[2] = v4f32(group_xform.v[0][2], group_xform.v[1][2], group_xform.v[2][2], 0);
+                  R_CoreRectUniforms group_uniforms = r_core_rect_uniforms(pass_viewport_dim, group_params, group_xform, texture->format, texture->size, 0);
                   U64 uniform_offset = 0;
                   id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&group_uniforms, sizeof(group_uniforms), 256, &uniform_offset);
                   if(group_params->clip.x0 != 0 ||
@@ -1347,9 +1347,9 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                     MTLScissorRect scissor = {0, 0, (NSUInteger)pass_attachment_size.x, (NSUInteger)pass_attachment_size.y};
                     [encoder setScissorRect:scissor];
                   }
-                  [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:0];
-                  [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:1];
-                  [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:1];
+                  [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:R_MTL_CORE_RECT_INSTANCE_BUFFER];
+                  [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:0];
+                  [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
                   [encoder setFragmentTexture:texture->texture atIndex:0];
                   [encoder setFragmentSamplerState:r_mtl_state->samplers[group_params->tex_sample_kind] atIndex:0];
                   [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:inst_count];
@@ -1725,17 +1725,7 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
                   insts += batch_n->v.byte_count;
                 }
 
-                R_MTL_RectUniforms group_uniforms = {0};
-                group_uniforms.viewport_size = viewport_dim;
-                group_uniforms.opacity = 1.f - group_params->transparency;
-                group_uniforms.texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture->format);
-                group_uniforms.texture_size = v2f32((F32)Max(texture->size.x, 1), (F32)Max(texture->size.y, 1));
-                Vec2F32 xform_2x2_col0 = v2f32(group_params->xform.v[0][0], group_params->xform.v[0][1]);
-                Vec2F32 xform_2x2_col1 = v2f32(group_params->xform.v[1][0], group_params->xform.v[1][1]);
-                group_uniforms.xform_scale = v2f32(length_2f32(xform_2x2_col0), length_2f32(xform_2x2_col1));
-                group_uniforms.xform[0] = v4f32(group_params->xform.v[0][0], group_params->xform.v[1][0], group_params->xform.v[2][0], 0);
-                group_uniforms.xform[1] = v4f32(group_params->xform.v[0][1], group_params->xform.v[1][1], group_params->xform.v[2][1], 0);
-                group_uniforms.xform[2] = v4f32(group_params->xform.v[0][2], group_params->xform.v[1][2], group_params->xform.v[2][2], 0);
+                R_CoreRectUniforms group_uniforms = r_core_rect_uniforms(viewport_dim, group_params, group_params->xform, texture->format, texture->size, 0);
                 U64 uniform_offset = 0;
                 id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&group_uniforms, sizeof(group_uniforms), 256, &uniform_offset);
 
@@ -1759,9 +1749,9 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
                   MTLScissorRect scissor = {0, 0, (NSUInteger)size.x, (NSUInteger)size.y};
                   [encoder setScissorRect:scissor];
                 }
-                [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:0];
-                [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:1];
-                [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:1];
+                [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:R_MTL_CORE_RECT_INSTANCE_BUFFER];
+                [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:0];
+                [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
                 [encoder setFragmentTexture:texture->texture atIndex:0];
                 [encoder setFragmentSamplerState:r_mtl_state->samplers[group_params->tex_sample_kind] atIndex:0];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:inst_count];

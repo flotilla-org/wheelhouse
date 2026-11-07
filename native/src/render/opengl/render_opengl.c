@@ -12,13 +12,8 @@
 # error OS portion of OpenGL rendering backend not defined.
 #endif
 
-#if R_OGL_CORE_SHADERS == 1
-# include "shaders/generated/core_shaders_slang.h"
-#elif R_OGL_CORE_SHADERS == 2
-# include "shaders/generated/core_shaders_wgsl.h"
-#elif R_OGL_CORE_SHADERS != 0
-# error R_OGL_CORE_SHADERS must be 0 (hand-written), 1 (Slang) or 2 (WGSL).
-#endif
+// The rect and blur shaders, generated from native/src/shaders/*.slang.
+#include "shaders/generated/core_shaders_glsl.h"
 
 ////////////////////////////////
 //~ rjf: Attribute Tables
@@ -142,30 +137,11 @@ r_ogl_scissor_from_pixel_clip(Rng2F32 clip_px, Vec2S32 attachment_size)
 // Sets the rect shader's uniforms for one batch group. xform is the group's
 // transform as the pass sees it; texture_size is the bound texture's.
 internal void
-r_ogl_rect_uniforms(GLuint shader, Vec2F32 viewport_dim, R_BatchGroup2DParams *group_params, Mat3x3F32 xform,
+r_ogl_rect_uniforms(Vec2F32 viewport_dim, R_BatchGroup2DParams *group_params, Mat3x3F32 xform,
                     R_Tex2DFormat texture_fmt, Vec2S32 texture_size)
 {
-  Mat4x4F32 texture_sample_channel_map = r_sample_channel_map_from_tex2dformat(texture_fmt);
-#if R_OGL_CORE_SHADERS == 0
-  glUniformMatrix4fv(glGetUniformLocation(shader, "u_texture_sample_channel_map"), 1, 0, &texture_sample_channel_map.v[0][0]);
-  glUniform2f(glGetUniformLocation(shader, "u_viewport_size_px"), viewport_dim.x, viewport_dim.y);
-  glUniform1f(glGetUniformLocation(shader, "u_opacity"), 1.f - group_params->transparency);
-  glUniform1f(glGetUniformLocation(shader, "u_sample_is_surface"), (F32)!!group_params->tex_sample_is_surface);
-  glUniformMatrix3fv(glGetUniformLocation(shader, "u_xform"), 1, 0, &xform.v[0][0]);
-#else
-  R_OGL_CoreRectUniforms uniforms = {0};
-  uniforms.viewport_size = viewport_dim;
-  uniforms.opacity = 1.f - group_params->transparency;
-  uniforms.sample_is_surface = (F32)!!group_params->tex_sample_is_surface;
-  uniforms.texture_sample_channel_map = texture_sample_channel_map;
-  uniforms.texture_size = v2f32((F32)Max(texture_size.x, 1), (F32)Max(texture_size.y, 1));
-  uniforms.xform_scale = v2f32(length_2f32(v2f32(xform.v[0][0], xform.v[0][1])),
-                               length_2f32(v2f32(xform.v[1][0], xform.v[1][1])));
-  for EachIndex(row, 3)
-  {
-    uniforms.xform[row] = v4f32(xform.v[0][row], xform.v[1][row], xform.v[2][row], 0);
-  }
-  uniforms.surface_flip_y = 1.f; // surfaces render through the flipped stage projection
+  // Surfaces render through the flipped stage projection, so they are stored bottom-up.
+  R_CoreRectUniforms uniforms = r_core_rect_uniforms(viewport_dim, group_params, xform, texture_fmt, texture_size, 1);
   if(r_ogl_state->core_ubo == 0)
   {
     glGenBuffers(1, &r_ogl_state->core_ubo);
@@ -174,11 +150,10 @@ r_ogl_rect_uniforms(GLuint shader, Vec2F32 viewport_dim, R_BatchGroup2DParams *g
   glBufferData(GL_UNIFORM_BUFFER, sizeof(uniforms), &uniforms, GL_STREAM_DRAW);
   glBindBuffer(GL_UNIFORM_BUFFER, 0);
   glBindBufferBase(GL_UNIFORM_BUFFER, 0, r_ogl_state->core_ubo);
-#endif
 }
 
 // The blur kernel folds each pair of taps into one bilinear sample between
-// them (see the kernel below), as D3D11's linear, clamped sampler does.
+// them (r_core_blur_uniforms), as the linear, clamped samplers on D3D11 and Metal do.
 // Nearest sampling would land every folded tap on one texel and turn fine
 // detail into its negative instead of averaging it.
 internal void
@@ -190,13 +165,15 @@ r_ogl_blur_sampling(void)
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
-#if R_OGL_CORE_SHADERS != 0
-// The generated blur shader, with the kernel packed as Metal packs it: one
-// centre tap, then pairs folded into single bilinear samples. The horizontal
-// pass widens its rect to cover the vertical pass's whole input footprint;
-// only the vertical pass is clipped and masked to the rounded rect.
+// Blurs params->rect of stage in place, through scratch: the horizontal pass
+// writes scratch, the vertical pass writes back to stage. The kernel packs
+// pairs of taps into single bilinear samples (r_core_blur_uniforms). The
+// horizontal pass widens its rect to cover the vertical pass's whole input
+// and isn't clipped; only the vertical pass is clipped and masked to the
+// rounded rect. viewport_dim is in points (the units of params->rect and
+// params->clip), pixel_dim the targets' size in pixels.
 internal void
-r_ogl_blur_core(R_PassParams_Blur *params, F32 backing_scale, Vec2F32 viewport_dim, Vec2S32 pixel_dim,
+r_ogl_blur(R_PassParams_Blur *params, F32 backing_scale, Vec2F32 viewport_dim, Vec2S32 pixel_dim,
                 R_OGL_RenderTarget *stage, R_OGL_RenderTarget *scratch)
 {
   B32 clipped = (params->clip.x0 != 0 ||
@@ -209,52 +186,8 @@ r_ogl_blur_core(R_PassParams_Blur *params, F32 backing_scale, Vec2F32 viewport_d
     return;
   }
   
-  R_OGL_CoreBlurUniforms uniforms = {0};
-  uniforms.corner_radii = v4f32(params->corner_radii[Corner_00], params->corner_radii[Corner_01], params->corner_radii[Corner_10], params->corner_radii[Corner_11]);
-  uniforms.viewport_size = viewport_dim;
-  uniforms.texcoord_flip_y = 1.f; // the stage is stored bottom-up
-  {
-    F32 weights[ArrayCount(uniforms.kernel)*2] = {0};
-    // The kernel steps in texels, pixels of the window's targets. One slot
-    // is reserved for the centre weight; the rest hold pairs.
-    F32 blur_size = Min(params->blur_size*backing_scale, ArrayCount(weights)-1);
-    U64 blur_count = (U64)round_f32(blur_size);
-    F32 stdev = (blur_size-1.f)/2.f;
-    F32 one_over_root_2pi_stdev2 = 1/sqrt_f32(2*pi32*stdev*stdev);
-    F32 euler32 = 2.718281828459045f;
-    weights[0] = 1.f;
-    if(stdev > 0.f)
-    {
-      for(U64 idx = 0; idx < blur_count; idx += 1)
-      {
-        F32 kernel_x = (F32)idx;
-        weights[idx] = one_over_root_2pi_stdev2*pow_f32(euler32, -kernel_x*kernel_x/(2.f*stdev*stdev));
-      }
-    }
-    if(weights[0] > 1.f)
-    {
-      MemoryZeroArray(weights);
-      weights[0] = 1.f;
-    }
-    else
-    {
-      for(U64 idx = 1; idx < blur_count; idx += 2)
-      {
-        F32 w0 = weights[idx + 0];
-        F32 w1 = weights[idx + 1];
-        F32 w = w0 + w1;
-        F32 t = w1 / w;
-        uniforms.kernel[(idx+1)/2] = v4f32(w, (F32)idx + t, 0, 0);
-      }
-    }
-    uniforms.kernel[0].x = weights[0];
-    uniforms.blur_count = 1 + (U32)(blur_count / 2);
-  }
-  F32 sample_radius = 0.f;
-  for(U32 idx = 1; idx < uniforms.blur_count; idx += 1)
-  {
-    sample_radius = Max(sample_radius, uniforms.kernel[idx].y);
-  }
+  // The kernel steps in texels, pixels of the window's targets; the stage is stored bottom-up.
+  R_CoreBlurUniforms uniforms = r_core_blur_uniforms(params, viewport_dim, params->blur_size*backing_scale, 1);
   
   if(r_ogl_state->core_ubo == 0)
   {
@@ -270,23 +203,13 @@ r_ogl_blur_core(R_PassParams_Blur *params, F32 backing_scale, Vec2F32 viewport_d
     {
       R_OGL_RenderTarget *src = (axis == 0 ? stage : scratch);
       R_OGL_RenderTarget *dst = (axis == 0 ? scratch : stage);
-      uniforms.rect = params->rect;
+      r_core_blur_pass(&uniforms, params, axis == 0 ? Axis2_X : Axis2_Y, viewport_dim, pixel_dim);
       if(axis == 0)
       {
-        // The vertical pass samples above and below the final rect, and the
-        // bilinear neighbours beside it; the horizontal pass writes all of it.
-        F32 pixel_w = viewport_dim.x/(F32)Max(pixel_dim.x, 1);
-        F32 pixel_h = viewport_dim.y/(F32)Max(pixel_dim.y, 1);
-        uniforms.rect.x0 -= pixel_w;
-        uniforms.rect.x1 += pixel_w;
-        uniforms.rect.y0 -= (ceil_f32(sample_radius)+1.f)*pixel_h;
-        uniforms.rect.y1 += (ceil_f32(sample_radius)+1.f)*pixel_h;
-        uniforms.direction = v2f32(1.f/(F32)Max(pixel_dim.x, 1), 0);
         glDisable(GL_SCISSOR_TEST);
       }
       else
       {
-        uniforms.direction = v2f32(0, 1.f/(F32)Max(pixel_dim.y, 1));
         if(clipped)
         {
           r_ogl_scissor_from_pixel_clip(clip_px, pixel_dim);
@@ -305,121 +228,6 @@ r_ogl_blur_core(R_PassParams_Blur *params, F32 backing_scale, Vec2F32 viewport_d
       }
     }
   }
-  glDisable(GL_SCISSOR_TEST);
-}
-#endif
-
-// Blurs params->rect of stage in place, through scratch, with the window
-// path's two separable passes. viewport_dim is in points (the units of
-// params->rect and params->clip), pixel_dim the targets' size in pixels.
-internal void
-r_ogl_blur(R_PassParams_Blur *params, F32 backing_scale, Vec2F32 viewport_dim, Vec2S32 pixel_dim,
-           R_OGL_RenderTarget *stage, R_OGL_RenderTarget *scratch)
-{
-#if R_OGL_CORE_SHADERS != 0
-  r_ogl_blur_core(params, backing_scale, viewport_dim, pixel_dim, stage, scratch);
-  return;
-#endif
-  //- rjf: set up scissor; a clip with nothing on the target blurs nothing
-  B32 clipped = (params->clip.x0 != 0 ||
-                 params->clip.x1 != 0 ||
-                 params->clip.y0 != 0 ||
-                 params->clip.y1 != 0);
-  if(clipped)
-  {
-    Rng2F32 clip_px = r2f32p(params->clip.x0*backing_scale, params->clip.y0*backing_scale, params->clip.x1*backing_scale, params->clip.y1*backing_scale);
-    if(!r_ogl_scissor_from_pixel_clip(clip_px, pixel_dim))
-    {
-      return;
-    }
-    glEnable(GL_SCISSOR_TEST);
-  }
-  glViewport(0, 0, pixel_dim.x, pixel_dim.y);
-  GLuint shader = r_ogl_state->shaders[R_OGL_ShaderKind_Blur];
-  glUseProgramScope(shader)
-    glBindVertexArrayScope(r_ogl_state->all_purpose_vao)
-  {
-    //- rjf: form blur sampling kernel
-    Vec4F32 kernel[32] = {0};
-    U64 blur_count = 0;
-    {
-      //
-      // TODO(rjf): adopted from martins' d3d11 impl, should dedup in common render helpers
-      //
-      F32 weights[ArrayCount(kernel)*2] = {0};
-      // The kernel steps in texels, pixels of the window's targets.
-      F32 blur_size = Min(params->blur_size*backing_scale, ArrayCount(weights));
-      blur_count = (U64)round_f32(blur_size);
-      F32 stdev = (blur_size-1.f)/2.f;
-      F32 one_over_root_2pi_stdev2 = 1/sqrt_f32(2*pi32*stdev*stdev);
-      F32 euler32 = 2.718281828459045f;
-      weights[0] = 1.f;
-      if(stdev > 0.f)
-      {
-        for(U64 idx = 0; idx < blur_count; idx += 1)
-        {
-          F32 kernel_x = (F32)idx;
-          weights[idx] = one_over_root_2pi_stdev2*pow_f32(euler32, -kernel_x*kernel_x/(2.f*stdev*stdev)); 
-        }
-      }
-      if(weights[0] > 1.f)
-      {
-        MemoryZeroArray(weights);
-        weights[0] = 1.f;
-      }
-      else
-      {
-        // prepare weights & offsets for bilinear lookup
-        // blur filter wants to calculate w0*pixel[pos] + w1*pixel[pos+1] + ...
-        // with bilinear filter we can do this calulation by doing only w*sample(pos+t) = w*((1-t)*pixel[pos] + t*pixel[pos+1])
-        // we can see w0=w*(1-t) and w1=w*t
-        // thus w=w0+w1 and t=w1/w
-        for(U64 idx = 1; idx < blur_count; idx += 2)
-        {
-          F32 w0 = weights[idx + 0];
-          F32 w1 = weights[idx + 1];
-          F32 w = w0 + w1;
-          F32 t = w1 / w;
-          
-          // each kernel element is float2(weight, offset)
-          // weights & offsets are adjusted for bilinear sampling
-          // zw elements are not used, a bit of waste but it allows for simpler shader code
-          kernel[(idx+1)/2] = v4f32(w, (F32)idx + t, 0, 0);
-        }
-      }
-      kernel[0].x = weights[0];
-    }
-    
-    //- rjf: set up uniforms
-    glUniform4fv(glGetUniformLocation(shader, "rect"), 1, (F32 *)(&params->rect));
-    glUniform4fv(glGetUniformLocation(shader, "corner_radii_px"), 1, params->corner_radii);
-    glUniform2f(glGetUniformLocation(shader, "viewport_size"), viewport_dim.x, viewport_dim.y);
-    glUniform1i(glGetUniformLocation(shader, "blur_count"), blur_count);
-    glUniform4fv(glGetUniformLocation(shader, "kernel"), ArrayCount(kernel), (F32 *)&kernel[0]);
-    glActiveTexture(GL_TEXTURE0);
-    
-    //- rjf: pass 1: stage -(horizontal)-> scratch
-    glBindFramebufferScope(GL_FRAMEBUFFER, scratch->fbo)
-      glBindTextureScope(GL_TEXTURE_2D, stage->color_texture)
-    {
-      r_ogl_blur_sampling();
-      glUniform2f(glGetUniformLocation(shader, "direction"), 1.f/pixel_dim.x, 0);
-      glUniform1i(glGetUniformLocation(shader, "tex"), 0);
-      glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    }
-    
-    //- rjf: pass 2: scratch -(vertical)-> stage
-    glBindFramebufferScope(GL_FRAMEBUFFER, stage->fbo)
-      glBindTextureScope(GL_TEXTURE_2D, scratch->color_texture)
-    {
-      r_ogl_blur_sampling();
-      glUniform2f(glGetUniformLocation(shader, "direction"), 0, 1.f/pixel_dim.y);
-      glUniform1i(glGetUniformLocation(shader, "tex"), 0);
-      glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    }
-  }
-  
-  //- rjf: unset scissor
   glDisable(GL_SCISSOR_TEST);
 }
 
@@ -453,14 +261,6 @@ r_init(CmdLine *cmdln)
       {GL_VERTEX_SHADER,   r_ogl_shader_kind_vshad_src_table[k]},
       {GL_FRAGMENT_SHADER, r_ogl_shader_kind_pshad_src_table[k]},
     };
-#if R_OGL_CORE_SHADERS != 0
-    switch(k)
-    {
-      default:{}break;
-      case R_OGL_ShaderKind_Rect: { stages[0].src = &r_core_rect_vs_glsl; stages[1].src = &r_core_rect_fs_glsl; }break;
-      case R_OGL_ShaderKind_Blur: { stages[0].src = &r_core_blur_vs_glsl; stages[1].src = &r_core_blur_fs_glsl; }break;
-    }
-#endif
     for EachElement(idx, stages)
     {
       stages[idx].out = glCreateShader(stages[idx].type);
@@ -515,15 +315,13 @@ r_init(CmdLine *cmdln)
       glGetProgramInfoLog(program, sizeof(log_buffer)-1, 0, log_buffer);
       fprintf(stderr, "[OpenGL shader %.*s] link failed: %s\n", str8_varg(r_ogl_shader_kind_name_table[k]), log_buffer);
     }
-#if R_OGL_CORE_SHADERS != 0
-    // A generated shader has one uniform block; it reads from binding point 0.
+    // Each shader has one uniform block; it reads from binding point 0.
     GLint block_count = 0;
     glGetProgramiv(program, GL_ACTIVE_UNIFORM_BLOCKS, &block_count);
     if(block_count > 0)
     {
       glUniformBlockBinding(program, 0, 0);
     }
-#endif
     glValidateProgram(program);
     r_ogl_state->shaders[k] = program;
   }
@@ -685,11 +483,12 @@ r_effect_alloc(String8 name, R_EffectSources *sources)
     glGetProgramiv(program, GL_LINK_STATUS, &link_status);
     if(link_status != 0)
     {
-      // route the (sole) uniform block to binding point 0; spirv-cross names it "u"
-      GLuint block_idx = glGetUniformBlockIndex(program, "u");
-      if(block_idx != GL_INVALID_INDEX)
+      // route the effect's sole uniform block to binding point 0
+      GLint block_count = 0;
+      glGetProgramiv(program, GL_ACTIVE_UNIFORM_BLOCKS, &block_count);
+      if(block_count > 0)
       {
-        glUniformBlockBinding(program, block_idx, 0);
+        glUniformBlockBinding(program, 0, 0);
       }
       R_OGL_Effect *effect = push_array(r_ogl_state->arena, R_OGL_Effect, 1);
       effect->program = program;
@@ -1103,7 +902,6 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
                 }break;
               }
               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-              glUniform1i(glGetUniformLocation(shader, "u_tex_color"), 0);
             }
             
             //- rjf: upload misc. uniforms
@@ -1113,7 +911,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
               {
                 group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
               }
-              r_ogl_rect_uniforms(shader, pass_viewport_dim, group_params, group_xform, texture_fmt, texture_size);
+              r_ogl_rect_uniforms(pass_viewport_dim, group_params, group_xform, texture_fmt, texture_size);
             }
 
             //- rjf: set up scissor
@@ -1361,9 +1159,8 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
                 }break;
               }
               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-              glUniform1i(glGetUniformLocation(shader, "u_tex_color"), 0);
 
-              r_ogl_rect_uniforms(shader, viewport_dim, group_params, group_params->xform, texture_fmt, texture_size);
+              r_ogl_rect_uniforms(viewport_dim, group_params, group_params->xform, texture_fmt, texture_size);
 
               glDisable(GL_SCISSOR_TEST);
               if(group_params->clip.x0 != 0 ||

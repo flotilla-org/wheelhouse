@@ -9,7 +9,7 @@
 #endif
 
 
-#line 9 "/home/user/wheelhouse/native/src/shaders/slang/blur.slang"
+#line 9 "blur.slang"
 struct BlurUniforms_0
 {
     float4 rect_0;
@@ -26,7 +26,7 @@ cbuffer u_0 : register(b0)
     BlurUniforms_0 u_0;
 }
 
-#line 27 "/home/user/wheelhouse/native/src/shaders/slang/common.slang"
+#line 27 "common.slang"
 float2 corner_pct_0(uint vid_0)
 {
 
@@ -83,7 +83,7 @@ float4 ndc_from_points_0(float2 p_0, float2 viewport_size_1)
 }
 
 
-#line 24 "/home/user/wheelhouse/native/src/shaders/slang/blur.slang"
+#line 24 "blur.slang"
 struct V2P_0
 {
     float4 position_0 : SV_Position;

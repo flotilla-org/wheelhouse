@@ -1,130 +1,222 @@
-#pragma clang diagnostic ignored "-Wmissing-prototypes"
-
 #include <metal_stdlib>
-#include <simd/simd.h>
-
+#include <metal_math>
+#include <metal_texture>
 using namespace metal;
 
-struct EffectUniforms
+#line 25 "effect_prelude.slang"
+struct EffectUniforms_0
 {
-    float2 source_size_px;
-    float2 output_size_px;
-    float4 params0;
-    float4 params1;
+    float2 source_size_px_0;
+    float2 output_size_px_0;
+    float4 params0_0;
+    float4 params1_0;
 };
 
-struct V2P
+
+
+struct KernelContext_0
 {
-    float4 position;
-    float2 uv;
+    EffectUniforms_0 constant* u_0;
+    texture2d<float, access::sample> t_source_0;
+    sampler s_source_0;
 };
 
-struct _15
-{
-    EffectUniforms _m0;
-};
 
-struct fs_main_out
+#line 57
+float4 src_0(float2 uv_0, KernelContext_0 thread* kernelContext_0)
 {
-    float4 m_247 [[color(0)]];
-};
-
-struct fs_main_in
-{
-    float2 uv [[user(locn0)]];
-};
-
-static inline __attribute__((always_inline))
-float4 src(float2 uv, texture2d<float> t_source, sampler s_source)
-{
-    return t_source.sample(s_source, uv);
+    return ((kernelContext_0->t_source_0).sample((kernelContext_0->s_source_0), (uv_0)));
 }
 
-static inline __attribute__((always_inline))
-float4 src_at(float2 uv, float2 offset_px, constant _15& u, texture2d<float> t_source, sampler s_source)
+float4 src_at_0(float2 uv_1, float2 offset_px_0, KernelContext_0 thread* kernelContext_1)
 {
-    return t_source.sample(s_source, (uv + (offset_px / u._m0.source_size_px)));
+    return ((kernelContext_1->t_source_0).sample((kernelContext_1->s_source_0), (uv_1 + offset_px_0 / kernelContext_1->u_0->source_size_px_0)));
 }
 
-static inline __attribute__((always_inline))
-uint naga_mod(uint lhs, uint rhs)
-{
-    return lhs % ((rhs == 0u) ? 1u : rhs);
-}
 
-static inline __attribute__((always_inline))
-float4 effect(float2 uv01, float2 frag_px, constant _15& u, texture2d<float> t_source, sampler s_source)
+#line 14 "crt.slang"
+float4 effect_0(float2 uv01_0, float2 frag_px_0, KernelContext_0 thread* kernelContext_2)
 {
-    float3 mask_mul = float3(0.0);
-    bool _82 = false;
-    float4 color = float4(0.0);
-    bool _79 = false;
-    bool _84 = false;
-    float2 _108 = uv01 - float2(0.5);
-    float _109 = dot(_108, _108);
-    float2 _113 = uv01 + (_108 * ((_109 * u._m0.params0.y) * 2.0));
-    if (!(_113.x < 0.0))
+    float scanline_intensity_0 = kernelContext_2->u_0->params0_0.x;
+
+    float vignette_strength_0 = kernelContext_2->u_0->params0_0.z;
+    float mask_strength_0 = kernelContext_2->u_0->params0_0.w;
+    float rgb_shift_px_0 = kernelContext_2->u_0->params1_0.x;
+    float brightness_0 = kernelContext_2->u_0->params1_0.y;
+
+
+    float2 centered_0 = uv01_0 - float2(0.5f, 0.5f);
+    float r2_0 = dot(centered_0, centered_0);
+    float2 uv_2 = uv01_0 + centered_0 * float2((r2_0 * kernelContext_2->u_0->params0_0.y * 2.0f)) ;
+    float _S1 = uv_2.x;
+
+#line 27
+    bool _S2;
+
+#line 27
+    if(_S1 < 0.0f)
     {
-        _79 = _113.x > 1.0;
+
+#line 27
+        _S2 = true;
+
+#line 27
     }
     else
     {
-        _79 = true;
+
+#line 27
+        _S2 = _S1 > 1.0f;
+
+#line 27
     }
-    if (!_79)
+
+#line 27
+    if(_S2)
     {
-        _82 = _113.y < 0.0;
-    }
-    else
-    {
-        _82 = true;
-    }
-    if (!_82)
-    {
-        _84 = _113.y > 1.0;
-    }
-    else
-    {
-        _84 = true;
-    }
-    if (_84)
-    {
-        return float4(0.0);
-    }
-    color = src(_113, t_source, s_source);
-    if (u._m0.params1.x > 0.001000000047497451305389404296875)
-    {
-        color.x = src_at(_113, float2(u._m0.params1.x, 0.0), u, t_source, s_source).x;
-        color.z = src_at(_113, float2(-u._m0.params1.x, 0.0), u, t_source, s_source).z;
-    }
-    float _158 = sin((_113.y * u._m0.source_size_px.y) * 3.1415927410125732421875);
-    float _163 = 1.0 - (u._m0.params0.x * (0.3499999940395355224609375 + ((0.64999997615814208984375 * _158) * _158)));
-    uint _168 = naga_mod(uint(fast::clamp(frag_px.x, 0.0, 4294967040.0)), 3u);
-    mask_mul = float3(1.0 - (u._m0.params0.w * 0.449999988079071044921875));
-    if (_168 == 0u)
-    {
-        mask_mul.x = 1.0;
+
+#line 27
+        _S2 = true;
+
+#line 27
     }
     else
     {
-        if (_168 == 1u)
+
+#line 27
+        _S2 = (uv_2.y) < 0.0f;
+
+#line 27
+    }
+
+#line 27
+    if(_S2)
+    {
+
+#line 27
+        _S2 = true;
+
+#line 27
+    }
+    else
+    {
+
+#line 27
+        _S2 = (uv_2.y) > 1.0f;
+
+#line 27
+    }
+
+#line 27
+    if(_S2)
+    {
+        return float4(0.0f) ;
+    }
+
+#line 29
+    float4 _S3 = src_0(uv_2, kernelContext_2);
+
+
+
+    thread float4 color_0 = _S3;
+    if(rgb_shift_px_0 > 0.00100000004749745f)
+    {
+
+#line 34
+        float4 _S4 = src_at_0(uv_2, float2(rgb_shift_px_0, 0.0f), kernelContext_2);
+
+        color_0.x = _S4.x;
+
+#line 36
+        float4 _S5 = src_at_0(uv_2, float2(- rgb_shift_px_0, 0.0f), kernelContext_2);
+        color_0.z = _S5.z;
+
+#line 34
+    }
+
+#line 42
+    float s_0 = sin(uv_2.y * kernelContext_2->u_0->source_size_px_0.y * 3.14159274101257324f);
+    float scan_0 = 1.0f - scanline_intensity_0 * (0.34999999403953552f + 0.64999997615814209f * s_0 * s_0);
+
+
+    uint mask_sel_0 = uint(frag_px_0.x) % 3U;
+    thread float3 mask_mul_0 = float3((1.0f - mask_strength_0 * 0.44999998807907104f)) ;
+    if(mask_sel_0 == 0U)
+    {
+
+#line 48
+        mask_mul_0.x = 1.0f;
+
+#line 48
+    }
+    else
+    {
+
+#line 49
+        if(mask_sel_0 == 1U)
         {
-            mask_mul.y = 1.0;
+
+#line 49
+            mask_mul_0.y = 1.0f;
+
+#line 49
         }
         else
         {
-            mask_mul.z = 1.0;
+
+#line 50
+            mask_mul_0.z = 1.0f;
+
+#line 49
         }
+
+#line 48
     }
-    float _186 = fast::max(1.0 - ((u._m0.params0.z * _109) * 1.5), 0.0);
-    return float4((((color.xyz * mask_mul) * u._m0.params1.y) * _163) * _186, (color.w * _163) * _186);
+
+#line 53
+    float _S6 = max(1.0f - vignette_strength_0 * r2_0 * 1.5f, 0.0f);
+
+#line 59
+    return float4(color_0.xyz * mask_mul_0 * float3(brightness_0)  * float3(scan_0)  * float3(_S6) , color_0.w * scan_0 * _S6);
 }
 
-fragment fs_main_out fs_main(fs_main_in in [[stage_in]], constant _15& u [[buffer(0)]], texture2d<float> t_source [[texture(0)]], sampler s_source [[sampler(0)]], float4 gl_FragCoord [[position]])
+
+#line 59
+struct pixelOutput_0
 {
-    fs_main_out out = {};
-    V2P _240 = V2P{ gl_FragCoord, in.uv };
-    out.m_247 = effect(_240.uv, _240.position.xy, u, t_source, s_source);
-    return out;
+    float4 output_0 [[color(0)]];
+};
+
+
+#line 59
+struct pixelInput_0
+{
+    float2 uv_3 [[user(TEXCOORD)]];
+};
+
+
+#line 68 "effect_prelude.slang"
+[[fragment]] pixelOutput_0 fs_main(pixelInput_0 _S7 [[stage_in]], float4 position_0 [[position]], EffectUniforms_0 constant* u_1 [[buffer(0)]], texture2d<float, access::sample> t_source_1 [[texture(0)]], sampler s_source_1 [[sampler(0)]])
+{
+
+#line 68
+    thread KernelContext_0 kernelContext_3;
+
+#line 68
+    (&kernelContext_3)->u_0 = u_1;
+
+#line 68
+    (&kernelContext_3)->t_source_0 = t_source_1;
+
+#line 68
+    (&kernelContext_3)->s_source_0 = s_source_1;
+
+#line 68
+    float4 _S8 = effect_0(_S7.uv_3, position_0.xy, &kernelContext_3);
+
+#line 68
+    pixelOutput_0 _S9 = { _S8 };
+
+    return _S9;
 }
 

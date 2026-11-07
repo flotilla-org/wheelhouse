@@ -3,7 +3,7 @@
 #include <metal_texture>
 using namespace metal;
 
-#line 27 "/home/user/wheelhouse/native/src/shaders/slang/common.slang"
+#line 27 "common.slang"
 float2 corner_pct_0(uint vid_0)
 {
 
@@ -71,7 +71,7 @@ struct vs_main_Result_0
 };
 
 
-#line 9 "/home/user/wheelhouse/native/src/shaders/slang/blur.slang"
+#line 9 "blur.slang"
 struct BlurUniforms_0
 {
     float4 rect_0;

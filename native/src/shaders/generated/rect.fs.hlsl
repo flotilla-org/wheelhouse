@@ -9,7 +9,7 @@
 #endif
 
 
-#line 23 "/home/user/wheelhouse/native/src/shaders/slang/rect.slang"
+#line 23 "rect.slang"
 Texture2D<float4 > t_color_0 : register(t0);
 
 
@@ -35,7 +35,7 @@ cbuffer u_0 : register(b0)
     RectUniforms_0 u_0;
 }
 
-#line 9 "/home/user/wheelhouse/native/src/shaders/slang/common.slang"
+#line 9 "common.slang"
 float linear_from_srgb_0(float x_0)
 {
 
@@ -76,7 +76,7 @@ float rect_sdf_0(float2 sample_pos_0, float2 rect_half_size_0, float r_0)
 }
 
 
-#line 38 "/home/user/wheelhouse/native/src/shaders/slang/rect.slang"
+#line 38 "rect.slang"
 struct V2P_0
 {
     float4 position_0 : SV_Position;

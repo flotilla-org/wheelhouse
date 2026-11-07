@@ -9,7 +9,7 @@
 #endif
 
 
-#line 9 "/home/user/wheelhouse/native/src/shaders/slang/blur.slang"
+#line 9 "blur.slang"
 struct BlurUniforms_0
 {
     float4 rect_0;
@@ -34,14 +34,14 @@ Texture2D<float4 > t_stage_0 : register(t0);
 SamplerState s_stage_0 : register(s0);
 
 
-#line 4 "/home/user/wheelhouse/native/src/shaders/slang/common.slang"
+#line 4 "common.slang"
 float rect_sdf_0(float2 sample_pos_0, float2 rect_half_size_0, float r_0)
 {
     return length(max(abs(sample_pos_0) - rect_half_size_0 + r_0, (float2)0.0f)) - r_0;
 }
 
 
-#line 24 "/home/user/wheelhouse/native/src/shaders/slang/blur.slang"
+#line 24 "blur.slang"
 struct V2P_0
 {
     float4 position_0 : SV_Position;
