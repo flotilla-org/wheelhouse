@@ -269,6 +269,19 @@ pub unsafe extern "C" fn wheelhouse_table_find(table: *mut WheelhouseTable) -> W
     find
 }
 
+/// 0 when the Table Source left out the rows' quick filter last asked for
+/// (an invalid regex, say), keeping the one before; 1 otherwise.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_quick_filter_applied(table: *mut WheelhouseTable) -> u32 {
+    // SAFETY: the caller's contract.
+    let Some(t) = (unsafe { table.as_mut() }) else {
+        return 1;
+    };
+    // SAFETY: the handle owns its Grid until wheelhouse_table_free.
+    let handle = unsafe { &mut *t.grid };
+    t.table.quick_filter_applied(handle.grid_mut()).into()
+}
+
 /// Marks which cells of the block rows by cols (row and column Keys,
 /// rows_len and cols_len of them) match the Find Query in force: out, of
 /// rows_len*cols_len bytes, gets 1 for a match and 0 otherwise, row by row;

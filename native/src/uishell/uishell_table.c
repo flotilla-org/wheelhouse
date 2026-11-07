@@ -61,6 +61,23 @@ struct UIShell_TableState
   // and whether a step's match is current.
   U32 find_support;
   B32 find_current;
+  // The filter bar: the rows' quick filter's text and toggles, and whether
+  // its field has the keys.
+  U8 filter_buffer[1024];
+  U64 filter_size;
+  TxtPt filter_cursor;
+  TxtPt filter_mark;
+  B32 filter_case;
+  B32 filter_regex;
+  B32 filter_focused;
+  // As of the last Snapshot: the rows' BINNACLE_QUICK_FILTER* bits, whether
+  // the source left out the filter asked for, and their count and unfiltered
+  // total for the bar.
+  U32 filter_support;
+  B32 filter_rejected;
+  U64 rows_count;
+  B32 rows_has_total;
+  U64 rows_total;
 };
 
 // Cells painted, counted by the table diagnostics.
@@ -145,12 +162,15 @@ uishell_table_rect(Rng2F32 origin, BinnacleRect r)
 
 // What an empty table says in its body, as on the web: "No rows" once it
 // has no rows or no columns, but nothing while its status line says why
-// (connecting, loading, retrying, failed).
+// (connecting, loading, retrying, failed). Rows the filter leaves out are
+// said to be.
 internal String8
 uishell_table_empty_message(BinnacleSnapshot *snap, String8 status)
 {
-  B32 empty = snap->axes[BINNACLE_ROWS].count == 0 || snap->axes[BINNACLE_COLS].count == 0;
-  return empty && status.size == 0 ? str8_lit("No rows") : str8_zero();
+  BinnacleAxisSnapshot *rows = &snap->axes[BINNACLE_ROWS];
+  B32 empty = rows->count == 0 || snap->axes[BINNACLE_COLS].count == 0;
+  if(!empty || status.size != 0) { return str8_zero(); }
+  return rows->count == 0 && rows->has_total && rows->total != 0 ? str8_lit("No rows match the filter") : str8_lit("No rows");
 }
 
 internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
@@ -441,6 +461,19 @@ uishell_table_find_step(UIShell_TableState *state, S32 dir)
   rd_request_frame();
 }
 
+// "Show only matching rows": the find text, matching as find does, becomes
+// the rows' quick filter.
+internal void
+uishell_table_filter_from_find(UIShell_TableState *state, String8 text)
+{
+  state->filter_size = Min(text.size, sizeof(state->filter_buffer));
+  MemoryCopy(state->filter_buffer, text.str, state->filter_size);
+  state->filter_cursor = state->filter_mark = txt_pt(1, state->filter_size+1);
+  state->filter_case = state->find_case;
+  state->filter_regex = state->find_regex && (state->filter_support & BINNACLE_QUICK_FILTER_REGEX);
+  rd_request_frame();
+}
+
 // The table's part of its search row: the count, a note when a step wraps,
 // matching case, regexes where the source takes them, the order steps go
 // in, and Previous and Next.
@@ -489,6 +522,12 @@ uishell_table_query_extras(void *user_data)
         if(ui_hovering(sig)) UI_Tooltip { ui_labelf("The order find steps in"); }
         if(ui_clicked(sig)) { state->find_by_cols = !state->find_by_cols; rd_request_frame(); }
       }
+      if(state->filter_support & BINNACLE_QUICK_FILTER)
+      {
+        UI_Signal sig = ui_buttonf("Filter###find_filter");
+        if(ui_hovering(sig)) UI_Tooltip { ui_labelf("Show only matching rows"); }
+        if(ui_clicked(sig)) { uishell_table_filter_from_find(state, rd_view_query_input()); }
+      }
       RD_Font(RD_FontSlot_Icons)
       {
         UI_Signal previous = ui_buttonf("%S###find_previous", rd_icon_kind_text_table[RD_IconKind_UpArrow]);
@@ -513,6 +552,102 @@ uishell_table_title(Arena *arena, String8 expr)
   U8 *out = push_array_no_zero(arena, U8, cap);
   U64 size = wheelhouse_table_title((WheelhouseText){expr.str, expr.size}, out, cap);
   return str8(out, size);
+}
+
+// What the filter bar says of the rows: "1,204 of 5,001" while a filter
+// leaves some out, else "5,001 rows".
+internal String8
+uishell_table_row_count(Arena *arena, U64 count, B32 has_total, U64 total)
+{
+  String8 shown = str8_from_u64(arena, count, 10, 0, ',');
+  if(has_total && total != count)
+  {
+    return push_str8f(arena, "%S of %S", shown, str8_from_u64(arena, total, 10, 0, ','));
+  }
+  return push_str8f(arena, "%S %s", shown, count == 1 ? "row" : "rows");
+}
+
+// The filter bar (#535), where the rows take a quick filter: its field,
+// matching case, regexes where the source takes them, a clear button while
+// there is text, "Not applied" while the source leaves the filter out, and
+// the count. Escape in the field clears it, or with nothing to clear hands
+// the keys back to the Grid, as Enter does.
+internal void
+uishell_table_filter_bar(UIShell_TableState *state, F32 width, F32 height)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UI_Box *bar;
+  UI_PrefWidth(ui_px(width, 1)) UI_PrefHeight(ui_px(height, 1)) UI_ChildLayoutAxis(Axis2_X)
+  {
+    bar = ui_build_box_from_string(UI_BoxFlag_DrawSideBottom, str8_lit("table_filter_bar"));
+  }
+  UI_Parent(bar) UI_PrefHeight(ui_pct(1, 1)) RD_Font(RD_FontSlot_Main)
+  {
+    ui_spacer(ui_em(0.5f, 1.f));
+    UI_Focus(state->filter_focused ? UI_FocusKind_On : UI_FocusKind_Off)
+    {
+      if(ui_is_focus_active() && ui_slot_press(UI_EventActionSlot_Cancel))
+      {
+        if(state->filter_size != 0) { state->filter_size = 0; state->filter_cursor = state->filter_mark = txt_pt(1, 1); }
+        else { state->filter_focused = 0; }
+      }
+      if(ui_is_focus_active() && ui_slot_press(UI_EventActionSlot_Accept)) { state->filter_focused = 0; }
+      RD_CellParams params = {0};
+      params.flags = RD_CellFlag_Border;
+      params.cursor = &state->filter_cursor;
+      params.mark = &state->filter_mark;
+      params.edit_buffer = state->filter_buffer;
+      params.edit_buffer_size = sizeof(state->filter_buffer);
+      params.edit_string_size_out = &state->filter_size;
+      params.pre_edit_value = str8(state->filter_buffer, state->filter_size);
+      // Empty, it says what it is for.
+      if(state->filter_size == 0) UI_TagF("weak")
+      {
+        DR_FStrParams fparams = {ui_top_font(), ui_top_text_raster_flags(), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+        dr_fstrs_push_new(scratch.arena, &params.value_fstrs, &fparams, str8_lit("Filter rows…"));
+      }
+      UI_Signal sig;
+      UI_PrefWidth(ui_em(20, 1)) { sig = rd_cellf(&params, "###table_filter"); }
+      if(ui_pressed(sig))
+      {
+        state->filter_focused = 1;
+        uishell_cmd("focus_panel");
+      }
+    }
+    // The buttons are for the mouse: Enter and Escape stay the field's.
+    UI_PrefWidth(ui_text_dim(10, 1)) UI_Focus(UI_FocusKind_Off)
+    {
+      UI_TagF(state->filter_case ? "pop" : "")
+      {
+        UI_Signal sig = ui_buttonf("Aa###filter_case");
+        if(ui_hovering(sig)) UI_Tooltip { ui_labelf("Match case"); }
+        if(ui_clicked(sig)) { state->filter_case = !state->filter_case; rd_request_frame(); }
+      }
+      if(state->filter_support & BINNACLE_QUICK_FILTER_REGEX) UI_TagF(state->filter_regex ? "pop" : "")
+      {
+        UI_Signal sig = ui_buttonf(".*###filter_regex");
+        if(ui_hovering(sig)) UI_Tooltip { ui_labelf("Use regular expression"); }
+        if(ui_clicked(sig)) { state->filter_regex = !state->filter_regex; rd_request_frame(); }
+      }
+      if(state->filter_size != 0) RD_Font(RD_FontSlot_Icons)
+      {
+        UI_Signal sig = ui_buttonf("%S###filter_clear", rd_icon_kind_text_table[RD_IconKind_X]);
+        if(ui_hovering(sig)) UI_Tooltip RD_Font(RD_FontSlot_Main) { ui_labelf("Clear filter"); }
+        if(ui_clicked(sig))
+        {
+          state->filter_size = 0;
+          state->filter_cursor = state->filter_mark = txt_pt(1, 1);
+          state->filter_focused = 1;
+          uishell_cmd("focus_panel");
+          rd_request_frame();
+        }
+      }
+      ui_spacer(ui_em(0.5f, 1.f));
+      if(state->filter_rejected) UI_TagF("bad") { ui_labelf("Not applied"); }
+      UI_TagF("weak") ui_label(uishell_table_row_count(scratch.arena, state->rows_count, state->rows_has_total, state->rows_total));
+    }
+  }
+  scratch_end(scratch);
 }
 
 WH_VIEW_UI_FUNCTION_DEF(table)
@@ -624,6 +759,22 @@ WH_VIEW_UI_FUNCTION_DEF(table)
       uishell_table_find_step(state, -1);
     }
   }
+  // The filter bar's text, with its toggles, is the rows' quick filter.
+  // It has the keys until the Grid or the search row takes them.
+  B32 row_focused = vs->query_is_open && !vs->contents_are_focused;
+  if(row_focused) { state->filter_focused = 0; }
+  F32 bar_h = 0;
+  if(state->filter_support & BINNACLE_QUICK_FILTER)
+  {
+    bar_h = line;
+    UI_Parent(root) { uishell_table_filter_bar(state, dim.x, bar_h); }
+    BinnacleTextQuery quick = {0};
+    quick.text = (BinnacleText){state->filter_buffer, state->filter_size};
+    quick.flags = (state->filter_case ? BINNACLE_TEXT_CASE_SENSITIVE : 0) |
+                  (state->filter_regex && (state->filter_support & BINNACLE_QUICK_FILTER_REGEX) ? BINNACLE_TEXT_REGEX : 0);
+    quick.searched = BINNACLE_SEARCHED_SHOWN;
+    binnacle_grid_set_quick_filter(grid, BINNACLE_ROWS, &quick);
+  }
   // A described table's state (connecting, loading, retrying, failed, partly shown)
   // takes a line above the Grid, as of the last frame.
   String8 status = push_str8_copy(scratch.arena, uishell_table_text(wheelhouse_table_status(state->table)));
@@ -632,10 +783,11 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   {
     ui_label(status);
   }
+  F32 top = bar_h + status_h;
   // The Grid in a scroll region, with either style's bars, as other Views
   // have. Its Thumbs are estimates in no units, so the bars take them as
   // they are, from the last Snapshot.
-  UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, status_h, dim.x, Max(dim.y, status_h)),
+  UI_ScrollRegionParams params = ui_scroll_region_params(r2f32p(0, top, dim.x, Max(dim.y, top)),
                                                         UI_ScrollAxisPolicy_Auto, UI_ScrollAxisPolicy_Auto);
   params.content_dim_px = v2f32(state->content_px[Axis2_X], state->content_px[Axis2_Y]);
   // The Grid runs to the edge under reserved gutters, so its headers and
@@ -674,6 +826,7 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   if(ui_pressed(sig))
   {
     uishell_cmd("focus_panel");
+    state->filter_focused = 0;
     BinnaclePointerEvent e = {BINNACLE_POINTER_DOWN, mouse.x, mouse.y, BINNACLE_BUTTON_PRIMARY, mods, ui_double_clicked(sig) ? 2u : 1u};
     binnacle_grid_pointer(grid, e);
   }
@@ -738,10 +891,9 @@ WH_VIEW_UI_FUNCTION_DEF(table)
       uishell_table_act(grid, a);
     }
   }
-  // Keys go to the Grid unless its query row has them: Enter there steps
-  // find, and Escape closes it.
-  B32 row_focused = vs->query_is_open && !vs->contents_are_focused;
-  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && !row_focused)
+  // Keys go to the Grid unless its query row has them (Enter there steps
+  // find, and Escape closes it) or its filter bar does.
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && !row_focused && !state->filter_focused)
   {
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
@@ -771,6 +923,22 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   binnacle_grid_snapshot(grid, &draw->snap);
   state->find_support = draw->snap.find_support;
   state->find_current = draw->snap.has_find_match;
+  // The bar, laid out above, shows these as of the last frame: a change
+  // shows next frame.
+  {
+    BinnacleAxisSnapshot *rows = &draw->snap.axes[BINNACLE_ROWS];
+    B32 rejected = !wheelhouse_table_quick_filter_applied(state->table);
+    if(rows->quick_filter != state->filter_support || rejected != state->filter_rejected || rows->count != state->rows_count ||
+       !!rows->has_total != state->rows_has_total || rows->total != state->rows_total)
+    {
+      rd_request_frame();
+    }
+    state->filter_support = rows->quick_filter;
+    state->filter_rejected = rejected;
+    state->rows_count = rows->count;
+    state->rows_has_total = !!rows->has_total;
+    state->rows_total = rows->total;
+  }
   // Next frame's bars: a Thumb stands for the scrolling Strip's share of the
   // content it scrolls through; the pinned Strips stay put.
   for EachEnumVal(Axis2, axis)

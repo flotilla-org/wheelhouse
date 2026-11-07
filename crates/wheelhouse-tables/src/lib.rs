@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use binnacle_core::{
     Axis, AxisConfig, Distinct, DistinctQuery, Effect, FindDirection, FindMatch, FindQuery, Grid, Key, Located, Position, Scalar, Stamped,
-    Support, TextSupport, ViewSpec, Viewport,
+    Support, TextQuery, TextSupport, ViewSpec, Viewport,
 };
 use binnacle_memory::{pump, FindCount, FindStep, IdentitySource, MemorySource, Moved, PumpSource, Viewed};
 
@@ -220,6 +220,8 @@ pub struct Table {
     /// The measures its Grid's sizes are in, as last set.
     metrics: Metrics,
     find: Find,
+    /// The rows' quick filter of the last View Spec asked for.
+    quick: Option<TextQuery>,
 }
 
 /// What the host's find bar shows: the Find Query in force, the last
@@ -347,7 +349,7 @@ impl Table {
                 let id = source.support(Axis::Rows, Key(0)).with_text(None).with_one_of(false).with_compare(None);
                 grid.set_support(Axis::Rows, Key(0), id);
                 let kind = Kind::Records { rows, source: Box::new(source) };
-                Some((Table { kind, metrics, find: Find::default() }, grid))
+                Some((Table { kind, metrics, find: Find::default(), quick: None }, grid))
             }
             "huge" => {
                 let digits = HUGE_ROWS.to_string().len() as f32;
@@ -360,14 +362,14 @@ impl Table {
                     grid.set_support(Axis::Rows, Key(c), none);
                 }
                 let kind = Kind::Huge(Huge { rows: IdentitySource::new(HUGE_ROWS), cols: IdentitySource::new(HUGE_COLS) });
-                Some((Table { kind, metrics, find: Find::default() }, grid))
+                Some((Table { kind, metrics, find: Find::default(), quick: None }, grid))
             }
             "live" => {
                 let grid = Grid::new(
                     AxisConfig::new(TICKERS as u64, line).header(line),
                     AxisConfig::new(TICKER_HEADERS.len() as u64, 12.0 * digit).header(5.0 * digit).gap(1.0),
                 );
-                Some((Table { kind: Kind::Live(Live::new()), metrics, find: Find::default() }, grid))
+                Some((Table { kind: Kind::Live(Live::new()), metrics, find: Find::default(), quick: None }, grid))
             }
             _ => None,
         }
@@ -403,7 +405,7 @@ impl Table {
             grid.set_support(Axis::Rows, Key(c), source.support(Axis::Rows, Key(c)));
         }
         let kind = Kind::Cells(Cells { header, rows, right, source: Box::new(source) });
-        (Table { kind, metrics, find: Find::default() }, grid)
+        (Table { kind, metrics, find: Find::default(), quick: None }, grid)
     }
 
     /// The described table at `link` and an empty Grid for it, sized in
@@ -416,7 +418,7 @@ impl Table {
             AxisConfig::new(0, metrics.line).header(metrics.line),
             AxisConfig::new(0, 14.0 * metrics.digit).header(5.0 * metrics.digit).gap(1.0),
         );
-        Some((Table { kind: Kind::Described(Box::new(described)), metrics, find: Find::default() }, grid))
+        Some((Table { kind: Kind::Described(Box::new(described)), metrics, find: Find::default(), quick: None }, grid))
     }
 
     /// Resizes `grid` for new `metrics`, as when the host's text size
@@ -489,11 +491,15 @@ impl Table {
     /// [`Table::find_marks`], and passed on too.
     pub fn pump(&mut self, grid: &mut Grid, mut pass_on: impl FnMut(Stamped)) {
         let find = &mut self.find;
+        let quick = &mut self.quick;
         // The last step answered, unless a new query came after it.
         let step = std::cell::Cell::new(None);
         let mut seen = |_: &mut Grid, stamped: Stamped| match &stamped.effect {
             // A View Spec can change which cells are shown: count again.
-            Effect::ViewRequested { .. } => find.count = None,
+            Effect::ViewRequested { spec, .. } => {
+                find.count = None;
+                *quick = spec.rows.filter.quick.clone();
+            }
             Effect::Locate { .. } | Effect::MoveRequested { .. } | Effect::FindStepRequested { .. } => {}
             Effect::FindRequested { query } => {
                 *find = Find { query: query.clone(), step: None, count: None };
@@ -515,6 +521,13 @@ impl Table {
         if let Some(step) = step.get() {
             self.find.step = Some(step);
         }
+    }
+
+    /// Whether the rows' quick filter last asked for is the one `grid`
+    /// applies: not when the source left it out (an invalid regex, say),
+    /// keeping the one before.
+    pub fn quick_filter_applied(&self, grid: &Grid) -> bool {
+        grid.applied_view().rows.filter.quick == self.quick
     }
 
     /// Where the last find step landed among the matches of the Find Query
