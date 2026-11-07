@@ -600,12 +600,24 @@ impl View {
         Window { top, viewport: self.viewport, total, at_end: self.at_end, new: self.new_items(doc), entries }
     }
 
-    pub fn thumb(&self, doc: &Tree) -> Thumb {
-        let total = self.heights.total();
-        let estimated = if total > 0.0 { self.heights.estimated_total() / total } else { 0.0 };
+    /// `unloaded` items not in `doc` yet come before it, as many again as
+    /// its own top-level items' height on average: a watched thread's
+    /// scrollbar is right before its history loads (#541).
+    pub fn thumb(&self, doc: &Tree, unloaded: u64) -> Thumb {
+        let loaded = self.heights.total();
+        let items = doc.root().map_or(0, |root| doc.children(root).count()).max(1);
+        let above = unloaded as f64 * loaded / items as f64;
+        let total = loaded + above;
+        let estimated = if total > 0.0 { (self.heights.estimated_total() + above) / total } else { 0.0 };
         if total <= self.viewport || total <= 0.0 {
             return Thumb { start: 0.0, size: 1.0, estimated };
         }
-        Thumb { start: self.top(doc) / total, size: self.viewport / total, estimated }
+        Thumb { start: (above + self.top(doc)) / total, size: self.viewport / total, estimated }
+    }
+
+    /// Whether the View reads within a viewport of `doc`'s start: time to
+    /// ask for what comes before it.
+    pub fn near_start(&self, doc: &Tree) -> bool {
+        self.top(doc) < self.viewport
     }
 }

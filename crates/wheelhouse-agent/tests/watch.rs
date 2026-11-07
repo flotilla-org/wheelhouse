@@ -187,6 +187,10 @@ impl Watcher {
         }
     }
 
+    fn watch_endpoint(&self) -> Endpoint {
+        self.watch.endpoint().clone()
+    }
+
     fn seqs(&self) -> Vec<u64> {
         self.seen.iter().filter_map(|u| if let Update::Event(e) = u { Some(e.seq()) } else { None }).collect()
     }
@@ -302,4 +306,17 @@ fn a_post_is_accepted_or_fails_with_the_producers_reason() {
     };
     assert_eq!(settle(r#"{"messages":[]}"#), PostStatus::Accepted);
     assert_eq!(settle(r#"{"resume":"second answer"}"#), PostStatus::Failed(r#"{"error":"answered","by":"m7"}"#.into()));
+}
+
+#[test]
+fn watches_and_posts_of_one_endpoint_share_it_while_it_is_in_use() {
+    let socket = serve("shared", Producer::new(3, 3));
+    let first = Endpoint::shared(&socket).unwrap();
+    let second = Endpoint::shared(&socket).unwrap();
+    assert!(first.same(&second));
+    let mut watcher = Watcher::open(&second, THREAD);
+    drop((first, second));
+    // The watch keeps it: a third use gets the same one.
+    assert!(Endpoint::shared(&socket).unwrap().same(&watcher.watch_endpoint()));
+    watcher.until("snapshot", has_seq(3));
 }

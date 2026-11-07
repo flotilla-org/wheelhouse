@@ -119,6 +119,13 @@ pub enum LocalRecipe {
         daemon: String,
         session: String,
     },
+    /// An agent thread watched over the Agent View protocol (#691): its
+    /// producer's Local Endpoint (a socket on this machine) and the thread,
+    /// whose id is the same wherever it is watched from (#706).
+    AgentSession {
+        endpoint: String,
+        thread: String,
+    },
 }
 
 /// How a frontend reaches a Cleat session's daemon.
@@ -516,6 +523,7 @@ fn recipe(f: &Facts, key: &str) -> Result<LocalRecipe, LayoutError> {
             }
             LocalRecipe::CleatSession { transport, host, runtime_root, daemon, session }
         }
+        "agent-session" => LocalRecipe::AgentSession { endpoint: required("endpoint")?, thread: required("thread")? },
         other => return Err(invalid(&at("kind"), other)),
     })
 }

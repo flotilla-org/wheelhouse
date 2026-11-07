@@ -25,7 +25,7 @@ pub unsafe extern "C" fn wheelhouse_agent_input_post(endpoint: Text, path: Text,
     pure(error_out, || {
         let endpoint = endpoint.read()?;
         let socket = endpoint.strip_prefix("unix://").ok_or_else(|| format!("unsupported input endpoint {endpoint}"))?;
-        let post = Endpoint::open(Path::new(socket)).map_err(|error| error.to_string())?.post(&path.read()?, body.read()?.into_bytes());
+        let post = Endpoint::shared(Path::new(socket)).map_err(|error| error.to_string())?.post(&path.read()?, body.read()?.into_bytes());
         let ticket = NEXT_TICKET.fetch_add(1, Ordering::Relaxed);
         TICKETS.lock().unwrap().get_or_insert_default().insert(ticket, post);
         Ok(ticket)

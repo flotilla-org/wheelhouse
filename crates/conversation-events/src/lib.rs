@@ -116,10 +116,6 @@ impl Event {
 #[serde(rename_all = "camelCase")]
 pub struct Hello {
     pub contract: u32,
-    /// Where an events file's producer takes input, before the watch stream
-    /// (#683): `unix://PATH`. Goes with the bridge's move to the stream.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub thread_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -737,8 +733,11 @@ pub struct StateDelta {
     pub delta: Vec<Value>,
 }
 
-/// The `status` document's `snapshot`: `idle`, `running` or `requires_action`.
+/// The `status` document's key; its `snapshot` is one of the three below.
 pub const STATUS: &str = "status";
+pub const STATUS_IDLE: &str = "idle";
+pub const STATUS_RUNNING: &str = "running";
+pub const STATUS_REQUIRES_ACTION: &str = "requires_action";
 
 /// Plans and to-dos.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

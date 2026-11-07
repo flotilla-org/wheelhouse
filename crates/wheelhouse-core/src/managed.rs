@@ -82,6 +82,11 @@ impl Resolved {
                 field(daemon);
                 field(session);
             }
+            LocalRecipe::AgentSession { endpoint, thread } => {
+                field("agent-session");
+                field(endpoint);
+                field(thread);
+            }
         }
         out
     }

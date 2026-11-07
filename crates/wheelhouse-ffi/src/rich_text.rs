@@ -12,6 +12,7 @@
 use super::*;
 use std::time::Duration;
 
+use conversation_events::STATUS_REQUIRES_ACTION;
 use wheelhouse_rich_text::{
     copy_block, Alert, Align, Anchor, Attr, Color, CopyAction, Delta, Detail, FindOptions, FindStatus, Format, Key, ListOp, Match, Metrics,
     NodeContent, Op, Part, Point, Position, RichText, Role, SectionKind, SubscriptionId, ToolKind, ToolStatus, Tree, View, Window,
@@ -624,10 +625,16 @@ impl WheelhouseRichDelta {
 /// A markdown document and its subscribers. Calls on one are serialised by
 /// the host.
 pub struct WheelhouseRichText {
-    rich: RichText,
+    pub(crate) rich: RichText,
     poisoned: bool,
     /// What the last window points into.
     window: Vec<WheelhouseRichWindowEntry>,
+}
+
+impl WheelhouseRichText {
+    pub(crate) fn new(rich: RichText) -> WheelhouseRichText {
+        WheelhouseRichText { rich, poisoned: false, window: vec![] }
+    }
 }
 
 impl Handle for WheelhouseRichText {
@@ -654,7 +661,7 @@ unsafe fn markdown(text: Text) -> Result<String, String> {
 pub unsafe extern "C" fn wheelhouse_rich_text_open(markdown_text: Text, error_out: *mut *mut c_char) -> *mut WheelhouseRichText {
     pure(error_out, || {
         let rich = RichText::open(&markdown(markdown_text)?);
-        Ok(Box::into_raw(Box::new(WheelhouseRichText { rich, poisoned: false, window: vec![] })))
+        Ok(Box::into_raw(Box::new(WheelhouseRichText::new(rich))))
     })
     .unwrap_or(ptr::null_mut())
 }
@@ -700,7 +707,7 @@ pub unsafe extern "C" fn wheelhouse_rich_text_reload(
 pub unsafe extern "C" fn wheelhouse_rich_text_open_conversation(jsonl: Text, error_out: *mut *mut c_char) -> *mut WheelhouseRichText {
     pure(error_out, || {
         let rich = RichText::open_conversation(slice(jsonl.data, jsonl.len)?);
-        Ok(Box::into_raw(Box::new(WheelhouseRichText { rich, poisoned: false, window: vec![] })))
+        Ok(Box::into_raw(Box::new(WheelhouseRichText::new(rich))))
     })
     .unwrap_or(ptr::null_mut())
 }
@@ -716,7 +723,7 @@ pub unsafe extern "C" fn wheelhouse_rich_text_open_thread(
 ) -> *mut WheelhouseRichText {
     pure(error_out, || {
         let rich = RichText::open_thread(slice(jsonl.data, jsonl.len)?, &thread.read()?);
-        Ok(Box::into_raw(Box::new(WheelhouseRichText { rich, poisoned: false, window: vec![] })))
+        Ok(Box::into_raw(Box::new(WheelhouseRichText::new(rich))))
     })
     .unwrap_or(ptr::null_mut())
 }
@@ -1256,9 +1263,10 @@ pub unsafe extern "C" fn wheelhouse_rich_text_thumb(
     out: *mut WheelhouseRichThumb,
     error_out: *mut *mut c_char,
 ) -> u32 {
+    let unloaded = h.as_ref().map_or(0, |h| h.rich.conversation_earlier().0);
     view(h, subscription, error_out, |doc, view| {
         let out = out.as_mut().ok_or("null output")?;
-        let thumb = view.thumb(doc);
+        let thumb = view.thumb(doc, unloaded);
         *out = WheelhouseRichThumb { start: thumb.start, size: thumb.size, estimated: thumb.estimated };
         Ok(())
     })
@@ -1387,23 +1395,23 @@ pub unsafe extern "C" fn wheelhouse_rich_text_copy(
     .is_some() as u32
 }
 
-/// Where a conversation's producer takes input, from its hello: returns 0
-/// with nothing written when it names none.
+/// Whether a watched thread takes input, as its hello says: its View shows
+/// a composer only then.
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_rich_text_conversation_input(
-    h: *mut WheelhouseRichText,
-    out: *mut Bytes,
-    error_out: *mut *mut c_char,
-) -> u32 {
-    run(h, error_out, |h| match h.rich.conversation_input() {
-        Some(input) => write_bytes(out, input.as_bytes().to_vec()).map(|()| true),
-        None => Ok(false),
-    })
-    .unwrap_or(false) as u32
+pub unsafe extern "C" fn wheelhouse_rich_text_conversation_takes_input(h: *mut WheelhouseRichText, error_out: *mut *mut c_char) -> u32 {
+    run(h, error_out, |h| Ok(h.rich.conversation_takes_input())).unwrap_or(false) as u32
 }
 
-/// Whether a conversation's top-level run is open; while it is, the title
-/// of its running tool goes to `tool_out` (empty when no tool is running).
+/// Whether a watched thread waits on an answer (its `status` document says
+/// `requires_action`).
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_rich_text_conversation_waiting(h: *mut WheelhouseRichText, error_out: *mut *mut c_char) -> u32 {
+    run(h, error_out, |h| Ok(h.rich.conversation_status() == Some(STATUS_REQUIRES_ACTION))).unwrap_or(false) as u32
+}
+
+/// Whether a conversation is busy: its `status` document says so, or
+/// without one, its top-level run is open. While it is, the title of its
+/// running tool goes to `tool_out` (empty when no tool is running).
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_rich_text_conversation_running(
     h: *mut WheelhouseRichText,

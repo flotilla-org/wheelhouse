@@ -142,6 +142,23 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 #define WHEELHOUSE_AGENT_INPUT_FAILED 2
 
+// wheelhouse_agent_watch_pump's flags: the conversation changed.
+#define WHEELHOUSE_AGENT_CHANGED 1
+
+// The producer started over with a fresh snapshot: free the conversation,
+// open a new one and pump again.
+#define WHEELHOUSE_AGENT_RESTART 2
+
+#define WHEELHOUSE_AGENT_CONNECTING 0
+
+#define WHEELHOUSE_AGENT_OPEN 1
+
+// Dropped or refused for now; it connects again by itself.
+#define WHEELHOUSE_AGENT_RETRYING 2
+
+// Refused for good, as for a thread the producer doesn't have.
+#define WHEELHOUSE_AGENT_FAILED 3
+
 // The size of a tab: the host's View Address, copied whole.
 #define WHEELHOUSE_TAB_BYTES 40
 
@@ -668,6 +685,10 @@ typedef struct BinnacleGrid BinnacleGrid;
 // "ssh", cleat_host, cleat_runtime_root, cleat_daemon, cleat_session).
 #define WHEELHOUSE_SLOT_CLEAT_SESSION 5
 
+// An agent thread watched over the Agent View protocol (endpoint, a Local
+// Endpoint's socket, and agent_thread).
+#define WHEELHOUSE_SLOT_AGENT_SESSION 6
+
 // A rebind closes the instance it replaces.
 #define WHEELHOUSE_REBIND_REPLACE 0
 
@@ -859,6 +880,8 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 // Safe to use from several threads at once.
 typedef struct WhText WhText;
+
+typedef struct WheelhouseAgentWatch WheelhouseAgentWatch;
 
 typedef struct WheelhouseCard WheelhouseCard;
 
@@ -1807,6 +1830,7 @@ typedef struct {
   WheelhouseText cleat_runtime_root;
   WheelhouseText cleat_daemon;
   WheelhouseText cleat_session;
+  WheelhouseText agent_thread;
 } WheelhouseViewSpec;
 
 // One named field of a portable Target Resolution.
@@ -2491,6 +2515,35 @@ uint64_t wheelhouse_agent_input_post(WheelhouseText endpoint,
 uint32_t wheelhouse_agent_input_status(uint64_t ticket, WheelhouseBytes *why_out, char **error_out);
 
 void wheelhouse_agent_input_forget(uint64_t ticket);
+
+// Watches `thread` at the Local Endpoint whose socket is `endpoint`,
+// sharing its connection with every other watch and post of it. `wake`
+// (if not NULL) is called from another thread whenever updates wait.
+// Free it with wheelhouse_agent_watch_free.
+WheelhouseAgentWatch *wheelhouse_agent_watch_open(WheelhouseText endpoint,
+                                                  WheelhouseText thread,
+                                                  void (*wake)(void),
+                                                  char **error_out);
+
+void wheelhouse_agent_watch_free(WheelhouseAgentWatch *w);
+
+// An empty conversation for wheelhouse_agent_watch_pump to feed. Free it
+// with wheelhouse_rich_text_free.
+WheelhouseRichText *wheelhouse_rich_text_watch_conversation(char **error_out);
+
+// Feeds `doc` what came since the last pump and returns
+// WHEELHOUSE_AGENT_* flags. Asks for older items while View `subscription`
+// reads near the start of what `doc` has.
+uint32_t wheelhouse_agent_watch_pump(WheelhouseAgentWatch *w,
+                                     WheelhouseRichText *doc,
+                                     uint64_t subscription,
+                                     char **error_out);
+
+// The watch's WHEELHOUSE_AGENT_CONNECTING..FAILED state; why it is
+// retrying or failed goes to `why_out`.
+uint32_t wheelhouse_agent_watch_connection(WheelhouseAgentWatch *w,
+                                           WheelhouseBytes *why_out,
+                                           char **error_out);
 
 // Applies `edit` to `doc` by the core's rules, with `hidden` (and its
 // `context`) saying which tabs a settle passes over. Returns the edited
@@ -3184,14 +3237,17 @@ uint32_t wheelhouse_rich_text_copy(WheelhouseRichText *h,
                                    WheelhouseBytes *out,
                                    char **error_out);
 
-// Where a conversation's producer takes input, from its hello: returns 0
-// with nothing written when it names none.
-uint32_t wheelhouse_rich_text_conversation_input(WheelhouseRichText *h,
-                                                 WheelhouseBytes *out,
-                                                 char **error_out);
+// Whether a watched thread takes input, as its hello says: its View shows
+// a composer only then.
+uint32_t wheelhouse_rich_text_conversation_takes_input(WheelhouseRichText *h, char **error_out);
 
-// Whether a conversation's top-level run is open; while it is, the title
-// of its running tool goes to `tool_out` (empty when no tool is running).
+// Whether a watched thread waits on an answer (its `status` document says
+// `requires_action`).
+uint32_t wheelhouse_rich_text_conversation_waiting(WheelhouseRichText *h, char **error_out);
+
+// Whether a conversation is busy: its `status` document says so, or
+// without one, its top-level run is open. While it is, the title of its
+// running tool goes to `tool_out` (empty when no tool is running).
 uint32_t wheelhouse_rich_text_conversation_running(WheelhouseRichText *h,
                                                    WheelhouseBytes *tool_out,
                                                    char **error_out);

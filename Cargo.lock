@@ -2696,6 +2696,7 @@ version = "0.1.0"
 dependencies = [
  "binnacle-core",
  "binnacle-ffi",
+ "conversation-events",
  "hegeltest",
  "serde_json",
  "wheelhouse-agent",

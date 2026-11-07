@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use conversation_events::{
     parse_line, patch, Capabilities, Event, Lines, Message, Outcome, Page, Parent, Role as EventRole, ToolCallResult,
-    ToolKind as EventToolKind, ToolStatus as EventToolStatus, Truncated, ANSI, COMPACTION, CONTRACT, DIFF, MARKDOWN, STATUS,
+    ToolKind as EventToolKind, ToolStatus as EventToolStatus, Truncated, ANSI, COMPACTION, CONTRACT, DIFF, MARKDOWN, STATUS, STATUS_IDLE,
 };
 use serde_json::Value;
 
@@ -629,8 +629,6 @@ pub(crate) struct Conversation {
     floor: usize,
     lines: Lines,
     unsupported: bool,
-    /// Where the producer takes input, from the hello.
-    input: Option<String>,
     /// What a watch stream's hello says the thread offers.
     capabilities: Option<Capabilities>,
     /// A watch stream's completed items not loaded yet, and the oldest
@@ -699,10 +697,6 @@ impl Conversation {
         conversation
     }
 
-    pub fn input(&self) -> Option<&str> {
-        self.input.as_deref()
-    }
-
     pub fn takes_input(&self) -> bool {
         self.capabilities.as_ref().is_some_and(|c| c.input)
     }
@@ -730,10 +724,13 @@ impl Conversation {
         (self.earlier, self.oldest_seq) = (page.earlier_items, page.oldest_seq);
     }
 
-    /// Whether a top-level run is open, and its running tool's title.
+    /// Whether the thread is busy, and its running tool's title: its
+    /// `status` document says, if it has one, or else whether a top-level
+    /// run is open.
     pub fn activity(&self) -> (bool, Option<&str>) {
         let tool = self.activity.tool.as_ref().map(|(_, _, title)| title.as_str());
-        (self.activity.run.is_some(), tool)
+        let busy = self.status().map_or(self.activity.run.is_some(), |status| status != STATUS_IDLE);
+        (busy, tool.filter(|_| busy))
     }
 
     pub fn has_user_message(&self, id: &str) -> bool {
@@ -931,7 +928,6 @@ impl Conversation {
         let order = (at, 0);
         match event {
             Event::Hello(hello) => {
-                self.input = hello.input;
                 self.capabilities = hello.capabilities;
                 if let Some(snapshot) = hello.snapshot {
                     (self.earlier, self.oldest_seq) = (snapshot.earlier_items, snapshot.oldest_seq);

@@ -93,7 +93,8 @@
 
 StaticAssert(WH_Content_Command == 1<<WHEELHOUSE_SLOT_COMMAND && WH_Content_File == 1<<WHEELHOUSE_SLOT_FILE &&
              WH_Content_Url == 1<<WHEELHOUSE_SLOT_URL && WH_Content_Jackstay == 1<<WHEELHOUSE_SLOT_JACKSTAY &&
-             WH_Content_Facet == 1<<WHEELHOUSE_SLOT_FACET && WH_Content_CleatSession == 1<<WHEELHOUSE_SLOT_CLEAT_SESSION,
+             WH_Content_Facet == 1<<WHEELHOUSE_SLOT_FACET && WH_Content_CleatSession == 1<<WHEELHOUSE_SLOT_CLEAT_SESSION &&
+             WH_Content_AgentSession == 1<<WHEELHOUSE_SLOT_AGENT_SESSION,
              uishell_store_content_kinds);
 
 // Terminal View settings that name a Cleat endpoint, in the order of
@@ -401,6 +402,15 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
     spec->url = uishell_store_page_url(arena, kind, 0, 0, 0);
     return 1;
   }
+  if(str8_match(kind, str8_lit("rich_text"), 0) && uishell_store_setting(view, str8_lit("agent_thread")).size)
+  {
+    spec->content = WHEELHOUSE_SLOT_AGENT_SESSION;
+    spec->endpoint = uishell_store_setting(view, str8_lit("agent_endpoint"));
+    spec->agent_thread = uishell_store_setting(view, str8_lit("agent_thread"));
+    taken[(*taken_count)++] = str8_lit("agent_endpoint");
+    taken[(*taken_count)++] = str8_lit("agent_thread");
+    return 1;
+  }
   B32 file_view = str8_match(kind, str8_lit("text"), 0) || str8_match(kind, str8_lit("rich_text"), 0);
   String8 path = file_view ? uishell_store_file_from_expr(arena, expr) : str8_zero();
   if(path.size)
@@ -599,6 +609,7 @@ uishell_store_spec_from_core(Arena *arena, WheelhouseViewSpec *s)
   spec.presentation = s->has_presentation ? uishell_sidebar_string(s->presentation) : str8_zero();
   WheelhouseText cleat[] = {s->cleat_transport, s->cleat_host, s->cleat_runtime_root, s->cleat_daemon, s->cleat_session};
   for(U64 i = 0; i < ArrayCount(cleat); i++) { *uishell_store_cleat_fields(&spec, i) = uishell_sidebar_string(cleat[i]); }
+  spec.agent_thread = uishell_sidebar_string(s->agent_thread);
   return spec;
 }
 
@@ -635,6 +646,7 @@ uishell_store_core_spec(Arena *arena, UIShell_ViewSpec *spec, WheelhouseViewSpec
   s.presentation = uishell_sidebar_text(spec->presentation);
   WheelhouseText *cleat[] = {&s.cleat_transport, &s.cleat_host, &s.cleat_runtime_root, &s.cleat_daemon, &s.cleat_session};
   for(U64 i = 0; i < ArrayCount(cleat); i++) { *cleat[i] = uishell_sidebar_text(*uishell_store_cleat_fields(spec, i)); }
+  s.agent_thread = uishell_sidebar_text(spec->agent_thread);
   return s;
 }
 
@@ -648,7 +660,7 @@ uishell_store_spec_match(UIShell_ViewSpec *a, UIShell_ViewSpec *b)
           str8_match(a->endpoint, b->endpoint, 0) && str8_match(a->presentation, b->presentation, 0) &&
           str8_match(a->cleat_transport, b->cleat_transport, 0) && str8_match(a->cleat_host, b->cleat_host, 0) &&
           str8_match(a->cleat_runtime_root, b->cleat_runtime_root, 0) && str8_match(a->cleat_daemon, b->cleat_daemon, 0) &&
-          str8_match(a->cleat_session, b->cleat_session, 0));
+          str8_match(a->cleat_session, b->cleat_session, 0) && str8_match(a->agent_thread, b->agent_thread, 0));
 }
 
 internal U64
@@ -665,7 +677,8 @@ uishell_store_spec_hash(U64 hash, UIShell_ViewSpec *spec)
   hash = hash*33 + spec->content;
   String8 fields[] = {spec->provider, spec->kind, spec->id, spec->facet, spec->command, spec->cwd, spec->path,
                       spec->url, spec->launcher, spec->endpoint, spec->presentation, spec->cleat_transport,
-                      spec->cleat_host, spec->cleat_runtime_root, spec->cleat_daemon, spec->cleat_session};
+                      spec->cleat_host, spec->cleat_runtime_root, spec->cleat_daemon, spec->cleat_session,
+                      spec->agent_thread};
   for(U64 i = 0; i < ArrayCount(fields); i++) { hash = uishell_store_hash_text(hash, fields[i]); }
   return hash*33 + spec->has_cwd;
 }
@@ -701,6 +714,12 @@ uishell_store_unshown(Arena *arena, String8 key, UIShell_ViewSpec *spec)
       { return push_str8f(arena, "Cleat session %S over transport \"%S\"", spec->cleat_session, spec->cleat_transport); }
       if(OS_WINDOWS && ssh)
       { return push_str8f(arena, "Cleat session %S on %S", spec->cleat_session, spec->cleat_host); }
+      return str8_zero();
+    }
+    case WHEELHOUSE_SLOT_AGENT_SESSION:
+    {
+      // The Agent View client reaches Unix sockets only, for now.
+      if(OS_WINDOWS) { return push_str8f(arena, "agent thread %S at %S", spec->agent_thread, spec->endpoint); }
       return str8_zero();
     }
     case WHEELHOUSE_SLOT_JACKSTAY:
@@ -766,6 +785,11 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
   if(has_cwd) { uishell_store_set_setting(view, str8_lit("cwd"), cwd); }
   if(url.size) { uishell_store_set_setting(view, str8_lit("url"), url); }
   if(!unshown.size && spec->content == WHEELHOUSE_SLOT_JACKSTAY) { uishell_store_set_setting(view, spec->launcher, spec->endpoint); }
+  if(!unshown.size && spec->content == WHEELHOUSE_SLOT_AGENT_SESSION)
+  {
+    uishell_store_set_setting(view, str8_lit("agent_endpoint"), spec->endpoint);
+    uishell_store_set_setting(view, str8_lit("agent_thread"), spec->agent_thread);
+  }
   if(!unshown.size && spec->content == WHEELHOUSE_SLOT_CLEAT_SESSION)
   {
     for(U64 i = 0; i < ArrayCount(uishell_store_cleat_keys); i++)
@@ -1716,6 +1740,7 @@ uishell_store_recipe_text(Arena *arena, UIShell_ViewSpec *recipe)
       { return push_str8f(arena, "session %S on %S", recipe->cleat_session, recipe->cleat_host); }
       return push_str8f(arena, "session %S", recipe->cleat_session);
     }
+    case WHEELHOUSE_SLOT_AGENT_SESSION: return push_str8f(arena, "agent thread %S", recipe->agent_thread);
   }
   return str8_lit("new content");
 }

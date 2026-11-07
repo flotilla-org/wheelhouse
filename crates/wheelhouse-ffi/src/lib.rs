@@ -22,6 +22,7 @@ use wheelhouse_core::{
 };
 
 pub mod agent_input;
+pub mod agent_watch;
 pub mod arrangement;
 pub mod card;
 pub mod dashboard;
@@ -36,6 +37,7 @@ pub mod strip;
 pub mod tables;
 pub mod text;
 pub use agent_input::*;
+pub use agent_watch::*;
 pub use arrangement::*;
 pub use card::*;
 pub use dashboard::*;

@@ -20,6 +20,9 @@ pub const WHEELHOUSE_SLOT_FACET: u32 = 4;
 /// A direct Cleat packet view of a session (cleat_transport "local" or
 /// "ssh", cleat_host, cleat_runtime_root, cleat_daemon, cleat_session).
 pub const WHEELHOUSE_SLOT_CLEAT_SESSION: u32 = 5;
+/// An agent thread watched over the Agent View protocol (endpoint, a Local
+/// Endpoint's socket, and agent_thread).
+pub const WHEELHOUSE_SLOT_AGENT_SESSION: u32 = 6;
 
 /// A rebind closes the instance it replaces.
 pub const WHEELHOUSE_REBIND_REPLACE: u32 = 0;
@@ -82,6 +85,7 @@ pub struct ViewSpecView {
     pub cleat_runtime_root: Text,
     pub cleat_daemon: Text,
     pub cleat_session: Text,
+    pub agent_thread: Text,
 }
 
 impl ViewSpecView {
@@ -108,6 +112,7 @@ impl ViewSpecView {
             cleat_runtime_root: Text::borrowed(""),
             cleat_daemon: Text::borrowed(""),
             cleat_session: Text::borrowed(""),
+            agent_thread: Text::borrowed(""),
         }
     }
 
@@ -135,6 +140,9 @@ impl ViewSpecView {
                     daemon: self.cleat_daemon.read()?,
                     session: self.cleat_session.read()?,
                 })
+            }
+            WHEELHOUSE_SLOT_AGENT_SESSION => {
+                Content::Local(LocalRecipe::AgentSession { endpoint: self.endpoint.read()?, thread: self.agent_thread.read()? })
             }
             other => return Err(format!("unknown slot content kind {other}")),
         };
@@ -185,6 +193,11 @@ fn recipe_view(recipe: &LocalRecipe, out: &mut ViewSpecView) -> SpecStorage {
             out.cleat_runtime_root = Text::borrowed(runtime_root);
             out.cleat_daemon = Text::borrowed(daemon);
             out.cleat_session = Text::borrowed(session);
+        }
+        LocalRecipe::AgentSession { endpoint, thread } => {
+            out.content = WHEELHOUSE_SLOT_AGENT_SESSION;
+            out.endpoint = Text::borrowed(endpoint);
+            out.agent_thread = Text::borrowed(thread);
         }
     }
     storage

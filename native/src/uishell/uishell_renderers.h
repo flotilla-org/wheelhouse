@@ -7,7 +7,7 @@
 #ifndef UISHELL_RENDERERS_H
 #define UISHELL_RENDERERS_H
 
-// The View Spec content a Renderer can show. The first six follow
+// The View Spec content a Renderer can show. The first seven follow
 // WHEELHOUSE_SLOT_*'s order (checked in uishell_workspace_store.c).
 typedef U32 WH_ContentKinds;
 enum
@@ -18,14 +18,15 @@ enum
   WH_Content_Jackstay  = 1<<3, // local recipe: a Jackstay launcher
   WH_Content_Facet     = 1<<4, // a provider facet
   WH_Content_CleatSession = 1<<5, // local recipe: a Cleat endpoint's session
+  WH_Content_AgentSession = 1<<6, // local recipe: an agent thread's watch stream
   // `wheelhouse:<kind>`: this frontend's own page of the Renderer's kind.
-  WH_Content_Page      = 1<<6,
+  WH_Content_Page      = 1<<7,
   // Content no other Renderer here can show, named rather than dropped.
-  WH_Content_Unshown   = 1<<7,
+  WH_Content_Unshown   = 1<<8,
   // A control view: the Dashboard's arrangement, not a Slot's content.
-  WH_Content_Dashboard = 1<<8,
+  WH_Content_Dashboard = 1<<9,
   // A Rich Text Embed's content, by its media type: an Embedded View.
-  WH_Content_Embed     = 1<<9,
+  WH_Content_Embed     = 1<<10,
 };
 
 // Presentation-settings schemas: the config schema of a Renderer's Views.
@@ -70,6 +71,8 @@ enum
   "x:{" \
   "@description(\"The markdown file, or conversation, shown as Rich Text.\") 'expression': expr_string," \
   "@optional @display_name('Thread') @description(\"A conversation's subagent thread to show alone.\") 'thread': string," \
+  "@optional @display_name('Agent Endpoint') @description(\"The socket of the producer whose thread this watches.\") 'agent_endpoint': string," \
+  "@optional @display_name('Agent Thread') @description(\"The thread watched at the agent endpoint.\") 'agent_thread': string," \
   "@optional @display_name('Container Styles') @description(\"How Containers present: document or chat; by default chat for a conversation.\") 'container_styles': string," \
   "@no_callee_helper @no_revert @default(0) @display_name('Transient') @description(\"Controls whether or not this tab will be automatically replaced.\") 'auto': bool," \
   "}"
@@ -121,7 +124,7 @@ enum
   X(table, table, WH_STATE(UIShell_TableState), WH_Content_Page|WH_Content_Embed, \
     RD_ViewTrait_Content|RD_ViewTrait_Visualizer|RD_ViewTrait_ExpressionDrop|RD_ViewTrait_Listed, \
     128, WorkspaceRegion, WH_NO_EXPAND, UISHELL_TABLE_SETTINGS, WH_NO_PLACEHOLDER) \
-  X(rich_text, rich_text, WH_STATE(UIShell_RichTextState), WH_Content_File|WH_Content_Page, \
+  X(rich_text, rich_text, WH_STATE(UIShell_RichTextState), WH_Content_File|WH_Content_AgentSession|WH_Content_Page, \
     RD_ViewTrait_Content|RD_ViewTrait_LiveDragPreview|RD_ViewTrait_Visualizer|RD_ViewTrait_VersionedSurface|RD_ViewTrait_Listed, \
     0, WorkspaceRegion, WH_NO_EXPAND, UISHELL_RICH_TEXT_SETTINGS, WH_NO_PLACEHOLDER) \
   X(jackstay, jackstay, WH_NO_STATE, WH_Content_Jackstay|WH_Content_Page, \
