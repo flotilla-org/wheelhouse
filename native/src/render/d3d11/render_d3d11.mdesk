@@ -5,7 +5,7 @@
 //~ rjf: Pipeline Tables
 
 // Rect and Blur are generated from native/src/shaders/*.slang into
-// shaders/generated/core_shaders_hlsl.h (tools/generate-core-shaders.sh).
+// shaders/generated/core_shaders_hlsl.h (tools/generate-shaders.sh).
 @table(name, source, ilay_table)
 R_D3D11_VShadTable:
 {

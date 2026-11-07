@@ -1,137 +1,195 @@
-struct EffectUniforms
+#pragma pack_matrix(column_major)
+#ifdef SLANG_HLSL_ENABLE_NVAPI
+#include "nvHLSLExtns.h"
+#endif
+
+#ifndef __DXC_VERSION_MAJOR
+// warning X3557: loop doesn't seem to do anything, forcing loop to unroll
+#pragma warning(disable : 3557)
+#endif
+
+
+#line 25 "effect_prelude.slang"
+struct EffectUniforms_0
 {
-    float2 source_size_px;
-    float2 output_size_px;
-    float4 params0;
-    float4 params1;
+    float2 source_size_px_0;
+    float2 output_size_px_0;
+    float4 params0_0;
+    float4 params1_0;
 };
 
-struct V2P
+cbuffer u_0 : register(b0)
 {
-    float4 position;
-    float2 uv;
-};
-
-static const V2P _214 = { 0.0f.xxxx, 0.0f.xx };
-
-cbuffer u : register(b0)
-{
-    EffectUniforms u_1_m0 : packoffset(c0);
-};
-
-Texture2D<float4> t_source : register(t1);
-SamplerState s_source : register(s2);
-
-static float4 gl_FragCoord;
-static float2 uv;
-static float4 _247;
-
-struct SPIRV_Cross_Input
-{
-    float2 uv : TEXCOORD0;
-    float4 gl_FragCoord : SV_Position;
-};
-
-struct SPIRV_Cross_Output
-{
-    float4 _247 : SV_Target0;
-};
-
-float4 src(float2 uv_1)
-{
-    return t_source.Sample(s_source, uv_1);
+    EffectUniforms_0 u_0;
 }
 
-float4 src_at(float2 uv_1, float2 offset_px)
+#line 34
+Texture2D<float4 > t_source_0 : register(t0);
+
+
+#line 35
+SamplerState s_source_0 : register(s0);
+
+
+#line 55
+float4 src_0(float2 uv_0)
 {
-    return t_source.Sample(s_source, uv_1 + (offset_px / u_1_m0.source_size_px));
+    return t_source_0.Sample(s_source_0, uv_0);
 }
 
-uint naga_mod(uint lhs, uint rhs)
+float4 src_at_0(float2 uv_1, float2 offset_px_0)
 {
-    return lhs % ((rhs == 0u) ? 1u : rhs);
+    return t_source_0.Sample(s_source_0, uv_1 + offset_px_0 / u_0.source_size_px_0);
 }
 
-float4 effect(float2 uv01, float2 frag_px)
+
+#line 14 "crt.slang"
+float4 effect_0(float2 uv01_0, float2 frag_px_0)
 {
-    float3 mask_mul = 0.0f.xxx;
-    bool _82 = false;
-    float4 color = 0.0f.xxxx;
-    bool _79 = false;
-    bool _84 = false;
-    float2 _108 = uv01 - 0.5f.xx;
-    float _109 = dot(_108, _108);
-    float2 _113 = uv01 + (_108 * ((_109 * u_1_m0.params0.y) * 2.0f));
-    if (!(_113.x < 0.0f))
+    float scanline_intensity_0 = u_0.params0_0.x;
+
+    float vignette_strength_0 = u_0.params0_0.z;
+    float mask_strength_0 = u_0.params0_0.w;
+    float rgb_shift_px_0 = u_0.params1_0.x;
+    float brightness_0 = u_0.params1_0.y;
+
+
+    float2 centered_0 = uv01_0 - float2(0.5f, 0.5f);
+    float r2_0 = dot(centered_0, centered_0);
+    float2 uv_2 = uv01_0 + centered_0 * (r2_0 * u_0.params0_0.y * 2.0f);
+    float _S1 = uv_2.x;
+
+#line 27
+    bool _S2;
+
+#line 27
+    if(_S1 < 0.0f)
     {
-        _79 = _113.x > 1.0f;
+
+#line 27
+        _S2 = true;
+
+#line 27
     }
     else
     {
-        _79 = true;
+
+#line 27
+        _S2 = _S1 > 1.0f;
+
+#line 27
     }
-    if (!_79)
+
+#line 27
+    if(_S2)
     {
-        _82 = _113.y < 0.0f;
-    }
-    else
-    {
-        _82 = true;
-    }
-    if (!_82)
-    {
-        _84 = _113.y > 1.0f;
-    }
-    else
-    {
-        _84 = true;
-    }
-    if (_84)
-    {
-        return 0.0f.xxxx;
-    }
-    color = src(_113);
-    if (u_1_m0.params1.x > 0.001000000047497451305389404296875f)
-    {
-        color.x = src_at(_113, float2(u_1_m0.params1.x, 0.0f)).x;
-        color.z = src_at(_113, float2(-u_1_m0.params1.x, 0.0f)).z;
-    }
-    float _158 = sin((_113.y * u_1_m0.source_size_px.y) * 3.1415927410125732421875f);
-    float _163 = 1.0f - (u_1_m0.params0.x * (0.3499999940395355224609375f + ((0.64999997615814208984375f * _158) * _158)));
-    uint _168 = naga_mod(uint(clamp(frag_px.x, 0.0f, 4294967040.0f)), 3u);
-    mask_mul = (1.0f - (u_1_m0.params0.w * 0.449999988079071044921875f)).xxx;
-    if (_168 == 0u)
-    {
-        mask_mul.x = 1.0f;
+
+#line 27
+        _S2 = true;
+
+#line 27
     }
     else
     {
-        if (_168 == 1u)
+
+#line 27
+        _S2 = (uv_2.y) < 0.0f;
+
+#line 27
+    }
+
+#line 27
+    if(_S2)
+    {
+
+#line 27
+        _S2 = true;
+
+#line 27
+    }
+    else
+    {
+
+#line 27
+        _S2 = (uv_2.y) > 1.0f;
+
+#line 27
+    }
+
+#line 27
+    if(_S2)
+    {
+        return (float4)0.0f;
+    }
+
+
+    float4 color_0 = src_0(uv_2);
+    if(rgb_shift_px_0 > 0.00100000004749745f)
+    {
+        color_0[int(0)] = src_at_0(uv_2, float2(rgb_shift_px_0, 0.0f)).x;
+        color_0[int(2)] = src_at_0(uv_2, float2(- rgb_shift_px_0, 0.0f)).z;
+
+#line 34
+    }
+
+#line 42
+    float s_0 = sin(uv_2.y * u_0.source_size_px_0.y * 3.14159274101257324f);
+    float scan_0 = 1.0f - scanline_intensity_0 * (0.34999999403953552f + 0.64999997615814209f * s_0 * s_0);
+
+
+    uint mask_sel_0 = uint(frag_px_0.x) % 3U;
+    float3 mask_mul_0 = (float3)(1.0f - mask_strength_0 * 0.44999998807907104f);
+    if(mask_sel_0 == 0U)
+    {
+
+#line 48
+        mask_mul_0[int(0)] = 1.0f;
+
+#line 48
+    }
+    else
+    {
+
+#line 49
+        if(mask_sel_0 == 1U)
         {
-            mask_mul.y = 1.0f;
+
+#line 49
+            mask_mul_0[int(1)] = 1.0f;
+
+#line 49
         }
         else
         {
-            mask_mul.z = 1.0f;
+
+#line 50
+            mask_mul_0[int(2)] = 1.0f;
+
+#line 49
         }
+
+#line 48
     }
-    float _186 = max(1.0f - ((u_1_m0.params0.z * _109) * 1.5f), 0.0f);
-    return float4((((color.xyz * mask_mul) * u_1_m0.params1.y) * _163) * _186, (color.w * _163) * _186);
+
+#line 53
+    float _S3 = max(1.0f - vignette_strength_0 * r2_0 * 1.5f, 0.0f);
+
+#line 59
+    return float4(color_0.xyz * mask_mul_0 * brightness_0 * scan_0 * _S3, color_0.w * scan_0 * _S3);
 }
 
-void frag_main()
+
+#line 37 "effect_prelude.slang"
+struct V2P_0
 {
-    V2P _240 = { gl_FragCoord, uv };
-    _247 = effect(_240.uv, _240.position.xy);
+    float4 position_0 : SV_Position;
+    float2 uv_3 : TEXCOORD0;
+};
+
+
+#line 66
+float4 fs_main(V2P_0 in_0) : SV_TARGET
+{
+    return effect_0(in_0.uv_3, in_0.position_0.xy);
 }
 
-SPIRV_Cross_Output main(SPIRV_Cross_Input stage_input)
-{
-    gl_FragCoord = stage_input.gl_FragCoord;
-    gl_FragCoord.w = 1.0 / gl_FragCoord.w;
-    uv = stage_input.uv;
-    frag_main();
-    SPIRV_Cross_Output stage_output;
-    stage_output._247 = _247;
-    return stage_output;
-}

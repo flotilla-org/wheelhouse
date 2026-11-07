@@ -1,38 +1,21 @@
 #version 330
-#ifdef GL_ARB_shading_language_420pack
-#extension GL_ARB_shading_language_420pack : require
+#ifdef GL_ARB_shader_draw_parameters
+#extension GL_ARB_shader_draw_parameters : enable
 #endif
 
-struct EffectUniforms
-{
-    vec2 source_size_px;
-    vec2 output_size_px;
-    vec4 params0;
-    vec4 params1;
-};
-
-struct V2P
-{
-    vec4 position;
-    vec2 uv;
-};
-
-layout(binding = 0, std140) uniform u
-{
-    EffectUniforms _m0;
-} u_1;
-
-out vec2 uv;
+#ifdef GL_ARB_shader_draw_parameters
+#define SPIRV_Cross_BaseVertex gl_BaseVertexARB
+#else
+uniform int SPIRV_Cross_BaseVertex;
+#endif
+out vec2 v0;
 
 void main()
 {
-    V2P _out = V2P(vec4(0.0), vec2(0.0));
-    float _220 = float((int(uint(gl_VertexID) & 1u) * 4) - 1);
-    float _225 = float((int(uint(gl_VertexID) >> 1u) * 4) - 1);
-    _out.position = vec4(_220, _225, 0.0, 1.0);
-    _out.uv = vec2((_220 + 1.0) * 0.5, 1.0 - ((_225 + 1.0) * 0.5));
-    gl_Position = _out.position;
-    uv = _out.uv;
+    float x = float((int(uint(gl_VertexID - SPIRV_Cross_BaseVertex) & 1u) * 4) - 1);
+    float y = float((int(uint(gl_VertexID - SPIRV_Cross_BaseVertex) >> uint(1)) * 4) - 1);
+    gl_Position = vec4(x, y, 0.0, 1.0);
+    v0 = vec2((x + 1.0) * 0.5, 1.0 - ((y + 1.0) * 0.5));
     gl_Position.y = -gl_Position.y;
 }
 

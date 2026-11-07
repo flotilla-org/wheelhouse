@@ -338,6 +338,21 @@ fprintf(stderr, "%.*s rect %s: %s (" fmt ")\n", str8_varg(backend), (label), _pa
   scratch_end(scratch);
 }
 
+// Every embedded effect compiles and links on this backend, through the same
+// lookup the view surfaces use. A wrong entry point, binding or uniform block
+// for the generated shaders shows up here as a zero handle.
+internal void
+uishell_check_effects_compile(U32 *failures)
+{
+  for(U64 idx = 0; idx < ArrayCount(efx_embedded_effects); idx += 1)
+  {
+    String8 name = efx_embedded_effects[idx].name;
+    B32 ok = !r_handle_match(rd_effect_from_name(name), r_handle_zero());
+    fprintf(stderr, "%.*s effect %.*s: %s\n", str8_varg(r_backend_name()), str8_varg(name), ok ? "ok" : "FAILED to compile or link");
+    UIImportCheck(ok);
+  }
+}
+
 // Check raster coverage through every platform provider, including descenders.
 internal void
 uishell_check_raster_baselines(Arena *arena, U32 *failures)
@@ -521,6 +536,9 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   U32 failures_before_blur = failures;
   uishell_check_blur_mask(&failures);
   fprintf(stderr, "blur mask: %u failures\n", failures - failures_before_blur);
+  U32 failures_before_effects = failures;
+  uishell_check_effects_compile(&failures);
+  fprintf(stderr, "effects: %u failures\n", failures - failures_before_effects);
   U32 failures_before_rect = failures;
   uishell_check_rect_semantics(&failures);
   fprintf(stderr, "rect semantics: %u failures\n", failures - failures_before_rect);

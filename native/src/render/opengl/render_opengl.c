@@ -483,11 +483,12 @@ r_effect_alloc(String8 name, R_EffectSources *sources)
     glGetProgramiv(program, GL_LINK_STATUS, &link_status);
     if(link_status != 0)
     {
-      // route the (sole) uniform block to binding point 0; spirv-cross names it "u"
-      GLuint block_idx = glGetUniformBlockIndex(program, "u");
-      if(block_idx != GL_INVALID_INDEX)
+      // route the effect's sole uniform block to binding point 0
+      GLint block_count = 0;
+      glGetProgramiv(program, GL_ACTIVE_UNIFORM_BLOCKS, &block_count);
+      if(block_count > 0)
       {
-        glUniformBlockBinding(program, block_idx, 0);
+        glUniformBlockBinding(program, 0, 0);
       }
       R_OGL_Effect *effect = push_array(r_ogl_state->arena, R_OGL_Effect, 1);
       effect->program = program;

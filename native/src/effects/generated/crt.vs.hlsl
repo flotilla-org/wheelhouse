@@ -1,59 +1,35 @@
-struct EffectUniforms
+#pragma pack_matrix(column_major)
+#ifdef SLANG_HLSL_ENABLE_NVAPI
+#include "nvHLSLExtns.h"
+#endif
+
+#ifndef __DXC_VERSION_MAJOR
+// warning X3557: loop doesn't seem to do anything, forcing loop to unroll
+#pragma warning(disable : 3557)
+#endif
+
+
+#line 37 "effect_prelude.slang"
+struct V2P_0
 {
-    float2 source_size_px;
-    float2 output_size_px;
-    float4 params0;
-    float4 params1;
+    float4 position_0 : SV_Position;
+    float2 uv_0 : TEXCOORD0;
 };
 
-struct V2P
+
+V2P_0 vs_main(uint vid_0 : SV_VertexID)
 {
-    float4 position;
-    float2 uv;
-};
 
-static const V2P _214 = { 0.0f.xxxx, 0.0f.xx };
 
-cbuffer u : register(b0)
-{
-    EffectUniforms u_1_m0 : packoffset(c0);
-};
+    float x_0 = float(int(vid_0 & 1U) * int(4) - int(1));
+    float y_0 = float(int(vid_0 >> int(1)) * int(4) - int(1));
 
-Texture2D<float4> t_source : register(t1);
-SamplerState s_source : register(s2);
+#line 47
+    V2P_0 out_0;
 
-static float4 gl_Position;
-static int gl_VertexIndex;
-static float2 uv;
 
-struct SPIRV_Cross_Input
-{
-    uint gl_VertexIndex : SV_VertexID;
-};
-
-struct SPIRV_Cross_Output
-{
-    float2 uv : TEXCOORD0;
-    float4 gl_Position : SV_Position;
-};
-
-void vert_main()
-{
-    V2P _out = _214;
-    float _220 = float((int(uint(gl_VertexIndex) & 1u) * 4) - 1);
-    float _225 = float((int(uint(gl_VertexIndex) >> 1u) * 4) - 1);
-    _out.position = float4(_220, _225, 0.0f, 1.0f);
-    _out.uv = float2((_220 + 1.0f) * 0.5f, 1.0f - ((_225 + 1.0f) * 0.5f));
-    gl_Position = _out.position;
-    uv = _out.uv;
+    out_0.position_0 = float4(x_0, y_0, 0.0f, 1.0f);
+    out_0.uv_0 = float2((x_0 + 1.0f) * 0.5f, 1.0f - (y_0 + 1.0f) * 0.5f);
+    return out_0;
 }
 
-SPIRV_Cross_Output main(SPIRV_Cross_Input stage_input)
-{
-    gl_VertexIndex = int(stage_input.gl_VertexIndex);
-    vert_main();
-    SPIRV_Cross_Output stage_output;
-    stage_output.gl_Position = gl_Position;
-    stage_output.uv = uv;
-    return stage_output;
-}

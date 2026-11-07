@@ -239,7 +239,7 @@ struct R_PassParams_Geo3D
   B32 preserve;         // target content is up-to-date; skip rendering this pass entirely
 };
 
-// effect contract v1 (native/src/effects/effect_prelude.wgsl): one fullscreen-triangle
+// effect contract (native/src/effects/effect_prelude.slang): one fullscreen-triangle
 // fragment pass, source texture -> target, premultiplied in & out, no blending
 typedef struct R_PassParams_Effect R_PassParams_Effect;
 struct R_PassParams_Effect
@@ -306,7 +306,7 @@ struct R_EffectSources
 //~ Core Shader Uniforms
 //
 // The uniform blocks of the rect and blur shaders, which are generated from
-// native/src/shaders/*.slang (tools/generate-core-shaders.sh). Every backend
+// native/src/shaders/*.slang (tools/generate-shaders.sh). Every backend
 // fills these same bytes: std140 for OpenGL, a cbuffer for D3D11, a constant
 // buffer for Metal.
 
@@ -398,7 +398,7 @@ r_hook R_Handle          r_window_equip(WM_Window window);
 r_hook void              r_window_unequip(WM_Window window, R_Handle window_equip);
 
 //- rjf: effects (runtime-compiled fullscreen passes; sources are the
-// per-backend translations of one WGSL effect - see `native/build.sh effects`)
+// per-backend translations of one Slang effect - see tools/generate-shaders.sh)
 r_hook R_Handle          r_effect_alloc(String8 name, R_EffectSources *sources);
 
 //- rjf: textures

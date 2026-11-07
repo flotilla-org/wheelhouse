@@ -831,7 +831,7 @@ r_effect_alloc(String8 name, R_EffectSources *sources)
     {
       ID3DBlob *blob = 0;
       ID3DBlob *errors_blob = 0;
-      error = D3DCompile(sources->hlsl_vs.str, sources->hlsl_vs.size, (char *)name.str, 0, 0, "main", "vs_5_0", 0, 0, &blob, &errors_blob);
+      error = D3DCompile(sources->hlsl_vs.str, sources->hlsl_vs.size, (char *)name.str, 0, 0, "vs_main", "vs_5_0", 0, 0, &blob, &errors_blob);
       if(FAILED(error))
       {
         String8 errors = str8((U8 *)errors_blob->lpVtbl->GetBufferPointer(errors_blob), (U64)errors_blob->lpVtbl->GetBufferSize(errors_blob));
@@ -848,7 +848,7 @@ r_effect_alloc(String8 name, R_EffectSources *sources)
     {
       ID3DBlob *blob = 0;
       ID3DBlob *errors_blob = 0;
-      error = D3DCompile(sources->hlsl_fs.str, sources->hlsl_fs.size, (char *)name.str, 0, 0, "main", "ps_5_0", 0, 0, &blob, &errors_blob);
+      error = D3DCompile(sources->hlsl_fs.str, sources->hlsl_fs.size, (char *)name.str, 0, 0, "fs_main", "ps_5_0", 0, 0, &blob, &errors_blob);
       if(FAILED(error))
       {
         String8 errors = str8((U8 *)errors_blob->lpVtbl->GetBufferPointer(errors_blob), (U64)errors_blob->lpVtbl->GetBufferSize(errors_blob));
@@ -1678,11 +1678,11 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
               d_ctx->lpVtbl->VSSetShader(d_ctx, effect->vshad, 0, 0);
               d_ctx->lpVtbl->PSSetShader(d_ctx, effect->pshad, 0, 0);
               d_ctx->lpVtbl->PSSetConstantBuffers(d_ctx, 0, 1, &r_d3d11_state->effect_uniforms_buffer);
-              d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 1, 1, &source->view);
-              d_ctx->lpVtbl->PSSetSamplers(d_ctx, 2, 1, &r_d3d11_state->samplers[R_Tex2DSampleKind_Linear]);
+              d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &source->view);
+              d_ctx->lpVtbl->PSSetSamplers(d_ctx, 0, 1, &r_d3d11_state->samplers[R_Tex2DSampleKind_Linear]);
               d_ctx->lpVtbl->Draw(d_ctx, 3, 0);
               ID3D11ShaderResourceView *null_srv = 0;
-              d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 1, 1, &null_srv);
+              d_ctx->lpVtbl->PSSetShaderResources(d_ctx, 0, 1, &null_srv);
             }
           }
         }break;

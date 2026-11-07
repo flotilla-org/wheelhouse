@@ -5,7 +5,7 @@
 //~ rjf: Shader Table
 //
 // The sources are generated from native/src/shaders/*.slang into
-// shaders/generated/core_shaders_glsl.h (tools/generate-core-shaders.sh).
+// shaders/generated/core_shaders_glsl.h (tools/generate-shaders.sh).
 
 @table(name   name_lower    input_atts                          output_atts)
 R_OGL_ShaderTable:

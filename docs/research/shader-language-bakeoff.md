@@ -149,12 +149,15 @@ The comparison above is as it was run. After the decision:
   versions (`slangc` 2026.17-25-gc7954ebd1 and `spirv-cross` from Vulkan SDK
   1.4.363), and runs `slangc` from the source directory so its `#line`
   directives name `rect.slang`, not a checkout path.
+- The effects moved to Slang too (`native/src/effects/*.slang`; each
+  includes `effect_prelude.slang` and defines `effect()`), and the script,
+  renamed `tools/generate-shaders.sh`, generates both. `effects_embed.h`
+  gives only the build's own backend real sources.
 - The uniform blocks and the blur kernel are filled once, in `render_core`
   (`r_core_rect_uniforms`, `r_core_blur_uniforms`, `r_core_blur_pass`).
 
 ## Still open
 
-- Port the effects and their contract (`effect_prelude.wgsl`) to Slang.
 - Move the remaining core shaders (mesh, 3D composite, finalize) over, each
   behind a parity check.
 - Metal's blur kernel isn't scaled by the backing scale, unlike OpenGL's, so a
