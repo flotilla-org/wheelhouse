@@ -274,6 +274,23 @@ This is staged, not decided.
   before it is adopted.
 - **Stage 2.** The remaining core shaders move over one at a time, each
   behind the parity check.
+- **Decided 2026-11-06: Slang.** The bake-off ported the rect and blur
+  shaders to both languages and generated them for every backend. Both passed
+  the per-backend blur and rect checks on OpenGL with identical results and
+  equal code size
+  ([shader-language-bakeoff.md](../research/shader-language-bakeoff.md), #711).
+  Slang won on authoring and debugging:
+  - the hand-written core shaders are HLSL, so they port almost line for line;
+  - modules replace build-script concatenation;
+  - its HLSL and MSL keep source names and map errors back to `.slang` lines;
+  - it can still emit WGSL, so a wgpu or Dawn candidate stays open.
+
+  The cost is a pinned `slangc` (from the Vulkan SDK), needed only to change a
+  shader, since generated sources are committed. Effects move to Slang too,
+  once the core shaders have, so there is one shader language. The effect
+  contract (`effect_prelude.wgsl`) is restated in Slang then, not before.
+  OpenGL's GLSL 330 still goes through SPIR-V and `spirv-cross`, since OpenGL
+  is not a Slang target.
 
 ## Consequences
 
