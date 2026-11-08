@@ -319,6 +319,14 @@ _Avoid_: View kind, view rule, widget
 A frontend's rule for showing a kind of **View Spec** content: which **Renderer** shows it and, when another program produces it, how to launch that program and connect to what it publishes. A web page's Handler launches Luchs and connects to its Jackstay endpoint. Each frontend has its own Handlers, as it has its own Renderers.
 _Avoid_: Plugin, opener, launcher (a Jackstay "launcher" in a **View Spec** is the setting that names an endpoint)
 
+**Presented Page**:
+A web page a person views, such as a preview or a document. Any instance of it will do, so each frontend chooses how to show it: a Luchs view, an iframe, or a link to open.
+_Avoid_: Browser view, embedded browser (an **Agent Browser** is a different thing)
+
+**Agent Browser**:
+A browser an agent drives. There is one instance, on a host the orchestrator chose, and people watch it as a Jackstay source; a person who controls it takes over from the agent.
+_Avoid_: Presented Page, web view, headless browser
+
 **Rich Text**:
 The core's model of styled, flowing content, shown read-only for now: a keyed tree of **Containers** whose leaves are **Blocks**. Markdown, agent conversations and logs are sources of it. It records what content is; each frontend chooses how to present it and draws it with its own text engine.
 _Avoid_: Document (the arrangement is a document), markdown view, prose
