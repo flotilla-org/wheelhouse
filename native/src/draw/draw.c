@@ -10,14 +10,12 @@ type old_val = bucket->top_##name_lower->v;\
 DR_##name_upper##Node *node = push_array(dr_thread_ctx->arena, DR_##name_upper##Node, 1);\
 node->v = (val);\
 SLLStackPush(bucket->top_##name_lower, node);\
-bucket->stack_gen += 1;\
 return old_val
 
 #define DR_StackPopImpl(name_upper, name_lower, type) \
 DR_Bucket *bucket = dr_top_bucket();\
 type popped_val = bucket->top_##name_lower->v;\
 SLLStackPop(bucket->top_##name_lower);\
-bucket->stack_gen += 1;\
 return popped_val
 
 #define DR_StackTopImpl(name_upper, name_lower, type) \
@@ -344,6 +342,23 @@ dr_ui_pass(DR_Bucket *bucket, Arena *arena)
   return pass;
 }
 
+// Whether the next rect can join the bucket's last batch group: nothing has
+// forced a split since its last command (stack_gen), & the state a group
+// carries - sample kind, transform, clip, transparency, content version - is
+// what is on top of the stacks now. Pushing & popping back to the same value
+// keeps one group, so nesting alone doesn't cost draw calls.
+internal B32
+dr_batch_group_continues(DR_Bucket *bucket, R_BatchGroup2DNode *node)
+{
+  return (node != 0 &&
+          bucket->stack_gen == bucket->last_cmd_stack_gen &&
+          node->params.tex_sample_kind == bucket->top_tex2d_sample_kind->v &&
+          MemoryMatchStruct(&node->params.xform, &bucket->top_xform2d->v) &&
+          MemoryMatchStruct(&node->params.clip, &bucket->top_clip->v) &&
+          node->params.transparency == bucket->top_transparency->v &&
+          node->params.content_version == bucket->content_version);
+}
+
 internal inline R_Rect2DInst *
 dr_rect(Rng2F32 dst, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32 edge_softness)
 {
@@ -353,7 +368,7 @@ dr_rect(Rng2F32 dst, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32
   R_PassParams_UI *params = pass->params_ui;
   R_BatchGroup2DList *rects = &params->rects;
   R_BatchGroup2DNode *node = rects->last;
-  if(node == 0 || bucket->stack_gen != bucket->last_cmd_stack_gen)
+  if(!dr_batch_group_continues(bucket, node))
   {
     node = push_array(arena, R_BatchGroup2DNode, 1);
     SLLQueuePush(rects->first, rects->last, node);
@@ -396,11 +411,12 @@ dr_img(Rng2F32 dst, Rng2F32 src, R_Handle texture, Vec4F32 color, F32 corner_rad
   R_PassParams_UI *params = pass->params_ui;
   R_BatchGroup2DList *rects = &params->rects;
   R_BatchGroup2DNode *node = rects->last;
-  if(node != 0 && bucket->stack_gen == bucket->last_cmd_stack_gen && r_handle_match(node->params.tex, r_handle_zero()))
+  B32 continues = dr_batch_group_continues(bucket, node);
+  if(continues && r_handle_match(node->params.tex, r_handle_zero()))
   {
     node->params.tex = texture;
   }
-  else if(node == 0 || bucket->stack_gen != bucket->last_cmd_stack_gen || !r_handle_match(texture, node->params.tex))
+  else if(!continues || !r_handle_match(texture, node->params.tex))
   {
     node = push_array(arena, R_BatchGroup2DNode, 1);
     SLLQueuePush(rects->first, rects->last, node);
@@ -828,7 +844,7 @@ internal R_Rect2DInst *
 dr_surface_img_sub(R_Handle target, Rng2F32 dst, Rng2F32 src_uv, Vec4F32 color, F32 corner_radius, F32 border_thickness, F32 edge_softness)
 {
   DR_Bucket *bucket = dr_top_bucket();
-  bucket->stack_gen += 1; // sequester the surface sample in its own batch group
+  bucket->stack_gen += 1; // force a split: the surface sample gets its own batch group
   Vec2S32 size_px = r_size_from_tex2d(target);
   Rng2F32 src_px = r2f32p(src_uv.x0*(F32)size_px.x, src_uv.y0*(F32)size_px.y,
                           src_uv.x1*(F32)size_px.x, src_uv.y1*(F32)size_px.y);

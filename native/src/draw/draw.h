@@ -90,7 +90,7 @@ struct DR_Bucket
   R_PassList passes;
   Arena *arena;                 // nonzero -> draw calls allocate here (retained buckets); zero -> per-frame thread arena
   U64 content_version;          // nonzero -> stamped onto batch groups; content is producer-versioned (see dr_surface_end_cached)
-  U64 stack_gen;
+  U64 stack_gen;                // bumped to force the next rect into a new batch group (see dr_batch_group_continues)
   U64 last_cmd_stack_gen;
   DR_SurfaceNode *top_surface;  // stack of open dr_surface_begin/dr_surface_end_composite brackets
   DR_SurfaceNode *free_surface;
