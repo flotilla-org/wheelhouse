@@ -3170,6 +3170,20 @@ uishell_rt_table_cell_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, 
   }
 }
 
+// The width a table cell or header needs to show text whole, padding
+// included: what an autosize fits a column to.
+internal F32
+uishell_rt_table_cell_width(UIShell_RtCellText *ct, String8 text, B32 right)
+{
+  UIShell_RtTheme *t = ct->theme;
+  F32 pad = uishell_rt_cell_pad(t);
+  if(text.size == 0) { return 2*pad; }
+  UIShell_RtLayoutEntry *e = uishell_rt_cell_layout(ct->layouts, t, text, 1e6f, right);
+  if(e == 0 || e->layout->text.line_count == 0) { return 2*pad; }
+  WhTextLine *line = &e->layout->text.lines[0];
+  return ceil_f32(line->x + line->width + 2*pad);
+}
+
 // The table View's own painter: made on its first frame, its theme taken
 // again each frame at the View's font size, which a zoom changes.
 typedef struct UIShell_RtCellTextStore UIShell_RtCellTextStore;

@@ -13,6 +13,7 @@ typedef struct UIShell_RtCellText UIShell_RtCellText;
 internal UIShell_RtCellText *uishell_rt_cell_text_frame(UIShell_RtCellText *ct, F32 font_size);
 internal void uishell_rt_cell_text_release(UIShell_RtCellText *ct);
 internal void uishell_rt_table_cell_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, String8 text, B32 right, Vec4F32 color);
+internal F32 uishell_rt_table_cell_width(UIShell_RtCellText *ct, String8 text, B32 right);
 
 typedef struct UIShell_TableState UIShell_TableState;
 struct UIShell_TableState
@@ -79,6 +80,12 @@ struct UIShell_TableState
   B32 rows_has_total;
   U64 rows_total;
 };
+
+// A column's starting fit stays within these, in digits, as a cells table's
+// starting widths do (wheelhouse-tables' CELLS_MIN_DIGITS and
+// CELLS_MAX_DIGITS); an autosize the user asks for is not held to them.
+#define UISHELL_TABLE_FIT_MIN_DIGITS 4.f
+#define UISHELL_TABLE_FIT_MAX_DIGITS 40.f
 
 // Cells painted, counted by the table diagnostics.
 global U64 uishell_table_cells_drawn;
@@ -152,6 +159,8 @@ struct UIShell_TableDraw
   // Find is open: mark the cells that match, in match.
   B32 finding;
   Vec4F32 match;
+  // The pointer's shape, and a resize's guide to draw.
+  WheelhouseTablePointer pointer;
 };
 
 internal Rng2F32
@@ -171,6 +180,21 @@ uishell_table_empty_message(BinnacleSnapshot *snap, String8 status)
   B32 empty = rows->count == 0 || snap->axes[BINNACLE_COLS].count == 0;
   if(!empty || status.size != 0) { return str8_zero(); }
   return rows->count == 0 && rows->has_total && rows->total != 0 ? str8_lit("No rows match the filter") : str8_lit("No rows");
+}
+
+// A header's label as the View draws it: a sorted item's with its arrow,
+// and its place among several sorts.
+internal String8
+uishell_table_header_label(Arena *arena, WheelhouseTable *table, U32 axis, BinnacleHeader *h)
+{
+  String8 label = uishell_table_text(wheelhouse_table_header(table, axis, h->key, h->position));
+  if(h->flags & BINNACLE_HEADER_SORTED)
+  {
+    String8 arrow = h->flags & BINNACLE_HEADER_DESCENDING ? str8_lit(" ▼") : str8_lit(" ▲");
+    label = h->sort_place > 1 ? push_str8f(arena, "%S%S%u", label, arrow, h->sort_place)
+                              : push_str8f(arena, "%S%S", label, arrow);
+  }
+  return label;
 }
 
 internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
@@ -306,13 +330,7 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
       }
       if(!h->has_key) { continue; }
       Temp scratch = scratch_begin(0, 0);
-      String8 label = uishell_table_text(wheelhouse_table_header(d->table, (U32)axis_idx, h->key, h->position));
-      if(h->flags & BINNACLE_HEADER_SORTED)
-      {
-        String8 arrow = h->flags & BINNACLE_HEADER_DESCENDING ? str8_lit(" ▼") : str8_lit(" ▲");
-        label = h->sort_place > 1 ? push_str8f(scratch.arena, "%S%S%u", label, arrow, h->sort_place)
-                                  : push_str8f(scratch.arena, "%S%S", label, arrow);
-      }
+      String8 label = uishell_table_header_label(scratch.arena, d->table, (U32)axis_idx, h);
       B32 pending = !!(h->flags & (BINNACLE_HEADER_PENDING|BINNACLE_HEADER_MOVE_PENDING|BINNACLE_HEADER_FILTER_PENDING));
       draw_text(d->text_user, box, rect, clip, label, axis_idx == BINNACLE_ROWS, pending ? weak : text_color);
       scratch_end(scratch);
@@ -332,6 +350,14 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
       dr_rect(uishell_table_rect(o, snap->focus_rect), accent, 0, 1.5f, 1.f);
     }
   }
+  // A resize's guide: where the resized item's moving edge is.
+  if(d->pointer.has_guide)
+  {
+    F32 at = d->pointer.guide_offset;
+    Rng2F32 guide = d->pointer.guide_axis == BINNACLE_COLS ? r2f32p(o.x0+at-1.f, o.y0, o.x0+at+1.f, o.y1)
+                                                          : r2f32p(o.x0, o.y0+at-1.f, o.x1, o.y0+at+1.f);
+    dr_rect(guide, accent, 0, 0, 0.f);
+  }
   if(snap->has_drop)
   {
     Rng2F32 drop = snap->drop_axis == BINNACLE_COLS ? r2f32p(o.x0+snap->drop_offset-1.f, o.y0, o.x0+snap->drop_offset+1.f, o.y1)
@@ -339,6 +365,111 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
     dr_rect(drop, accent, 0, 0, 0.f);
   }
   scratch_end(scratch);
+}
+
+// The width that shows column strip item c's header and the values of the
+// rows in the Strip whole, as the View draws them; *complete is 0 while the
+// column or any of those rows is still to come.
+internal F32
+uishell_table_fit_width(UIShell_TableState *state, BinnacleSnapshot *snap, size_t c, B32 *complete)
+{
+  BinnacleAxisSnapshot *rows = &snap->axes[BINNACLE_ROWS], *cols = &snap->axes[BINNACLE_COLS];
+  BinnacleStripItem *ci = &cols->strip[c];
+  *complete = !!ci->has_key;
+  if(!ci->has_key) { return 0; }
+  Temp scratch = scratch_begin(0, 0);
+  String8 label = uishell_table_header_label(scratch.arena, state->table, BINNACLE_COLS, &cols->headers[c]);
+  F32 width = uishell_rt_table_cell_width(state->cell_text, label, 0);
+  for(size_t r = 0; r < rows->strip_len; r += 1)
+  {
+    BinnacleStripItem *ri = &rows->strip[r];
+    if(!ri->has_key) { *complete = 0; continue; }
+    U32 align = 0;
+    String8 text = uishell_table_text(wheelhouse_table_cell(state->table, ri->key, ci->key, &align));
+    width = Max(width, uishell_rt_table_cell_width(state->cell_text, text, align == WHEELHOUSE_TABLE_ALIGN_RIGHT));
+  }
+  scratch_end(scratch);
+  return width;
+}
+
+// Answers this frame's autosize requests (a double-click on a border or a
+// band's edge), and gives each column shown that has no size yet its
+// starting fit once the rows shown are all in, within the fit's limits: 1
+// if any size changed.
+internal B32
+uishell_table_fit(UIShell_TableState *state, BinnacleGrid *grid, BinnacleSnapshot *snap, BinnacleEffect *asks, U64 asks_count)
+{
+  BinnacleAxisSnapshot *rows = &snap->axes[BINNACLE_ROWS], *cols = &snap->axes[BINNACLE_COLS];
+  B32 changed = 0;
+  for(U64 i = 0; i < asks_count; i += 1)
+  {
+    BinnacleEffect *ask = &asks[i];
+    if(ask->kind == BINNACLE_EFFECT_AUTO_SIZE_REQUESTED && ask->axis == BINNACLE_ROWS)
+    {
+      // Rows hold one line of text: fitting one is going back to the
+      // default height.
+      wheelhouse_table_clear_size(state->table, BINNACLE_ROWS, ask->key);
+      changed = 1;
+    }
+    else if(ask->kind == BINNACLE_EFFECT_AUTO_SIZE_REQUESTED)
+    {
+      for(size_t c = 0; c < cols->strip_len; c += 1)
+      {
+        if(!cols->strip[c].has_key || cols->strip[c].key != ask->key) { continue; }
+        B32 complete = 0;
+        binnacle_grid_set_size(grid, BINNACLE_COLS, ask->key, uishell_table_fit_width(state, snap, c, &complete));
+        changed = 1;
+        break;
+      }
+    }
+    else if(ask->kind == BINNACLE_EFFECT_BAND_AUTO_SIZE_REQUESTED && ask->axis == BINNACLE_ROWS)
+    {
+      // The column headers are a line of text, as they start.
+      binnacle_grid_set_header(grid, BINNACLE_ROWS, state->line);
+      changed = 1;
+    }
+    else if(ask->kind == BINNACLE_EFFECT_BAND_AUTO_SIZE_REQUESTED)
+    {
+      // The row numbers: the labels of the rows shown, whole.
+      Temp scratch = scratch_begin(0, 0);
+      F32 width = 0;
+      for(size_t r = 0; r < rows->headers_len; r += 1)
+      {
+        if(!rows->headers[r].has_key) { continue; }
+        String8 label = uishell_table_header_label(scratch.arena, state->table, BINNACLE_ROWS, &rows->headers[r]);
+        width = Max(width, uishell_rt_table_cell_width(state->cell_text, label, 1));
+      }
+      scratch_end(scratch);
+      if(width > 0) { binnacle_grid_set_header(grid, BINNACLE_COLS, width); changed = 1; }
+    }
+  }
+  // Starting fits, for a table that brings no widths, wait for rows to fit
+  // to, and leave alone a column that has a size: its fit, or a resize.
+  if(rows->strip_len != 0 && wheelhouse_table_fits_columns(state->table))
+  {
+    BinnacleSizeOverrides sized = {0};
+    binnacle_grid_size_overrides(grid, BINNACLE_COLS, &sized);
+    for(size_t c = 0; c < cols->strip_len; c += 1)
+    {
+      BinnacleStripItem *ci = &cols->strip[c];
+      if(!ci->has_key) { continue; }
+      // Overrides come in Key order.
+      size_t lo = 0, hi = sized.len;
+      while(lo < hi)
+      {
+        size_t mid = lo + (hi - lo)/2;
+        if(sized.keys[mid] < ci->key) { lo = mid + 1; } else { hi = mid; }
+      }
+      if(lo < sized.len && sized.keys[lo] == ci->key) { continue; }
+      B32 complete = 0;
+      F32 width = uishell_table_fit_width(state, snap, c, &complete);
+      if(!complete) { continue; }
+      width = Clamp(UISHELL_TABLE_FIT_MIN_DIGITS*state->digit, width, UISHELL_TABLE_FIT_MAX_DIGITS*state->digit);
+      binnacle_grid_set_size(grid, BINNACLE_COLS, ci->key, ceil_f32(width));
+      changed = 1;
+    }
+  }
+  return changed;
 }
 
 internal U32
@@ -918,11 +1049,32 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   // theme without one marks them in its selection colour.
   UI_TagF("match") { draw->match = ui_color_from_name(str8_lit("background")); }
   if(draw->match.w == 0) { draw->match = ui_color_from_name(str8_lit("selection")); }
-  // Effects for the host: nothing acts on them yet (#506 has no actions),
-  // so drain them to keep the queue bounded, before the Snapshot whose
-  // arrays the draw reads.
-  for(BinnacleEffect effect; binnacle_grid_poll_effect(grid, &effect);) {}
+  // Effects for the host: autosize requests, answered from the cells the
+  // Snapshot shows. Nothing acts on the rest yet (#506 has no actions), so
+  // they are drained to keep the queue bounded.
+  BinnacleEffect asks[16];
+  U64 asks_count = 0;
+  for(BinnacleEffect effect; binnacle_grid_poll_effect(grid, &effect);)
+  {
+    if((effect.kind == BINNACLE_EFFECT_AUTO_SIZE_REQUESTED || effect.kind == BINNACLE_EFFECT_BAND_AUTO_SIZE_REQUESTED) &&
+       asks_count < ArrayCount(asks))
+    {
+      asks[asks_count] = effect;
+      asks_count += 1;
+    }
+  }
   binnacle_grid_snapshot(grid, &draw->snap);
+  // Sizes fitted now are drawn now.
+  if(uishell_table_fit(state, grid, &draw->snap, asks, asks_count)) { binnacle_grid_snapshot(grid, &draw->snap); }
+  // After the Snapshot, which would otherwise find its damage taken.
+  draw->pointer = wheelhouse_table_pointer(state->table);
+  switch(draw->pointer.cursor)
+  {
+    case WHEELHOUSE_TABLE_CURSOR_RESIZE_COLS:{ box->hover_cursor = WM_Cursor_LeftRight; }break;
+    case WHEELHOUSE_TABLE_CURSOR_RESIZE_ROWS:{ box->hover_cursor = WM_Cursor_UpDown; }break;
+    case WHEELHOUSE_TABLE_CURSOR_MOVE:{ box->hover_cursor = WM_Cursor_HandPoint; }break;
+    default:{ box->hover_cursor = WM_Cursor_Pointer; }break;
+  }
   state->find_support = draw->snap.find_support;
   state->find_current = draw->snap.has_find_match;
   // The bar, laid out above, shows these as of the last frame: a change

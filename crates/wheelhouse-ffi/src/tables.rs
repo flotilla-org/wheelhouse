@@ -4,7 +4,7 @@
 //! read live from a server by its link (#529), or one of given cells, as a
 //! Rich Text table Embed shows (#561).
 use super::*;
-use binnacle_core::{Axis, Key, Viewport};
+use binnacle_core::{Axis, Cursor, Key, Viewport};
 use binnacle_ffi::BinnacleGrid;
 use std::time::Duration;
 use wheelhouse_tables::{Align, Link, Metrics, Table, NAMES};
@@ -15,6 +15,29 @@ pub const WHEELHOUSE_TABLE_ALIGN_LEFT: u32 = 0;
 pub const WHEELHOUSE_TABLE_ALIGN_RIGHT: u32 = 1;
 /// wheelhouse_table_frame's answer when the table never changes by itself.
 pub const WHEELHOUSE_TABLE_NEVER: u64 = u64::MAX;
+/// WheelhouseTablePointer.cursor: the arrow.
+pub const WHEELHOUSE_TABLE_CURSOR_DEFAULT: u32 = 0;
+/// Over a column header border, or resizing a column.
+pub const WHEELHOUSE_TABLE_CURSOR_RESIZE_COLS: u32 = 1;
+/// Over a row header border, or resizing a row.
+pub const WHEELHOUSE_TABLE_CURSOR_RESIZE_ROWS: u32 = 2;
+/// Moving headers.
+pub const WHEELHOUSE_TABLE_CURSOR_MOVE: u32 = 3;
+
+/// The pointer's shape and a resize's guide, which binnacle's C Snapshot
+/// leaves out.
+#[repr(C)]
+#[derive(Default)]
+pub struct WheelhouseTablePointer {
+    /// WHEELHOUSE_TABLE_CURSOR_*.
+    pub cursor: u32,
+    /// 1 while a resize is in progress: a line across the viewport at
+    /// guide_offset along guide_axis (0 rows, 1 columns), viewport-relative
+    /// as Strip offsets are.
+    pub has_guide: u32,
+    pub guide_axis: u32,
+    pub guide_offset: f32,
+}
 
 /// What the host's find bar says, as of the last wheelhouse_table_frame.
 #[repr(C)]
@@ -280,6 +303,55 @@ pub unsafe extern "C" fn wheelhouse_table_quick_filter_applied(table: *mut Wheel
     // SAFETY: the handle owns its Grid until wheelhouse_table_free.
     let handle = unsafe { &mut *t.grid };
     t.table.quick_filter_applied(handle.grid_mut()).into()
+}
+
+/// The pointer's shape for this frame and a resize's guide line. Call it
+/// after binnacle_grid_snapshot, which would otherwise find the damage
+/// taken.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_pointer(table: *mut WheelhouseTable) -> WheelhouseTablePointer {
+    let mut pointer = WheelhouseTablePointer::default();
+    // SAFETY: the caller's contract.
+    let Some(t) = (unsafe { table.as_mut() }) else {
+        return pointer;
+    };
+    // SAFETY: the handle owns its Grid until wheelhouse_table_free.
+    let handle = unsafe { &mut *t.grid };
+    let snapshot = handle.grid_mut().snapshot();
+    pointer.cursor = match snapshot.cursor() {
+        Cursor::Default => WHEELHOUSE_TABLE_CURSOR_DEFAULT,
+        Cursor::ResizeCol => WHEELHOUSE_TABLE_CURSOR_RESIZE_COLS,
+        Cursor::ResizeRow => WHEELHOUSE_TABLE_CURSOR_RESIZE_ROWS,
+        Cursor::Move => WHEELHOUSE_TABLE_CURSOR_MOVE,
+    };
+    if let Some(guide) = snapshot.resize_guide() {
+        pointer.has_guide = 1;
+        pointer.guide_axis = (guide.axis == Axis::Cols).into();
+        pointer.guide_offset = guide.offset;
+    }
+    pointer
+}
+
+/// 1 when the host fits the columns, once, to the first values it shows:
+/// the table brings no widths of its own.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_fits_columns(table: *mut WheelhouseTable) -> u32 {
+    // SAFETY: the caller's contract.
+    unsafe { table.as_ref() }.is_some_and(|t| t.table.fits_columns()).into()
+}
+
+/// Drops the Size Override of the item with key on axis (0 rows, 1
+/// columns): it goes back to the axis's default size.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_clear_size(table: *mut WheelhouseTable, axis: u32, key: u64) {
+    // SAFETY: the caller's contract.
+    let Some(t) = (unsafe { table.as_mut() }) else {
+        return;
+    };
+    // SAFETY: the handle owns its Grid until wheelhouse_table_free.
+    let handle = unsafe { &mut *t.grid };
+    let axis = if axis == 0 { Axis::Rows } else { Axis::Cols };
+    handle.grid_mut().clear_size(axis, Key(key));
 }
 
 /// Marks which cells of the block rows by cols (row and column Keys,
