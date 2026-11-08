@@ -609,6 +609,17 @@ uishell_check_atlas_eviction(U32 *failures)
   NextFrame();
   AtlasPiece("WW");
   UIImportCheck(!fnt_atlas_use_keep(&use));
+  // A recording inside another sees only its own atlases; the enclosing one
+  // sees both.
+  NextFrame();
+  U64 outermost = fnt_atlas_use_begin();
+  AtlasPiece("WW");
+  U64 inner_outer = fnt_atlas_use_begin();
+  AtlasPiece("MM");
+  FNT_AtlasUse inner = {0}, enclosing = {0};
+  fnt_atlas_use_end(inner_outer, &inner);
+  fnt_atlas_use_end(outermost, &enclosing);
+  UIImportCheck(inner.mask == 2 && enclosing.mask == 3);
 #undef AtlasPiece
 #undef NextFrame
   fnt_reset();

@@ -109,10 +109,13 @@ struct FNT_RasterCacheInfo
   Rng2S16 subrect;
   Vec2S16 raster_dim;
   Vec2F32 draw_dim;
+  // -1 when no atlas had room: the piece draws blank, and rasterizes again
+  // on a frame after failed_frame.
   S16 atlas_num;
   // The atlas's generation when this was rasterized into it; a different one
   // means the atlas was evicted since, and the piece is rasterized again.
   U32 atlas_generation;
+  U64 failed_frame;
   F32 advance;
   F32 origin_from_left;
   F32 baseline_from_top;

@@ -524,6 +524,8 @@ fnt_atlas_region_release(FNT_Atlas *atlas, Rng2S16 region)
   }
 }
 
+// Empties an atlas's regions. Its texture keeps the old pixels; each piece
+// uploads a clear border around its bitmap, so sampling never reaches them.
 internal void
 fnt_atlas_clear(FNT_Atlas *atlas)
 {
@@ -907,7 +909,7 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
       FNT_RasterCacheInfo *stale_info = 0;
       if(info != 0)
       {
-        B32 failed = (info->atlas_num < 0 && info->atlas_generation != (U32)fnt_state->frame_index);
+        B32 failed = (info->atlas_num < 0 && info->failed_frame != fnt_state->frame_index);
         B32 evicted = (info->atlas_num >= 0 && info->subrect.x1 != info->subrect.x0 &&
                        fnt_state->atlases[info->atlas_num].generation != info->atlas_generation);
         if(failed || evicted)
@@ -998,16 +1000,28 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
         }
         
         // rjf: upload rasterization to allocated region of atlas texture memory
+        // The bitmap goes one texel in, inside a clear border: an evicted
+        // atlas keeps its old pixels, and filtering at the bitmap's edge
+        // must not reach them.
         if(chosen_atlas != 0)
         {
+          S32 bordered_w = raster.atlas_dim.x + 2;
+          S32 bordered_h = raster.atlas_dim.y + 2;
+          U8 *bordered = push_array(scratch.arena, U8, (U64)bordered_w*(U64)bordered_h*4);
+          for(S32 y = 0; y < raster.atlas_dim.y; y += 1)
+          {
+            MemoryCopy(bordered + ((U64)(y + 1)*(U64)bordered_w + 1)*4,
+                       (U8 *)raster.atlas + (U64)y*(U64)raster.atlas_dim.x*4,
+                       (U64)raster.atlas_dim.x*4);
+          }
           Rng2S32 subregion =
           {
             chosen_atlas_region.x0,
             chosen_atlas_region.y0,
-            chosen_atlas_region.x0 + raster.atlas_dim.x,
-            chosen_atlas_region.y0 + raster.atlas_dim.y
+            chosen_atlas_region.x0 + bordered_w,
+            chosen_atlas_region.y0 + bordered_h
           };
-          r_fill_tex2d_region(chosen_atlas->texture, subregion, raster.atlas);
+          r_fill_tex2d_region(chosen_atlas->texture, subregion, bordered);
         }
         
         // rjf: allocate & fill & push node
@@ -1042,7 +1056,7 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
               // No room this frame: blank now, tried again next frame. One
               // larger than an atlas stays blank, as it always would.
               info->atlas_num = -1;
-              info->atlas_generation = (U32)fnt_state->frame_index;
+              info->failed_frame = fnt_state->frame_index;
             }
             info->raster_dim = raster.atlas_dim;
             info->draw_dim   = v2f32((F32)raster.atlas_dim.x*inv_raster_scale, (F32)raster.atlas_dim.y*inv_raster_scale);
@@ -1089,10 +1103,10 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
           FNT_Piece *piece = fnt_piece_chunk_list_push_new(fnt_state->frame_arena, &piece_chunks, string.size);
           {
             piece->texture = atlas ? atlas->texture : r_handle_zero();
-            piece->subrect = r2s16p(info->subrect.x0,
-                                    info->subrect.y0,
-                                    info->subrect.x0 + info->raster_dim.x,
-                                    info->subrect.y0 + info->raster_dim.y);
+            piece->subrect = r2s16p(info->subrect.x0 + 1,
+                                    info->subrect.y0 + 1,
+                                    info->subrect.x0 + 1 + info->raster_dim.x,
+                                    info->subrect.y0 + 1 + info->raster_dim.y);
             piece->advance = advance;
             piece->draw_dim = info->draw_dim;
             piece->origin_from_left = info->origin_from_left;
