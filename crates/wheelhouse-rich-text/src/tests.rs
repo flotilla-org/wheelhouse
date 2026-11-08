@@ -20,7 +20,7 @@ pub(crate) fn outline(doc: &Tree) -> String {
         }
         match &c.detail {
             Detail::None => {}
-            Detail::Embed { media_type, table: Some(table) } => {
+            Detail::Embed { media_type, table: Some(table), .. } => {
                 out.push_str(&format!(" {media_type} {:?} {} rows", table.alignments, table.rows.len()))
             }
             detail => out.push_str(&format!(" {detail:?}")),

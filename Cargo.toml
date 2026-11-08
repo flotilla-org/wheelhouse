@@ -16,6 +16,7 @@ members = [
     "crates/wheelhouse-text",
     "crates/conversation-events",
     "crates/wheelhouse-agent",
+    "crates/wheelhouse-surface",
 ]
 # tools/scenario is a workspace of its own: it pins Flotilla's crates by git
 # revision, which normal builds shouldn't fetch.
@@ -55,6 +56,7 @@ wheelhouse-agent = { path = "crates/wheelhouse-agent" }
 wheelhouse-core = { path = "crates/wheelhouse-core" }
 wheelhouse-rich-text = { path = "crates/wheelhouse-rich-text" }
 wheelhouse-stream = { path = "crates/wheelhouse-stream" }
+wheelhouse-surface = { path = "crates/wheelhouse-surface" }
 wheelhouse-tables = { path = "crates/wheelhouse-tables" }
 wheelhouse-terminal = { path = "crates/wheelhouse-terminal" }
 wheelhouse-text = { path = "crates/wheelhouse-text" }

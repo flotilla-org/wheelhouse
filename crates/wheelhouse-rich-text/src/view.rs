@@ -119,6 +119,7 @@ pub(crate) fn estimate(doc: &Tree, entry: Entry, metrics: &Metrics) -> f32 {
         Kind::Rule => line,
         Kind::Embed => match doc.detail(entry.node) {
             Detail::Embed { table: Some(table), .. } => table.rows.len() as f32 * line,
+            Detail::Embed { surface: Some(items), .. } => items.len() as f32 * line,
             _ => 4.0 * line,
         },
         _ => {

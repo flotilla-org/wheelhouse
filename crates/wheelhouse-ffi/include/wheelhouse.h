@@ -621,6 +621,46 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 #define WHEELHOUSE_RICH_ALERT_CAUTION 5
 
+// An A2UI surface Item's kind (wheelhouse-surface's ItemKind).
+#define WHEELHOUSE_RICH_SURFACE_TEXT 0
+
+#define WHEELHOUSE_RICH_SURFACE_ROW 1
+
+#define WHEELHOUSE_RICH_SURFACE_COLUMN 2
+
+#define WHEELHOUSE_RICH_SURFACE_CARD 3
+
+#define WHEELHOUSE_RICH_SURFACE_DIVIDER 4
+
+#define WHEELHOUSE_RICH_SURFACE_BUTTON 5
+
+// A ChoicePicker; its Choices follow it.
+#define WHEELHOUSE_RICH_SURFACE_PICKER 6
+
+#define WHEELHOUSE_RICH_SURFACE_CHOICE 7
+
+#define WHEELHOUSE_RICH_SURFACE_TEXT_FIELD 8
+
+#define WHEELHOUSE_RICH_SURFACE_CHECK_BOX 9
+
+#define WHEELHOUSE_RICH_SURFACE_UNSUPPORTED 10
+
+#define WHEELHOUSE_RICH_SURFACE_VARIANT_DEFAULT 0
+
+#define WHEELHOUSE_RICH_SURFACE_VARIANT_PRIMARY 1
+
+#define WHEELHOUSE_RICH_SURFACE_VARIANT_BORDERLESS 2
+
+#define WHEELHOUSE_RICH_SURFACE_VARIANT_CAPTION 3
+
+#define WHEELHOUSE_RICH_SURFACE_VARIANT_MULTIPLE 4
+
+#define WHEELHOUSE_RICH_SURFACE_VARIANT_OBSCURED 5
+
+#define WHEELHOUSE_RICH_SURFACE_VARIANT_LONG_TEXT 6
+
+#define WHEELHOUSE_RICH_SURFACE_VARIANT_NUMBER 7
+
 #define WHEELHOUSE_RICH_ALIGN_NONE 0
 
 #define WHEELHOUSE_RICH_ALIGN_LEFT 1
@@ -664,6 +704,17 @@ typedef struct BinnacleGrid BinnacleGrid;
 #define WHEELHOUSE_RICH_FIND_CASE_SENSITIVE 2
 
 #define WHEELHOUSE_RICH_ROOT_KEY 5929344362340505684
+
+// An input to an A2UI surface component (#695): pressing a Button,
+// choosing a Picker's option by value, checking a CheckBox ("1" or "0"), or
+// setting a TextField's text.
+#define WHEELHOUSE_RICH_INPUT_PRESS 0
+
+#define WHEELHOUSE_RICH_INPUT_CHOOSE 1
+
+#define WHEELHOUSE_RICH_INPUT_CHECK 2
+
+#define WHEELHOUSE_RICH_INPUT_TEXT 3
 
 // A View Spec's content: a local command (argv when argc is nonzero, else
 // the shell line in command; optional cwd).
@@ -1662,6 +1713,31 @@ typedef struct {
   uint32_t len;
 } WheelhouseRichCell;
 
+// An A2UI surface's component (#695), resolved for drawing, in pre-order:
+// its children follow it one `depth` deeper.
+typedef struct {
+  // Its component's; a Choice's is its Picker's. Inputs name it.
+  WheelhouseText id;
+  // WHEELHOUSE_RICH_SURFACE_*.
+  uint32_t kind;
+  uint32_t depth;
+  // WHEELHOUSE_RICH_SURFACE_VARIANT_*.
+  uint32_t variant;
+  // A Text's, a Button's label, a Choice's label, a TextField's value.
+  WheelhouseText text;
+  // A Picker's, a TextField's or a CheckBox's label.
+  WheelhouseText label;
+  // A Choice's description, a TextField's placeholder.
+  WheelhouseText detail;
+  // A Choice's value, which choosing it sends.
+  WheelhouseText value;
+  uint32_t strong;
+  // A chosen Choice, a checked CheckBox.
+  uint32_t on;
+  // A Button whose checks pass.
+  uint32_t enabled;
+} WheelhouseRichSurfaceItem;
+
 // A node's content, without its children. An array with a count of 0 has a
 // pointer that is not NULL but must not be read.
 typedef struct {
@@ -1700,6 +1776,9 @@ typedef struct {
   size_t column_count;
   const WheelhouseRichCell *cells;
   size_t row_count;
+  // An A2UI surface Embed's components.
+  const WheelhouseRichSurfaceItem *surface;
+  size_t surface_count;
   // A Turn's WHEELHOUSE_RICH_ROLE_*.
   uint32_t role;
   // A Section's WHEELHOUSE_RICH_SECTION_*.
@@ -3240,6 +3319,25 @@ uint32_t wheelhouse_rich_text_copy(WheelhouseRichText *h,
 // Whether a watched thread takes input, as its hello says: its View shows
 // a composer only then.
 uint32_t wheelhouse_rich_text_conversation_takes_input(WheelhouseRichText *h, char **error_out);
+
+// Applies a WHEELHOUSE_RICH_INPUT_* to the component `component` of the
+// open Interrupt surface Embed `key`. Returns 1 when it completes an
+// answer, with the RunAgentInput to post to the producer's `/run` written
+// to `out`; else 0, the surface changed or not.
+uint32_t wheelhouse_rich_text_conversation_surface_input(WheelhouseRichText *h,
+                                                         uint64_t key,
+                                                         WheelhouseText component,
+                                                         uint32_t input,
+                                                         WheelhouseText value,
+                                                         WheelhouseBytes *out,
+                                                         char **error_out);
+
+// The first open Interrupt of a watched thread: 1 with the key of the item
+// it shows in and its reason (such as `approval`), else 0.
+uint32_t wheelhouse_rich_text_conversation_open_interrupt(WheelhouseRichText *h,
+                                                          uint64_t *key_out,
+                                                          WheelhouseBytes *reason_out,
+                                                          char **error_out);
 
 // Whether a watched thread waits on an answer (its `status` document says
 // `requires_action`).

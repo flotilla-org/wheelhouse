@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 pub use wheelhouse_stream::{ListOp, SubscriptionId, UnknownSubscription};
+pub use wheelhouse_surface::{Input, Item as SurfaceItem, ItemKind as SurfaceKind, Variant as SurfaceVariant};
 
 mod conversation;
 mod find;
@@ -29,7 +30,7 @@ mod scale_tests;
 #[cfg(test)]
 mod tests;
 
-pub use conversation::{CopyAction, TAIL_BYTES, TAIL_ITEMS};
+pub use conversation::{CopyAction, SURFACE_MEDIA_TYPE, TAIL_BYTES, TAIL_ITEMS};
 pub use find::{Find, FindOptions, FindStatus, Match, FIND_BUDGET, MATCH_LIMIT};
 pub use log::{CHUNK_BYTES, CHUNK_LINES, LINE_CAP};
 pub use pages::PAGE;
@@ -151,6 +152,23 @@ impl RichText {
     /// The watched thread's `status` document, if it publishes one.
     pub fn conversation_status(&self) -> Option<&str> {
         self.conversation.as_ref()?.status()
+    }
+
+    /// The first open Interrupt of a watched thread: the item it shows in,
+    /// and its reason, such as `approval`.
+    pub fn conversation_open_interrupt(&self) -> Option<(Key, String)> {
+        let (key, reason) = self.conversation.as_ref()?.open_interrupt()?;
+        Some((key, reason.to_owned()))
+    }
+
+    /// Applies an input to an open Interrupt's surface Embed `key`: the
+    /// RunAgentInput to post when it completes an answer.
+    pub fn conversation_surface_input(&mut self, key: Key, component: &str, input: Input) -> Option<String> {
+        let mut conversation = self.conversation.take()?;
+        let mut body = None;
+        self.edit(|sink| body = conversation.surface_input(key, component, input, sink));
+        self.conversation = Some(conversation);
+        body
     }
 
     pub fn is_conversation(&self) -> bool {

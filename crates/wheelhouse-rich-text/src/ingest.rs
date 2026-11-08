@@ -197,8 +197,16 @@ impl Staged {
     }
 
     /// Like [`Staged::push`], with strings for the spans to name.
-    pub fn push_with_strings(&mut self, parent: u32, kind: Kind, text: &str, spans: Vec<Span>, strings: Vec<String>) -> u32 {
-        let id = self.push(parent, kind, None, text, spans, Detail::None);
+    pub fn push_with_strings(
+        &mut self,
+        parent: u32,
+        kind: Kind,
+        key: Option<Key>,
+        text: &str,
+        spans: Vec<Span>,
+        strings: Vec<String>,
+    ) -> u32 {
+        let id = self.push(parent, kind, key, text, spans, Detail::None);
         let node = &mut self.nodes[id as usize];
         node.side.strings = strings;
         node.hash = content_hash(kind, 0, false, text, &node.spans, &node.side);
@@ -510,7 +518,8 @@ impl<'s> Builder<'s> {
                         Alignment::Right => Align::Right,
                     })
                     .collect();
-                let detail = Detail::Embed { media_type: TABLE_MEDIA_TYPE.into(), table: Some(Table { alignments, rows: vec![] }) };
+                let detail =
+                    Detail::Embed { media_type: TABLE_MEDIA_TYPE.into(), table: Some(Table { alignments, rows: vec![] }), surface: None };
                 self.open_leaf(Kind::Embed, detail, &range, false, false);
             }
             Tag::TableHead | Tag::TableRow => {

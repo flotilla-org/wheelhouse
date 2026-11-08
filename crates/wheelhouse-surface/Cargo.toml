@@ -1,0 +1,13 @@
+[package]
+name = "wheelhouse-surface"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A2UI v1.0 surfaces: the subset of the basic catalog Wheelhouse draws (wheelhouse#695)"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+hegeltest = "0.49.2"

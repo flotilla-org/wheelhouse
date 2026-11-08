@@ -13,16 +13,18 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use conversation_events::{
-    parse_line, patch, Capabilities, Event, Lines, Message, Outcome, Page, Parent, Role as EventRole, ToolCallResult,
-    ToolKind as EventToolKind, ToolStatus as EventToolStatus, Truncated, ANSI, COMPACTION, CONTRACT, DIFF, MARKDOWN, STATUS, STATUS_IDLE,
+    parse_line, patch, Capabilities, Event, Interrupt, Lines, Message, Outcome, Page, Parent, ResumeEntry, ResumeStatus, Role as EventRole,
+    ToolCallResult, ToolKind as EventToolKind, ToolStatus as EventToolStatus, Truncated, ANSI, COMPACTION, CONTRACT, DIFF, MARKDOWN,
+    STATUS, STATUS_IDLE,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
+use wheelhouse_surface::{Form, Input, Item as SurfaceItem, ItemKind as SurfaceKind, Surface, Variant};
 
 use super::ingest::{parse_into, Staged};
 use super::log::Log;
 use super::ring::Ring;
 use super::tail::{repair, Fence};
-use super::tree::{Attr, Detail, Key, Kind, Role, RunSummary, SectionKind, Span, ToolKind, ToolStatus, Tree};
+use super::tree::{Alert, Attr, Detail, Key, Kind, Role, RunSummary, SectionKind, Span, ToolKind, ToolStatus, Tree};
 use super::view::View;
 
 /// The file offset of an item's first line, then its place in that line (a
@@ -211,11 +213,13 @@ enum Body {
         kind: ToolKind,
         args: String,
         nesting: Nesting,
-        result: Option<ToolResult>,
+        result: Option<Box<ToolResult>>,
         /// Output while it runs, shown until the result replaces it.
         streamed: Option<Box<ToolResult>>,
         /// An open Interrupt names it.
         waiting: bool,
+        /// The Interrupt that asked about it, answered or not (#695).
+        ask: Option<String>,
         started: Option<u64>,
         shown: Shown,
     },
@@ -228,7 +232,31 @@ enum Body {
     Notice {
         text: String,
     },
+    /// An Interrupt that names no call: a question, by its id.
+    Question {
+        id: String,
+    },
 }
+
+/// What an Interrupt asks, where it shows, and its answer once one comes.
+#[derive(Debug)]
+struct Ask {
+    interrupt: Interrupt,
+    key: Key,
+    answer: Option<ResumeEntry>,
+    /// The surface its schema compiles to, as this View has filled it in;
+    /// None for an Interrupt with no schema to answer.
+    form: Option<(Form, Surface)>,
+}
+
+impl Ask {
+    fn surface_key(&self) -> Key {
+        Key::named(&[&self.interrupt.id, "ask", "surface"])
+    }
+}
+
+/// An open Interrupt's Embed: an A2UI surface, its Items in the Detail.
+pub const SURFACE_MEDIA_TYPE: &str = "application/vnd.a2ui+json";
 
 #[derive(Debug)]
 struct Item {
@@ -257,8 +285,8 @@ impl Item {
             Body::Text { role, pending, .. } => (Kind::Turn, "", Detail::Turn { role: *role, pending: *pending }),
             Body::Reasoning { md } => (Kind::Section, "", section(SectionKind::Reasoning, "", "", ToolKind::Other, streaming(md), None)),
             Body::Tool { name, kind, result, waiting, started, shown, .. } => {
-                let status = tool_head_status(result.as_ref(), *waiting);
-                let duration = started.zip(result.as_ref().and_then(|r| r.ended)).and_then(|(start, end)| end.checked_sub(start));
+                let status = tool_head_status(result.as_deref(), *waiting);
+                let duration = started.zip(result.as_deref().and_then(|r| r.ended)).and_then(|(start, end)| end.checked_sub(start));
                 (Kind::Section, "", section(SectionKind::Tool, name, &shown.title, *kind, status, duration))
             }
             Body::Subagent { status } => {
@@ -266,6 +294,7 @@ impl Item {
             }
             Body::Divider { text } => (Kind::Divider, text, Detail::None),
             Body::Notice { text } => (Kind::Notice, text, Detail::None),
+            Body::Question { .. } => (Kind::Quote, "", Detail::Quote { alert: Some(Alert::Important) }),
         }
     }
 }
@@ -529,6 +558,42 @@ impl Shown {
     }
 }
 
+/// What an Interrupt asks, under `parent`: its surface while open, or once
+/// answered, what was chosen (#695).
+fn stage_ask(ask: &Ask, staged: &mut Staged, parent: u32) {
+    // Keyed by the Interrupt, so a card staged whole and one updated agree.
+    let key = |part: &str| Some(Key::named(&[&ask.interrupt.id, "ask", part]));
+    if let Some(entry) = &ask.answer {
+        let text = match (entry.status, &ask.form, &entry.payload) {
+            (ResumeStatus::Cancelled, ..) => "Not answered: the run stopped".to_owned(),
+            (ResumeStatus::Resolved, Some((form, _)), Some(payload)) => {
+                format!("✓ {}", form.summary(payload, form.field_count() > 1 || ask.interrupt.tool_call_id.is_none()))
+            }
+            (ResumeStatus::Resolved, ..) => "✓ Answered".to_owned(),
+        };
+        let len = text.len() as u32;
+        staged.push(parent, Kind::Paragraph, key("answer"), &text, vec![Span { start: 0, len, attr: Attr::Emphasis }], Detail::None);
+        return;
+    }
+    match &ask.form {
+        Some((_, surface)) => {
+            let items = surface.items();
+            // What find and copy see: its words, a line each.
+            let words =
+                |i: &SurfaceItem| [i.label.as_str(), i.text.as_str()].into_iter().filter(|w| !w.is_empty()).collect::<Vec<_>>().join(": ");
+            let text =
+                items.iter().filter(|i| i.variant != Variant::Obscured).map(words).filter(|w| !w.is_empty()).collect::<Vec<_>>().join("\n");
+            let detail = Detail::Embed { media_type: SURFACE_MEDIA_TYPE.into(), table: None, surface: Some(items) };
+            staged.push(parent, Kind::Embed, Some(ask.surface_key()), &text, vec![], detail);
+        }
+        None => {
+            if let Some(message) = &ask.interrupt.message {
+                staged.push(parent, Kind::Paragraph, key("message"), message, vec![], Detail::None);
+            }
+        }
+    }
+}
+
 /// A call's input Block under `parent`, if it has input.
 fn stage_input(call: Key, shown: &Shown, staged: &mut Staged, parent: u32) -> Option<u32> {
     let (text, language) = shown.input.as_ref()?;
@@ -610,7 +675,7 @@ fn stage_result(r: &ToolResult, kind: ToolKind, path: &str, staged: &mut Staged,
         let mut log = Log::default();
         log.feed(&r.content);
         for chunk in log.chunks() {
-            staged.push_with_strings(parent, Kind::Log, &chunk.text, chunk.spans, chunk.strings);
+            staged.push_with_strings(parent, Kind::Log, None, &chunk.text, chunk.spans, chunk.strings);
         }
     }
     if let Some(truncated) = &r.truncated {
@@ -661,7 +726,9 @@ pub(crate) struct Conversation {
     waiting: HashMap<Key, (String, u64)>,
     /// The line that answered each Interrupt. Backfill reads an answer
     /// before the Interrupt it answers.
-    answered: HashMap<String, u64>,
+    answered: HashMap<String, (u64, ResumeEntry)>,
+    /// What each Interrupt asks, by its id.
+    asks: HashMap<String, Ask>,
     touched: Vec<Key>,
     touched_set: HashSet<Key>,
     created: Vec<Key>,
@@ -940,7 +1007,12 @@ impl Conversation {
             }
             Event::RunStarted(e) => {
                 for entry in e.input.iter().flat_map(|input| &input.resume) {
-                    self.answered.insert(entry.interrupt_id.clone(), at);
+                    self.answered.insert(entry.interrupt_id.clone(), (at, entry.clone()));
+                    if let Some(ask) = self.asks.get_mut(&entry.interrupt_id) {
+                        ask.answer = Some(entry.clone());
+                        let key = ask.key;
+                        self.dirty(key);
+                    }
                     let answered: Vec<Key> =
                         self.waiting.iter().filter(|(_, (id, from))| *id == entry.interrupt_id && *from < at).map(|(k, _)| *k).collect();
                     for key in answered {
@@ -969,18 +1041,21 @@ impl Conversation {
                     }
                     Some(Outcome::Interrupt { interrupts }) => {
                         for (i, interrupt) in interrupts.iter().enumerate() {
+                            let open = self.answered.get(&interrupt.id).is_none_or(|(answer, _)| *answer < at);
                             match &interrupt.tool_call_id {
-                                Some(call) if self.answered.get(&interrupt.id).is_none_or(|&answer| answer < at) => {
+                                Some(call) => {
                                     let key = tool_key(&thread, call);
-                                    self.waiting.insert(key, (interrupt.id.clone(), at));
-                                    self.set_waiting(key, true);
+                                    self.ask(key, interrupt);
+                                    if open {
+                                        self.waiting.insert(key, (interrupt.id.clone(), at));
+                                        self.set_waiting(key, true);
+                                    }
                                 }
-                                Some(_) => {}
-                                // Drawing what it asks is #695's; until then it's a notice.
                                 None => {
-                                    let text = interrupt.message.clone().unwrap_or_else(|| interrupt.reason.clone());
                                     let key = Key::named(&[&thread, &interrupt.id, "interrupt"]);
-                                    self.create(key, (at, i as u32), &thread, || Body::Notice { text });
+                                    self.ask(key, interrupt);
+                                    let id = interrupt.id.clone();
+                                    self.create(key, (at, i as u32), &thread, || Body::Question { id });
                                 }
                             }
                         }
@@ -1049,7 +1124,7 @@ impl Conversation {
             Event::ToolCallResult(e) => {
                 let key = tool_key(&thread, &e.tool_call_id);
                 if let Some(Body::Tool { result: r, streamed, .. }) = self.items.get_mut(&key).map(|i| &mut i.body) {
-                    *r = Some(result(&e));
+                    *r = Some(Box::new(result(&e)));
                     *streamed = None;
                 }
                 self.retitle(key, e.title, e.kind);
@@ -1085,6 +1160,59 @@ impl Conversation {
             }
             *shown = Shown::of(name, t, *k, args, nesting.closed());
         }
+    }
+
+    /// Records what `interrupt` asks, shown in the item `key`; a restated
+    /// one keeps its answer and this View's choices.
+    fn ask(&mut self, key: Key, interrupt: &Interrupt) {
+        let answer = self.answered.get(&interrupt.id).map(|(_, entry)| entry.clone());
+        let ask = self.asks.entry(interrupt.id.clone()).or_insert_with(|| {
+            let anchor = match &interrupt.tool_call_id {
+                Some(id) => json!({ "toolCallId": id }),
+                None => json!({ "transcript": "end" }),
+            };
+            let form = interrupt.response_schema.as_ref().and_then(|schema| {
+                let (form, create) = Form::compile(&interrupt.id, schema, interrupt.message.as_deref(), Some(anchor))?;
+                Some((form, Surface::create(create).ok()?))
+            });
+            Ask { interrupt: interrupt.clone(), key, answer, form }
+        });
+        ask.interrupt = interrupt.clone();
+        if let Some(item) = self.items.get_mut(&key) {
+            if let Body::Tool { ask, .. } = &mut item.body {
+                *ask = Some(interrupt.id.clone());
+            }
+        }
+        self.dirty(key);
+    }
+
+    fn dirty(&mut self, key: Key) {
+        if let Some(item) = self.items.get_mut(&key) {
+            item.dirty = true;
+            self.touch(key);
+        }
+    }
+
+    /// The first Interrupt still open, where it shows, and its reason.
+    pub fn open_interrupt(&self) -> Option<(Key, &str)> {
+        let open = self.asks.values().filter(|a| a.answer.is_none() && self.items.contains_key(&a.key));
+        open.min_by_key(|a| self.items[&a.key].order).map(|a| (a.key, a.interrupt.reason.as_str()))
+    }
+
+    /// Applies an input to the open Interrupt surface `key`: a RunAgentInput
+    /// to post when it completes an answer.
+    pub fn surface_input(&mut self, key: Key, component: &str, input: Input, sink: &mut Sink) -> Option<String> {
+        let ask = self.asks.values_mut().find(|a| a.answer.is_none() && a.surface_key() == key)?;
+        let (form, surface) = ask.form.as_mut()?;
+        let action = form.input(surface, component, input).ok()?;
+        let body = action.and_then(|a| form.answer(surface, &a)).map(|payload| {
+            let entry = ResumeEntry { interrupt_id: ask.interrupt.id.clone(), status: ResumeStatus::Resolved, payload: Some(payload) };
+            json!({ "messages": [], "resume": [entry] }).to_string()
+        });
+        let key = ask.key;
+        self.dirty(key);
+        self.settle(sink);
+        body
     }
 
     fn set_waiting(&mut self, key: Key, waiting: bool) {
@@ -1142,6 +1270,7 @@ impl Conversation {
             result: None,
             streamed: None,
             waiting: self.waiting.contains_key(&key),
+            ask: self.asks.iter().find(|(_, a)| a.key == key).map(|(id, _)| id.clone()),
             started,
             shown,
         };
@@ -1187,7 +1316,7 @@ impl Conversation {
                     match self.items.get_mut(&key) {
                         Some(item) if item.snapshot.is_none_or(|s| s <= at) => {
                             if let Body::Tool { result, .. } = &mut item.body {
-                                *result = Some(r);
+                                *result = Some(Box::new(r));
                                 item.dirty = true;
                                 self.touch(key);
                             }
@@ -1276,14 +1405,22 @@ impl Conversation {
         let node = staged.push(parent, kind, Some(key), text, vec![], detail);
         match &mut item.body {
             Body::Text { md, .. } | Body::Reasoning { md } => md.stage(staged, node, doc),
-            Body::Tool { kind, result, streamed, shown, .. } => {
-                if let Some(r) = result.as_ref().or(streamed.as_deref()) {
+            Body::Tool { kind, result, streamed, shown, ask, .. } => {
+                if let Some(r) = result.as_deref().or(streamed.as_deref()) {
                     stage_result(r, *kind, &shown.title, staged, node);
                 }
                 // Staged after the result, so the result's ordinals are as
                 // an update stages them, then moved first.
                 if stage_input(key, shown, staged, node).is_some() {
                     staged.nodes[node as usize].children.rotate_right(1);
+                }
+                if let Some(ask) = ask.as_ref().and_then(|id| self.asks.get(id)) {
+                    stage_ask(ask, staged, node);
+                }
+            }
+            Body::Question { id } => {
+                if let Some(ask) = self.asks.get(id) {
+                    stage_ask(ask, staged, node);
                 }
             }
             _ => {}
@@ -1353,7 +1490,7 @@ impl Conversation {
 
     fn run_detail(&self, calls: &[(Order, Key)]) -> Detail {
         Detail::ToolRun(RunSummary::new(calls.iter().filter_map(|(_, key)| match &self.items.get(key)?.body {
-            Body::Tool { kind, result, waiting, .. } => Some((*kind, tool_head_status(result.as_ref(), *waiting))),
+            Body::Tool { kind, result, waiting, .. } => Some((*kind, tool_head_status(result.as_deref(), *waiting))),
             _ => None,
         })))
     }
@@ -1535,7 +1672,7 @@ impl Conversation {
             sink.update(&head, 1);
             match &mut item.body {
                 Body::Text { md, .. } | Body::Reasoning { md } => md.stream(key, sink),
-                Body::Tool { kind, result, streamed, shown, .. } => {
+                Body::Tool { kind, result, streamed, shown, ask, .. } => {
                     // Only an input that changed is staged again.
                     let was = lead(sink.doc, key);
                     let current =
@@ -1551,10 +1688,20 @@ impl Conversation {
                         sink.splice(key, 0, Some(was), input);
                     }
                     let mut staged = Staged::under(key, 0);
-                    if let Some(r) = result.as_ref().or(streamed.as_deref()) {
+                    if let Some(r) = result.as_deref().or(streamed.as_deref()) {
                         stage_result(r, *kind, &shown.title, &mut staged, 0);
                     }
+                    if let Some(ask) = ask.as_ref().and_then(|id| self.asks.get(id)) {
+                        stage_ask(ask, &mut staged, 0);
+                    }
                     sink.splice(key, lead(sink.doc, key) + own, None, staged);
+                }
+                Body::Question { id } => {
+                    let mut staged = Staged::under(key, 0);
+                    if let Some(ask) = self.asks.get(id) {
+                        stage_ask(ask, &mut staged, 0);
+                    }
+                    sink.splice(key, 0, None, staged);
                 }
                 _ => {}
             }
@@ -1683,7 +1830,7 @@ impl Conversation {
                     if let Some(command) = command(args) {
                         part = format!("{part}\n\n{}", fenced("sh", &command));
                     }
-                    if let Some(text) = result.as_ref().and_then(output).filter(|t| !t.is_empty()) {
+                    if let Some(text) = result.as_deref().and_then(output).filter(|t| !t.is_empty()) {
                         part = format!("{part}\n\n{}", fenced("", &text));
                     }
                     parts.push(part);
@@ -1693,6 +1840,13 @@ impl Conversation {
                 // setext heading.
                 Body::Divider { text } => parts.push(format!("*— {} —*", text.replace('*', "\\*"))),
                 Body::Notice { text } => parts.push(text.split('\n').map(|line| format!("> {line}")).collect::<Vec<_>>().join("\n")),
+                Body::Question { id } => {
+                    if let Some((_, surface)) = self.asks.get(id).and_then(|a| a.form.as_ref()) {
+                        let asked: Vec<String> =
+                            surface.items().into_iter().filter(|i| i.kind == SurfaceKind::Text).map(|i| format!("> {}", i.text)).collect();
+                        parts.push(asked.join("\n"));
+                    }
+                }
             }
             self.transcript_into(key, parts);
         }

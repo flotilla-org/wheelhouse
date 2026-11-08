@@ -33,6 +33,7 @@ Root
       Paragraph "It's sa_do." [Code "sa_do"]
     Section Section { section: Tool, name: "Bash", title: "cargo build", tool: Shell, status: Waiting, duration_ms: None }
       Log "   Compiling ka v0.1.0\n   Compiling lo v0.1.0"
+      Paragraph "Run cargo build?"
   Divider "compaction"
   Turn Turn { role: User, pending: false }
     Paragraph "Try again"

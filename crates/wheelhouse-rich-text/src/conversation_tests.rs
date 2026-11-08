@@ -312,10 +312,82 @@ fn an_interrupt_leaves_its_call_waiting_until_it_is_answered() {
     );
     let mut rich = RichText::open_conversation(&[line(HELLO), call, line(INTERRUPTED)].concat());
     assert_eq!(tool_status(&rich, "c"), ToolStatus::Waiting);
-    // One that names no call isn't lost before #695 draws it.
-    assert!(outline(rich.doc()).contains(r#"Notice "Which branch?""#), "{}", outline(rich.doc()));
+    // One that names no call shows as a question of its own.
+    assert!(outline(rich.doc()).contains(r#"Paragraph "Which branch?""#), "{}", outline(rich.doc()));
     rich.append(&line(ANSWERED));
     assert_eq!(tool_status(&rich, "c"), ToolStatus::Pending);
+}
+
+const APPROVAL: &str = r#"{"type":"RunFinished","threadId":"t","seq":2,"runId":"r","outcome":{"type":"interrupt","interrupts":[{"id":"i","reason":"approval","toolCallId":"c","responseSchema":{"type":"object","required":["decision"],"properties":{"decision":{"oneOf":[{"const":"accept","title":"Approve"},{"const":"acceptForSession","title":"Approve for this session"},{"const":"decline","title":"Deny"}]}}}}]}}"#;
+
+/// The open Interrupt surface `id`'s Items, if it shows.
+fn surface(rich: &RichText, id: &str) -> Option<Vec<SurfaceItem>> {
+    let node = rich.doc().get(Key::named(&[id, "ask", "surface"]))?;
+    match rich.doc().detail(node) {
+        Detail::Embed { media_type, surface: Some(items), .. } if media_type == SURFACE_MEDIA_TYPE => Some(items.clone()),
+        _ => None,
+    }
+}
+
+fn surface_key(id: &str) -> Key {
+    Key::named(&[id, "ask", "surface"])
+}
+
+#[test]
+fn an_approval_offers_the_producers_decisions_on_its_call_and_shows_the_one_made() {
+    let call = line(
+        r#"{"type":"ToolCallStart","threadId":"t","seq":1,"toolCallId":"c","toolCallName":"Bash","title":"cargo build","kind":"shell"}"#,
+    );
+    let mut rich = RichText::open_conversation(&[line(HELLO), call, line(APPROVAL)].concat());
+    let items = surface(&rich, "i").expect("the approval's surface");
+    let buttons: Vec<_> = items.iter().filter(|i| i.kind == SurfaceKind::Button).map(|i| (i.id.as_str(), i.text.as_str())).collect();
+    assert_eq!(buttons, [("answer0", "Approve"), ("answer1", "Approve for this session"), ("answer2", "Deny")]);
+    let parent = rich.doc().parent(rich.doc().get(surface_key("i")).unwrap());
+    assert_eq!(parent.map(|p| rich.doc().key(p)), Some(Key::named(&["t", "tool", "c"])), "it shows on its call");
+    let (key, reason) = rich.conversation_open_interrupt().expect("an open Interrupt");
+    assert_eq!((key, reason.as_str()), (Key::named(&["t", "tool", "c"]), "approval"));
+
+    // An input the surface doesn't take sends nothing; a decision sends its resume entry.
+    assert_eq!(rich.conversation_surface_input(surface_key("i"), "nothing", Input::Press), None);
+    let body = rich.conversation_surface_input(surface_key("i"), "answer1", Input::Press).expect("a body to send");
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        body["resume"][0],
+        serde_json::json!({"interruptId": "i", "status": "resolved", "payload": {"decision": "acceptForSession"}})
+    );
+
+    // Every View shows the answer the stream carries, whoever chose it.
+    rich.append(&line(r#"{"type":"RunStarted","threadId":"t","seq":3,"runId":"r.1","input":{"resume":[{"interruptId":"i","status":"resolved","payload":{"decision":"acceptForSession"}}]}}"#));
+    let shown = outline(rich.doc());
+    assert!(shown.contains(r#"Paragraph "✓ Approve for this session""#) && surface(&rich, "i").is_none(), "{shown}");
+    assert_eq!(tool_status(&rich, "c"), ToolStatus::Pending);
+    assert_eq!(rich.conversation_open_interrupt(), None);
+    assert_eq!(rich.conversation_surface_input(surface_key("i"), "answer2", Input::Press), None);
+}
+
+#[test]
+fn a_question_is_a_form_that_submits_once_every_field_is_answered() {
+    let question = line(
+        r#"{"type":"RunFinished","threadId":"t","seq":1,"runId":"r","outcome":{"type":"interrupt","interrupts":[{"id":"q","reason":"question","responseSchema":{"type":"object","required":["branch","why"],"properties":{"branch":{"title":"Branch","description":"Which branch?","anyOf":[{"const":"main","title":"main"},{"const":"dev","title":"dev"},{"type":"string","title":"Other"}]},"why":{"title":"Why","description":"Why that one?"}}}}]}}"#,
+    );
+    let mut rich = RichText::open_conversation(&[line(HELLO), question].concat());
+    assert!(outline(rich.doc()).contains(r#"Quote Quote { alert: Some(Important) }"#), "{}", outline(rich.doc()));
+    let submit = |rich: &RichText| surface(rich, "q").unwrap().into_iter().find(|i| i.id == "submit").unwrap().enabled;
+    assert!(!submit(&rich));
+
+    let key = surface_key("q");
+    assert_eq!(rich.conversation_surface_input(key, "f0.choice", Input::Choose("main")), None);
+    let chosen = surface(&rich, "q").unwrap().into_iter().find(|i| i.kind == SurfaceKind::Choice && i.on).map(|i| i.value);
+    assert_eq!(chosen.as_deref(), Some("main"), "this View shows its choice");
+    assert_eq!(rich.conversation_surface_input(key, "submit", Input::Press), None, "Why is unanswered");
+    rich.conversation_surface_input(key, "f1.text", Input::Text("tests pass there"));
+    assert!(submit(&rich));
+    let body = rich.conversation_surface_input(key, "submit", Input::Press).expect("a body to send");
+    let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(body["resume"][0]["payload"], serde_json::json!({"branch": "main", "why": "tests pass there"}));
+
+    rich.append(&line(r#"{"type":"RunStarted","threadId":"t","seq":2,"runId":"r.1","input":{"resume":[{"interruptId":"q","status":"resolved","payload":{"branch":"main","why":"tests pass there"}}]}}"#));
+    assert!(outline(rich.doc()).contains(r#"Paragraph "✓ Branch: main · Why: tests pass there""#), "{}", outline(rich.doc()));
 }
 
 #[test]

@@ -513,6 +513,58 @@ uishell_rt_diag_conversation(Arena *arena)
   return str8_list_join(arena, &out, 0);
 }
 
+//- Approvals and questions (#695): a command's approval and a two-field
+// question, open.
+
+internal String8
+uishell_rt_diag_asks(Arena *arena)
+{
+  String8 lines[] =
+  {
+    str8_lit("{\"type\":\"Hello\",\"contract\":2}"),
+    str8_lit("{\"type\":\"RunStarted\",\"threadId\":\"t\",\"seq\":1,\"runId\":\"r\"}"),
+    str8_lit("{\"type\":\"ToolCallStart\",\"threadId\":\"t\",\"seq\":2,\"toolCallId\":\"c1\",\"toolCallName\":\"Bash\",\"title\":\"rm -rf target/tmp\",\"kind\":\"shell\"}"),
+    str8_lit("{\"type\":\"ToolCallEnd\",\"threadId\":\"t\",\"seq\":3,\"toolCallId\":\"c1\"}"),
+    str8_lit("{\"type\":\"RunFinished\",\"threadId\":\"t\",\"seq\":4,\"runId\":\"r\",\"outcome\":{\"type\":\"interrupt\",\"interrupts\":["
+             "{\"id\":\"a1\",\"reason\":\"approval\",\"toolCallId\":\"c1\",\"message\":\"May I remove target/tmp?\",\"responseSchema\":{\"type\":\"object\",\"required\":[\"decision\"],"
+             "\"properties\":{\"decision\":{\"oneOf\":[{\"const\":\"accept\",\"title\":\"Approve\"},{\"const\":\"acceptForSession\",\"title\":\"Approve for this session\"},{\"const\":\"decline\",\"title\":\"Deny\"}]}}}},"
+             "{\"id\":\"q1\",\"reason\":\"question\",\"responseSchema\":{\"type\":\"object\",\"required\":[\"profile\",\"note\"],\"properties\":{"
+             "\"profile\":{\"title\":\"Profile\",\"anyOf\":[{\"const\":\"debug\",\"title\":\"debug\"},{\"const\":\"release\",\"title\":\"release\"},{\"type\":\"string\",\"title\":\"Other\"}]},"
+             "\"note\":{\"title\":\"Note\",\"anyOf\":[{\"type\":\"string\",\"title\":\"Other\"}]}}}}]}}"),
+  };
+  String8List out = {0};
+  for EachElement(i, lines) { str8_list_pushf(arena, &out, "%S\n", lines[i]); }
+  return str8_list_join(arena, &out, 0);
+}
+
+// The Block holding a surface Item of `kind` with `text`, and the Item's index.
+internal UIShell_RtNode *
+uishell_rt_diag_surface_item(UIShell_RichTextState *s, U32 kind, String8 text, U64 *index)
+{
+  for(U64 b = 0; b < s->model.block_count; b += 1)
+  {
+    UIShell_RtNode *n = uishell_rt_node(&s->model, s->model.block_keys[b]);
+    for(U64 i = 0; n && i < n->surface_count; i += 1)
+    {
+      if(n->surface[i].kind == kind && str8_match(n->surface[i].text, text, 0)) { *index = i; return n; }
+    }
+  }
+  return 0;
+}
+
+// The centre of the box a surface Item built in its Block's box, by its
+// key's `suffix`; only boxes that draw text keep their strings.
+internal Vec2F32
+uishell_rt_diag_surface_point(U64 key, U64 index, char *suffix)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UI_Box *block = uishell_rt_diag_drawn(uishell_rt_block_draw, key);
+  String8 name = push_str8f(scratch.arena, "###rt_surface_%llx_%llu%s", (unsigned long long)key, (unsigned long long)index, suffix);
+  UI_Box *b = ui_box_is_nil(block) ? &ui_nil_box : ui_box_from_key(ui_key_from_string(block->key, name));
+  scratch_end(scratch);
+  return ui_box_is_nil(b) ? v2f32(-1, -1) : center_2f32(b->rect);
+}
+
 //- The fixture: synthetic, so the repo stays public-safe.
 
 internal String8
@@ -1679,9 +1731,15 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
         s = uishell_rt_diag_click(d, center_2f32(run_header->rect), 0, 1);
         s = uishell_rt_diag_frames(d, 2);
         B32 calls_collapsed = run->child_count >= 2;
-        for(U64 i = 0; i < run->child_count; i += 1) { calls_collapsed &= uishell_rt_collapsed(s, run->children[i]); }
-        RichCheck(!uishell_rt_collapsed(s, run->key) && calls_collapsed && !ui_box_is_nil(uishell_rt_diag_drawn(uishell_rt_header_draw, bash->key)),
-                  "a Tool Run expands to its calls, each collapsed");
+        B32 waiting_open = 0;
+        for(U64 i = 0; i < run->child_count; i += 1)
+        {
+          UIShell_RtNode *call = uishell_rt_node(&s->model, run->children[i]);
+          if(call && call->status == WHEELHOUSE_RICH_STATUS_WAITING) { waiting_open = !uishell_rt_collapsed(s, call->key); }
+          else { calls_collapsed &= uishell_rt_collapsed(s, run->children[i]); }
+        }
+        RichCheck(!uishell_rt_collapsed(s, run->key) && calls_collapsed && waiting_open && !ui_box_is_nil(uishell_rt_diag_drawn(uishell_rt_header_draw, bash->key)),
+                  "a Tool Run expands to its calls, each collapsed but the one waiting on an answer");
       }
       UI_Box *header = uishell_rt_diag_drawn(uishell_rt_header_draw, bash->key);
       U64 input = bash->child_count ? bash->children[0] : 0, output = bash->child_count > 1 ? bash->children[1] : 0;
@@ -1986,6 +2044,67 @@ uishell_rich_text_diagnostics(RD_WindowState *ws)
           RichCheck(s->conversation && own && !other, "the thread's View shows its thread alone");
         }
       }
+    }
+    d->rect = r2f32p(0, 0, 900, 600);
+    scratch_end(scratch);
+  }
+
+  //- Approvals and questions (#695): the producer's decisions are buttons on
+  // the call, a question is a form; a click chooses, typing goes to the
+  // field and not the composer, and Submit waits for every field.
+  {
+    Temp scratch = scratch_begin(&arena, 1);
+    String8 asks = push_str8f(arena, "%S/asks.events.jsonl", dir);
+    write_data_to_file_path(asks, uishell_rt_diag_asks(scratch.arena));
+    d->rect = r2f32p(0, 0, 700, 900);
+    s = uishell_rt_diag_open(d, asks);
+    s = uishell_rt_diag_frames(d, 3);
+    U64 approve = 0, deny = 0, debug = 0, note = 0, submit = 0;
+    UIShell_RtNode *approval = s ? uishell_rt_diag_surface_item(s, WHEELHOUSE_RICH_SURFACE_BUTTON, str8_lit("Approve for this session"), &approve) : 0;
+    B32 deny_too = approval && uishell_rt_diag_surface_item(s, WHEELHOUSE_RICH_SURFACE_BUTTON, str8_lit("Deny"), &deny) == approval;
+    RichCheck(approval && deny_too && approval->surface[0].kind != WHEELHOUSE_RICH_SURFACE_UNSUPPORTED, "an approval's decisions are buttons in the chat");
+    UIShell_RtNode *question = s ? uishell_rt_diag_surface_item(s, WHEELHOUSE_RICH_SURFACE_CHOICE, str8_lit("debug"), &debug) : 0;
+    RichCheck(question && question != approval, "a question is a form of its own");
+    if(question)
+    {
+      U64 key = question->key;
+      Vec2F32 at = uishell_rt_diag_surface_point(key, debug, "_mark");
+
+      d->now_us += 2000000;
+      s = uishell_rt_diag_click(d, at, 0, 1);
+      question = uishell_rt_diag_surface_item(s, WHEELHOUSE_RICH_SURFACE_CHOICE, str8_lit("debug"), &debug);
+      RichCheck(question && question->surface[debug].on, "a click chooses a choice");
+      U64 count = question ? question->surface_count : 0;
+      for(U64 i = 0; i < count; i += 1)
+      {
+        if(question->surface[i].kind == WHEELHOUSE_RICH_SURFACE_TEXT_FIELD) { note = i; }
+        if(question->surface[i].kind == WHEELHOUSE_RICH_SURFACE_BUTTON) { submit = i; }
+      }
+      RichCheck(note && submit && !question->surface[submit].enabled, "Submit waits while the note is unanswered");
+      d->now_us += 2000000;
+      s = uishell_rt_diag_click(d, uishell_rt_diag_surface_point(key, note, ""), 0, 1);
+      U64 compose = s->compose_size;
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Text, .string = str8_lit("keep logs")});
+      s = uishell_rt_diag_frames(d, 2);
+      question = uishell_rt_node(&s->model, key);
+      B32 typed = question && note < question->surface_count && str8_match(question->surface[note].text, str8_lit("keep logs"), 0);
+      RichCheck(typed && s->compose_size == compose, "typing goes to the field, not the composer");
+      RichCheck(typed && question->surface[submit].enabled, "Submit is enabled once every field is answered");
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Esc});
+      RichCheck(s->edit_surface == 0, "Esc stops typing in the field");
+      // Tab to the other choice, and Enter chooses it.
+      U64 release = 0;
+      uishell_rt_diag_surface_item(s, WHEELHOUSE_RICH_SURFACE_CHOICE, str8_lit("release"), &release);
+      B32 reached = 0;
+      for(U32 i = 0; i < 24 && !reached; i += 1)
+      {
+        s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Navigate, .flags = UI_EventFlag_Secondary, .delta_unit = UI_EventDeltaUnit_Char, .delta_2s32 = v2s32(0, 1)});
+        reached = s->focus_stop >= 0 && s->focus_stop_value.kind == UIShell_RtStop_Surface && s->focus_stop_value.key == key && s->focus_stop_value.start == release;
+      }
+      s = uishell_rt_diag_event(d, (UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Return, .slot = UI_EventActionSlot_Accept});
+      s = uishell_rt_diag_frames(d, 2);
+      question = uishell_rt_node(&s->model, key);
+      RichCheck(reached && question && question->surface[release].on && !question->surface[debug].on, "Tab reaches a choice, and Enter chooses it");
     }
     d->rect = r2f32p(0, 0, 900, 600);
     scratch_end(scratch);
