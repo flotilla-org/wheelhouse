@@ -1390,6 +1390,173 @@ r_window_end_frame(WM_Window window, R_Handle window_equip)
 {
 }
 
+//- render passes shared by window submission and readback, so the
+// diagnostics read back what windows draw
+
+// Encodes a UI pass into its surface target, or else into stage_color. Passes
+// are in points (viewport_dim); the stage is drawable_size pixels. A surface
+// target's first pass in a submission clears it; touched remembers which.
+internal void
+r_mtl_encode_ui_pass(id<MTLCommandBuffer> command_buffer, MTLRenderPassDescriptor *stage_pass, R_PassParams_UI *params,
+                     id<MTLTexture> stage_color, Vec2F32 viewport_dim, Vec2S32 drawable_size, F32 scale,
+                     R_MTL_TouchedTargets *touched)
+{
+  if(r_mtl_state->rect_pipeline == 0)
+  {
+    return;
+  }
+
+  //- unpack optional render target; surface passes draw into their own
+  // texture (cleared to transparent), in coordinates relative to target_rect
+  R_MTL_Tex2D *target = r_mtl_tex2d_from_handle(params->target);
+  B32 to_surface = (target != 0 && target->texture != 0);
+  if(to_surface && params->preserve)
+  {
+    // surface content is up-to-date; skip the render & keep the texture
+    return;
+  }
+  Vec2F32 pass_viewport_dim = viewport_dim;
+  Vec2S32 pass_attachment_size = drawable_size;
+  Vec2F32 target_origin = v2f32(0, 0);
+  F32 pass_scale = scale;
+  if(to_surface)
+  {
+    pass_viewport_dim = dim_2f32(params->target_rect);
+    pass_attachment_size = target->size;
+    target_origin = params->target_rect.p0;
+    // surfaces may be allocated at any resolution (e.g. reduced-res
+    // previews); derive the point->pixel scale from the target itself
+    if(pass_viewport_dim.x > 0)
+    {
+      pass_scale = (F32)target->size.x/pass_viewport_dim.x;
+    }
+  }
+
+  B32 target_first_touch = 0;
+  if(to_surface)
+  {
+    target_first_touch = 1;
+    for(U64 idx = 0; idx < touched->count; idx += 1)
+    {
+      if(touched->v[idx] == target)
+      {
+        target_first_touch = 0;
+        break;
+      }
+    }
+    if(target_first_touch && touched->count < ArrayCount(touched->v))
+    {
+      touched->v[touched->count] = target;
+      touched->count += 1;
+    }
+  }
+
+  stage_pass.colorAttachments[0].texture = (to_surface ? target->texture : stage_color);
+  stage_pass.colorAttachments[0].loadAction = ((to_surface && target_first_touch) ? MTLLoadActionClear : MTLLoadActionLoad);
+  stage_pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+  stage_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+  id<MTLRenderCommandEncoder> encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_pass];
+  [encoder setRenderPipelineState:(to_surface ? r_mtl_state->rect_surface_pipeline : r_mtl_state->rect_pipeline)];
+
+  for(R_BatchGroup2DNode *group_n = params->rects.first; group_n != 0; group_n = group_n->next)
+  {
+    R_BatchList *batches = &group_n->batches;
+    R_BatchGroup2DParams *group_params = &group_n->params;
+    R_MTL_Tex2D *texture = r_mtl_tex2d_from_handle(group_params->tex);
+    if(texture == 0 || texture->texture == 0)
+    {
+      texture = r_mtl_state->white_texture;
+    }
+    if(texture != 0 && texture->texture != 0 && batches->byte_count != 0)
+    {
+      U64 inst_count = batches->byte_count / batches->bytes_per_inst;
+      U64 insts_offset = 0;
+      void *insts_ptr = 0;
+      id<MTLBuffer> insts_buffer = r_mtl_upload_buffer_reserve(batches->byte_count, 16, &insts_offset, &insts_ptr);
+      U8 *insts = (U8 *)insts_ptr;
+      for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
+      {
+        MemoryCopy(insts, batch_n->v.v, batch_n->v.byte_count);
+        insts += batch_n->v.byte_count;
+      }
+      Mat3x3F32 group_xform = group_params->xform;
+      if(to_surface)
+      {
+        group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
+      }
+      R_CoreRectUniforms group_uniforms = r_core_rect_uniforms(pass_viewport_dim, group_params, group_xform, texture->format, texture->size, 0);
+      U64 uniform_offset = 0;
+      id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&group_uniforms, sizeof(group_uniforms), 256, &uniform_offset);
+      if(group_params->clip.x0 != 0 ||
+         group_params->clip.y0 != 0 ||
+         group_params->clip.x1 != 0 ||
+         group_params->clip.y1 != 0)
+      {
+        Rng2F32 clip = group_params->clip;
+        if(to_surface)
+        {
+          clip = shift_2f32(clip, v2f32(-target_origin.x, -target_origin.y));
+        }
+        MTLScissorRect scissor = {0};
+        if(!r_mtl_scissor_from_clip(clip, pass_attachment_size, pass_scale, &scissor))
+        {
+          continue;
+        }
+        else
+        {
+          [encoder setScissorRect:scissor];
+        }
+      }
+      else
+      {
+        MTLScissorRect scissor = {0, 0, (NSUInteger)pass_attachment_size.x, (NSUInteger)pass_attachment_size.y};
+        [encoder setScissorRect:scissor];
+      }
+      [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:R_MTL_CORE_RECT_INSTANCE_BUFFER];
+      [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:0];
+      [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
+      [encoder setFragmentTexture:texture->texture atIndex:0];
+      [encoder setFragmentSamplerState:r_mtl_state->samplers[group_params->tex_sample_kind] atIndex:0];
+      [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:inst_count];
+    }
+  }
+  [encoder endEncoding];
+}
+
+// Encodes one effect: a fullscreen triangle from params->source into
+// params->target.
+internal void
+r_mtl_encode_effect_pass(id<MTLCommandBuffer> command_buffer, MTLRenderPassDescriptor *stage_pass, R_PassParams_Effect *params)
+{
+  R_MTL_Effect *effect = (R_MTL_Effect *)params->effect.u64[0];
+  R_MTL_Tex2D *source = r_mtl_tex2d_from_handle(params->source);
+  R_MTL_Tex2D *target = r_mtl_tex2d_from_handle(params->target);
+  if(effect != 0 && effect->pipeline != 0 &&
+     source != 0 && source->texture != 0 &&
+     target != 0 && target->texture != 0)
+  {
+    R_MTL_EffectUniforms uniforms = {0};
+    uniforms.source_size_px = v2f32((F32)Max(source->size.x, 1), (F32)Max(source->size.y, 1));
+    uniforms.output_size_px = v2f32((F32)Max(target->size.x, 1), (F32)Max(target->size.y, 1));
+    uniforms.params0 = params->params[0];
+    uniforms.params1 = params->params[1];
+    U64 uniform_offset = 0;
+    id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&uniforms, sizeof(uniforms), 256, &uniform_offset);
+
+    stage_pass.colorAttachments[0].texture = target->texture;
+    stage_pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+    stage_pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
+    stage_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLRenderCommandEncoder> encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_pass];
+    [encoder setRenderPipelineState:effect->pipeline];
+    [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
+    [encoder setFragmentTexture:source->texture atIndex:0];
+    [encoder setFragmentSamplerState:r_mtl_state->samplers[R_Tex2DSampleKind_Linear] atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [encoder endEncoding];
+  }
+}
+
 r_hook void
 r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
 {
@@ -1417,8 +1584,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
 
       // NOTE: a surface target's first pass this submit clears it; later passes
       // (e.g. a parent surface resuming after a nested child's bracket) load
-      id<MTLTexture> touched_targets[64];
-      U64 touched_target_count = 0;
+      R_MTL_TouchedTargets touched = {0};
 
       for(R_PassNode *pass_n = passes->first; pass_n != 0; pass_n = pass_n->next)
       {
@@ -1428,159 +1594,12 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
           default:{}break;
           case R_PassKind_UI:
           {
-            if(r_mtl_state->rect_pipeline != 0)
-            {
-              R_PassParams_UI *params = render_pass->params_ui;
-
-              //- unpack optional render target; surface passes draw into their own
-              // texture (cleared to transparent), in coordinates relative to target_rect
-              R_MTL_Tex2D *target = r_mtl_tex2d_from_handle(params->target);
-              B32 to_surface = (target != 0 && target->texture != 0);
-              if(to_surface && params->preserve)
-              {
-                // surface content is up-to-date; skip the render & keep the texture
-                break;
-              }
-              Vec2F32 pass_viewport_dim = viewport_dim;
-              Vec2S32 pass_attachment_size = mtl_window->drawable_size;
-              Vec2F32 target_origin = v2f32(0, 0);
-              F32 pass_scale = scale;
-              if(to_surface)
-              {
-                pass_viewport_dim = dim_2f32(params->target_rect);
-                pass_attachment_size = target->size;
-                target_origin = params->target_rect.p0;
-                // surfaces may be allocated at any resolution (e.g. reduced-res
-                // previews); derive the point->pixel scale from the target itself
-                if(pass_viewport_dim.x > 0)
-                {
-                  pass_scale = (F32)target->size.x/pass_viewport_dim.x;
-                }
-              }
-
-              B32 target_first_touch = 0;
-              if(to_surface)
-              {
-                target_first_touch = 1;
-                for(U64 idx = 0; idx < touched_target_count; idx += 1)
-                {
-                  if(touched_targets[idx] == target->texture)
-                  {
-                    target_first_touch = 0;
-                    break;
-                  }
-                }
-                if(target_first_touch && touched_target_count < ArrayCount(touched_targets))
-                {
-                  touched_targets[touched_target_count] = target->texture;
-                  touched_target_count += 1;
-                }
-              }
-
-              MTLRenderPassDescriptor *stage_pass = mtl_window->stage_pass;
-              stage_pass.colorAttachments[0].texture = (to_surface ? target->texture : mtl_window->stage_color);
-              stage_pass.colorAttachments[0].loadAction = ((to_surface && target_first_touch) ? MTLLoadActionClear : MTLLoadActionLoad);
-              stage_pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
-              stage_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-              id<MTLRenderCommandEncoder> encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_pass];
-              [encoder setRenderPipelineState:(to_surface ? r_mtl_state->rect_surface_pipeline : r_mtl_state->rect_pipeline)];
-
-              for(R_BatchGroup2DNode *group_n = params->rects.first; group_n != 0; group_n = group_n->next)
-              {
-                R_BatchList *batches = &group_n->batches;
-                R_BatchGroup2DParams *group_params = &group_n->params;
-                R_MTL_Tex2D *texture = r_mtl_tex2d_from_handle(group_params->tex);
-                if(texture == 0 || texture->texture == 0)
-                {
-                  texture = r_mtl_state->white_texture;
-                }
-                if(texture != 0 && texture->texture != 0 && batches->byte_count != 0)
-                {
-                  U64 inst_count = batches->byte_count / batches->bytes_per_inst;
-                  U64 insts_offset = 0;
-                  void *insts_ptr = 0;
-                  id<MTLBuffer> insts_buffer = r_mtl_upload_buffer_reserve(batches->byte_count, 16, &insts_offset, &insts_ptr);
-                  U8 *insts = (U8 *)insts_ptr;
-                  for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
-                  {
-                    MemoryCopy(insts, batch_n->v.v, batch_n->v.byte_count);
-                    insts += batch_n->v.byte_count;
-                  }
-                  Mat3x3F32 group_xform = group_params->xform;
-                  if(to_surface)
-                  {
-                    group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
-                  }
-                  R_CoreRectUniforms group_uniforms = r_core_rect_uniforms(pass_viewport_dim, group_params, group_xform, texture->format, texture->size, 0);
-                  U64 uniform_offset = 0;
-                  id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&group_uniforms, sizeof(group_uniforms), 256, &uniform_offset);
-                  if(group_params->clip.x0 != 0 ||
-                     group_params->clip.y0 != 0 ||
-                     group_params->clip.x1 != 0 ||
-                     group_params->clip.y1 != 0)
-                  {
-                    Rng2F32 clip = group_params->clip;
-                    if(to_surface)
-                    {
-                      clip = shift_2f32(clip, v2f32(-target_origin.x, -target_origin.y));
-                    }
-                    MTLScissorRect scissor = {0};
-                    if(!r_mtl_scissor_from_clip(clip, pass_attachment_size, pass_scale, &scissor))
-                    {
-                      continue;
-                    }
-                    else
-                    {
-                      [encoder setScissorRect:scissor];
-                    }
-                  }
-                  else
-                  {
-                    MTLScissorRect scissor = {0, 0, (NSUInteger)pass_attachment_size.x, (NSUInteger)pass_attachment_size.y};
-                    [encoder setScissorRect:scissor];
-                  }
-                  [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:R_MTL_CORE_RECT_INSTANCE_BUFFER];
-                  [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:0];
-                  [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
-                  [encoder setFragmentTexture:texture->texture atIndex:0];
-                  [encoder setFragmentSamplerState:r_mtl_state->samplers[group_params->tex_sample_kind] atIndex:0];
-                  [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:inst_count];
-                }
-              }
-              [encoder endEncoding];
-            }
+            r_mtl_encode_ui_pass(command_buffer, mtl_window->stage_pass, render_pass->params_ui, mtl_window->stage_color,
+                                 viewport_dim, mtl_window->drawable_size, scale, &touched);
           }break;
           case R_PassKind_Effect:
           {
-            R_PassParams_Effect *params = render_pass->params_effect;
-            R_MTL_Effect *effect = (R_MTL_Effect *)params->effect.u64[0];
-            R_MTL_Tex2D *source = r_mtl_tex2d_from_handle(params->source);
-            R_MTL_Tex2D *target = r_mtl_tex2d_from_handle(params->target);
-            if(effect != 0 && effect->pipeline != 0 &&
-               source != 0 && source->texture != 0 &&
-               target != 0 && target->texture != 0)
-            {
-              R_MTL_EffectUniforms uniforms = {0};
-              uniforms.source_size_px = v2f32((F32)Max(source->size.x, 1), (F32)Max(source->size.y, 1));
-              uniforms.output_size_px = v2f32((F32)Max(target->size.x, 1), (F32)Max(target->size.y, 1));
-              uniforms.params0 = params->params[0];
-              uniforms.params1 = params->params[1];
-              U64 uniform_offset = 0;
-              id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&uniforms, sizeof(uniforms), 256, &uniform_offset);
-
-              MTLRenderPassDescriptor *stage_pass = mtl_window->stage_pass;
-              stage_pass.colorAttachments[0].texture = target->texture;
-              stage_pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-              stage_pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
-              stage_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-              id<MTLRenderCommandEncoder> encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_pass];
-              [encoder setRenderPipelineState:effect->pipeline];
-              [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
-              [encoder setFragmentTexture:source->texture atIndex:0];
-              [encoder setFragmentSamplerState:r_mtl_state->samplers[R_Tex2DSampleKind_Linear] atIndex:0];
-              [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-              [encoder endEncoding];
-            }
+            r_mtl_encode_effect_pass(command_buffer, mtl_window->stage_pass, render_pass->params_effect);
           }break;
 
           case R_PassKind_Blur:
@@ -1704,6 +1723,7 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
         stage_clear_pass.colorAttachments[0].clearColor = MTLClearColorMake(0.06, 0.06, 0.065, 1.0);
         id<MTLRenderCommandEncoder> clear_encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_clear_pass];
         [clear_encoder endEncoding];
+        R_MTL_TouchedTargets touched = {0};
 
         for(R_PassNode *pass_n = passes->first; pass_n != 0; pass_n = pass_n->next)
         {
@@ -1753,71 +1773,14 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
             }
             continue;
           }
-          if(render_pass->kind == R_PassKind_UI)
+          if(render_pass->kind == R_PassKind_UI && render_pass->params_ui != 0)
           {
-            MTLRenderPassDescriptor *stage_pass = [MTLRenderPassDescriptor renderPassDescriptor];
-            stage_pass.colorAttachments[0].texture = stage_color;
-            stage_pass.colorAttachments[0].loadAction = MTLLoadActionLoad;
-            stage_pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-            id<MTLRenderCommandEncoder> encoder = [command_buffer renderCommandEncoderWithDescriptor:stage_pass];
-            [encoder setRenderPipelineState:r_mtl_state->rect_pipeline];
-
-            R_PassParams_UI *params = render_pass->params_ui;
-            for(R_BatchGroup2DNode *group_n = params->rects.first; group_n != 0; group_n = group_n->next)
-            {
-              R_BatchList *batches = &group_n->batches;
-              R_BatchGroup2DParams *group_params = &group_n->params;
-              R_MTL_Tex2D *texture = r_mtl_tex2d_from_handle(group_params->tex);
-              if(texture == 0 || texture->texture == 0)
-              {
-                texture = r_mtl_state->white_texture;
-              }
-              if(texture != 0 && texture->texture != 0 && batches->byte_count != 0)
-              {
-                U64 inst_count = batches->byte_count / batches->bytes_per_inst;
-                U64 insts_offset = 0;
-                void *insts_ptr = 0;
-                id<MTLBuffer> insts_buffer = r_mtl_upload_buffer_reserve(batches->byte_count, 16, &insts_offset, &insts_ptr);
-                U8 *insts = (U8 *)insts_ptr;
-                for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
-                {
-                  MemoryCopy(insts, batch_n->v.v, batch_n->v.byte_count);
-                  insts += batch_n->v.byte_count;
-                }
-
-                R_CoreRectUniforms group_uniforms = r_core_rect_uniforms(viewport_dim, group_params, group_params->xform, texture->format, texture->size, 0);
-                U64 uniform_offset = 0;
-                id<MTLBuffer> uniform_buffer = r_mtl_upload_buffer(&group_uniforms, sizeof(group_uniforms), 256, &uniform_offset);
-
-                if(group_params->clip.x0 != 0 ||
-                   group_params->clip.y0 != 0 ||
-                   group_params->clip.x1 != 0 ||
-                   group_params->clip.y1 != 0)
-                {
-                  MTLScissorRect scissor = {0};
-                  if(!r_mtl_scissor_from_clip(group_params->clip, size, 1.f, &scissor))
-                  {
-                    continue;
-                  }
-                  else
-                  {
-                    [encoder setScissorRect:scissor];
-                  }
-                }
-                else
-                {
-                  MTLScissorRect scissor = {0, 0, (NSUInteger)size.x, (NSUInteger)size.y};
-                  [encoder setScissorRect:scissor];
-                }
-                [encoder setVertexBuffer:insts_buffer offset:insts_offset atIndex:R_MTL_CORE_RECT_INSTANCE_BUFFER];
-                [encoder setVertexBuffer:uniform_buffer offset:uniform_offset atIndex:0];
-                [encoder setFragmentBuffer:uniform_buffer offset:uniform_offset atIndex:0];
-                [encoder setFragmentTexture:texture->texture atIndex:0];
-                [encoder setFragmentSamplerState:r_mtl_state->samplers[group_params->tex_sample_kind] atIndex:0];
-                [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4 instanceCount:inst_count];
-              }
-            }
-            [encoder endEncoding];
+            r_mtl_encode_ui_pass(command_buffer, [MTLRenderPassDescriptor renderPassDescriptor], render_pass->params_ui,
+                                 stage_color, viewport_dim, size, 1.f, &touched);
+          }
+          else if(render_pass->kind == R_PassKind_Effect && render_pass->params_effect != 0)
+          {
+            r_mtl_encode_effect_pass(command_buffer, [MTLRenderPassDescriptor renderPassDescriptor], render_pass->params_effect);
           }
         }
 

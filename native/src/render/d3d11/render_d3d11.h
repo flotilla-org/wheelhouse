@@ -104,6 +104,14 @@ struct R_D3D11_FlushBuffer
   ID3D11Buffer *buffer;
 };
 
+// Surface targets a submission has drawn to: the first pass into each clears it.
+typedef struct R_D3D11_TouchedTargets R_D3D11_TouchedTargets;
+struct R_D3D11_TouchedTargets
+{
+  ID3D11RenderTargetView *v[64];
+  U64 count;
+};
+
 typedef struct R_D3D11_State R_D3D11_State;
 struct R_D3D11_State
 {
@@ -130,6 +138,7 @@ struct R_D3D11_State
   IDXGIFactory2           *dxgi_factory;
   ID3D11RasterizerState1  *main_rasterizer;
   ID3D11RasterizerState1  *mesh_rasterizer; // no culling: a mirrored mesh (a reflection) winds the other way
+  ID3D11RasterizerState1  *effect_rasterizer;
   ID3D11BlendState        *main_blend_state;
   ID3D11BlendState        *surface_blend_state;
   ID3D11Buffer            *effect_uniforms_buffer;

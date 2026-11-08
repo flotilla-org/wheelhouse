@@ -116,6 +116,14 @@ struct R_MTL_Effect
 #define R_MTL_CORE_MESH_VERTEX_BUFFER 30
 #define R_MTL_CORE_MESH_INSTANCE_BUFFER 29
 
+// Surface targets a submission has drawn to: the first pass into each clears it.
+typedef struct R_MTL_TouchedTargets R_MTL_TouchedTargets;
+struct R_MTL_TouchedTargets
+{
+  R_MTL_Tex2D *v[64];
+  U64 count;
+};
+
 typedef struct R_MTL_State R_MTL_State;
 struct R_MTL_State
 {
