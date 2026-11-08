@@ -983,6 +983,240 @@ r_window_end_frame(WM_Window os, R_Handle r)
 
 //- rjf: render pass submission
 
+//- render passes shared by window submission and readback, so the
+// diagnostics read back what windows draw
+
+// Draws a UI pass into its surface target, or else into the stage. Passes are
+// in points (viewport_dim); the stage is pixel_dim pixels. A surface target's
+// first pass in a submission clears it; touched remembers which.
+internal void
+r_ogl_ui_pass(R_PassParams_UI *params, GLuint stage_fbo, Vec2F32 viewport_dim, Vec2S32 pixel_dim, F32 backing_scale,
+              R_OGL_TouchedTargets *touched)
+{
+  //- rjf: unpack params
+  R_BatchGroup2DList *rect_batch_groups = &params->rects;
+
+  //- rjf: unpack optional render target; surface passes draw into their own
+  // texture (cleared to transparent), in coordinates relative to target_rect
+  R_OGL_Tex2D *target = r_ogl_tex2d_from_handle(params->target);
+  B32 to_surface = (target != 0 && target->id != 0);
+  if(to_surface && params->preserve)
+  {
+    // surface content is up-to-date; skip the render & keep the texture
+    return;
+  }
+  Vec2F32 pass_viewport_dim = viewport_dim;
+  Vec2S32 pass_attachment_size = pixel_dim;
+  Vec2F32 target_origin = v2f32(0, 0);
+  F32 pass_scale = backing_scale;
+  if(to_surface)
+  {
+    pass_viewport_dim = dim_2f32(params->target_rect);
+    pass_attachment_size = target->size;
+    target_origin = params->target_rect.p0;
+    // surfaces may be allocated at any resolution (e.g. reduced-res
+    // previews); derive the point->pixel scale from the target itself
+    if(pass_viewport_dim.x > 0)
+    {
+      pass_scale = (F32)target->size.x/pass_viewport_dim.x;
+    }
+  }
+  B32 target_first_touch = 0;
+  if(to_surface)
+  {
+    target_first_touch = 1;
+    for(U64 idx = 0; idx < touched->count; idx += 1)
+    {
+      if(touched->v[idx] == target->id)
+      {
+        target_first_touch = 0;
+        break;
+      }
+    }
+    if(target_first_touch && touched->count < ArrayCount(touched->v))
+    {
+      touched->v[touched->count] = target->id;
+      touched->count += 1;
+    }
+    if(r_ogl_state->surface_fbo == 0)
+    {
+      glGenFramebuffers(1, &r_ogl_state->surface_fbo);
+    }
+  }
+
+  //- rjf: draw each batch group
+  GLuint shader = r_ogl_state->shaders[R_OGL_ShaderKind_Rect];
+  glUseProgramScope(shader)
+    glBindVertexArrayScope(r_ogl_state->all_purpose_vao)
+    glBindFramebufferScope(GL_FRAMEBUFFER, to_surface ? r_ogl_state->surface_fbo : stage_fbo)
+  {
+    if(to_surface)
+    {
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target->id, 0);
+      if(target_first_touch)
+      {
+        glDisable(GL_SCISSOR_TEST);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+      }
+      // NOTE: accumulate source-over coverage in dst alpha, so transparent-cleared
+      // surfaces end up holding premultiplied color + coverage; the stage's alpha
+      // is never read again, so the plain blend func is fine there
+      glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    }
+    glViewport(0, 0, pass_attachment_size.x, pass_attachment_size.y);
+    for(R_BatchGroup2DNode *group_n = rect_batch_groups->first; group_n != 0; group_n = group_n->next)
+    {
+      R_BatchList *batches = &group_n->batches;
+      R_BatchGroup2DParams *group_params = &group_n->params;
+      if(batches->byte_count == 0 || batches->bytes_per_inst == 0)
+      {
+        continue;
+      }
+      
+      //- rjf: unpack texture
+      R_Tex2DFormat texture_fmt = R_Tex2DFormat_RGBA8;
+      GLuint texture_id = r_ogl_state->white_texture;
+      Vec2S32 texture_size = v2s32(1, 1);
+      {
+        R_OGL_Tex2D *tex = r_ogl_tex2d_from_handle(group_params->tex);
+        if(tex != 0)
+        {
+          texture_id = tex->id;
+          texture_fmt = tex->fmt;
+          texture_size = tex->size;
+        }
+      }
+      
+      //- rjf: get & fill buffer
+      GLuint buffer = r_ogl_instance_buffer_from_size(batches->byte_count);
+      {
+        glBindBuffer(GL_ARRAY_BUFFER, buffer);
+        U64 off = 0;
+        for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
+        {
+          glBufferSubData(GL_ARRAY_BUFFER, off, batch_n->v.byte_count, batch_n->v.v);
+          off += batch_n->v.byte_count;
+        }
+      }
+      
+      //- rjf: bind input attributes
+      {
+        R_OGL_AttributeArray inputs = r_ogl_shader_kind_input_attributes_table[R_OGL_ShaderKind_Rect];
+        U64 off = 0;
+        for EachIndex(idx, inputs.count)
+        {
+          glEnableVertexAttribArray(inputs.v[idx].index);
+          glVertexAttribDivisor(inputs.v[idx].index, 1);
+          glVertexAttribPointer(inputs.v[idx].index, inputs.v[idx].count, inputs.v[idx].type, GL_FALSE, sizeof(R_Rect2DInst), (void *)(off));
+          // TODO(rjf): this is not correct if type != GL_FLOAT
+          off += inputs.v[idx].count*sizeof(F32);
+        }
+      }
+      
+      //- rjf: bind texture
+      {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texture_id);
+        r_ogl_texture_sampling(group_params->tex_sample_kind);
+      }
+      
+      //- rjf: upload misc. uniforms
+      {
+        Mat3x3F32 group_xform = group_params->xform;
+        if(to_surface)
+        {
+          group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
+        }
+        r_ogl_rect_uniforms(pass_viewport_dim, group_params, group_xform, texture_fmt, texture_size);
+      }
+
+      //- rjf: set up scissor
+      if(group_params->clip.x0 != 0 ||
+         group_params->clip.x1 != 0 ||
+         group_params->clip.y0 != 0 ||
+         group_params->clip.y1 != 0)
+      {
+        Rng2F32 clip = group_params->clip;
+        if(to_surface)
+        {
+          clip = shift_2f32(clip, v2f32(-target_origin.x, -target_origin.y));
+        }
+        Rng2F32 clip_px = r2f32p(clip.x0*pass_scale, clip.y0*pass_scale, clip.x1*pass_scale, clip.y1*pass_scale);
+        if(!r_ogl_scissor_from_pixel_clip(clip_px, pass_attachment_size))
+        {
+          continue;
+        }
+        glEnable(GL_SCISSOR_TEST);
+      }
+
+      //- rjf: draw
+      {
+        glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, batches->byte_count / batches->bytes_per_inst);
+      }
+
+      //- rjf: unset scissor
+      glDisable(GL_SCISSOR_TEST);
+    }
+  }
+  if(to_surface)
+  {
+    glViewport(0, 0, pixel_dim.x, pixel_dim.y);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  }
+}
+
+// Runs one effect: a fullscreen triangle from params->source into
+// params->target, leaving the viewport on the stage's pixel_dim.
+internal void
+r_ogl_effect_pass(R_PassParams_Effect *params, Vec2S32 pixel_dim)
+{
+  R_OGL_Effect *effect = (R_OGL_Effect *)params->effect.u64[0];
+  R_OGL_Tex2D *source = r_ogl_tex2d_from_handle(params->source);
+  R_OGL_Tex2D *target = r_ogl_tex2d_from_handle(params->target);
+  if(effect != 0 && effect->program != 0 &&
+     source != 0 && source->id != 0 &&
+     target != 0 && target->id != 0)
+  {
+    if(r_ogl_state->surface_fbo == 0)
+    {
+      glGenFramebuffers(1, &r_ogl_state->surface_fbo);
+    }
+    if(r_ogl_state->effect_ubo == 0)
+    {
+      glGenBuffers(1, &r_ogl_state->effect_ubo);
+    }
+    R_OGL_EffectUniforms uniforms = {0};
+    uniforms.source_size_px = v2f32((F32)Max(source->size.x, 1), (F32)Max(source->size.y, 1));
+    uniforms.output_size_px = v2f32((F32)Max(target->size.x, 1), (F32)Max(target->size.y, 1));
+    uniforms.params0 = params->params[0];
+    uniforms.params1 = params->params[1];
+    glBindBuffer(GL_UNIFORM_BUFFER, r_ogl_state->effect_ubo);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(uniforms), &uniforms, GL_STREAM_DRAW);
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    glUseProgramScope(effect->program)
+      glBindVertexArrayScope(r_ogl_state->all_purpose_vao)
+      glBindFramebufferScope(GL_FRAMEBUFFER, r_ogl_state->surface_fbo)
+    {
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target->id, 0);
+      glViewport(0, 0, target->size.x, target->size.y);
+      glDisable(GL_BLEND);
+      glDisable(GL_SCISSOR_TEST);
+      glBindBufferBase(GL_UNIFORM_BUFFER, 0, r_ogl_state->effect_ubo);
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, source->id);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+      glDrawArrays(GL_TRIANGLES, 0, 3);
+      glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    glEnable(GL_BLEND);
+    glViewport(0, 0, pixel_dim.x, pixel_dim.y);
+  }
+}
+
 r_hook void
 r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
 {
@@ -993,8 +1227,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
   F32 backing_scale = w->last_backing_scale > 0 ? w->last_backing_scale : 1.f;
   // NOTE: a surface target's first pass this submit clears it; later passes
   // (e.g. a parent surface resuming after a nested child's bracket) load
-  GLuint touched_targets[64];
-  U64 touched_target_count = 0;
+  R_OGL_TouchedTargets touched = {0};
   for(R_PassNode *pass_n = passes->first; pass_n != 0; pass_n = pass_n->next)
   {
     R_Pass *pass = &pass_n->v;
@@ -1007,174 +1240,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
       //
       case R_PassKind_UI:
       {
-        //- rjf: unpack params
-        R_PassParams_UI *params = pass->params_ui;
-        R_BatchGroup2DList *rect_batch_groups = &params->rects;
-
-        //- rjf: unpack optional render target; surface passes draw into their own
-        // texture (cleared to transparent), in coordinates relative to target_rect
-        R_OGL_Tex2D *target = r_ogl_tex2d_from_handle(params->target);
-        B32 to_surface = (target != 0 && target->id != 0);
-        if(to_surface && params->preserve)
-        {
-          // surface content is up-to-date; skip the render & keep the texture
-          break;
-        }
-        Vec2F32 pass_viewport_dim = viewport_dim;
-        Vec2S32 pass_attachment_size = pixel_dim;
-        Vec2F32 target_origin = v2f32(0, 0);
-        F32 pass_scale = backing_scale;
-        if(to_surface)
-        {
-          pass_viewport_dim = dim_2f32(params->target_rect);
-          pass_attachment_size = target->size;
-          target_origin = params->target_rect.p0;
-          // surfaces may be allocated at any resolution (e.g. reduced-res
-          // previews); derive the point->pixel scale from the target itself
-          if(pass_viewport_dim.x > 0)
-          {
-            pass_scale = (F32)target->size.x/pass_viewport_dim.x;
-          }
-        }
-        B32 target_first_touch = 0;
-        if(to_surface)
-        {
-          target_first_touch = 1;
-          for(U64 idx = 0; idx < touched_target_count; idx += 1)
-          {
-            if(touched_targets[idx] == target->id)
-            {
-              target_first_touch = 0;
-              break;
-            }
-          }
-          if(target_first_touch && touched_target_count < ArrayCount(touched_targets))
-          {
-            touched_targets[touched_target_count] = target->id;
-            touched_target_count += 1;
-          }
-          if(r_ogl_state->surface_fbo == 0)
-          {
-            glGenFramebuffers(1, &r_ogl_state->surface_fbo);
-          }
-        }
-
-        //- rjf: draw each batch group
-        GLuint shader = r_ogl_state->shaders[R_OGL_ShaderKind_Rect];
-        glUseProgramScope(shader)
-          glBindVertexArrayScope(r_ogl_state->all_purpose_vao)
-          glBindFramebufferScope(GL_FRAMEBUFFER, to_surface ? r_ogl_state->surface_fbo : w->stage_target.fbo)
-        {
-          if(to_surface)
-          {
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target->id, 0);
-            if(target_first_touch)
-            {
-              glDisable(GL_SCISSOR_TEST);
-              glClearColor(0, 0, 0, 0);
-              glClear(GL_COLOR_BUFFER_BIT);
-            }
-            // NOTE: accumulate source-over coverage in dst alpha, so transparent-cleared
-            // surfaces end up holding premultiplied color + coverage; the stage's alpha
-            // is never read again, so the plain blend func is fine there
-            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-          }
-          glViewport(0, 0, pass_attachment_size.x, pass_attachment_size.y);
-          for(R_BatchGroup2DNode *group_n = rect_batch_groups->first; group_n != 0; group_n = group_n->next)
-          {
-            R_BatchList *batches = &group_n->batches;
-            R_BatchGroup2DParams *group_params = &group_n->params;
-            
-            //- rjf: unpack texture
-            R_Tex2DFormat texture_fmt = R_Tex2DFormat_RGBA8;
-            GLuint texture_id = r_ogl_state->white_texture;
-            Vec2S32 texture_size = v2s32(1, 1);
-            {
-              R_OGL_Tex2D *tex = r_ogl_tex2d_from_handle(group_params->tex);
-              if(tex != 0)
-              {
-                texture_id = tex->id;
-                texture_fmt = tex->fmt;
-                texture_size = tex->size;
-              }
-            }
-            
-            //- rjf: get & fill buffer
-            GLuint buffer = r_ogl_instance_buffer_from_size(batches->byte_count);
-            {
-              glBindBuffer(GL_ARRAY_BUFFER, buffer);
-              U64 off = 0;
-              for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
-              {
-                glBufferSubData(GL_ARRAY_BUFFER, off, batch_n->v.byte_count, batch_n->v.v);
-                off += batch_n->v.byte_count;
-              }
-            }
-            
-            //- rjf: bind input attributes
-            {
-              R_OGL_AttributeArray inputs = r_ogl_shader_kind_input_attributes_table[R_OGL_ShaderKind_Rect];
-              U64 off = 0;
-              for EachIndex(idx, inputs.count)
-              {
-                glEnableVertexAttribArray(inputs.v[idx].index);
-                glVertexAttribDivisor(inputs.v[idx].index, 1);
-                glVertexAttribPointer(inputs.v[idx].index, inputs.v[idx].count, inputs.v[idx].type, GL_FALSE, sizeof(R_Rect2DInst), (void *)(off));
-                // TODO(rjf): this is not correct if type != GL_FLOAT
-                off += inputs.v[idx].count*sizeof(F32);
-              }
-            }
-            
-            //- rjf: bind texture
-            {
-              glActiveTexture(GL_TEXTURE0);
-              glBindTexture(GL_TEXTURE_2D, texture_id);
-              r_ogl_texture_sampling(group_params->tex_sample_kind);
-            }
-            
-            //- rjf: upload misc. uniforms
-            {
-              Mat3x3F32 group_xform = group_params->xform;
-              if(to_surface)
-              {
-                group_xform = mul_3x3f32(make_translate_3x3f32(v2f32(-target_origin.x, -target_origin.y)), group_xform);
-              }
-              r_ogl_rect_uniforms(pass_viewport_dim, group_params, group_xform, texture_fmt, texture_size);
-            }
-
-            //- rjf: set up scissor
-            if(group_params->clip.x0 != 0 ||
-               group_params->clip.x1 != 0 ||
-               group_params->clip.y0 != 0 ||
-               group_params->clip.y1 != 0)
-            {
-              Rng2F32 clip = group_params->clip;
-              if(to_surface)
-              {
-                clip = shift_2f32(clip, v2f32(-target_origin.x, -target_origin.y));
-              }
-              Rng2F32 clip_px = r2f32p(clip.x0*pass_scale, clip.y0*pass_scale, clip.x1*pass_scale, clip.y1*pass_scale);
-              if(!r_ogl_scissor_from_pixel_clip(clip_px, pass_attachment_size))
-              {
-                continue;
-              }
-              glEnable(GL_SCISSOR_TEST);
-            }
-
-            //- rjf: draw
-            {
-              glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, batches->byte_count / batches->bytes_per_inst);
-            }
-
-            //- rjf: unset scissor
-            glDisable(GL_SCISSOR_TEST);
-          }
-        }
-        if(to_surface)
-        {
-          glViewport(0, 0, pixel_dim.x, pixel_dim.y);
-          glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        }
+        r_ogl_ui_pass(pass->params_ui, w->stage_target.fbo, viewport_dim, pixel_dim, backing_scale, &touched);
       }break;
       
       ////////////////////////
@@ -1182,51 +1248,7 @@ r_window_submit(WM_Window window, R_Handle window_equip, R_PassList *passes)
       //
       case R_PassKind_Effect:
       {
-        R_PassParams_Effect *params = pass->params_effect;
-        R_OGL_Effect *effect = (R_OGL_Effect *)params->effect.u64[0];
-        R_OGL_Tex2D *source = r_ogl_tex2d_from_handle(params->source);
-        R_OGL_Tex2D *target = r_ogl_tex2d_from_handle(params->target);
-        if(effect != 0 && effect->program != 0 &&
-           source != 0 && source->id != 0 &&
-           target != 0 && target->id != 0)
-        {
-          if(r_ogl_state->surface_fbo == 0)
-          {
-            glGenFramebuffers(1, &r_ogl_state->surface_fbo);
-          }
-          if(r_ogl_state->effect_ubo == 0)
-          {
-            glGenBuffers(1, &r_ogl_state->effect_ubo);
-          }
-          R_OGL_EffectUniforms uniforms = {0};
-          uniforms.source_size_px = v2f32((F32)Max(source->size.x, 1), (F32)Max(source->size.y, 1));
-          uniforms.output_size_px = v2f32((F32)Max(target->size.x, 1), (F32)Max(target->size.y, 1));
-          uniforms.params0 = params->params[0];
-          uniforms.params1 = params->params[1];
-          glBindBuffer(GL_UNIFORM_BUFFER, r_ogl_state->effect_ubo);
-          glBufferData(GL_UNIFORM_BUFFER, sizeof(uniforms), &uniforms, GL_STREAM_DRAW);
-          glBindBuffer(GL_UNIFORM_BUFFER, 0);
-          glUseProgramScope(effect->program)
-            glBindVertexArrayScope(r_ogl_state->all_purpose_vao)
-            glBindFramebufferScope(GL_FRAMEBUFFER, r_ogl_state->surface_fbo)
-          {
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target->id, 0);
-            glViewport(0, 0, target->size.x, target->size.y);
-            glDisable(GL_BLEND);
-            glDisable(GL_SCISSOR_TEST);
-            glBindBufferBase(GL_UNIFORM_BUFFER, 0, r_ogl_state->effect_ubo);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, source->id);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-            glBindTexture(GL_TEXTURE_2D, 0);
-          }
-          glEnable(GL_BLEND);
-          glViewport(0, 0, pixel_dim.x, pixel_dim.y);
-        }
+        r_ogl_effect_pass(pass->params_effect, pixel_dim);
       }break;
 
       ////////////////////////
@@ -1284,8 +1306,8 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
         glClearColor(0.06f, 0.06f, 0.065f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        GLuint shader = r_ogl_state->shaders[R_OGL_ShaderKind_Rect];
         R_OGL_RenderTarget stage = {fbo, color_texture};
+        R_OGL_TouchedTargets touched = {0};
         for(R_PassNode *pass_n = passes->first; pass_n != 0; pass_n = pass_n->next)
         {
           R_Pass *pass = &pass_n->v;
@@ -1319,85 +1341,13 @@ r_pass_list_readback(Arena *arena, Vec2S32 size, R_PassList *passes)
             r_ogl_geo3d(pass->params_geo3d, 1.f, &geo, size, &stage, size);
             continue;
           }
-          if(pass->kind != R_PassKind_UI || pass->params_ui == 0)
+          if(pass->kind == R_PassKind_UI && pass->params_ui != 0)
           {
-            continue;
+            r_ogl_ui_pass(pass->params_ui, fbo, viewport_dim, size, 1.f, &touched);
           }
-          R_PassParams_UI *params = pass->params_ui;
-          if(r_ogl_tex2d_from_handle(params->target) != 0)
+          else if(pass->kind == R_PassKind_Effect && pass->params_effect != 0)
           {
-            // surface-targeted passes draw offscreen; readback wants the stage only
-            continue;
-          }
-          glViewport(0, 0, size.x, size.y);
-          glUseProgramScope(shader)
-            glBindVertexArrayScope(r_ogl_state->all_purpose_vao)
-            glBindFramebufferScope(GL_FRAMEBUFFER, fbo)
-          {
-            R_BatchGroup2DList *rect_batch_groups = &params->rects;
-            for(R_BatchGroup2DNode *group_n = rect_batch_groups->first; group_n != 0; group_n = group_n->next)
-            {
-              R_BatchList *batches = &group_n->batches;
-              R_BatchGroup2DParams *group_params = &group_n->params;
-              if(batches->byte_count == 0 || batches->bytes_per_inst == 0)
-              {
-                continue;
-              }
-
-              R_Tex2DFormat texture_fmt = R_Tex2DFormat_RGBA8;
-              GLuint texture_id = r_ogl_state->white_texture;
-              Vec2S32 texture_size = v2s32(1, 1);
-              {
-                R_OGL_Tex2D *tex = r_ogl_tex2d_from_handle(group_params->tex);
-                if(tex != 0)
-                {
-                  texture_id = tex->id;
-                  texture_fmt = tex->fmt;
-                  texture_size = tex->size;
-                }
-              }
-
-              GLuint buffer = r_ogl_instance_buffer_from_size(batches->byte_count);
-              glBindBuffer(GL_ARRAY_BUFFER, buffer);
-              U64 off = 0;
-              for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
-              {
-                glBufferSubData(GL_ARRAY_BUFFER, off, batch_n->v.byte_count, batch_n->v.v);
-                off += batch_n->v.byte_count;
-              }
-
-              R_OGL_AttributeArray inputs = r_ogl_shader_kind_input_attributes_table[R_OGL_ShaderKind_Rect];
-              off = 0;
-              for EachIndex(idx, inputs.count)
-              {
-                glEnableVertexAttribArray(inputs.v[idx].index);
-                glVertexAttribDivisor(inputs.v[idx].index, 1);
-                glVertexAttribPointer(inputs.v[idx].index, inputs.v[idx].count, inputs.v[idx].type, GL_FALSE, sizeof(R_Rect2DInst), (void *)(off));
-                off += inputs.v[idx].count*sizeof(F32);
-              }
-
-              glActiveTexture(GL_TEXTURE0);
-              glBindTexture(GL_TEXTURE_2D, texture_id);
-              r_ogl_texture_sampling(group_params->tex_sample_kind);
-
-              r_ogl_rect_uniforms(viewport_dim, group_params, group_params->xform, texture_fmt, texture_size);
-
-              glDisable(GL_SCISSOR_TEST);
-              if(group_params->clip.x0 != 0 ||
-                 group_params->clip.x1 != 0 ||
-                 group_params->clip.y0 != 0 ||
-                 group_params->clip.y1 != 0)
-              {
-                if(!r_ogl_scissor_from_pixel_clip(group_params->clip, size))
-                {
-                  continue;
-                }
-                glEnable(GL_SCISSOR_TEST);
-              }
-
-              glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, batches->byte_count / batches->bytes_per_inst);
-              glDisable(GL_SCISSOR_TEST);
-            }
+            r_ogl_effect_pass(pass->params_effect, size);
           }
         }
 

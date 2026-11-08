@@ -482,6 +482,100 @@ uishell_check_effects_compile(U32 *failures)
   }
 }
 
+// A view drawn the way the dev menu's draw_view_surfaces and crt_views draw
+// it, read back from this backend: into an offscreen surface, optionally
+// through an effect into a second target, then composited onto the stage. The
+// view is red above green. #717: on D3D11 the effect's fullscreen triangle was
+// culled, so every CRT view was blank while the effect still compiled.
+internal void
+uishell_check_view_surface_effects(U32 *failures)
+{
+  Temp scratch = scratch_begin(0, 0);
+  Vec2S32 size = v2s32(96, 64);
+  Rng2F32 view_rect = r2f32p(16, 8, 80, 56);
+  Vec2S32 view_px = v2s32(64, 48);
+  String8 backend = r_backend_name();
+  R_Handle crt = rd_effect_from_name(str8_lit("crt"));
+  struct
+  {
+    char *label;
+    B32 effect;
+    Vec4F32 params0;
+    Vec4F32 params1;
+    F32 min_channel; // the probed half's own colour must reach this
+  }
+  cases[] =
+  {
+    {"plain surface", 0, {0}, {0}, 0.8f},
+    // scanlines, curvature, vignette, mask and rgb shift all off: the effect
+    // should copy its source
+    {"crt, effects off", 1, v4f32(0, 0, 0, 0), v4f32(0, 1, 0, 0), 0.8f},
+    // crt_views' defaults (shell_core.c): darker, but the content survives
+    {"crt, dev menu defaults", 1, v4f32(0.4f, 0.016981f, 0.35f, 0.5f), v4f32(0.75f, 1.15f, 0, 0), 0.3f},
+  };
+  for EachElement(case_idx, cases)
+  {
+    if(cases[case_idx].effect && r_handle_match(crt, r_handle_zero()))
+    {
+      *failures += 1;
+      fprintf(stderr, "%.*s view surface %s: DIFFERS (the crt effect did not compile)\n",
+              str8_varg(backend), cases[case_idx].label);
+      continue;
+    }
+    R_Handle source = r_tex2d_alloc_render_target(view_px);
+    R_Handle output = cases[case_idx].effect ? r_tex2d_alloc_render_target(view_px) : r_handle_zero();
+    DR_Bucket *bucket = dr_bucket_make();
+    DR_BucketScope(bucket)
+    {
+      dr_surface_begin(source, view_rect);
+      dr_rect(r2f32p(view_rect.x0, view_rect.y0, view_rect.x1, 32), v4f32(1, 0, 0, 1), 0, 0, 0);
+      dr_rect(r2f32p(view_rect.x0, 32, view_rect.x1, view_rect.y1), v4f32(0, 1, 0, 1), 0, 0, 0);
+      if(cases[case_idx].effect)
+      {
+        dr_surface_end();
+        dr_effect(crt, source, output, cases[case_idx].params0, cases[case_idx].params1);
+        dr_surface_img(output, view_rect, v4f32(1, 1, 1, 1), 0, 0, 0);
+      }
+      else
+      {
+        dr_surface_end_composite();
+      }
+    }
+    R_Readback pixels = r_pass_list_readback(scratch.arena, size, &bucket->passes);
+    B32 ok = (pixels.format == R_Tex2DFormat_BGRA8 && pixels.size.x == size.x && pixels.size.y == size.y &&
+              pixels.data.size >= (U64)size.x*size.y*4);
+    UIImportCheck(ok);
+    if(ok)
+    {
+      // Brightest red and green in a 3x3 patch, which spans the aperture mask's
+      // three columns and a scanline.
+      F32 top[2] = {0}, bottom[2] = {0};
+      for(S32 dy = -1; dy <= 1; dy += 1)
+      for(S32 dx = -1; dx <= 1; dx += 1)
+      for(U32 channel = 0; channel < 2; channel += 1)
+      {
+        top[channel] = Max(top[channel], uishell_rect_semantics_linear(&pixels, 48 + dx, 18 + dy, channel));
+        bottom[channel] = Max(bottom[channel], uishell_rect_semantics_linear(&pixels, 48 + dx, 46 + dy, channel));
+      }
+      F32 outside = uishell_rect_semantics_linear(&pixels, 6, 32, 0);
+      F32 min_channel = cases[case_idx].min_channel;
+      B32 pass = (top[0] >= min_channel && top[1] < top[0]*0.5f &&
+                  bottom[1] >= min_channel && bottom[0] < bottom[1]*0.5f &&
+                  outside < 0.1f);
+      if(!pass) { *failures += 1; }
+      fprintf(stderr, "%.*s view surface %s: %s (top rg %.2f %.2f, bottom rg %.2f %.2f, outside r %.2f)\n",
+              str8_varg(backend), cases[case_idx].label, pass ? "ok" : "DIFFERS",
+              top[0], top[1], bottom[0], bottom[1], outside);
+    }
+    r_tex2d_release(source);
+    if(cases[case_idx].effect)
+    {
+      r_tex2d_release(output);
+    }
+  }
+  scratch_end(scratch);
+}
+
 // Check raster coverage through every platform provider, including descenders.
 internal void
 uishell_check_raster_baselines(Arena *arena, U32 *failures)
@@ -677,6 +771,9 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   U32 failures_before_geo3d = failures;
   uishell_check_geo3d(&failures);
   fprintf(stderr, "geo3d: %u failures\n", failures - failures_before_geo3d);
+  U32 failures_before_view_surface = failures;
+  uishell_check_view_surface_effects(&failures);
+  fprintf(stderr, "view surfaces and effects: %u failures\n", failures - failures_before_view_surface);
   fprintf(stderr, "shared UI diagnostics: %s (%u failures)\n", failures ? "FAIL" : "PASS", failures);
   scratch_end(scratch);
   return failures == 0;

@@ -305,6 +305,14 @@ struct R_OGL_Window
   GLuint geo3d_depth_texture;
 };
 
+// Surface targets a submission has drawn to: the first pass into each clears it.
+typedef struct R_OGL_TouchedTargets R_OGL_TouchedTargets;
+struct R_OGL_TouchedTargets
+{
+  GLuint v[64];
+  U64 count;
+};
+
 typedef struct R_OGL_State R_OGL_State;
 struct R_OGL_State
 {
