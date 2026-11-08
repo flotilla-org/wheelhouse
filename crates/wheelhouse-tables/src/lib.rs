@@ -194,7 +194,6 @@ impl PumpSource for Huge {
     }
 }
 
-/// A given table's columns size to their text, within these many digits.
 /// How far either side of the Gap between two headers a press grabs their
 /// border, in the host's points: as binnacle's web host does for a fine
 /// pointer. Rows have no Gap, so without it they could not be resized.
@@ -207,6 +206,7 @@ fn new_grid(rows: AxisConfig, cols: AxisConfig) -> Grid {
     grid
 }
 
+/// A given table's columns size to their text, within these many digits.
 const CELLS_MIN_DIGITS: f32 = 4.0;
 const CELLS_MAX_DIGITS: f32 = 40.0;
 

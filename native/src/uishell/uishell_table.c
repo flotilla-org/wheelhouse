@@ -1066,6 +1066,7 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   binnacle_grid_snapshot(grid, &draw->snap);
   // Sizes fitted now are drawn now.
   if(uishell_table_fit(state, grid, &draw->snap, asks, asks_count)) { binnacle_grid_snapshot(grid, &draw->snap); }
+  // After the Snapshot, which would otherwise find its damage taken.
   draw->pointer = wheelhouse_table_pointer(state->table);
   switch(draw->pointer.cursor)
   {
