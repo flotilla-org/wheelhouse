@@ -195,6 +195,18 @@ impl PumpSource for Huge {
 }
 
 /// A given table's columns size to their text, within these many digits.
+/// How far either side of the Gap between two headers a press grabs their
+/// border, in the host's points: as binnacle's web host does for a fine
+/// pointer. Rows have no Gap, so without it they could not be resized.
+const BORDER_GRAB: f32 = 3.0;
+
+/// A Grid for a table, its borders grabbed [`BORDER_GRAB`] either side.
+fn new_grid(rows: AxisConfig, cols: AxisConfig) -> Grid {
+    let mut grid = Grid::new(rows, cols);
+    grid.set_border_grab(BORDER_GRAB);
+    grid
+}
+
 const CELLS_MIN_DIGITS: f32 = 4.0;
 const CELLS_MAX_DIGITS: f32 = 40.0;
 
@@ -332,7 +344,7 @@ impl Table {
             "records" => {
                 let rows: Vec<Record> = (0..RECORDS).map(Record::generate).collect();
                 let source = records_source(&rows);
-                let mut grid = Grid::new(
+                let mut grid = new_grid(
                     AxisConfig::new(rows.len() as u64, line).header(line),
                     AxisConfig::new(HEADERS.len() as u64, 14.0 * digit).header(5.0 * digit).gap(1.0),
                 );
@@ -353,7 +365,7 @@ impl Table {
             }
             "huge" => {
                 let digits = HUGE_ROWS.to_string().len() as f32;
-                let mut grid = Grid::new(
+                let mut grid = new_grid(
                     AxisConfig::new(HUGE_ROWS, line).header(line),
                     AxisConfig::new(HUGE_COLS, (digits + 4.0) * digit).header((digits + 1.0) * digit).gap(1.0),
                 );
@@ -365,7 +377,7 @@ impl Table {
                 Some((Table { kind, metrics, find: Find::default(), quick: None }, grid))
             }
             "live" => {
-                let grid = Grid::new(
+                let grid = new_grid(
                     AxisConfig::new(TICKERS as u64, line).header(line),
                     AxisConfig::new(TICKER_HEADERS.len() as u64, 12.0 * digit).header(5.0 * digit).gap(1.0),
                 );
@@ -385,7 +397,7 @@ impl Table {
         for c in 0..columns {
             source = source.bytes_column(Key(c as u64), move |r: &Vec<String>| r.get(c).map(|t| Cow::Borrowed(t.as_bytes())));
         }
-        let mut grid = Grid::new(
+        let mut grid = new_grid(
             AxisConfig::new(rows.len() as u64, metrics.line).header(metrics.line),
             AxisConfig::new(columns as u64, 14.0 * metrics.digit).gap(1.0),
         );
@@ -414,7 +426,7 @@ impl Table {
     /// draws a frame, which takes it in. `None` if no thread could start.
     pub fn open_described(link: &Link, metrics: Metrics, utc_offset: i32, wake: Wake) -> Option<(Table, Grid)> {
         let described = described::Described::open(link, utc_offset, wake).ok()?;
-        let grid = Grid::new(
+        let grid = new_grid(
             AxisConfig::new(0, metrics.line).header(metrics.line),
             AxisConfig::new(0, 14.0 * metrics.digit).header(5.0 * metrics.digit).gap(1.0),
         );
@@ -528,6 +540,13 @@ impl Table {
     /// keeping the one before.
     pub fn quick_filter_applied(&self, grid: &Grid) -> bool {
         grid.applied_view().rows.filter.quick == self.quick
+    }
+
+    /// Whether the host fits the columns to their first values shown: a
+    /// described table's, which come with no widths, and the canned records
+    /// standing in for one. The other canned tables size their own.
+    pub fn fits_columns(&self) -> bool {
+        matches!(self.kind, Kind::Described(_) | Kind::Records { .. })
     }
 
     /// Where the last find step landed among the matches of the Find Query

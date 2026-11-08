@@ -781,6 +781,128 @@ uishell_table_diagnostics(RD_WindowState *ws)
         }
       }
     }
+    // Column sizes (#535): the records table starts with its columns fitted
+    // to their first values; over a border the pointer shows a resize, a
+    // drag resizes with a guide, and a double-click fits a column to its
+    // values, puts a row back to a line, and fits the row numbers.
+    {
+      CFG_Node *view = rd_fixture_view(panel, str8_lit("table"), str8_lit("records"), 1);
+      RD_ViewAddress address = rd_view_address_from_cfg(view);
+      UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = address, .view = address)
+      {
+        UI_Event none = {0};
+        Vec2F32 away = v2f32(450, 300);
+        UI_Box *part = &ui_nil_box, *grid_box = &ui_nil_box;
+        for(U32 frame = 0; frame < 3; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+        UIShell_TableState *state = (UIShell_TableState *)rd_view_state_from_view(address, 0)->user_data;
+        UIShell_TableDraw *d = ui_box_is_nil(grid_box) ? 0 : (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+        TableCheck(d != 0 && d->snap.axes[BINNACLE_COLS].strip_len > 2, "the records table shows its columns");
+        if(d != 0 && d->snap.axes[BINNACLE_COLS].strip_len > 2)
+        {
+          BinnacleGrid *grid = wheelhouse_table_grid(state->table);
+          // The name column, the second.
+          size_t c = 1;
+          B32 complete = 0;
+          F32 fit = uishell_table_fit_width(state, &d->snap, c, &complete);
+          F32 start = ceil_f32(Clamp(UISHELL_TABLE_FIT_MIN_DIGITS*state->digit, fit, UISHELL_TABLE_FIT_MAX_DIGITS*state->digit));
+          TableCheck(complete && d->snap.axes[BINNACLE_COLS].strip[c].size == start && start != 14.f*state->digit,
+                     "a records table's columns start fitted to their first values");
+          U64 key = d->snap.axes[BINNACLE_COLS].strip[c].key;
+          F32 header_y = grid_box->rect.y0 + d->snap.axes[BINNACLE_ROWS].header/2;
+          F32 border_x = grid_box->rect.x0 + d->snap.axes[BINNACLE_COLS].strip[c].offset + d->snap.axes[BINNACLE_COLS].strip[c].size + 0.5f;
+          Vec2F32 border = v2f32(border_x, header_y);
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, border, UIShell_TableDiagBar_Thumb, &part); }
+          d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          TableCheck(d->pointer.cursor == WHEELHOUSE_TABLE_CURSOR_RESIZE_COLS && grid_box->hover_cursor == WM_Cursor_LeftRight,
+                     "over a column's border the pointer shows a resize");
+          // A drag of the border resizes the column, a guide at its edge.
+          // Presses a second apart count as single clicks.
+          U64 at = now_time_us();
+          UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = border, .timestamp_us = at};
+          uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, press, border, UIShell_TableDiagBar_Thumb, &part);
+          Vec2F32 dragged = v2f32(border.x + 30, border.y);
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, dragged, UIShell_TableDiagBar_Thumb, &part); }
+          d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          TableCheck(d->pointer.has_guide && d->pointer.guide_axis == BINNACLE_COLS &&
+                     abs_f32(grid_box->rect.x0 + d->pointer.guide_offset - dragged.x) < 1.5f,
+                     "a drag of a column's border draws a guide at the pointer");
+          UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = dragged};
+          uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, release, dragged, UIShell_TableDiagBar_Thumb, &part);
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, dragged, UIShell_TableDiagBar_Thumb, &part); }
+          d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          F32 resized = d->snap.axes[BINNACLE_COLS].strip[c].size;
+          TableCheck(!d->pointer.has_guide && abs_f32(resized - (start + 30)) < 1.5f, "the release leaves the column resized");
+          // A double-click on the border fits the column, past the starting
+          // fit's limits.
+          border.x = dragged.x;
+          for(U32 click = 0; click < 2; click += 1)
+          {
+            at += click == 0 ? 2000000 : 100000;
+            UI_Event down = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = border, .timestamp_us = at};
+            UI_Event up = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = border};
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, down, border, UIShell_TableDiagBar_Thumb, &part);
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, up, border, UIShell_TableDiagBar_Thumb, &part);
+          }
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          fit = uishell_table_fit_width(state, &d->snap, c, &complete);
+          TableCheck(d->snap.axes[BINNACLE_COLS].strip[c].key == key && d->snap.axes[BINNACLE_COLS].strip[c].size == fit,
+                     "a double-click on a column's border fits it to its header and values");
+          // A row made taller goes back to a line.
+          BinnacleAxisSnapshot *rows = &d->snap.axes[BINNACLE_ROWS];
+          size_t r = 2;
+          binnacle_grid_set_size(grid, BINNACLE_ROWS, rows->strip[r].key, 3*state->line);
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          rows = &d->snap.axes[BINNACLE_ROWS];
+          Vec2F32 row_border = v2f32(grid_box->rect.x0 + d->snap.axes[BINNACLE_COLS].header/2,
+                                     grid_box->rect.y0 + rows->strip[r].offset + rows->strip[r].size - 0.5f);
+          F32 tall = rows->strip[r].size;
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, row_border, UIShell_TableDiagBar_Thumb, &part); }
+          d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          TableCheck(d->pointer.cursor == WHEELHOUSE_TABLE_CURSOR_RESIZE_ROWS && grid_box->hover_cursor == WM_Cursor_UpDown,
+                     "over a row's border the pointer shows a resize");
+          for(U32 click = 0; click < 2; click += 1)
+          {
+            at += click == 0 ? 2000000 : 100000;
+            UI_Event down = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = row_border, .timestamp_us = at};
+            UI_Event up = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = row_border};
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, down, row_border, UIShell_TableDiagBar_Thumb, &part);
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, up, row_border, UIShell_TableDiagBar_Thumb, &part);
+          }
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          rows = &d->snap.axes[BINNACLE_ROWS];
+          TableCheck(tall == 3*state->line && rows->strip[r].size == state->line, "a double-click on a row's border puts it back to a line");
+          // The row numbers, squeezed, fit their labels again.
+          binnacle_grid_set_header(grid, BINNACLE_COLS, 6.f);
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          // Its edge is grabbed where it meets the column headers.
+          Vec2F32 band_edge = v2f32(grid_box->rect.x0 + 6.f + 0.5f, header_y);
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, band_edge, UIShell_TableDiagBar_Thumb, &part); }
+          for(U32 click = 0; click < 2; click += 1)
+          {
+            at += click == 0 ? 2000000 : 100000;
+            UI_Event down = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = band_edge, .timestamp_us = at};
+            UI_Event up = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = band_edge};
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, down, band_edge, UIShell_TableDiagBar_Thumb, &part);
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, up, band_edge, UIShell_TableDiagBar_Thumb, &part);
+          }
+          for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+          rows = &d->snap.axes[BINNACLE_ROWS];
+          F32 widest = 0;
+          for(size_t i = 0; i < rows->headers_len; i += 1)
+          {
+            if(!rows->headers[i].has_key) { continue; }
+            String8 label = uishell_table_header_label(scratch.arena, state->table, BINNACLE_ROWS, &rows->headers[i]);
+            widest = Max(widest, uishell_rt_table_cell_width(state->cell_text, label, 1));
+          }
+          TableCheck(widest > 6.f && d->snap.axes[BINNACLE_COLS].header == widest, "a double-click on the row numbers' edge fits their labels");
+        }
+      }
+      rd_fixture_remove(view);
+    }
     // What the row says of a count, partial or in collapsed groups.
     {
       WheelhouseTableFind one = {.open = 1, .total = 1};
