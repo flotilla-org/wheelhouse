@@ -143,6 +143,7 @@ struct FNT_RunCacheNode
   FNT_RunCacheNode *next;
   String8 string;
   FNT_Run run;
+  U64 atlas_mask; // the atlases the run's pieces draw from
 };
 
 typedef struct FNT_RunCacheSlot FNT_RunCacheSlot;
@@ -201,7 +202,7 @@ struct FNT_AtlasRegionNode
 // Run pieces live in at most atlas_budget atlases. When none has room, the
 // one least recently drawn from (and not this frame) is cleared and reused,
 // and its generation moves on so the pieces it held rasterize again.
-#define FNT_ATLAS_MAX 64
+#define FNT_ATLAS_MAX 64 // at most 64: one bit each in a U64 mask
 
 typedef struct FNT_Atlas FNT_Atlas;
 struct FNT_Atlas
@@ -213,6 +214,15 @@ struct FNT_Atlas
   FNT_AtlasRegionNode *root;
   U64 last_used_frame;
   U32 generation;
+};
+
+// The atlases a retained draw bucket's pieces come from, and their
+// generations when it was built (see fnt_atlas_use_begin).
+typedef struct FNT_AtlasUse FNT_AtlasUse;
+struct FNT_AtlasUse
+{
+  U64 mask;
+  U32 generations[FNT_ATLAS_MAX];
 };
 
 typedef struct FNT_AtlasStats FNT_AtlasStats;
@@ -272,6 +282,11 @@ struct FNT_State
   U64 atlas_budget;
   Vec2S16 atlas_dim;
   FNT_AtlasStats atlas_stats;
+  // Not reset by fnt_reset, so an atlas made after a reset never takes a
+  // generation a retained bucket recorded before it.
+  U32 atlas_generation_counter;
+  // The atlases drawn from since fnt_atlas_use_begin.
+  U64 atlas_use_mask;
   
   // A character a run's font lacks comes from the first of these that has it.
   FNT_Tag fallbacks[8];
@@ -314,6 +329,15 @@ internal void fnt_set_fallbacks(FNT_Tag *tags, U64 count);
 
 internal Rng2S16 fnt_atlas_region_alloc(Arena *arena, FNT_Atlas *atlas, Vec2S16 needed_size);
 internal void fnt_atlas_region_release(FNT_Atlas *atlas, Rng2S16 region);
+
+// A draw bucket kept across frames holds pieces whose atlases the cache
+// doesn't see used when the bucket is drawn again. Bracket its build with
+// begin/end to record them; each frame it is reused, fnt_atlas_use_keep marks
+// them used, or returns 0 when one was evicted (or reset) since, and the
+// bucket must be built again.
+internal U64 fnt_atlas_use_begin(void);
+internal void fnt_atlas_use_end(U64 outer_mask, FNT_AtlasUse *use_out);
+internal B32 fnt_atlas_use_keep(FNT_AtlasUse *use);
 
 ////////////////////////////////
 //~ rjf: Piece Type Functions

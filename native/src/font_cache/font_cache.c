@@ -533,7 +533,57 @@ fnt_atlas_clear(FNT_Atlas *atlas)
     atlas->root->max_free_size[Corner_01] =
     atlas->root->max_free_size[Corner_10] =
     atlas->root->max_free_size[Corner_11] = v2s16(atlas->root_dim.x/2, atlas->root_dim.y/2);
-  atlas->generation += 1;
+  fnt_state->atlas_generation_counter += 1;
+  atlas->generation = fnt_state->atlas_generation_counter;
+}
+
+internal U64
+fnt_atlas_use_begin(void)
+{
+  U64 outer_mask = fnt_state->atlas_use_mask;
+  fnt_state->atlas_use_mask = 0;
+  return outer_mask;
+}
+
+internal void
+fnt_atlas_use_end(U64 outer_mask, FNT_AtlasUse *use_out)
+{
+  MemoryZeroStruct(use_out);
+  use_out->mask = fnt_state->atlas_use_mask;
+  for EachIndex(idx, fnt_state->atlas_count)
+  {
+    if(use_out->mask & (1ull<<idx))
+    {
+      use_out->generations[idx] = fnt_state->atlases[idx].generation;
+    }
+  }
+  // An enclosing recording also sees what this one drew from.
+  fnt_state->atlas_use_mask = outer_mask | use_out->mask;
+}
+
+internal B32
+fnt_atlas_use_keep(FNT_AtlasUse *use)
+{
+  B32 kept = 1;
+  for(U64 idx = 0; idx < FNT_ATLAS_MAX && kept; idx += 1)
+  {
+    if(use->mask & (1ull<<idx))
+    {
+      kept = (idx < fnt_state->atlas_count && fnt_state->atlases[idx].generation == use->generations[idx]);
+    }
+  }
+  if(kept)
+  {
+    for EachIndex(idx, fnt_state->atlas_count)
+    {
+      if(use->mask & (1ull<<idx))
+      {
+        fnt_state->atlases[idx].last_used_frame = fnt_state->frame_index;
+      }
+    }
+    fnt_state->atlas_use_mask |= use->mask;
+  }
+  return kept;
 }
 
 // A region of needed_size in some atlas: one with room, else a new atlas
@@ -752,9 +802,11 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
   //- rjf: no run node? -> cache miss - compute & build & fill node if possible
   B32 run_is_cacheable = 1;
   FNT_Run run = {0};
+  U64 run_atlas_mask = 0;
   if(run_node)
   {
     run = run_node->run;
+    run_atlas_mask = run_node->atlas_mask;
   }
   else
   {
@@ -1022,6 +1074,7 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
         {
           atlas = &fnt_state->atlases[info->atlas_num];
           atlas->last_used_frame = fnt_state->frame_index;
+          run_atlas_mask |= (1ull<<info->atlas_num);
         }
         
         // rjf: on tabs -> expand advance
@@ -1080,7 +1133,9 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
     SLLQueuePush(run_slot->first, run_slot->last, run_node);
     run_node->string = push_str8_copy(fnt_state->frame_arena, string);
     run_node->run = run;
+    run_node->atlas_mask = run_atlas_mask;
   }
+  fnt_state->atlas_use_mask |= run_atlas_mask;
   
   return run;
 }

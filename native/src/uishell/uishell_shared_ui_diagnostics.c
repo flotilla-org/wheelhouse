@@ -582,6 +582,33 @@ uishell_check_atlas_eviction(U32 *failures)
   FNT_Piece d2 = AtlasPiece("GG");
   UIImportCheck(!r_handle_match(d2.texture, r_handle_zero()));
   UIImportCheck(fnt_state->atlas_count == 2);
+  // A retained bucket's recorded atlases are kept from eviction each frame
+  // it is reused, and stop being kept once one is evicted or reset.
+  fnt_reset();
+  NextFrame();
+  U64 outer = fnt_atlas_use_begin();
+  FNT_Piece kept = AtlasPiece("WW");
+  FNT_AtlasUse use = {0};
+  fnt_atlas_use_end(outer, &use);
+  UIImportCheck(use.mask == 1);
+  NextFrame();
+  FNT_Piece other = AtlasPiece("MM");
+  NextFrame();
+  UIImportCheck(fnt_atlas_use_keep(&use));
+  FNT_Piece evicting = AtlasPiece("QQ");
+  UIImportCheck(r_handle_match(evicting.texture, other.texture) && !r_handle_match(evicting.texture, kept.texture));
+  NextFrame();
+  AtlasPiece("GG");
+  NextFrame();
+  UIImportCheck(!fnt_atlas_use_keep(&use));
+  outer = fnt_atlas_use_begin();
+  AtlasPiece("WW");
+  fnt_atlas_use_end(outer, &use);
+  UIImportCheck(fnt_atlas_use_keep(&use));
+  fnt_reset();
+  NextFrame();
+  AtlasPiece("WW");
+  UIImportCheck(!fnt_atlas_use_keep(&use));
 #undef AtlasPiece
 #undef NextFrame
   fnt_reset();
