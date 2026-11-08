@@ -14,7 +14,7 @@
 import { getSessionInfo, listSessions, query } from '@anthropic-ai/claude-agent-sdk';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, unlinkSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -103,9 +103,10 @@ function page(q) {
 // replayed threads come from one mapping of Claude's tools.
 const translator = fileURLToPath(new URL('../claude-to-events.py', import.meta.url));
 function history() {
-  const dir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'));
-  const file = join(dir, `${threadId}.jsonl`);
-  if (!existsSync(file)) throw new Error(`no session log at ${file}`);
+  // Claude hashes long project directory names, so the log is found by its session id.
+  const projects = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects');
+  const file = readdirSync(projects).map((dir) => join(projects, dir, `${threadId}.jsonl`)).find(existsSync);
+  if (!file) throw new Error(`no session log for ${threadId} in ${projects}`);
   const out = execFileSync('python3', [translator, file], { maxBuffer: 1 << 30, encoding: 'utf-8' });
   let turns = 0;
   for (const line of out.split('\n')) {
@@ -382,10 +383,13 @@ function permission(waiting, entry) {
   const payload = entry.payload ?? {};
   if (waiting.interrupt.reason === 'question') {
     if (entry.status === 'cancelled') return { behavior: 'deny', message: 'The user dismissed the question.' };
+    // Free text is a choice, so an answer need only have the schema's shape.
+    const shaped = (q, v) => typeof v === 'string' || (q.multiSelect && Array.isArray(v) && v.every((s) => typeof s === 'string'));
+    if (!waiting.input.questions.every((q, i) => shaped(q, payload[`q${i}`]))) return null;
     const given = {};
     waiting.input.questions.forEach((q, i) => {
       const v = payload[`q${i}`];
-      if (v != null) given[q.question] = Array.isArray(v) ? v.join(', ') : String(v);
+      given[q.question] = Array.isArray(v) ? v.join(', ') : v;
     });
     return { behavior: 'allow', updatedInput: { ...waiting.input, answers: given } };
   }
@@ -503,7 +507,9 @@ function serve() {
           return reply(200, { stopped: true });
         }
         if (verb !== 'run') return reply(404, { error: pathname });
-        return reply(...run(JSON.parse(body || '{}')));
+        let input;
+        try { input = JSON.parse(body || '{}'); } catch { return reply(400, { error: 'the body is not JSON' }); }
+        return reply(...run(input));
       } catch (err) {
         return reply(500, { error: err.message });
       }
