@@ -110,6 +110,9 @@ struct FNT_RasterCacheInfo
   Vec2S16 raster_dim;
   Vec2F32 draw_dim;
   S16 atlas_num;
+  // The atlas's generation when this was rasterized into it; a different one
+  // means the atlas was evicted since, and the piece is rasterized again.
+  U32 atlas_generation;
   F32 advance;
   F32 origin_from_left;
   F32 baseline_from_top;
@@ -195,14 +198,28 @@ struct FNT_AtlasRegionNode
   U64 num_allocated_descendants;
 };
 
+// Run pieces live in at most atlas_budget atlases. When none has room, the
+// one least recently drawn from (and not this frame) is cleared and reused,
+// and its generation moves on so the pieces it held rasterize again.
+#define FNT_ATLAS_MAX 64
+
 typedef struct FNT_Atlas FNT_Atlas;
 struct FNT_Atlas
 {
-  FNT_Atlas *next;
-  FNT_Atlas *prev;
+  // Holds this atlas's region tree, so clearing the atlas frees it.
+  Arena *arena;
   R_Handle texture;
   Vec2S16 root_dim;
   FNT_AtlasRegionNode *root;
+  U64 last_used_frame;
+  U32 generation;
+};
+
+typedef struct FNT_AtlasStats FNT_AtlasStats;
+struct FNT_AtlasStats
+{
+  U64 rasterized;
+  U64 evictions;
 };
 
 ////////////////////////////////
@@ -249,9 +266,12 @@ struct FNT_State
   U64 hash2style_slots_count;
   FNT_Hash2StyleRasterCacheSlot *hash2style_slots;
   
-  // rjf: atlas list
-  FNT_Atlas *first_atlas;
-  FNT_Atlas *last_atlas;
+  // rjf: atlases
+  FNT_Atlas atlases[FNT_ATLAS_MAX];
+  U64 atlas_count;
+  U64 atlas_budget;
+  Vec2S16 atlas_dim;
+  FNT_AtlasStats atlas_stats;
   
   // A character a run's font lacks comes from the first of these that has it.
   FNT_Tag fallbacks[8];
