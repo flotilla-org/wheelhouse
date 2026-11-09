@@ -1,6 +1,7 @@
 //! Conversations on the hand-written fixtures.
 use std::time::Duration;
 
+use conversation_events::{RunFinished, RunStarted};
 use hegel::TestCase;
 
 use super::conversation::Tuning;
@@ -476,6 +477,34 @@ fn activity_is_the_open_run_and_its_running_tool() {
     assert_eq!(rich.conversation_activity(), (true, None));
     rich.append(&line(r#"{"type":"RunFinished","threadId":"t","seq":4,"runId":"r"}"#));
     assert_eq!(rich.conversation_activity(), (false, None));
+}
+
+#[test]
+fn the_open_run_reports_when_it_started_if_its_producer_said() {
+    let run = line(r#"{"type":"RunStarted","threadId":"t","seq":1,"runId":"r","timestamp":1800000000000}"#);
+    let mut rich = RichText::open_conversation(&[line(HELLO), run].concat());
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_000_000));
+    rich.append(&line(
+        r#"{"type":"RunStarted","threadId":"s","seq":1,"runId":"rs","parent":{"threadId":"t","toolCallId":"c"},"timestamp":1800000005000}"#,
+    ));
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_000_000), "a subagent's run is not the thread's");
+    rich.append(&line(r#"{"type":"RunFinished","threadId":"t","seq":2,"runId":"r"}"#));
+    assert_eq!(rich.conversation_run_started(), None);
+    rich.append(&line(r#"{"type":"RunStarted","threadId":"t","seq":3,"runId":"r2"}"#));
+    assert_eq!((rich.conversation_activity().0, rich.conversation_run_started()), (true, None), "an old producer's run");
+}
+
+#[test]
+fn a_snapshot_restating_an_open_run_reports_its_start_through_older_pages() {
+    let run = |seq, id: &str, timestamp| {
+        Event::RunStarted(RunStarted { thread_id: "t0".into(), seq, run_id: id.into(), timestamp: Some(timestamp), ..Default::default() })
+    };
+    let finished = |seq, id: &str| Event::RunFinished(RunFinished { thread_id: "t0".into(), seq, run_id: id.into(), ..Default::default() });
+    let mut rich = RichText::watch_conversation(None);
+    rich.receive(vec![watch_hello(1, 3), run(3, "r2", 1_800_000_060_000)]);
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_060_000));
+    rich.receive_page(Page { events: vec![run(1, "r1", 1_800_000_000_000), finished(2, "r1")], earlier_items: 0, oldest_seq: 1 });
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_060_000), "an older run ended long ago");
 }
 
 #[test]

@@ -1573,17 +1573,21 @@ pub unsafe extern "C" fn wheelhouse_rich_text_conversation_waiting(h: *mut Wheel
 
 /// Whether a conversation is busy: its `status` document says so, or
 /// without one, its top-level run is open. While it is, the title of its
-/// running tool goes to `tool_out` (empty when no tool is running).
+/// running tool goes to `tool_out` (empty when no tool is running), and
+/// when the open run started, in milliseconds since the Unix epoch, to
+/// `started_out` (0 when its producer didn't say).
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_rich_text_conversation_running(
     h: *mut WheelhouseRichText,
     tool_out: *mut Bytes,
+    started_out: *mut u64,
     error_out: *mut *mut c_char,
 ) -> u32 {
     run(h, error_out, |h| {
         let (running, tool) = h.rich.conversation_activity();
         if running {
             write_bytes(tool_out, tool.unwrap_or_default().as_bytes().to_vec())?;
+            *started_out.as_mut().ok_or("null started")? = h.rich.conversation_run_started().unwrap_or(0);
         }
         Ok(running)
     })

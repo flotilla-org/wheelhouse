@@ -26,6 +26,11 @@ const POST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_FIRST: Duration = Duration::from_millis(250);
 const RETRY_MOST: Duration = Duration::from_secs(5);
 
+/// How long to wait before trying again after `failures` failed attempts.
+pub fn retry_after(failures: u32) -> Duration {
+    RETRY_FIRST.saturating_mul(1 << failures.min(5)).min(RETRY_MOST)
+}
+
 /// The most events a watch holds for its host. Past it the watch waits for the
 /// host to take half; one that doesn't within [`HOST_AWAY`], as while its View
 /// is hidden, loses the stream, and once it has taken half the watch starts
@@ -194,12 +199,13 @@ impl Watch {
         })
     }
 
-    /// Asks for up to `limit` completed items before `seq`; the answer comes
-    /// as an [`Update::Page`].
-    pub fn older(&self, before: u64, limit: u32) {
+    /// Asks, after `delay`, for up to `limit` completed items before `seq`;
+    /// the answer comes as an [`Update::Page`].
+    pub fn older(&self, before: u64, limit: u32, delay: Duration) {
         let (client, sink) = (self.endpoint.0.client.clone(), self.sink.clone());
         let url = thread_url(&self.thread, &format!("before={before}&limit={limit}"));
         self.endpoint.0.runtime.spawn(async move {
+            sleep(delay).await;
             sink.send(Update::Page(page(&client, url).await));
         });
     }
@@ -266,7 +272,7 @@ async fn follow(client: Arc<ReqwestHttpClient>, thread: String, sink: Sink) {
         }
         attempt += 1;
         sink.send(Update::Connection(Connection::Retrying { attempt, why }));
-        sleep(RETRY_FIRST.saturating_mul(1 << attempt.min(5)).min(RETRY_MOST)).await;
+        sleep(retry_after(attempt)).await;
     }
 }
 

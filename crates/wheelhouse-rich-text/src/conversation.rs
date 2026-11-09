@@ -306,6 +306,8 @@ impl Item {
 struct Activity {
     at: u64,
     run: Option<String>,
+    /// The open run's `timestamp`, so every window times it alike.
+    started: Option<u64>,
     /// The call's thread, id and title.
     tool: Option<(String, String, String)>,
 }
@@ -800,6 +802,12 @@ impl Conversation {
         (busy, tool.filter(|_| busy))
     }
 
+    /// When the open top-level run started, in milliseconds since the Unix
+    /// epoch, if its producer said.
+    pub fn run_started(&self) -> Option<u64> {
+        self.activity.started
+    }
+
     pub fn has_user_message(&self, id: &str) -> bool {
         self.user_messages.contains(id)
     }
@@ -842,8 +850,10 @@ impl Conversation {
         }
         let activity = &mut self.activity;
         match event {
-            Event::RunStarted(e) if e.parent.is_none() => (activity.run, activity.tool) = (Some(e.run_id.clone()), None),
-            Event::RunFinished(_) | Event::RunError(_) => (activity.run, activity.tool) = (None, None),
+            Event::RunStarted(e) if e.parent.is_none() => {
+                (activity.run, activity.started, activity.tool) = (Some(e.run_id.clone()), e.timestamp, None)
+            }
+            Event::RunFinished(_) | Event::RunError(_) => (activity.run, activity.started, activity.tool) = (None, None, None),
             Event::ToolCallStart(e) => {
                 activity.tool = Some((thread.to_owned(), e.tool_call_id.clone(), e.title.clone().unwrap_or_default()))
             }
