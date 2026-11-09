@@ -3371,8 +3371,9 @@ uint32_t wheelhouse_rich_text_conversation_waiting(WheelhouseRichText *h, char *
 // Whether a conversation is busy: its `status` document says so, or
 // without one, its top-level run is open. While it is, the title of its
 // running tool goes to `tool_out` (empty when no tool is running), and
-// when the open run started, in milliseconds since the Unix epoch, to
-// `started_out` (0 when its producer didn't say).
+// when it started, in milliseconds since the Unix epoch, to `started_out`
+// (0 when its producer didn't say): its run's start, or its turn's when an
+// Interrupt cut the turn into runs.
 uint32_t wheelhouse_rich_text_conversation_running(WheelhouseRichText *h,
                                                    WheelhouseBytes *tool_out,
                                                    uint64_t *started_out,

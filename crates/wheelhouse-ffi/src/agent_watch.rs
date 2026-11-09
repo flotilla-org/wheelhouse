@@ -171,8 +171,7 @@ impl Pump {
             return (flags, None);
         }
         self.asking = true;
-        let delay = if self.page_failures == 0 { Duration::ZERO } else { retry_after(self.page_failures) };
-        (flags, Some((oldest, delay)))
+        (flags, Some((oldest, retry_after(self.page_failures))))
     }
 }
 

@@ -26,9 +26,13 @@ const POST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_FIRST: Duration = Duration::from_millis(250);
 const RETRY_MOST: Duration = Duration::from_secs(5);
 
-/// How long to wait before trying again after `failures` failed attempts.
+/// How long to wait before trying again after `failures` failed attempts:
+/// no time after none.
 pub fn retry_after(failures: u32) -> Duration {
-    RETRY_FIRST.saturating_mul(1 << failures.min(5)).min(RETRY_MOST)
+    match failures {
+        0 => Duration::ZERO,
+        _ => RETRY_FIRST.saturating_mul(1 << failures.min(5)).min(RETRY_MOST),
+    }
 }
 
 /// The most events a watch holds for its host. Past it the watch waits for the
