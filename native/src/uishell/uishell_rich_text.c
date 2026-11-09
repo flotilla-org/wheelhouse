@@ -5883,7 +5883,8 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
 {
   char *error = 0;
   WheelhouseBytes tool = {0};
-  B32 running = wheelhouse_rich_text_conversation_running(s->doc, &tool, &error);
+  U64 run_started_ms = 0;
+  B32 running = wheelhouse_rich_text_conversation_running(s->doc, &tool, &run_started_ms, &error);
   String8 running_tool = str8_zero();
   if(tool.data)
   {
@@ -6044,7 +6045,15 @@ uishell_rt_composer(UIShell_RichTextState *s, UI_Box *root, F32 bottom, F32 colu
     else if(running)
     {
       static const char *dots[] = {"   ", ".  ", ".. ", "..."};
+      // From the run's own start, so every window agrees; from when this one
+      // first saw it if the producer didn't say. A producer's clock ahead of
+      // ours shows 0s.
       U64 elapsed = (now - s->running_since_us)/1000000;
+      if(run_started_ms)
+      {
+        U64 now_unix = now_time_unix(), started_unix = run_started_ms/1000;
+        elapsed = now_unix > started_unix ? now_unix - started_unix : 0;
+      }
       String8 what = running_tool.size ? push_str8f(scratch, " · %S", running_tool) : str8_zero();
       left = push_str8f(scratch, "Working%s %llus%S", dots[(now/400000) % 4], (unsigned long long)elapsed, what);
       right = str8_lit("Esc to stop");

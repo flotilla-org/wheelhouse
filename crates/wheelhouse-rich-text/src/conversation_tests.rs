@@ -1,6 +1,7 @@
 //! Conversations on the hand-written fixtures.
 use std::time::Duration;
 
+use conversation_events::{RunFinished, RunStarted};
 use hegel::TestCase;
 
 use super::conversation::Tuning;
@@ -476,6 +477,57 @@ fn activity_is_the_open_run_and_its_running_tool() {
     assert_eq!(rich.conversation_activity(), (true, None));
     rich.append(&line(r#"{"type":"RunFinished","threadId":"t","seq":4,"runId":"r"}"#));
     assert_eq!(rich.conversation_activity(), (false, None));
+}
+
+#[test]
+fn the_open_run_reports_when_it_started_if_its_producer_said() {
+    let run = line(r#"{"type":"RunStarted","threadId":"t","seq":1,"runId":"r","timestamp":1800000000000}"#);
+    let mut rich = RichText::open_conversation(&[line(HELLO), run].concat());
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_000_000));
+    rich.append(&line(
+        r#"{"type":"RunStarted","threadId":"s","seq":1,"runId":"rs","parent":{"threadId":"t","toolCallId":"c"},"timestamp":1800000005000}"#,
+    ));
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_000_000), "a subagent's run is not the thread's");
+    rich.append(&line(r#"{"type":"RunFinished","threadId":"t","seq":2,"runId":"r"}"#));
+    assert_eq!(rich.conversation_run_started(), None);
+    rich.append(&line(r#"{"type":"RunStarted","threadId":"t","seq":3,"runId":"r2"}"#));
+    assert_eq!((rich.conversation_activity().0, rich.conversation_run_started()), (true, None), "an old producer's run");
+}
+
+#[test]
+fn runs_an_interrupt_cuts_a_turn_into_keep_the_turns_start() {
+    let status = |seq, value: &str| {
+        line(&format!(
+            r#"{{"type":"StateSnapshot","threadId":"t","seq":{seq},"key":"status","mediaType":"application/json","snapshot":"{value}"}}"#
+        ))
+    };
+    let started = |seq, run: &str, timestamp: u64| {
+        line(&format!(r#"{{"type":"RunStarted","threadId":"t","seq":{seq},"runId":"{run}","timestamp":{timestamp}}}"#))
+    };
+    let finished = |seq, run: &str| line(&format!(r#"{{"type":"RunFinished","threadId":"t","seq":{seq},"runId":"{run}"}}"#));
+    let mut rich =
+        RichText::open_conversation(&[line(HELLO), status(1, "idle"), started(2, "r1", 1_800_000_000_000), status(3, "running")].concat());
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_000_000));
+    rich.append(&[finished(4, "r1"), status(5, "requires_action"), started(6, "r1.2", 1_800_000_030_000), status(7, "running")].concat());
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_000_000), "the turn goes on after its answer");
+    rich.append(&[finished(8, "r1.2"), status(9, "idle")].concat());
+    assert_eq!(rich.conversation_run_started(), None);
+    // A producer that says it is running before the run starts.
+    rich.append(&[status(10, "running"), started(11, "r2", 1_800_000_090_000)].concat());
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_090_000), "a new turn starts its own time");
+}
+
+#[test]
+fn a_snapshot_restating_an_open_run_reports_its_start_through_older_pages() {
+    let run = |seq, id: &str, timestamp| {
+        Event::RunStarted(RunStarted { thread_id: "t0".into(), seq, run_id: id.into(), timestamp: Some(timestamp), ..Default::default() })
+    };
+    let finished = |seq, id: &str| Event::RunFinished(RunFinished { thread_id: "t0".into(), seq, run_id: id.into(), ..Default::default() });
+    let mut rich = RichText::watch_conversation(None);
+    rich.receive(vec![watch_hello(1, 3), run(3, "r2", 1_800_000_060_000)]);
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_060_000));
+    rich.receive_page(Page { events: vec![run(1, "r1", 1_800_000_000_000), finished(2, "r1")], earlier_items: 0, oldest_seq: 1 });
+    assert_eq!(rich.conversation_run_started(), Some(1_800_000_060_000), "an older run ended long ago");
 }
 
 #[test]

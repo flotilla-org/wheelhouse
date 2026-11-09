@@ -198,7 +198,7 @@ let stopping = false;
 const startRun = (input = {}) => {
   runId = randomUUID();
   runOpen = true;
-  const record = emit('RunStarted', { runId, ...(Object.keys(input).length ? { input } : {}) });
+  const record = emit('RunStarted', { runId, timestamp: Date.now(), ...(Object.keys(input).length ? { input } : {}) });
   // Claude starts turns of its own too, as when a background task ends.
   if (!turnOpen) { turnOpen = true; record.turn = true; setStatus('running'); }
 };

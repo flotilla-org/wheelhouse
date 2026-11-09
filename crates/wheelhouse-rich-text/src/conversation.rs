@@ -306,6 +306,10 @@ impl Item {
 struct Activity {
     at: u64,
     run: Option<String>,
+    /// The busy stretch's start, from its first run's `timestamp`, so every
+    /// window times it alike. Runs an Interrupt cuts a turn into start
+    /// while `status` still says busy, and keep it.
+    started: Option<u64>,
     /// The call's thread, id and title.
     tool: Option<(String, String, String)>,
 }
@@ -800,6 +804,13 @@ impl Conversation {
         (busy, tool.filter(|_| busy))
     }
 
+    /// While the thread is busy, when it started, in milliseconds since
+    /// the Unix epoch, if its producer said: its open run's start, or the
+    /// turn's first run's for a run that continues a turn.
+    pub fn run_started(&self) -> Option<u64> {
+        self.activity.started.filter(|_| self.activity().0)
+    }
+
     pub fn has_user_message(&self, id: &str) -> bool {
         self.user_messages.contains(id)
     }
@@ -840,9 +851,16 @@ impl Conversation {
         if self.threads.get(thread).is_some_and(|t| t.parent.is_some()) {
             return;
         }
+        let continues = self.status().is_some_and(|status| status != STATUS_IDLE);
         let activity = &mut self.activity;
+        if !continues && activity.run.is_none() {
+            activity.started = None;
+        }
         match event {
-            Event::RunStarted(e) if e.parent.is_none() => (activity.run, activity.tool) = (Some(e.run_id.clone()), None),
+            Event::RunStarted(e) if e.parent.is_none() => {
+                let started = activity.started.filter(|_| continues).or(e.timestamp);
+                (activity.run, activity.started, activity.tool) = (Some(e.run_id.clone()), started, None)
+            }
             Event::RunFinished(_) | Event::RunError(_) => (activity.run, activity.tool) = (None, None),
             Event::ToolCallStart(e) => {
                 activity.tool = Some((thread.to_owned(), e.tool_call_id.clone(), e.title.clone().unwrap_or_default()))

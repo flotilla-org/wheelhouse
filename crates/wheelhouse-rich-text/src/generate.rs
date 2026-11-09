@@ -464,6 +464,7 @@ pub mod conversation {
                 parent_run_id: None,
                 parent: Some(Parent { thread_id: thread.into(), tool_call_id: call.clone() }),
                 input: None,
+                timestamp: None,
             }));
             let text = inline(c, 2, 6);
             self.message(c, &child, Role::User, &text);
