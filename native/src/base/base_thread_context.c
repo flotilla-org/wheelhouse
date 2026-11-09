@@ -4,8 +4,9 @@
 ////////////////////////////////
 //~ rjf: Globals
 
+#if BUILD_SUPPLEMENTARY_UNIT
 C_LINKAGE thread_static TCTX *tctx_thread_local;
-#if !BUILD_SUPPLEMENTARY_UNIT
+#else
 C_LINKAGE thread_static TCTX *tctx_thread_local = 0;
 #endif
 
