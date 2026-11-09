@@ -206,6 +206,10 @@ pub struct RunStarted {
     /// an interrupt was answered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<RunAgentInput>,
+    /// When the run started, in milliseconds since the Unix epoch, as
+    /// AG-UI's `timestamp`. A snapshot restating an open run keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<u64>,
 }
 
 /// AG-UI's `RunAgentInput`, as far as a watcher reads it.

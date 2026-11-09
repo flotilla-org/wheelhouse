@@ -4,9 +4,10 @@ use super::*;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use conversation_events::Event;
-use wheelhouse_agent::{Connection, Endpoint, Update, Watch};
+use wheelhouse_agent::{retry_after, Connection, Endpoint, Update, Watch};
 use wheelhouse_rich_text::{RichText, SubscriptionId};
 
 use crate::rich_text::WheelhouseRichText;
@@ -46,8 +47,8 @@ struct Pump {
     asking: bool,
     /// Pages asked for by a conversation since replaced, to drop.
     stale_pages: u32,
-    /// A page failed: no more are asked for until a restart.
-    paging_failed: bool,
+    /// Pages failed since one came: the next waits longer.
+    page_failures: u32,
 }
 
 impl Handle for WheelhouseAgentWatch {
@@ -113,8 +114,8 @@ pub unsafe extern "C" fn wheelhouse_agent_watch_pump(
             update => Some(update),
         });
         let (flags, older) = w.pump.pump(updates, &mut doc.rich, SubscriptionId(subscription));
-        if let Some(before) = older {
-            w.watch.older(before, PAGE_ITEMS);
+        if let Some((before, delay)) = older {
+            w.watch.older(before, PAGE_ITEMS, delay);
         }
         Ok(flags)
     })
@@ -123,8 +124,14 @@ pub unsafe extern "C" fn wheelhouse_agent_watch_pump(
 
 impl Pump {
     /// Feeds `rich` the updates and any queued before them; returns the
-    /// flags, and the `seq` to ask for older items before, if it is time.
-    fn pump(&mut self, updates: impl Iterator<Item = Update>, rich: &mut RichText, subscription: SubscriptionId) -> (u32, Option<u64>) {
+    /// flags, and the `seq` to ask for older items before and how long to
+    /// wait first, if it is time.
+    fn pump(
+        &mut self,
+        updates: impl Iterator<Item = Update>,
+        rich: &mut RichText,
+        subscription: SubscriptionId,
+    ) -> (u32, Option<(u64, Duration)>) {
         let mut flags = 0;
         let mut events = vec![];
         self.queue.extend(updates);
@@ -134,7 +141,7 @@ impl Pump {
                     self.queue.push_front(Update::Hello(hello));
                     self.started = false;
                     self.stale_pages += u32::from(self.asking);
-                    (self.asking, self.paging_failed) = (false, false);
+                    (self.asking, self.page_failures) = (false, 0);
                     return (flags | flush(&mut events, rich) | WHEELHOUSE_AGENT_RESTART, None);
                 }
                 Update::Hello(hello) => {
@@ -147,8 +154,11 @@ impl Pump {
                     flags |= flush(&mut events, rich);
                     self.asking = false;
                     match page {
-                        Ok(page) => flags |= u32::from(rich.receive_page(page)) * WHEELHOUSE_AGENT_CHANGED,
-                        Err(_) => self.paging_failed = true,
+                        Ok(page) => {
+                            self.page_failures = 0;
+                            flags |= u32::from(rich.receive_page(page)) * WHEELHOUSE_AGENT_CHANGED
+                        }
+                        Err(_) => self.page_failures += 1,
                     }
                 }
                 Update::Connection(_) => {}
@@ -157,11 +167,11 @@ impl Pump {
         flags |= flush(&mut events, rich);
         let (earlier, oldest) = rich.conversation_earlier();
         let near = rich.view(subscription).is_ok_and(|view| view.near_start(rich.doc()));
-        if earlier == 0 || !near || self.asking || self.paging_failed {
+        if earlier == 0 || !near || self.asking {
             return (flags, None);
         }
         self.asking = true;
-        (flags, Some(oldest))
+        (flags, Some((oldest, retry_after(self.page_failures))))
     }
 }
 
@@ -253,12 +263,25 @@ mod tests {
         let (mut rich, id) = watched();
         let mut pump = Pump::default();
         let snapshot = [vec![hello(4, 13)], messages(5..=6)].concat();
-        assert_eq!(pump.pump(snapshot.into_iter(), &mut rich, id), (WHEELHOUSE_AGENT_CHANGED, Some(13)));
+        assert_eq!(pump.pump(snapshot.into_iter(), &mut rich, id), (WHEELHOUSE_AGENT_CHANGED, Some((13, Duration::ZERO))));
         assert_eq!(pump.pump(std::iter::empty(), &mut rich, id), (0, None), "one page at a time");
-        assert_eq!(pump.pump(std::iter::once(page(3..=4, 2)), &mut rich, id), (WHEELHOUSE_AGENT_CHANGED, Some(7)));
+        assert_eq!(pump.pump(std::iter::once(page(3..=4, 2)), &mut rich, id), (WHEELHOUSE_AGENT_CHANGED, Some((7, Duration::ZERO))));
         assert_eq!(pump.pump(std::iter::once(page(1..=2, 0)), &mut rich, id), (WHEELHOUSE_AGENT_CHANGED, None));
         assert_eq!(rich.conversation_earlier().0, 0);
         assert!(rich.copy_all().unwrap().contains("message 1"));
+    }
+
+    #[test]
+    fn a_failed_page_is_asked_for_again_later_each_time_until_one_comes() {
+        let (mut rich, id) = watched();
+        let mut pump = Pump::default();
+        pump.pump([vec![hello(4, 13)], messages(5..=6)].into_iter().flatten(), &mut rich, id);
+        let failed = || std::iter::once(Update::Page(Err("refused".to_owned())));
+        assert_eq!(pump.pump(failed(), &mut rich, id), (0, Some((13, retry_after(1)))));
+        assert_eq!(pump.pump(failed(), &mut rich, id), (0, Some((13, retry_after(2)))));
+        assert!(retry_after(2) > retry_after(1));
+        assert_eq!(pump.pump(std::iter::once(page(3..=4, 2)), &mut rich, id), (WHEELHOUSE_AGENT_CHANGED, Some((7, Duration::ZERO))));
+        assert!(rich.copy_all().unwrap().contains("message 3"));
     }
 
     #[test]
@@ -272,7 +295,7 @@ mod tests {
         // The host opens a new conversation; the rest waited for it.
         let (mut rich, id) = watched();
         let (flags, older) = pump.pump(std::iter::once(page(3..=4, 2)), &mut rich, id);
-        assert_eq!((flags, older), (WHEELHOUSE_AGENT_CHANGED, Some(13)), "the old page dropped, the snapshot read");
+        assert_eq!((flags, older), (WHEELHOUSE_AGENT_CHANGED, Some((13, Duration::ZERO))), "the old page dropped, the snapshot read");
         assert!(rich.copy_all().unwrap().contains("message 7"));
         assert!(!rich.copy_all().unwrap().contains("message 3"));
     }

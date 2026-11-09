@@ -181,6 +181,10 @@ impl RichText {
         self.conversation.as_ref().map_or((false, None), |c| c.activity())
     }
 
+    pub fn conversation_run_started(&self) -> Option<u64> {
+        self.conversation.as_ref().and_then(|c| c.run_started())
+    }
+
     pub fn has_user_message(&self, id: &str) -> bool {
         self.conversation.as_ref().is_some_and(|c| c.has_user_message(id))
     }

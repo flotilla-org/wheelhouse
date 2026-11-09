@@ -283,7 +283,7 @@ fn older_items_come_back_a_page_at_a_time() {
     let endpoint = Endpoint::open(&socket).unwrap();
     let mut watcher = Watcher::open(&endpoint, THREAD);
     watcher.until("snapshot", has_seq(30));
-    watcher.watch.older(26, 10);
+    watcher.watch.older(26, 10, Duration::ZERO);
     watcher.until("a page", |seen| seen.iter().any(|u| matches!(u, Update::Page(_))));
     let page = watcher.seen.iter().find_map(|u| if let Update::Page(p) = u { Some(p.clone()) } else { None }).unwrap().unwrap();
     assert_eq!(page.events.iter().map(Event::seq).collect::<Vec<_>>(), (16..=25).collect::<Vec<_>>());

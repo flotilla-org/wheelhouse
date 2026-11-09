@@ -104,6 +104,18 @@ fn events_written_read_back_the_same() {
     assert!(!to_line(&original[2]).contains("null"));
 }
 
+#[test]
+fn a_run_start_keeps_its_timestamp_when_it_has_one() {
+    let timed = r#"{"type":"RunStarted","threadId":"t1","seq":1,"runId":"r","timestamp":1800000000000}"#;
+    let Ok(Some(Event::RunStarted(start))) = parse_line(timed.as_bytes()) else { panic!() };
+    assert_eq!(start.timestamp, Some(1_800_000_000_000));
+    assert_eq!(to_line(&Event::RunStarted(start)), timed);
+    let untimed = r#"{"type":"RunStarted","threadId":"t1","seq":1,"runId":"r"}"#;
+    let Ok(Some(Event::RunStarted(start))) = parse_line(untimed.as_bytes()) else { panic!() };
+    assert_eq!(start.timestamp, None);
+    assert_eq!(to_line(&Event::RunStarted(start)), untimed);
+}
+
 fn lines_of(pieces: &[&[u8]]) -> Vec<(u64, Vec<u8>)> {
     let mut lines = Lines::default();
     let mut out = vec![];

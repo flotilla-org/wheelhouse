@@ -225,7 +225,7 @@ function onNotification(m, p) {
   switch (m) {
     case 'turn/started':
       turnId = runId = p.turn.id; runOpen = true;
-      emit('RunStarted', { runId }).turn = true; setStatus('running'); say('\n[turn started]\n'); break;
+      emit('RunStarted', { runId, timestamp: Date.now() }).turn = true; setStatus('running'); say('\n[turn started]\n'); break;
     case 'turn/completed': {
       // A stopped turn leaves what it waited on unanswered: those are cancelled.
       if (waits.size) resume_([...waits.keys()].map((interruptId) => ({ interruptId, status: 'cancelled' })), false);
@@ -287,7 +287,7 @@ function questionInterrupt(id, p) {
 function startRun(input) {
   runId = `${turnId}.${++runs}`;
   runOpen = true;
-  emit('RunStarted', { runId, ...(Object.keys(input).length ? { input } : {}) });
+  emit('RunStarted', { runId, timestamp: Date.now(), ...(Object.keys(input).length ? { input } : {}) });
 }
 
 // The run ends on what Codex waits for, every open Interrupt named again.
