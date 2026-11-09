@@ -260,7 +260,9 @@ impl Private for fs::DirBuilder {
     }
 }
 
-#[cfg(test)]
+// Unix only: a Windows path has a drive's `:`, and the ssh route is
+// unshown there.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
