@@ -6,8 +6,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{env, fs, io, process, thread};
 
 use tokio::time::sleep;
@@ -17,6 +17,9 @@ const FORWARD_WITHIN: Duration = Duration::from_secs(20);
 const POLL: Duration = Duration::from_millis(20);
 /// How long a transport error waits for ssh to say why.
 const HEARD_WITHIN: Duration = Duration::from_millis(250);
+/// The longest socket path every platform binds: `sun_path` is 104 bytes on
+/// macOS, with its NUL.
+const PATH_MOST: usize = 103;
 
 pub(crate) struct Forward {
     host: String,
@@ -51,12 +54,9 @@ struct Said {
 impl Forward {
     pub(crate) fn new(host: &str, remote: &str) -> io::Result<Forward> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let dir = match env::var_os("XDG_RUNTIME_DIR") {
-            Some(runtime) if !runtime.is_empty() => PathBuf::from(runtime).join("wheelhouse-agent"),
-            _ => env::temp_dir().join(format!("wheelhouse-agent-{}", process::id())),
-        };
-        private_dir(&dir)?;
-        let local = dir.join(format!("{}-{}.sock", process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let name = format!("{}-{}.sock", process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
+        let runtime = env::var_os("XDG_RUNTIME_DIR").filter(|dir| !dir.is_empty()).map(PathBuf::from);
+        let local = local_path(runtime, &name)?;
         Ok(Forward { host: host.to_owned(), remote: remote.to_owned(), local, state: Default::default(), failures: AtomicU64::new(0) })
     }
 
@@ -66,8 +66,10 @@ impl Forward {
     }
 
     /// Starts ssh unless it is running, and waits for it to forward. Ok has
-    /// how many lines ssh had said, for [`Forward::why`]. Callers that wait
-    /// on an attempt that fails share its reason rather than start another.
+    /// how many lines ssh had said, for [`Forward::why`]. One attempt runs
+    /// at a time, up to [`FORWARD_WITHIN`], and every request to the
+    /// producer waits on it; those that waited on one that fails share its
+    /// reason rather than start another.
     pub(crate) async fn ready(&self) -> Result<u64, String> {
         let failures = self.failures.load(Ordering::Acquire);
         let mut state = self.state.lock().await;
@@ -129,9 +131,11 @@ impl Forward {
         }
         let program = env::var_os("WHEELHOUSE_SSH").unwrap_or_else(|| "ssh".into());
         // BatchMode fails with a reason instead of prompting: there is no
-        // terminal to ask on.
+        // terminal to ask on. Keepalives end an ssh whose network went away
+        // silently, which the next request then starts again.
         let mut child = Command::new(&program)
-            .args(["-T", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-L"])
+            .args(["-T", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes"])
+            .args(["-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-L"])
             .arg(format!("{}:{}", self.local.display(), self.remote))
             .arg("--")
             .arg(&self.host)
@@ -201,10 +205,77 @@ fn end(child: &mut Child) {
     let _ = child.wait();
 }
 
-fn private_dir(dir: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
+/// Where a forward listens: `name` under the runtime directory, or this
+/// process's scratch directory when that path wouldn't do.
+fn local_path(runtime: Option<PathBuf>, name: &str) -> io::Result<PathBuf> {
+    if let Some(local) = runtime.map(|dir| dir.join("wheelhouse-agent").join(name)).filter(|local| usable(local)) {
+        fs::DirBuilder::new().recursive(true).mode_private().create(local.parent().unwrap())?;
+        return Ok(local);
+    }
+    let local = scratch_dir()?.join(name);
+    if !usable(&local) {
+        return Err(io::Error::other(format!("no socket path for an ssh forward fits -L and sun_path: {}", local.display())));
+    }
+    Ok(local)
+}
+
+/// A local socket path `-L` reads whole (it splits on `:`) and every
+/// platform binds.
+fn usable(local: &Path) -> bool {
+    let text = local.to_string_lossy();
+    !text.contains(':') && text.len() <= PATH_MOST
+}
+
+/// This process's own directory for sockets when there is no usable
+/// runtime directory. Under `/tmp`, as macOS's temporary directory is too
+/// long for `sun_path`; made afresh, so no one else can have made it first.
+fn scratch_dir() -> io::Result<&'static Path> {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    if let Some(dir) = DIR.get() {
+        return Ok(dir);
+    }
+    let base = if cfg!(unix) { PathBuf::from("/tmp") } else { env::temp_dir() };
+    let mut attempt = 0u32;
+    let dir = loop {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
+        let dir = base.join(format!("wheelhouse-agent-{}-{nanos:x}", process::id()));
+        match fs::DirBuilder::new().mode_private().create(&dir) {
+            Ok(()) => break dir,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && attempt < 8 => attempt += 1,
+            Err(error) => return Err(error),
+        }
+    };
+    Ok(DIR.get_or_init(|| dir))
+}
+
+trait Private {
+    fn mode_private(&mut self) -> &mut Self;
+}
+
+impl Private for fs::DirBuilder {
+    fn mode_private(&mut self) -> &mut Self {
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(self, 0o700);
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A runtime directory whose socket path ssh's -L would split, or that
+    // is too long to bind, gives way to the scratch directory (#741).
+    #[test]
+    fn a_forward_listens_where_ssh_and_the_platform_can_both_take_the_path() {
+        let base = env::temp_dir().join(format!("wh-forward-{}", process::id()));
+        let fine = local_path(Some(base.join("run")), "1-0.sock").unwrap();
+        assert!(fine.starts_with(base.join("run")));
+        for runtime in [base.join("a:b"), base.join("x".repeat(PATH_MOST))] {
+            let local = local_path(Some(runtime.clone()), "1-0.sock").unwrap();
+            assert!(!local.starts_with(&runtime) && usable(&local), "{} for {}", local.display(), runtime.display());
+        }
+        assert!(local_path(None, "1-0.sock").unwrap().starts_with(scratch_dir().unwrap()));
+        let _ = fs::remove_dir_all(base);
+    }
 }
