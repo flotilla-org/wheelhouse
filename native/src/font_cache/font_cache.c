@@ -379,7 +379,8 @@ fnt_atlas_region_alloc(Arena *arena, FNT_Atlas *atlas, Vec2S16 needed_size)
   }
   
   //- rjf: we're taking the subtree rooted by `node`. mark up all parents
-  if(node != 0 && node_corner != Corner_Invalid)
+  // (the root, taken whole, has no corner and no parents, but is still taken)
+  if(node != 0 && (node_corner != Corner_Invalid || node == atlas->root))
   {
     node->flags |= FNT_AtlasRegionNodeFlag_Taken;
     if(node->parent != 0)
@@ -521,6 +522,138 @@ fnt_atlas_region_release(FNT_Atlas *atlas, Rng2S16 region)
       }
     }
   }
+}
+
+// Empties an atlas's regions. Its texture keeps the old pixels; each piece
+// uploads a clear border around its bitmap, so sampling never reaches them.
+internal void
+fnt_atlas_clear(FNT_Atlas *atlas)
+{
+  arena_clear(atlas->arena);
+  atlas->root = push_array(atlas->arena, FNT_AtlasRegionNode, 1);
+  atlas->root->max_free_size[Corner_00] =
+    atlas->root->max_free_size[Corner_01] =
+    atlas->root->max_free_size[Corner_10] =
+    atlas->root->max_free_size[Corner_11] = v2s16(atlas->root_dim.x/2, atlas->root_dim.y/2);
+  fnt_state->atlas_generation_counter += 1;
+  atlas->generation = fnt_state->atlas_generation_counter;
+}
+
+internal U64
+fnt_atlas_use_begin(void)
+{
+  U64 outer_mask = fnt_state->atlas_use_mask;
+  fnt_state->atlas_use_mask = 0;
+  return outer_mask;
+}
+
+internal void
+fnt_atlas_use_end(U64 outer_mask, FNT_AtlasUse *use_out)
+{
+  MemoryZeroStruct(use_out);
+  use_out->mask = fnt_state->atlas_use_mask;
+  for EachIndex(idx, fnt_state->atlas_count)
+  {
+    if(use_out->mask & (1ull<<idx))
+    {
+      use_out->generations[idx] = fnt_state->atlases[idx].generation;
+    }
+  }
+  // An enclosing recording also sees what this one drew from.
+  fnt_state->atlas_use_mask = outer_mask | use_out->mask;
+}
+
+internal B32
+fnt_atlas_use_keep(FNT_AtlasUse *use)
+{
+  B32 kept = 1;
+  for(U64 idx = 0; idx < FNT_ATLAS_MAX && kept; idx += 1)
+  {
+    if(use->mask & (1ull<<idx))
+    {
+      kept = (idx < fnt_state->atlas_count && fnt_state->atlases[idx].generation == use->generations[idx]);
+    }
+  }
+  if(kept)
+  {
+    for EachIndex(idx, fnt_state->atlas_count)
+    {
+      if(use->mask & (1ull<<idx))
+      {
+        fnt_state->atlases[idx].last_used_frame = fnt_state->frame_index;
+      }
+    }
+    fnt_state->atlas_use_mask |= use->mask;
+  }
+  return kept;
+}
+
+// A region of needed_size in some atlas: one with room, else a new atlas
+// while under budget, else the least recently used atlas not drawn from this
+// frame, cleared. Returns the atlas index, or -1 when none can be had.
+internal S32
+fnt_atlas_alloc(Vec2S16 needed_size, Rng2S16 *region_out)
+{
+  S32 result = -1;
+  Rng2S16 region = {0};
+  if(needed_size.x <= fnt_state->atlas_dim.x && needed_size.y <= fnt_state->atlas_dim.y)
+  {
+    for EachIndex(idx, fnt_state->atlas_count)
+    {
+      FNT_Atlas *atlas = &fnt_state->atlases[idx];
+      region = fnt_atlas_region_alloc(atlas->arena, atlas, needed_size);
+      if(region.x1 != region.x0)
+      {
+        result = (S32)idx;
+        break;
+      }
+    }
+    if(result < 0 && fnt_state->atlas_count < Min(fnt_state->atlas_budget, FNT_ATLAS_MAX))
+    {
+      FNT_Atlas *atlas = &fnt_state->atlases[fnt_state->atlas_count];
+      MemoryZeroStruct(atlas);
+      atlas->arena = arena_alloc();
+      atlas->root_dim = fnt_state->atlas_dim;
+      atlas->texture = r_tex2d_alloc(R_ResourceKind_Dynamic, v2s32((S32)atlas->root_dim.x, (S32)atlas->root_dim.y), R_Tex2DFormat_RGBA8, 0);
+      fnt_atlas_clear(atlas);
+      fnt_state->atlas_count += 1;
+      region = fnt_atlas_region_alloc(atlas->arena, atlas, needed_size);
+      if(region.x1 != region.x0)
+      {
+        result = (S32)(fnt_state->atlas_count - 1);
+      }
+    }
+    if(result < 0)
+    {
+      S32 lru = -1;
+      for EachIndex(idx, fnt_state->atlas_count)
+      {
+        FNT_Atlas *atlas = &fnt_state->atlases[idx];
+        if(atlas->last_used_frame != fnt_state->frame_index &&
+           (lru < 0 || atlas->last_used_frame < fnt_state->atlases[lru].last_used_frame))
+        {
+          lru = (S32)idx;
+        }
+      }
+      if(lru >= 0)
+      {
+        FNT_Atlas *atlas = &fnt_state->atlases[lru];
+        fnt_atlas_clear(atlas);
+        fnt_state->atlas_stats.evictions += 1;
+        region = fnt_atlas_region_alloc(atlas->arena, atlas, needed_size);
+        if(region.x1 != region.x0)
+        {
+          result = lru;
+        }
+      }
+    }
+  }
+  if(result < 0)
+  {
+    MemoryZeroStruct(&region);
+  }
+  *region_out = region;
+  return result;
 }
 
 ////////////////////////////////
@@ -671,9 +804,11 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
   //- rjf: no run node? -> cache miss - compute & build & fill node if possible
   B32 run_is_cacheable = 1;
   FNT_Run run = {0};
+  U64 run_atlas_mask = 0;
   if(run_node)
   {
     run = run_node->run;
+    run_atlas_mask = run_node->atlas_mask;
   }
   else
   {
@@ -769,6 +904,21 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
         }
       }
       
+      // A piece whose atlas was evicted since, or which found no atlas room
+      // on an earlier frame, rasterizes again into the same info.
+      FNT_RasterCacheInfo *stale_info = 0;
+      if(info != 0)
+      {
+        B32 failed = (info->atlas_num < 0 && info->failed_frame != fnt_state->frame_index);
+        B32 evicted = (info->atlas_num >= 0 && info->subrect.x1 != info->subrect.x0 &&
+                       fnt_state->atlases[info->atlas_num].generation != info->atlas_generation);
+        if(failed || evicted)
+        {
+          stale_info = info;
+          info = 0;
+        }
+      }
+      
       //- rjf: no info found -> miss... fill this hash in the cache
       if(info == 0)
       {
@@ -837,60 +987,50 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
         S16 chosen_atlas_num = 0;
         FNT_Atlas *chosen_atlas = 0;
         Rng2S16 chosen_atlas_region = {0};
-        if(raster.atlas_dim.x != 0 && raster.atlas_dim.y != 0)
+        B32 needs_atlas = (raster.atlas_dim.x != 0 && raster.atlas_dim.y != 0);
+        if(needs_atlas)
         {
-          U64 num_atlases = 0;
-          for(FNT_Atlas *atlas = fnt_state->first_atlas;; atlas = atlas->next, num_atlases += 1)
+          fnt_state->atlas_stats.rasterized += 1;
+          S32 atlas_idx = fnt_atlas_alloc(v2s16(raster.atlas_dim.x + 2, raster.atlas_dim.y + 2), &chosen_atlas_region);
+          if(atlas_idx >= 0)
           {
-            // rjf: create atlas if needed
-            if(atlas == 0 && num_atlases < 64)
-            {
-              atlas = push_array(fnt_state->raster_arena, FNT_Atlas, 1);
-              DLLPushBack(fnt_state->first_atlas, fnt_state->last_atlas, atlas);
-              atlas->root_dim = v2s16(1024, 1024);
-              atlas->root = push_array(fnt_state->raster_arena, FNT_AtlasRegionNode, 1);
-              atlas->root->max_free_size[Corner_00] =
-                atlas->root->max_free_size[Corner_01] =
-                atlas->root->max_free_size[Corner_10] =
-                atlas->root->max_free_size[Corner_11] = v2s16(atlas->root_dim.x/2, atlas->root_dim.y/2);
-              atlas->texture = r_tex2d_alloc(R_ResourceKind_Dynamic, v2s32((S32)atlas->root_dim.x, (S32)atlas->root_dim.y), R_Tex2DFormat_RGBA8, 0);
-            }
-            
-            // rjf: allocate from atlas
-            if(atlas != 0)
-            {
-              Vec2S16 needed_dimensions = v2s16(raster.atlas_dim.x + 2, raster.atlas_dim.y + 2);
-              chosen_atlas_region = fnt_atlas_region_alloc(fnt_state->raster_arena, atlas, needed_dimensions);
-              if(chosen_atlas_region.x1 != chosen_atlas_region.x0)
-              {
-                chosen_atlas = atlas;
-                chosen_atlas_num = (S32)num_atlases;
-                break;
-              }
-            }
-            else
-            {
-              break;
-            }
+            chosen_atlas = &fnt_state->atlases[atlas_idx];
+            chosen_atlas_num = (S16)atlas_idx;
           }
         }
         
         // rjf: upload rasterization to allocated region of atlas texture memory
+        // The bitmap goes one texel in, inside a clear border: an evicted
+        // atlas keeps its old pixels, and filtering at the bitmap's edge
+        // must not reach them.
         if(chosen_atlas != 0)
         {
+          S32 bordered_w = raster.atlas_dim.x + 2;
+          S32 bordered_h = raster.atlas_dim.y + 2;
+          U8 *bordered = push_array(scratch.arena, U8, (U64)bordered_w*(U64)bordered_h*4);
+          for(S32 y = 0; y < raster.atlas_dim.y; y += 1)
+          {
+            MemoryCopy(bordered + ((U64)(y + 1)*(U64)bordered_w + 1)*4,
+                       (U8 *)raster.atlas + (U64)y*(U64)raster.atlas_dim.x*4,
+                       (U64)raster.atlas_dim.x*4);
+          }
           Rng2S32 subregion =
           {
             chosen_atlas_region.x0,
             chosen_atlas_region.y0,
-            chosen_atlas_region.x0 + raster.atlas_dim.x,
-            chosen_atlas_region.y0 + raster.atlas_dim.y
+            chosen_atlas_region.x0 + bordered_w,
+            chosen_atlas_region.y0 + bordered_h
           };
-          r_fill_tex2d_region(chosen_atlas->texture, subregion, raster.atlas);
+          r_fill_tex2d_region(chosen_atlas->texture, subregion, bordered);
         }
         
         // rjf: allocate & fill & push node
         {
-          if(piece_substring.size == 1)
+          if(stale_info != 0)
+          {
+            info = stale_info;
+          }
+          else if(piece_substring.size == 1)
           {
             info = &hash2style_node->utf8_class1_direct_map[piece_substring.str[0]];
             hash2style_node->utf8_class1_direct_map_mask[piece_substring.str[0]/64] |= (1ull<<(piece_substring.str[0]%64));
@@ -909,6 +1049,15 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
             B32 tight_bounds = !!(flags & FNT_RasterFlag_TightBounds);
             info->subrect    = chosen_atlas_region;
             info->atlas_num  = chosen_atlas_num;
+            info->atlas_generation = chosen_atlas ? chosen_atlas->generation : 0;
+            B32 fits = (raster.atlas_dim.x + 2 <= fnt_state->atlas_dim.x && raster.atlas_dim.y + 2 <= fnt_state->atlas_dim.y);
+            if(needs_atlas && chosen_atlas == 0 && fits)
+            {
+              // No room this frame: blank now, tried again next frame. One
+              // larger than an atlas stays blank, as it always would.
+              info->atlas_num = -1;
+              info->failed_frame = fnt_state->frame_index;
+            }
             info->raster_dim = raster.atlas_dim;
             info->draw_dim   = v2f32((F32)raster.atlas_dim.x*inv_raster_scale, (F32)raster.atlas_dim.y*inv_raster_scale);
             info->advance    = raster.advance*inv_raster_scale;
@@ -935,19 +1084,11 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
       {
         // rjf: find atlas
         FNT_Atlas *atlas = 0;
+        if(info->atlas_num >= 0 && info->subrect.x1 != info->subrect.x0)
         {
-          if(info->subrect.x1 != 0 && info->subrect.y1 != 0)
-          {
-            S32 num = 0;
-            for(FNT_Atlas *a = fnt_state->first_atlas; a != 0; a = a->next, num += 1)
-            {
-              if(info->atlas_num == num)
-              {
-                atlas = a;
-                break;
-              }
-            }
-          }
+          atlas = &fnt_state->atlases[info->atlas_num];
+          atlas->last_used_frame = fnt_state->frame_index;
+          run_atlas_mask |= (1ull<<info->atlas_num);
         }
         
         // rjf: on tabs -> expand advance
@@ -962,10 +1103,10 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
           FNT_Piece *piece = fnt_piece_chunk_list_push_new(fnt_state->frame_arena, &piece_chunks, string.size);
           {
             piece->texture = atlas ? atlas->texture : r_handle_zero();
-            piece->subrect = r2s16p(info->subrect.x0,
-                                    info->subrect.y0,
-                                    info->subrect.x0 + info->raster_dim.x,
-                                    info->subrect.y0 + info->raster_dim.y);
+            piece->subrect = r2s16p(info->subrect.x0 + 1,
+                                    info->subrect.y0 + 1,
+                                    info->subrect.x0 + 1 + info->raster_dim.x,
+                                    info->subrect.y0 + 1 + info->raster_dim.y);
             piece->advance = advance;
             piece->draw_dim = info->draw_dim;
             piece->origin_from_left = info->origin_from_left;
@@ -1006,7 +1147,9 @@ fnt_run_from_string_scaled(FNT_Tag tag, F32 size, F32 raster_scale, F32 base_ali
     SLLQueuePush(run_slot->first, run_slot->last, run_node);
     run_node->string = push_str8_copy(fnt_state->frame_arena, string);
     run_node->run = run;
+    run_node->atlas_mask = run_atlas_mask;
   }
+  fnt_state->atlas_use_mask |= run_atlas_mask;
   
   return run;
 }
@@ -1300,17 +1443,21 @@ fnt_init(void)
   fnt_state->font_hash_table_size = 64;
   fnt_state->font_hash_table = push_array(fnt_state->permanent_arena, FNT_FontHashSlot, fnt_state->font_hash_table_size);
   fnt_state->glyph_cache_params = fnt_glyph_cache_default_params();
+  fnt_state->atlas_dim = v2s16(1024, 1024);
+  fnt_state->atlas_budget = 16;
   fnt_reset();
 }
 
 internal void
 fnt_reset(void)
 {
-  for(FNT_Atlas *a = fnt_state->first_atlas; a != 0; a = a->next)
+  for EachIndex(idx, fnt_state->atlas_count)
   {
-    r_tex2d_release(a->texture);
+    r_tex2d_release(fnt_state->atlases[idx].texture);
+    arena_release(fnt_state->atlases[idx].arena);
   }
-  fnt_state->first_atlas = fnt_state->last_atlas = 0;
+  MemoryZeroArray(fnt_state->atlases);
+  fnt_state->atlas_count = 0;
   arena_clear(fnt_state->raster_arena);
   fnt_state->hash2style_slots_count = 1024;
   fnt_state->hash2style_slots = push_array(fnt_state->raster_arena, FNT_Hash2StyleRasterCacheSlot, fnt_state->hash2style_slots_count);
