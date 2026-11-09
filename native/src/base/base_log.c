@@ -4,8 +4,10 @@
 ////////////////////////////////
 //~ rjf: Globals/Thread-Locals
 
+// One or the other: newer GCC rejects a thread-local declared, then defined, in one unit.
+#if BUILD_SUPPLEMENTARY_UNIT
 C_LINKAGE thread_static Log *log_active;
-#if !BUILD_SUPPLEMENTARY_UNIT
+#else
 C_LINKAGE thread_static Log *log_active = 0;
 #endif
 

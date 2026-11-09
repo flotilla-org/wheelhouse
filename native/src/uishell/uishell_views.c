@@ -83,6 +83,7 @@ struct UIShell_TerminalViewState
   U64 retained_bucket_style_key;
   B32 retained_bucket_has_images;
   U64 retained_bucket_frame; // the shell frame that built retained_bucket
+  FNT_AtlasUse retained_bucket_atlases; // the run atlases its glyphs come from
   U16 cols;
   U16 rows;
   F32 cell_width_px;
@@ -4984,7 +4985,10 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
           if(metrics != 0) { metrics->deferred++; }
         }
         if(metrics != 0) { metrics->terminal_visits++; }
-        if(tv->retained_bucket == 0 || (!defer_content && tv->retained_bucket_key != bucket_key) || trace_this_draw)
+        // Reusing the bucket keeps its glyph atlases from eviction; one
+        // evicted while the bucket wasn't drawn means building it again.
+        B32 atlases_kept = (tv->retained_bucket != 0 && fnt_atlas_use_keep(&tv->retained_bucket_atlases));
+        if(tv->retained_bucket == 0 || !atlases_kept || (!defer_content && tv->retained_bucket_key != bucket_key) || trace_this_draw)
         {
           U64 glyph_begin_us = metrics != 0 ? now_time_us() : 0;
           if(metrics != 0)
@@ -5002,6 +5006,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
           }
           DR_Bucket *terminal_bucket = dr_bucket_make_on(tv->retained_bucket_arena);
           terminal_bucket->content_version = bucket_key;
+          U64 outer_atlas_use = fnt_atlas_use_begin();
           DR_BucketScope(terminal_bucket)
           {
           glyph_renderer.trace_enabled = trace_this_draw;
@@ -5035,6 +5040,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
             tv->glyph_trace_last_render_generation = tv->cell_cache.render_generation;
           }
           }
+          fnt_atlas_use_end(outer_atlas_use, &tv->retained_bucket_atlases);
           tv->retained_bucket = terminal_bucket;
           tv->retained_bucket_key = (trace_this_draw ? 0 : bucket_key);
           tv->retained_bucket_style_key = style_key;

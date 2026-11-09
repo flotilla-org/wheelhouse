@@ -629,6 +629,98 @@ uishell_check_raster_baselines(Arena *arena, U32 *failures)
   }
 }
 
+// Run pieces stay within the atlas budget: with two small atlases, each piece
+// filling one, a third piece evicts the least recently drawn atlas, an evicted
+// piece rasterizes again, and a frame that needs more atlases than the budget
+// draws the extra piece blank and gets it on the next frame.
+internal void
+uishell_check_atlas_eviction(U32 *failures)
+{
+  Vec2S16 old_dim = fnt_state->atlas_dim;
+  U64 old_budget = fnt_state->atlas_budget;
+  fnt_reset();
+  fnt_state->atlas_dim = v2s16(128, 128);
+  fnt_state->atlas_budget = 2;
+  FNT_Tag font = fnt_tag_from_static_data_string(&rd_default_main_font_bytes);
+  // Two capitals at 40pt (53px) as one piece are wider than half an atlas
+  // but fit in a whole one, so each piece takes an atlas to itself.
+  F32 size = 40.f;
+  FNT_RasterFlags flags = FNT_RasterFlag_Smooth | FNT_RasterFlag_SinglePiece;
+#define AtlasPiece(s) fnt_run_from_string(font, size, 0, 0, flags, str8_lit(s)).pieces.v[0]
+#define NextFrame() (fnt_state->frame_index += 1)
+  FNT_AtlasStats start = fnt_state->atlas_stats;
+  NextFrame();
+  FNT_Piece a = AtlasPiece("WW");
+  NextFrame();
+  FNT_Piece b = AtlasPiece("MM");
+  UIImportCheck(!r_handle_match(a.texture, r_handle_zero()) && !r_handle_match(b.texture, r_handle_zero()));
+  UIImportCheck(!r_handle_match(a.texture, b.texture));
+  UIImportCheck(fnt_state->atlas_count == 2 && fnt_state->atlas_stats.evictions == start.evictions);
+  NextFrame();
+  FNT_Piece c = AtlasPiece("QQ");
+  UIImportCheck(r_handle_match(c.texture, a.texture));
+  UIImportCheck(fnt_state->atlas_stats.evictions == start.evictions + 1);
+  NextFrame();
+  U64 rasterized = fnt_state->atlas_stats.rasterized;
+  FNT_Piece a2 = AtlasPiece("WW");
+  UIImportCheck(fnt_state->atlas_stats.rasterized == rasterized + 1);
+  UIImportCheck(r_handle_match(a2.texture, b.texture));
+  UIImportCheck(a.subrect.x1 - a.subrect.x0 > 64 && a.subrect.x1 - a.subrect.x0 <= 128);
+  UIImportCheck(a2.subrect.x1 > a2.subrect.x0 && a2.subrect.y1 > a2.subrect.y0);
+  // Both atlases are in use this frame, so a third piece has nowhere to go.
+  FNT_Piece c2 = AtlasPiece("QQ");
+  FNT_Piece d = AtlasPiece("GG");
+  UIImportCheck(!r_handle_match(c2.texture, r_handle_zero()));
+  UIImportCheck(r_handle_match(d.texture, r_handle_zero()));
+  NextFrame();
+  FNT_Piece d2 = AtlasPiece("GG");
+  UIImportCheck(!r_handle_match(d2.texture, r_handle_zero()));
+  UIImportCheck(fnt_state->atlas_count == 2);
+  // A retained bucket's recorded atlases are kept from eviction each frame
+  // it is reused, and stop being kept once one is evicted or reset.
+  fnt_reset();
+  NextFrame();
+  U64 outer = fnt_atlas_use_begin();
+  FNT_Piece kept = AtlasPiece("WW");
+  FNT_AtlasUse use = {0};
+  fnt_atlas_use_end(outer, &use);
+  UIImportCheck(use.mask == 1);
+  NextFrame();
+  FNT_Piece other = AtlasPiece("MM");
+  NextFrame();
+  UIImportCheck(fnt_atlas_use_keep(&use));
+  FNT_Piece evicting = AtlasPiece("QQ");
+  UIImportCheck(r_handle_match(evicting.texture, other.texture) && !r_handle_match(evicting.texture, kept.texture));
+  NextFrame();
+  AtlasPiece("GG");
+  NextFrame();
+  UIImportCheck(!fnt_atlas_use_keep(&use));
+  outer = fnt_atlas_use_begin();
+  AtlasPiece("WW");
+  fnt_atlas_use_end(outer, &use);
+  UIImportCheck(fnt_atlas_use_keep(&use));
+  fnt_reset();
+  NextFrame();
+  AtlasPiece("WW");
+  UIImportCheck(!fnt_atlas_use_keep(&use));
+  // A recording inside another sees only its own atlases; the enclosing one
+  // sees both.
+  NextFrame();
+  U64 outermost = fnt_atlas_use_begin();
+  AtlasPiece("WW");
+  U64 inner_outer = fnt_atlas_use_begin();
+  AtlasPiece("MM");
+  FNT_AtlasUse inner = {0}, enclosing = {0};
+  fnt_atlas_use_end(inner_outer, &inner);
+  fnt_atlas_use_end(outermost, &enclosing);
+  UIImportCheck(inner.mask == 2 && enclosing.mask == 3);
+#undef AtlasPiece
+#undef NextFrame
+  fnt_reset();
+  fnt_state->atlas_dim = old_dim;
+  fnt_state->atlas_budget = old_budget;
+}
+
 // Symbols the UI font lacks draw from the first fallback that has them, the
 // same glyph that fallback draws on its own; every one has a fallback.
 internal void
@@ -731,6 +823,9 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   uishell_check_font_fallbacks(&failures);
   uishell_check_text_decorations(&failures);
   fprintf(stderr, "raster baselines and text decorations: %u failures\n", failures);
+  U32 failures_before_atlas = failures;
+  uishell_check_atlas_eviction(&failures);
+  fprintf(stderr, "atlas eviction: %u failures\n", failures - failures_before_atlas);
   CFG_State *state = cfg_state_alloc();
   uishell_check_config_directory_roundtrip(scratch.arena, &failures, state);
   cfg_state_release(state);
