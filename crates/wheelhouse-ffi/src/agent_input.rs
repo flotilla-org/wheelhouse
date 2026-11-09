@@ -5,9 +5,10 @@
 //! conversation's own stream.
 use super::*;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Mutex;
 use wheelhouse_agent::{Endpoint, Post, PostStatus};
+
+use crate::agent_watch::route;
 
 pub const WHEELHOUSE_AGENT_INPUT_SENDING: u32 = 0;
 pub const WHEELHOUSE_AGENT_INPUT_ACCEPTED: u32 = 1;
@@ -16,16 +17,24 @@ pub const WHEELHOUSE_AGENT_INPUT_FAILED: u32 = 2;
 static TICKETS: Mutex<Option<HashMap<u64, Post>>> = Mutex::new(None);
 static NEXT_TICKET: AtomicU64 = AtomicU64::new(1);
 
-/// Posts `body` to `path` on `endpoint` (`unix://PATH`) and returns its
-/// ticket at once: 0 for an endpoint that isn't `unix://`. Ask after it
-/// with wheelhouse_agent_input_status and let it go with
+/// Posts `body` to `path` on the Local Endpoint whose socket is `endpoint`,
+/// reached as wheelhouse_agent_watch_open reaches it, and returns its
+/// ticket at once: 0 for an endpoint it can't reach. Ask after it with
+/// wheelhouse_agent_input_status and let it go with
 /// wheelhouse_agent_input_forget.
 #[no_mangle]
-pub unsafe extern "C" fn wheelhouse_agent_input_post(endpoint: Text, path: Text, body: Text, error_out: *mut *mut c_char) -> u64 {
+pub unsafe extern "C" fn wheelhouse_agent_input_post(
+    transport: Text,
+    host: Text,
+    endpoint: Text,
+    path: Text,
+    body: Text,
+    error_out: *mut *mut c_char,
+) -> u64 {
     pure(error_out, || {
-        let endpoint = endpoint.read()?;
-        let socket = endpoint.strip_prefix("unix://").ok_or_else(|| format!("unsupported input endpoint {endpoint}"))?;
-        let post = Endpoint::shared(Path::new(socket)).map_err(|error| error.to_string())?.post(&path.read()?, body.read()?.into_bytes());
+        // The thread is in the path; the route needs none.
+        let route = route(&transport.read()?, host.read()?, endpoint.read()?, "-")?;
+        let post = Endpoint::shared(&route).map_err(|error| error.to_string())?.post(&path.read()?, body.read()?.into_bytes());
         let ticket = NEXT_TICKET.fetch_add(1, Ordering::Relaxed);
         TICKETS.lock().unwrap().get_or_insert_default().insert(ticket, post);
         Ok(ticket)
@@ -92,10 +101,12 @@ mod tests {
     }
 
     fn post_to(socket: &str, body: &str) -> u64 {
-        let endpoint = format!("unix://{socket}");
-        unsafe {
-            wheelhouse_agent_input_post(Text::borrowed(&endpoint), Text::borrowed("/run"), Text::borrowed(body), std::ptr::null_mut())
-        }
+        post_over("", "", socket, body)
+    }
+
+    fn post_over(transport: &str, host: &str, socket: &str, body: &str) -> u64 {
+        let [transport, host, socket, path, body] = [transport, host, socket, "/run", body].map(Text::borrowed);
+        unsafe { wheelhouse_agent_input_post(transport, host, socket, path, body, std::ptr::null_mut()) }
     }
 
     /// One request, answered with `reply`; returns what was posted.
@@ -150,11 +161,8 @@ mod tests {
         let _ = std::fs::remove_file(&socket);
         let ticket = post_to(socket.to_str().unwrap(), "{}");
         assert_eq!(settled(ticket).0, WHEELHOUSE_AGENT_INPUT_FAILED, "no producer listening");
-        assert_eq!(post_to_endpoint("tcp://x"), 0);
+        assert_eq!(post_over("mosh", "feta", "/run/p.sock", "{}"), 0, "an unknown transport");
+        assert_eq!(post_over("ssh", "-oProxyCommand=x", "/run/p.sock", "{}"), 0, "a host ssh would read as an option");
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    fn post_to_endpoint(endpoint: &str) -> u64 {
-        unsafe { wheelhouse_agent_input_post(Text::borrowed(endpoint), Text::borrowed("/run"), Text::borrowed("{}"), std::ptr::null_mut()) }
     }
 }

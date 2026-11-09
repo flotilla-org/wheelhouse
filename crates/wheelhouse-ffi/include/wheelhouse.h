@@ -737,7 +737,7 @@ typedef struct BinnacleGrid BinnacleGrid;
 #define WHEELHOUSE_SLOT_CLEAT_SESSION 5
 
 // An agent thread watched over the Agent View protocol (endpoint, a Local
-// Endpoint's socket, and agent_thread).
+// Endpoint's socket, agent_thread, and agent_transport and agent_host).
 #define WHEELHOUSE_SLOT_AGENT_SESSION 6
 
 // A rebind closes the instance it replaces.
@@ -1922,6 +1922,10 @@ typedef struct {
   WheelhouseText cleat_daemon;
   WheelhouseText cleat_session;
   WheelhouseText agent_thread;
+  // WHEELHOUSE_SLOT_AGENT_SESSION: "local" (or empty) or "ssh", and the
+  // ssh destination, empty when local.
+  WheelhouseText agent_transport;
+  WheelhouseText agent_host;
 } WheelhouseViewSpec;
 
 // One named field of a portable Target Resolution.
@@ -2605,11 +2609,14 @@ void wheelhouse_snapshot_release(WheelhouseSnapshot *s);
 
 void wheelhouse_effects_release(WheelhouseEffects *e);
 
-// Posts `body` to `path` on `endpoint` (`unix://PATH`) and returns its
-// ticket at once: 0 for an endpoint that isn't `unix://`. Ask after it
-// with wheelhouse_agent_input_status and let it go with
+// Posts `body` to `path` on the Local Endpoint whose socket is `endpoint`,
+// reached as wheelhouse_agent_watch_open reaches it, and returns its
+// ticket at once: 0 for an endpoint it can't reach. Ask after it with
+// wheelhouse_agent_input_status and let it go with
 // wheelhouse_agent_input_forget.
-uint64_t wheelhouse_agent_input_post(WheelhouseText endpoint,
+uint64_t wheelhouse_agent_input_post(WheelhouseText transport,
+                                     WheelhouseText host,
+                                     WheelhouseText endpoint,
                                      WheelhouseText path,
                                      WheelhouseText body,
                                      char **error_out);
@@ -2620,11 +2627,14 @@ uint32_t wheelhouse_agent_input_status(uint64_t ticket, WheelhouseBytes *why_out
 
 void wheelhouse_agent_input_forget(uint64_t ticket);
 
-// Watches `thread` at the Local Endpoint whose socket is `endpoint`,
+// Watches `thread` at the Local Endpoint whose socket is `endpoint`, on
+// this machine (`transport` "local" or empty) or over "ssh" on `host`,
 // sharing its connection with every other watch and post of it. `wake`
 // (if not NULL) is called from another thread whenever updates wait.
 // Free it with wheelhouse_agent_watch_free.
-WheelhouseAgentWatch *wheelhouse_agent_watch_open(WheelhouseText endpoint,
+WheelhouseAgentWatch *wheelhouse_agent_watch_open(WheelhouseText transport,
+                                                  WheelhouseText host,
+                                                  WheelhouseText endpoint,
                                                   WheelhouseText thread,
                                                   void (*wake)(void),
                                                   char **error_out);

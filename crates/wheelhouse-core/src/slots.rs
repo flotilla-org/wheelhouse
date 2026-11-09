@@ -419,8 +419,13 @@ fn check_spec(spec: &ViewSpec) -> Result<(), String> {
         Content::Local(LocalRecipe::Jackstay { launcher, endpoint }) if launcher.is_empty() || endpoint.is_empty() => {
             return empty("a launcher and an endpoint")
         }
-        Content::Local(LocalRecipe::AgentSession { endpoint, thread }) if endpoint.is_empty() || thread.is_empty() => {
+        Content::Local(LocalRecipe::AgentSession { endpoint, thread, .. }) if endpoint.is_empty() || thread.is_empty() => {
             return empty("an endpoint and a thread")
+        }
+        Content::Local(LocalRecipe::AgentSession { transport, host, endpoint, thread }) => {
+            if let Some(field) = suggested_layout::invalid_agent_field(*transport, host, endpoint, thread) {
+                return Err(format!("a view spec's agent {field} can't be reached over {}", transport.as_str()));
+            }
         }
         Content::Local(LocalRecipe::CleatSession { host, runtime_root, daemon, session, .. }) => {
             if let Some(field) = suggested_layout::invalid_cleat_field(host, runtime_root, daemon, session) {

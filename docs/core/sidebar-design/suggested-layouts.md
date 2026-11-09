@@ -63,22 +63,30 @@ Each fact is `layout.slot.<key>.<field>`.
 | `rebind` | text | `replace` (default), `keep-previous` or `ask`: what happens to the live instance when the resolution changes. |
 | `state` | text | `ready` or `held`. Required for a provider facet; optional (default `ready`) for a local recipe. |
 | `target` | text | Identity of the backing instance. Required for a ready provider facet; optional for a local recipe. |
-| `kind` | text | Recipe kind: `command`, `file`, `url`, `jackstay` or `cleat-session`. |
+| `kind` | text | Recipe kind: `command`, `file`, `url`, `jackstay`, `cleat-session` or `agent-session`. |
 | `argv.<n>` | text | `command`: argument `n`, contiguous from `0` ([andamento#134](https://github.com/flotilla-org/andamento/issues/134)). |
 | `command` | text | `command`: shell command line, used only when no `argv.*` is present. |
 | `cwd` | text | `command`: optional working directory. |
 | `path` | text | `file`: path to open. |
 | `url` | text | `url`: URL to open, including a Luchs page. |
 | `launcher`, `endpoint` | text | `jackstay`: Jackstay launcher and stream endpoint. |
-| `transport` | text | `cleat-session`: `local` or `ssh`. |
-| `host` | text | `cleat-session`: the local host's name (`local`) or the ssh destination (`ssh`). |
+| `transport` | text | `cleat-session`: `local` or `ssh`. `agent-session`: optional, `local` (the default) or `ssh`. |
+| `host` | text | `cleat-session`: the local host's name (`local`) or the ssh destination (`ssh`). `agent-session`: the ssh destination; absent when local. |
 | `runtime_root`, `daemon`, `session` | text | `cleat-session`: the Cleat runtime root, the daemon serving the session, and the session. A frontend shows it as a direct Cleat packet view. |
+| `endpoint`, `thread` | text | `agent-session`: the producer's Local Endpoint socket, on this machine or on `host`, and the thread an Agent View watches there ([#691](https://github.com/flotilla-org/wheelhouse/issues/691)). |
 
 A `cleat-session`'s `host`, `runtime_root`, `daemon` and `session` must each
 be usable as one argument: nonempty, not starting with `-` (so a host never
 passes one to ssh or cleat as an option) and without control characters; all
 but `runtime_root`, a path, also without whitespace. Any other value is an
 invalid spec.
+
+An `agent-session` over `ssh` reaches its producer through OpenSSH's
+unix-socket forwarding (`ssh -N -L <local>:<endpoint> <host>`), so the far host
+needs only sshd ([#737](https://github.com/flotilla-org/wheelhouse/issues/737)).
+Its `host` follows the `cleat-session` rule, and its `endpoint` is an absolute
+path without control characters or `:`, which `-L` reads as a separator. A
+local session has no `host`.
 
 A slot with `entity` and `facet` is a **provider facet**. Its spec is the pair;
 the recipe fields (`kind` and its companions) together with `state` and

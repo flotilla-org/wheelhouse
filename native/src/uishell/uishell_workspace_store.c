@@ -337,6 +337,14 @@ uishell_store_file_from_expr(Arena *arena, String8 expr)
   return raw_from_escaped_str8(arena, str8_substr(expr, r1u64(prefix.size, expr.size-suffix.size)));
 }
 
+// An agent session's transport as Wheelhouse holds it: local is empty, as
+// in a View saved before there was any other (#737).
+internal String8
+uishell_store_agent_transport(String8 transport)
+{
+  return str8_match(transport, str8_lit("local"), 0) ? str8_zero() : transport;
+}
+
 // What defines `view`'s content, and which of its settings that took (at
 // most UISHELL_STORE_TAKEN_MAX). Returns 0 for a placeholder, whose slot
 // keeps the spec it was made from.
@@ -407,8 +415,12 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
     spec->content = WHEELHOUSE_SLOT_AGENT_SESSION;
     spec->endpoint = uishell_store_setting(view, str8_lit("agent_endpoint"));
     spec->agent_thread = uishell_store_setting(view, str8_lit("agent_thread"));
+    spec->agent_transport = uishell_store_agent_transport(uishell_store_setting(view, str8_lit("agent_transport")));
+    spec->agent_host = uishell_store_setting(view, str8_lit("agent_host"));
     taken[(*taken_count)++] = str8_lit("agent_endpoint");
     taken[(*taken_count)++] = str8_lit("agent_thread");
+    taken[(*taken_count)++] = str8_lit("agent_transport");
+    taken[(*taken_count)++] = str8_lit("agent_host");
     return 1;
   }
   B32 file_view = str8_match(kind, str8_lit("text"), 0) || str8_match(kind, str8_lit("rich_text"), 0);
@@ -610,6 +622,8 @@ uishell_store_spec_from_core(Arena *arena, WheelhouseViewSpec *s)
   WheelhouseText cleat[] = {s->cleat_transport, s->cleat_host, s->cleat_runtime_root, s->cleat_daemon, s->cleat_session};
   for(U64 i = 0; i < ArrayCount(cleat); i++) { *uishell_store_cleat_fields(&spec, i) = uishell_sidebar_string(cleat[i]); }
   spec.agent_thread = uishell_sidebar_string(s->agent_thread);
+  spec.agent_transport = uishell_store_agent_transport(uishell_sidebar_string(s->agent_transport));
+  spec.agent_host = uishell_sidebar_string(s->agent_host);
   return spec;
 }
 
@@ -647,6 +661,8 @@ uishell_store_core_spec(Arena *arena, UIShell_ViewSpec *spec, WheelhouseViewSpec
   WheelhouseText *cleat[] = {&s.cleat_transport, &s.cleat_host, &s.cleat_runtime_root, &s.cleat_daemon, &s.cleat_session};
   for(U64 i = 0; i < ArrayCount(cleat); i++) { *cleat[i] = uishell_sidebar_text(*uishell_store_cleat_fields(spec, i)); }
   s.agent_thread = uishell_sidebar_text(spec->agent_thread);
+  s.agent_transport = uishell_sidebar_text(spec->agent_transport);
+  s.agent_host = uishell_sidebar_text(spec->agent_host);
   return s;
 }
 
@@ -660,7 +676,8 @@ uishell_store_spec_match(UIShell_ViewSpec *a, UIShell_ViewSpec *b)
           str8_match(a->endpoint, b->endpoint, 0) && str8_match(a->presentation, b->presentation, 0) &&
           str8_match(a->cleat_transport, b->cleat_transport, 0) && str8_match(a->cleat_host, b->cleat_host, 0) &&
           str8_match(a->cleat_runtime_root, b->cleat_runtime_root, 0) && str8_match(a->cleat_daemon, b->cleat_daemon, 0) &&
-          str8_match(a->cleat_session, b->cleat_session, 0) && str8_match(a->agent_thread, b->agent_thread, 0));
+          str8_match(a->cleat_session, b->cleat_session, 0) && str8_match(a->agent_thread, b->agent_thread, 0) &&
+          str8_match(a->agent_transport, b->agent_transport, 0) && str8_match(a->agent_host, b->agent_host, 0));
 }
 
 internal U64
@@ -680,6 +697,13 @@ uishell_store_spec_hash(U64 hash, UIShell_ViewSpec *spec)
                       spec->cleat_host, spec->cleat_runtime_root, spec->cleat_daemon, spec->cleat_session,
                       spec->agent_thread};
   for(U64 i = 0; i < ArrayCount(fields); i++) { hash = uishell_store_hash_text(hash, fields[i]); }
+  // Only over ssh, so a local session's hash is the one Views saved before
+  // #737 hold.
+  if(spec->agent_transport.size)
+  {
+    hash = uishell_store_hash_text(hash, spec->agent_transport);
+    hash = uishell_store_hash_text(hash, spec->agent_host);
+  }
   return hash*33 + spec->has_cwd;
 }
 
@@ -718,7 +742,12 @@ uishell_store_unshown(Arena *arena, String8 key, UIShell_ViewSpec *spec)
     }
     case WHEELHOUSE_SLOT_AGENT_SESSION:
     {
-      // The Agent View client reaches Unix sockets only, for now.
+      // The Agent View client reaches Unix sockets only, for now, and a
+      // transport Wheelhouse doesn't know is never guessed at.
+      B32 ssh = str8_match(spec->agent_transport, str8_lit("ssh"), 0);
+      if(!ssh && spec->agent_transport.size)
+      { return push_str8f(arena, "agent thread %S over transport \"%S\"", spec->agent_thread, spec->agent_transport); }
+      if(OS_WINDOWS && ssh) { return push_str8f(arena, "agent thread %S on %S", spec->agent_thread, spec->agent_host); }
       if(OS_WINDOWS) { return push_str8f(arena, "agent thread %S at %S", spec->agent_thread, spec->endpoint); }
       return str8_zero();
     }
@@ -789,6 +818,11 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
   {
     uishell_store_set_setting(view, str8_lit("agent_endpoint"), spec->endpoint);
     uishell_store_set_setting(view, str8_lit("agent_thread"), spec->agent_thread);
+    if(spec->agent_transport.size)
+    {
+      uishell_store_set_setting(view, str8_lit("agent_transport"), spec->agent_transport);
+      uishell_store_set_setting(view, str8_lit("agent_host"), spec->agent_host);
+    }
   }
   if(!unshown.size && spec->content == WHEELHOUSE_SLOT_CLEAT_SESSION)
   {
@@ -1740,7 +1774,11 @@ uishell_store_recipe_text(Arena *arena, UIShell_ViewSpec *recipe)
       { return push_str8f(arena, "session %S on %S", recipe->cleat_session, recipe->cleat_host); }
       return push_str8f(arena, "session %S", recipe->cleat_session);
     }
-    case WHEELHOUSE_SLOT_AGENT_SESSION: return push_str8f(arena, "agent thread %S", recipe->agent_thread);
+    case WHEELHOUSE_SLOT_AGENT_SESSION:
+    {
+      if(recipe->agent_transport.size) { return push_str8f(arena, "agent thread %S on %S", recipe->agent_thread, recipe->agent_host); }
+      return push_str8f(arena, "agent thread %S", recipe->agent_thread);
+    }
   }
   return str8_lit("new content");
 }

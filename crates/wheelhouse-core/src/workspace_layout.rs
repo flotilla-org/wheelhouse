@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::slots::{ArrangementDoc, Panel, PanelNode};
 use crate::suggested_layout::{
-    invalid_cleat_field, Axis, CleatTransport, CommandLine, Content, LocalRecipe, RebindPolicy, Slot, SlotResolution, ViewSpec,
+    invalid_agent_field, invalid_cleat_field, Axis, CleatTransport, CommandLine, Content, LocalRecipe, RebindPolicy, Slot, SlotResolution,
+    ViewSpec,
 };
 use crate::template_config::{TemplateConfigError, VisibilityPredicate, WorkspaceDefinition};
 use crate::tool_strip::StripDefinition;
@@ -74,7 +75,12 @@ pub enum RecipeTemplate {
         daemon: String,
         session: String,
     },
+    /// No `transport` is `local`; `host` is empty for it.
     AgentSession {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transport: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
         endpoint: String,
         thread: String,
     },
@@ -496,8 +502,20 @@ impl RecipeTemplate {
                 }
                 LocalRecipe::CleatSession { transport: CleatTransport::parse(&text(transport)?)?, host, runtime_root, daemon, session }
             }
-            RecipeTemplate::AgentSession { endpoint, thread } => {
-                LocalRecipe::AgentSession { endpoint: text(endpoint)?, thread: text(thread)? }
+            RecipeTemplate::AgentSession { transport, host, endpoint, thread } => {
+                let transport = match transport {
+                    Some(transport) => CleatTransport::parse(&text(transport)?)?,
+                    None => CleatTransport::Local,
+                };
+                let host = match host {
+                    Some(host) => text(host)?,
+                    None => String::new(),
+                };
+                let (endpoint, thread) = (text(endpoint)?, text(thread)?);
+                if invalid_agent_field(transport, &host, &endpoint, &thread).is_some() {
+                    return None;
+                }
+                LocalRecipe::AgentSession { transport, host, endpoint, thread }
             }
         })
     }
@@ -543,6 +561,7 @@ fn parse_slot(node: &KdlNode) -> Result<TemplateSlot, TemplateConfigError> {
             "runtime_root",
             "daemon",
             "session",
+            "thread",
         ],
         &format!("template slot {name}"),
     )?;
@@ -575,7 +594,12 @@ fn parse_slot(node: &KdlNode) -> Result<TemplateSlot, TemplateConfigError> {
             daemon: required("daemon")?,
             session: required("session")?,
         },
-        "agent-session" => RecipeTemplate::AgentSession { endpoint: required("endpoint")?, thread: required("thread")? },
+        "agent-session" => RecipeTemplate::AgentSession {
+            transport: text("transport")?,
+            host: text("host")?,
+            endpoint: required("endpoint")?,
+            thread: required("thread")?,
+        },
         other => return Err(invalid(format!("template slot {name} has unknown kind {other}"))),
     };
     if !matches!(recipe, RecipeTemplate::Command { .. }) && node.children().is_some() {
@@ -724,7 +748,12 @@ pub(crate) fn validate(kind: &str, slots: &[TemplateSlot], layouts: &[LayoutDefi
                 }
                 vec![transport, host, runtime_root, daemon, session]
             }
-            RecipeTemplate::AgentSession { endpoint, thread } => vec![endpoint, thread],
+            RecipeTemplate::AgentSession { transport, host, endpoint, thread } => {
+                if let Some(transport) = transport.as_ref().filter(|t| !t.contains('{') && CleatTransport::parse(t).is_none()) {
+                    return Err(invalid(format!("workspace {kind} template slot {} has unknown transport {transport:?}", slot.name)));
+                }
+                transport.iter().chain(host).chain([endpoint, thread]).collect()
+            }
         };
         if let Some(text) = texts.into_iter().find(|text| !well_formed(text)) {
             return Err(invalid(format!("workspace {kind} template slot {} has unbalanced braces in {text:?}", slot.name)));
@@ -913,6 +942,30 @@ mod tests {
         assert_eq!(build(&[("t", "ssh"), ("h", "-oProxyCommand=x"), ("s", "s1")]), None);
     }
 
+    // A template without a transport is a local session, as it was before
+    // #737; one over ssh builds only with a usable host.
+    #[test]
+    fn an_agent_session_template_builds_local_or_over_ssh() {
+        let agents = workspace(
+            r#"workspace kind="vessel" {
+              slot "here" kind="agent-session" endpoint="{e}" thread="t1"
+              slot "there" kind="agent-session" transport="{t}" host="{h}" endpoint="{e}" thread="t1"
+            }"#,
+        )
+        .expect("parses");
+        let build = |slot: usize, pairs: &[(&str, &str)]| agents.slots[slot].recipe.build(&facts(pairs));
+        let session = |transport, host: &str| LocalRecipe::AgentSession {
+            transport,
+            host: host.into(),
+            endpoint: "/run/p.sock".into(),
+            thread: "t1".into(),
+        };
+        assert_eq!(build(0, &[("e", "/run/p.sock")]), Some(session(CleatTransport::Local, "")));
+        assert_eq!(build(1, &[("t", "ssh"), ("h", "feta"), ("e", "/run/p.sock")]), Some(session(CleatTransport::Ssh, "feta")));
+        assert_eq!(build(1, &[("t", "ssh"), ("h", "-oProxyCommand=x"), ("e", "/run/p.sock")]), None);
+        assert_eq!(build(1, &[("t", "mosh"), ("h", "feta"), ("e", "/run/p.sock")]), None);
+    }
+
     #[test]
     fn a_workspace_without_children_has_no_template() {
         assert!(!workspace(r#"workspace kind="vessel""#).expect("parses").has_template());
@@ -959,6 +1012,7 @@ mod tests {
             (r#"layout "a" { tabs { slots { match "k" valeu="v"; }; }; }"#, "unknown match property"),
             (r#"slot "a" kind="cleat-session" transport="ssh" host="h" runtime_root="r" daemon="d""#, "cleat without session"),
             (r#"slot "a" kind="cleat-session" transport="mosh" host="h" runtime_root="r" daemon="d" session="s""#, "transport"),
+            (r#"slot "a" kind="agent-session" transport="mosh" endpoint="e" thread="t""#, "agent transport"),
             (r#"layout "a" glyph="" { tabs; }"#, "an empty glyph"),
             (r#"layout "a" glyph="ninechars" { tabs; }"#, "a long glyph"),
             (r#"layout "a" glyph=" W" { tabs; }"#, "a padded glyph"),

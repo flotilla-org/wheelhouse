@@ -4,7 +4,7 @@
 //! managed primary content is the `primary` slot.
 //! Missing facts suspend updates; they never mean delete the existing content.
 use crate::{
-    suggested_layout::{CommandLine, LocalRecipe, RebindPolicy},
+    suggested_layout::{CleatTransport, CommandLine, LocalRecipe, RebindPolicy},
     target_resolution::SavedResolution,
     EntityRef, WorkspaceId,
 };
@@ -82,10 +82,15 @@ impl Resolved {
                 field(daemon);
                 field(session);
             }
-            LocalRecipe::AgentSession { endpoint, thread } => {
+            LocalRecipe::AgentSession { transport, host, endpoint, thread } => {
                 field("agent-session");
                 field(endpoint);
                 field(thread);
+                // A local session's identity is as it was before #737.
+                if *transport != CleatTransport::Local {
+                    field(transport.as_str());
+                    field(host);
+                }
             }
         }
         out
@@ -301,5 +306,24 @@ impl ManagedContent {
     /// whether there was one.
     pub fn release_previous(&mut self, workspace: WorkspaceId, slot: &str) -> bool {
         self.bindings.get_mut(&(workspace, slot.to_owned())).and_then(|binding| binding.previous.take()).is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A host passes back the id of what it applied, saved across restarts:
+    // a local agent session keeps the id it had before #737, and one over
+    // ssh differs by its host, so a move to another host is an update.
+    #[test]
+    fn agent_session_ids_keep_local_ones_and_tell_hosts_apart() {
+        let id = |transport, host: &str| {
+            let recipe = LocalRecipe::AgentSession { transport, host: host.into(), endpoint: "/p.sock".into(), thread: "t1".into() };
+            Resolved { target: None, recipe }.id()
+        };
+        assert_eq!(id(CleatTransport::Local, ""), "0:13:agent-session7:/p.sock2:t1");
+        let (feta, brie) = (id(CleatTransport::Ssh, "feta"), id(CleatTransport::Ssh, "brie"));
+        assert!(feta != brie && feta != id(CleatTransport::Local, ""));
     }
 }

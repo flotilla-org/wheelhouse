@@ -1826,12 +1826,13 @@ struct UIShell_RichTextState
   U64 failed_size;
   DenseTime failed_modified;
   // A watched agent thread (#699): the watch, and the Local Endpoint's
-  // socket and thread its View settings name. Its composer posts to the
-  // thread's routes there; `input` is empty while the thread takes none.
+  // socket, how it is reached (#737) and thread its View settings name. Its
+  // composer posts to the thread's routes there; `input` is empty while the
+  // thread takes none.
   WheelhouseAgentWatch *watch;
   U8 agent_endpoint[512];
   U64 agent_endpoint_size;
-  String8 agent_thread;
+  String8 agent_thread, agent_transport, agent_host;
   U64 agent_version;
   U8 input[512];
   U64 input_size;
@@ -5466,10 +5467,11 @@ uishell_rt_agent_wake(void)
 // producer that starts over with a fresh snapshot gets a fresh
 // conversation; the composer keeps its draft.
 internal void
-uishell_rt_agent_follow(UIShell_RichTextState *s, String8 endpoint, String8 thread)
+uishell_rt_agent_follow(UIShell_RichTextState *s, String8 transport, String8 host, String8 endpoint, String8 thread)
 {
   char *error = 0;
-  if(!str8_match(endpoint, str8(s->agent_endpoint, s->agent_endpoint_size), 0) || !str8_match(thread, s->agent_thread, 0))
+  if(!str8_match(endpoint, str8(s->agent_endpoint, s->agent_endpoint_size), 0) || !str8_match(thread, s->agent_thread, 0) ||
+     !str8_match(transport, s->agent_transport, 0) || !str8_match(host, s->agent_host, 0))
   {
     // Another thread: the draft, its Up and the prompts on their way were
     // for the last one. The reopen keeps them only across a restart.
@@ -5481,10 +5483,13 @@ uishell_rt_agent_follow(UIShell_RichTextState *s, String8 endpoint, String8 thre
     s->agent_endpoint_size = Min(endpoint.size, sizeof(s->agent_endpoint));
     MemoryCopy(s->agent_endpoint, endpoint.str, s->agent_endpoint_size);
     s->agent_thread = push_str8_copy(s->arena, thread);
+    s->agent_transport = push_str8_copy(s->arena, transport);
+    s->agent_host = push_str8_copy(s->arena, host);
   }
   if(s->watch == 0)
   {
-    s->watch = wheelhouse_agent_watch_open(uishell_rt_wt(endpoint), uishell_rt_wt(thread), uishell_rt_agent_wake, &error);
+    s->watch = wheelhouse_agent_watch_open(uishell_rt_wt(transport), uishell_rt_wt(host), uishell_rt_wt(endpoint), uishell_rt_wt(thread),
+                                           uishell_rt_agent_wake, &error);
     String8 failure = uishell_rt_error(&error);
     s->load_error = failure.size ? push_str8_copy(s->arena, failure) : str8_zero();
     if(s->watch == 0) { return; }
@@ -5518,15 +5523,16 @@ uishell_rt_agent_follow(UIShell_RichTextState *s, String8 endpoint, String8 thre
     MemoryCopy(s->agent_endpoint, endpoint_copy, endpoint_size);
     s->agent_endpoint_size = endpoint_size;
     s->agent_thread = push_str8_copy(s->arena, thread);
+    s->agent_transport = push_str8_copy(s->arena, transport);
+    s->agent_host = push_str8_copy(s->arena, host);
     s->agent_version += 1;
   }
   // The composer shows while the thread takes input, and posts to its routes.
   s->input_size = 0;
   if(s->doc && wheelhouse_rich_text_conversation_takes_input(s->doc, &error))
   {
-    String8 input = push_str8f(rd_frame_arena(), "unix://%S", endpoint);
-    s->input_size = Min(input.size, sizeof(s->input));
-    MemoryCopy(s->input, input.str, s->input_size);
+    s->input_size = Min(endpoint.size, sizeof(s->input));
+    MemoryCopy(s->input, endpoint.str, s->input_size);
   }
   uishell_rt_error(&error);
   // Why it isn't streaming, while it isn't.
@@ -5629,7 +5635,8 @@ uishell_rt_input_post(UIShell_RichTextState *s, String8 path, String8 body)
 {
   char *error = 0;
   String8 route = push_str8f(rd_frame_arena(), "/threads/%S%S", s->agent_thread, path);
-  U64 ticket = wheelhouse_agent_input_post(uishell_rt_wt(str8(s->input, s->input_size)), uishell_rt_wt(route), uishell_rt_wt(body), &error);
+  U64 ticket = wheelhouse_agent_input_post(uishell_rt_wt(s->agent_transport), uishell_rt_wt(s->agent_host), uishell_rt_wt(str8(s->input, s->input_size)),
+                                           uishell_rt_wt(route), uishell_rt_wt(body), &error);
   uishell_rt_error(&error);
   return ticket;
 }
@@ -6217,6 +6224,8 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   // A watched agent thread streams from its producer instead (#699).
   String8 agent_endpoint = wh_view_setting(ctx, str8_lit("agent_endpoint"));
   String8 agent_thread = wh_view_setting(ctx, str8_lit("agent_thread"));
+  String8 agent_transport = wh_view_setting(ctx, str8_lit("agent_transport"));
+  String8 agent_host = wh_view_setting(ctx, str8_lit("agent_host"));
   B32 agent = agent_endpoint.size != 0 && agent_thread.size != 0 && agent_endpoint.size <= sizeof(s->agent_endpoint);
   String8 path = agent ? str8_zero() : uishell_rt_path_from_expr(scratch.arena, rd_expr_from_cfg(rd_cfg_from_view(ctx->settings.view)));
   String8 thread = agent ? str8_zero() : wh_view_setting(ctx, str8_lit("thread"));
@@ -6228,7 +6237,7 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
   FileProperties props = properties_from_file_path(path);
   if(agent)
   {
-    uishell_rt_agent_follow(s, agent_endpoint, agent_thread);
+    uishell_rt_agent_follow(s, agent_transport, agent_host, agent_endpoint, agent_thread);
     rd_workspace_surface_contribute_version(s->agent_version);
     // Not a file: what follows reads as one that is there.
     props.modified = 1;
