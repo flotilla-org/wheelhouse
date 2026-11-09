@@ -159,8 +159,6 @@ struct UIShell_TableDraw
   // Find is open: mark the cells that match, in match.
   B32 finding;
   Vec4F32 match;
-  // The pointer's shape, and a resize's guide to draw.
-  WheelhouseTablePointer pointer;
 };
 
 internal Rng2F32
@@ -351,10 +349,10 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
     }
   }
   // A resize's guide: where the resized item's moving edge is.
-  if(d->pointer.has_guide)
+  if(snap->has_resize_guide)
   {
-    F32 at = d->pointer.guide_offset;
-    Rng2F32 guide = d->pointer.guide_axis == BINNACLE_COLS ? r2f32p(o.x0+at-1.f, o.y0, o.x0+at+1.f, o.y1)
+    F32 at = snap->resize_guide.offset;
+    Rng2F32 guide = snap->resize_guide.axis == BINNACLE_COLS ? r2f32p(o.x0+at-1.f, o.y0, o.x0+at+1.f, o.y1)
                                                           : r2f32p(o.x0, o.y0+at-1.f, o.x1, o.y0+at+1.f);
     dr_rect(guide, accent, 0, 0, 0.f);
   }
@@ -408,7 +406,7 @@ uishell_table_fit(UIShell_TableState *state, BinnacleGrid *grid, BinnacleSnapsho
     {
       // Rows hold one line of text: fitting one is going back to the
       // default height.
-      wheelhouse_table_clear_size(state->table, BINNACLE_ROWS, ask->key);
+      binnacle_grid_clear_size(grid, BINNACLE_ROWS, ask->key);
       changed = 1;
     }
     else if(ask->kind == BINNACLE_EFFECT_AUTO_SIZE_REQUESTED)
@@ -1066,13 +1064,11 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   binnacle_grid_snapshot(grid, &draw->snap);
   // Sizes fitted now are drawn now.
   if(uishell_table_fit(state, grid, &draw->snap, asks, asks_count)) { binnacle_grid_snapshot(grid, &draw->snap); }
-  // After the Snapshot, which would otherwise find its damage taken.
-  draw->pointer = wheelhouse_table_pointer(state->table);
-  switch(draw->pointer.cursor)
+  switch(draw->snap.cursor)
   {
-    case WHEELHOUSE_TABLE_CURSOR_RESIZE_COLS:{ box->hover_cursor = WM_Cursor_LeftRight; }break;
-    case WHEELHOUSE_TABLE_CURSOR_RESIZE_ROWS:{ box->hover_cursor = WM_Cursor_UpDown; }break;
-    case WHEELHOUSE_TABLE_CURSOR_MOVE:{ box->hover_cursor = WM_Cursor_HandPoint; }break;
+    case BINNACLE_CURSOR_RESIZE_COLS:{ box->hover_cursor = WM_Cursor_LeftRight; }break;
+    case BINNACLE_CURSOR_RESIZE_ROWS:{ box->hover_cursor = WM_Cursor_UpDown; }break;
+    case BINNACLE_CURSOR_MOVE:{ box->hover_cursor = WM_Cursor_HandPoint; }break;
     default:{ box->hover_cursor = WM_Cursor_Pointer; }break;
   }
   state->find_support = draw->snap.find_support;

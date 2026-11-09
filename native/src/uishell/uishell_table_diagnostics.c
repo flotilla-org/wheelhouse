@@ -813,7 +813,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
           Vec2F32 border = v2f32(border_x, header_y);
           for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, border, UIShell_TableDiagBar_Thumb, &part); }
           d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
-          TableCheck(d->pointer.cursor == WHEELHOUSE_TABLE_CURSOR_RESIZE_COLS && grid_box->hover_cursor == WM_Cursor_LeftRight,
+          TableCheck(d->snap.cursor == BINNACLE_CURSOR_RESIZE_COLS && grid_box->hover_cursor == WM_Cursor_LeftRight,
                      "over a column's border the pointer shows a resize");
           // A drag of the border resizes the column, a guide at its edge.
           // Presses a second apart count as single clicks.
@@ -823,15 +823,15 @@ uishell_table_diagnostics(RD_WindowState *ws)
           Vec2F32 dragged = v2f32(border.x + 30, border.y);
           for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, dragged, UIShell_TableDiagBar_Thumb, &part); }
           d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
-          TableCheck(d->pointer.has_guide && d->pointer.guide_axis == BINNACLE_COLS &&
-                     abs_f32(grid_box->rect.x0 + d->pointer.guide_offset - dragged.x) < 1.5f,
+          TableCheck(d->snap.has_resize_guide && d->snap.resize_guide.axis == BINNACLE_COLS &&
+                     abs_f32(grid_box->rect.x0 + d->snap.resize_guide.offset - dragged.x) < 1.5f,
                      "a drag of a column's border draws a guide at the pointer");
           UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = dragged};
           uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, release, dragged, UIShell_TableDiagBar_Thumb, &part);
           for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, dragged, UIShell_TableDiagBar_Thumb, &part); }
           d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
           F32 resized = d->snap.axes[BINNACLE_COLS].strip[c].size;
-          TableCheck(!d->pointer.has_guide && abs_f32(resized - (start + 30)) < 1.5f, "the release leaves the column resized");
+          TableCheck(!d->snap.has_resize_guide && abs_f32(resized - (start + 30)) < 1.5f, "the release leaves the column resized");
           // A double-click on the border fits the column, past the starting
           // fit's limits.
           border.x = dragged.x;
@@ -860,7 +860,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
           F32 tall = rows->strip[r].size;
           for(U32 frame = 0; frame < 2; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, row_border, UIShell_TableDiagBar_Thumb, &part); }
           d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
-          TableCheck(d->pointer.cursor == WHEELHOUSE_TABLE_CURSOR_RESIZE_ROWS && grid_box->hover_cursor == WM_Cursor_UpDown,
+          TableCheck(d->snap.cursor == BINNACLE_CURSOR_RESIZE_ROWS && grid_box->hover_cursor == WM_Cursor_UpDown,
                      "over a row's border the pointer shows a resize");
           for(U32 click = 0; click < 2; click += 1)
           {
