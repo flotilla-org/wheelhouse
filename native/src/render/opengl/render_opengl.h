@@ -16,6 +16,10 @@ typedef ptrdiff_t GLintptr;
 #define GL_FRAMEBUFFER_SRGB               0x8DB9
 #define GL_TEXTURE_MAX_LEVEL              0x813D
 
+#define GL_MAP_WRITE_BIT                  0x0002
+#define GL_MAP_INVALIDATE_RANGE_BIT       0x0004
+#define GL_MAP_UNSYNCHRONIZED_BIT         0x0020
+
 #define GL_READ_FRAMEBUFFER               0x8CA8
 #define GL_DRAW_FRAMEBUFFER               0x8CA9
 
@@ -194,6 +198,8 @@ X(glEnableVertexAttribArray, void, (GLuint index))\
 X(glVertexAttribPointer, void, (GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer))\
 X(glBufferData, void, (GLenum target, ptrdiff_t size, void *data, GLenum usage))\
 X(glBufferSubData, void, (GLenum target, ptrdiff_t offset, ptrdiff_t size, const void *data))\
+X(glMapBufferRange, void *, (GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access))\
+X(glUnmapBuffer, GLboolean, (GLenum target))\
 X(glBlendFuncSeparate, void, (GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha))\
 X(glUniform1f, void, (GLint location, GLfloat v0))\
 X(glUniform2f, void, (GLint location, GLfloat v0, GLfloat v1))\
@@ -258,11 +264,26 @@ struct R_OGL_Buffer
   U64 size;
 };
 
-typedef struct R_OGL_FlushBuffer R_OGL_FlushBuffer;
-struct R_OGL_FlushBuffer
+// Instance data streams through one buffer: each upload is appended at the
+// cursor, written unsynchronized, since no draw has read that range of the
+// current storage. When it is full, the storage is orphaned (re-specified),
+// so draws still in flight keep reading the old one, and the cursor restarts.
+// A frame needing more than the capacity grows it.
+typedef struct R_OGL_InstanceRing R_OGL_InstanceRing;
+struct R_OGL_InstanceRing
 {
-  R_OGL_FlushBuffer *next;
-  GLuint id;
+  GLuint buffer;
+  U64 capacity;
+  U64 cursor;
+  U64 orphans;
+  U64 grows;
+};
+
+typedef struct R_OGL_InstanceUpload R_OGL_InstanceUpload;
+struct R_OGL_InstanceUpload
+{
+  GLuint buffer;
+  U64 offset;
 };
 
 typedef struct R_OGL_RenderTarget R_OGL_RenderTarget;
@@ -321,7 +342,6 @@ struct R_OGL_State
   R_OGL_Tex2D *free_tex2d;
   GLuint shaders[R_OGL_ShaderKind_COUNT];
   GLuint all_purpose_vao;
-  GLuint scratch_buffer_64kb;
   GLuint white_texture;
   GLuint surface_fbo; // shared fbo for surface render targets; the target texture is attached per-pass
   GLuint effect_ubo;  // scratch uniform buffer for effect passes
@@ -329,9 +349,7 @@ struct R_OGL_State
   GLuint core_ubo1;   // scratch uniform buffer for the core shaders, binding point 1 (the mesh shader's group block)
   GLuint mesh_vao;    // the mesh pass's vertex and instance attributes
   R_OGL_Buffer *free_buffer;
-  Arena *buffer_flush_arena;
-  R_OGL_FlushBuffer *first_buffer_to_flush;
-  R_OGL_FlushBuffer *last_buffer_to_flush;
+  R_OGL_InstanceRing instance_ring;
 };
 
 ////////////////////////////////
@@ -345,7 +363,7 @@ global R_OGL_State *r_ogl_state = 0;
 internal R_Handle r_ogl_handle_from_tex2d(R_OGL_Tex2D *t);
 internal R_OGL_Tex2D *r_ogl_tex2d_from_handle(R_Handle h);
 internal R_OGL_FormatInfo r_ogl_format_info_from_tex2dformat(R_Tex2DFormat fmt);
-internal GLuint r_ogl_instance_buffer_from_size(U64 size);
+internal R_OGL_InstanceUpload r_ogl_instance_upload(R_BatchList *batches);
 internal void r_ogl_debug_message_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *message, const void *userParam);
 
 #define glUseProgramScope(...)              DeferLoop(glUseProgram(__VA_ARGS__), glUseProgram(0))
