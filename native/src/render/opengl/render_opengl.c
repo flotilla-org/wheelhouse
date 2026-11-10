@@ -80,27 +80,57 @@ r_ogl_format_info_from_tex2dformat(R_Tex2DFormat fmt)
   return result;
 }
 
-internal GLuint
-r_ogl_instance_buffer_from_size(U64 size)
+// Appends a batch list's instances to the instance ring (see
+// R_OGL_InstanceRing), returning the buffer, left bound to GL_ARRAY_BUFFER,
+// and the offset of the first instance.
+internal R_OGL_InstanceUpload
+r_ogl_instance_upload(R_BatchList *batches)
 {
-  GLuint buffer = r_ogl_state->scratch_buffer_64kb;
-  if(size > KB(64))
+  R_OGL_InstanceRing *ring = &r_ogl_state->instance_ring;
+  U64 size = batches->byte_count;
+  // Uploads start on 256 bytes; attribute pointers start at the upload's
+  // offset, so it needn't be a multiple of the instance size.
+  U64 offset = AlignPow2(ring->cursor, 256);
+  glBindBuffer(GL_ARRAY_BUFFER, ring->buffer);
+  if(offset + size > ring->capacity)
   {
-    // rjf: build buffer
-    U64 flushed_buffer_size = size;
-    flushed_buffer_size += MB(1)-1;
-    flushed_buffer_size -= flushed_buffer_size%MB(1);
-    glGenBuffers(1, &buffer);
-    glBindBuffer(GL_ARRAY_BUFFER, buffer);
-    glBufferData(GL_ARRAY_BUFFER, flushed_buffer_size, 0, GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    
-    // rjf: push buffer to flush list
-    R_OGL_FlushBuffer *n = push_array(r_ogl_state->buffer_flush_arena, R_OGL_FlushBuffer, 1);
-    n->id = buffer;
-    SLLQueuePush(r_ogl_state->first_buffer_to_flush, r_ogl_state->last_buffer_to_flush, n);
+    if(size > ring->capacity)
+    {
+      while(ring->capacity < size) { ring->capacity *= 2; }
+      ring->grows += 1;
+    }
+    else
+    {
+      ring->orphans += 1;
+    }
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)ring->capacity, 0, GL_STREAM_DRAW);
+    offset = 0;
   }
-  return buffer;
+  U8 *dst = (U8 *)glMapBufferRange(GL_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)size,
+                                   GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+  if(dst != 0)
+  {
+    U64 off = 0;
+    for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
+    {
+      MemoryCopy(dst + off, batch_n->v.v, batch_n->v.byte_count);
+      off += batch_n->v.byte_count;
+    }
+    glUnmapBuffer(GL_ARRAY_BUFFER);
+  }
+  else
+  {
+    // A driver that can't map the range still takes the data, synchronized.
+    U64 off = offset;
+    for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
+    {
+      glBufferSubData(GL_ARRAY_BUFFER, (GLintptr)off, batch_n->v.byte_count, batch_n->v.v);
+      off += batch_n->v.byte_count;
+    }
+  }
+  ring->cursor = offset + size;
+  R_OGL_InstanceUpload result = {ring->buffer, offset};
+  return result;
 }
 
 internal void
@@ -347,21 +377,12 @@ r_ogl_geo3d(R_PassParams_Geo3D *params, F32 backing_scale,
 
       // instances: four transform columns, then the albedo remap (locations 4-8)
       U64 inst_count = n->batches.byte_count / n->batches.bytes_per_inst;
-      GLuint inst_buffer = r_ogl_instance_buffer_from_size(n->batches.byte_count);
-      glBindBuffer(GL_ARRAY_BUFFER, inst_buffer);
-      {
-        U64 off = 0;
-        for(R_BatchNode *batch_n = n->batches.first; batch_n != 0; batch_n = batch_n->next)
-        {
-          glBufferSubData(GL_ARRAY_BUFFER, off, batch_n->v.byte_count, batch_n->v.v);
-          off += batch_n->v.byte_count;
-        }
-      }
+      R_OGL_InstanceUpload inst = r_ogl_instance_upload(&n->batches);
       for(U32 idx = 0; idx < 5; idx += 1)
       {
         glEnableVertexAttribArray(4+idx);
         glVertexAttribDivisor(4+idx, 1);
-        glVertexAttribPointer(4+idx, 4, GL_FLOAT, GL_FALSE, (GLsizei)n->batches.bytes_per_inst, (void *)(U64)(idx*sizeof(Vec4F32)));
+        glVertexAttribPointer(4+idx, 4, GL_FLOAT, GL_FALSE, (GLsizei)n->batches.bytes_per_inst, (void *)(inst.offset + idx*sizeof(Vec4F32)));
       }
       glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -552,11 +573,13 @@ r_init(CmdLine *cmdln)
     glGenVertexArrays(1, &r_ogl_state->all_purpose_vao);
     glGenVertexArrays(1, &r_ogl_state->mesh_vao);
     
-    // rjf: scratch buffer
+    // Instance ring: 4 MB holds a typical frame's instances (128 bytes each).
     {
-      glGenBuffers(1, &r_ogl_state->scratch_buffer_64kb);
-      glBindBuffer(GL_ARRAY_BUFFER, r_ogl_state->scratch_buffer_64kb);
-      glBufferData(GL_ARRAY_BUFFER, KB(64), 0, GL_DYNAMIC_DRAW);
+      R_OGL_InstanceRing *ring = &r_ogl_state->instance_ring;
+      ring->capacity = MB(4);
+      glGenBuffers(1, &ring->buffer);
+      glBindBuffer(GL_ARRAY_BUFFER, ring->buffer);
+      glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)ring->capacity, 0, GL_STREAM_DRAW);
       glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
     
@@ -574,9 +597,6 @@ r_init(CmdLine *cmdln)
   
   //- rjf: set up options
   glEnable(GL_FRAMEBUFFER_SRGB);
-  
-  //- rjf: set up buffer flush state
-  r_ogl_state->buffer_flush_arena = arena_alloc();
   
   //- rjf: set up debug callback
   B32 debug_mode = cmd_line_has_flag(cmdln, str8_lit("opengl_debug"));
@@ -882,12 +902,6 @@ r_begin_frame(void)
 r_hook void
 r_end_frame(void)
 {
-  for(R_OGL_FlushBuffer *flush_buffer = r_ogl_state->first_buffer_to_flush; flush_buffer != 0; flush_buffer = flush_buffer->next)
-  {
-    glDeleteBuffers(1, &flush_buffer->id);
-  }
-  arena_clear(r_ogl_state->buffer_flush_arena);
-  r_ogl_state->first_buffer_to_flush = r_ogl_state->last_buffer_to_flush = 0;
 }
 
 internal Vec2S32
@@ -1089,27 +1103,21 @@ r_ogl_ui_pass(R_PassParams_UI *params, GLuint stage_fbo, Vec2F32 viewport_dim, V
       }
       
       //- rjf: get & fill buffer
-      GLuint buffer = r_ogl_instance_buffer_from_size(batches->byte_count);
-      {
-        glBindBuffer(GL_ARRAY_BUFFER, buffer);
-        U64 off = 0;
-        for(R_BatchNode *batch_n = batches->first; batch_n != 0; batch_n = batch_n->next)
-        {
-          glBufferSubData(GL_ARRAY_BUFFER, off, batch_n->v.byte_count, batch_n->v.v);
-          off += batch_n->v.byte_count;
-        }
-      }
+      R_OGL_InstanceUpload inst = r_ogl_instance_upload(batches);
       
       //- rjf: bind input attributes
+      // Every rect attribute is a float vector (R_Rect2DInst is eight float4s,
+      // statically asserted); an integer one would need glVertexAttribIPointer
+      // and its own size.
       {
         R_OGL_AttributeArray inputs = r_ogl_shader_kind_input_attributes_table[R_OGL_ShaderKind_Rect];
-        U64 off = 0;
+        U64 off = inst.offset;
         for EachIndex(idx, inputs.count)
         {
+          Assert(inputs.v[idx].type == GL_FLOAT);
           glEnableVertexAttribArray(inputs.v[idx].index);
           glVertexAttribDivisor(inputs.v[idx].index, 1);
           glVertexAttribPointer(inputs.v[idx].index, inputs.v[idx].count, inputs.v[idx].type, GL_FALSE, sizeof(R_Rect2DInst), (void *)(off));
-          // TODO(rjf): this is not correct if type != GL_FLOAT
           off += inputs.v[idx].count*sizeof(F32);
         }
       }

@@ -384,6 +384,79 @@ fprintf(stderr, "%.*s geo3d %s: %s (rg %.2f %.2f)\n", str8_varg(backend), (label
   scratch_end(scratch);
 }
 
+// Instance uploads land in the right place whether each group gets its own
+// upload, uploads wrap the instance buffer many times, or one group is bigger
+// than the buffer. Top: 32 four-pixel columns, each its own group (its own
+// clip), red and green in turn. Bottom: one group of 4096 one-pixel rects,
+// red and green in eight-pixel bands. On OpenGL the instance ring starts at
+// 1 KB, so the columns wrap it and the bottom group grows it.
+internal void
+uishell_check_instance_uploads(U32 *failures)
+{
+  Temp scratch = scratch_begin(0, 0);
+  Vec2S32 size = v2s32(128, 64);
+  Vec4F32 red = v4f32(1, 0, 0, 1), green = v4f32(0, 1, 0, 1);
+#if R_BACKEND == R_BACKEND_OPENGL
+  R_OGL_InstanceRing *ring = &r_ogl_state->instance_ring;
+  U64 old_capacity = ring->capacity;
+  U64 orphans = ring->orphans, grows = ring->grows;
+  // The next upload re-specifies the buffer at this capacity.
+  ring->capacity = KB(1);
+  ring->cursor = ring->capacity;
+#endif
+  DR_Bucket *bucket = dr_bucket_make();
+  DR_BucketScope(bucket)
+  {
+    dr_rect(r2f32p(0, 0, (F32)size.x, (F32)size.y), v4f32(0, 0, 0, 1), 0, 0, 0);
+    for(S32 col = 0; col < 32; col += 1)
+    {
+      Rng2F32 r = r2f32p((F32)col*4, 0, (F32)col*4 + 4, 32);
+      DR_ClipScope(r) { dr_rect(r, (col % 2) ? green : red, 0, 0, 0); }
+    }
+    DR_ClipScope(r2f32p(0, 32, (F32)size.x, (F32)size.y))
+    {
+      for(S32 y = 32; y < 64; y += 1)
+      for(S32 x = 0; x < 128; x += 1)
+      {
+        dr_rect(r2f32p((F32)x, (F32)y, (F32)x + 1, (F32)y + 1), ((x/8) % 2) ? green : red, 0, 0, 0);
+      }
+    }
+  }
+  R_Readback pixels = r_pass_list_readback(scratch.arena, size, &bucket->passes);
+  B32 ok = (pixels.format == R_Tex2DFormat_BGRA8 && pixels.size.x == size.x && pixels.size.y == size.y &&
+            pixels.data.size >= (U64)size.x*size.y*4);
+  UIImportCheck(ok);
+  if(ok)
+  {
+    U32 wrong = 0;
+    for(S32 col = 0; col < 32; col += 1)
+    {
+      S32 x = col*4 + 2;
+      B32 want_green = (col % 2);
+      F32 r = uishell_rect_semantics_linear(&pixels, x, 16, 0), g = uishell_rect_semantics_linear(&pixels, x, 16, 1);
+      if(!(want_green ? (g > 0.8f && r < 0.1f) : (r > 0.8f && g < 0.1f))) { wrong += 1; }
+    }
+    for(S32 y = 33; y < 64; y += 10)
+    for(S32 x = 3; x < 128; x += 8)
+    {
+      B32 want_green = ((x/8) % 2);
+      F32 r = uishell_rect_semantics_linear(&pixels, x, y, 0), g = uishell_rect_semantics_linear(&pixels, x, y, 1);
+      if(!(want_green ? (g > 0.8f && r < 0.1f) : (r > 0.8f && g < 0.1f))) { wrong += 1; }
+    }
+    fprintf(stderr, "instance uploads: %u wrong pixels\n", wrong);
+    UIImportCheck(wrong == 0);
+  }
+#if R_BACKEND == R_BACKEND_OPENGL
+  fprintf(stderr, "instance uploads: ring orphaned %llu, grew %llu\n",
+          (unsigned long long)(ring->orphans - orphans), (unsigned long long)(ring->grows - grows));
+  UIImportCheck(ring->orphans - orphans >= 8);
+  UIImportCheck(ring->grows - grows >= 1);
+  ring->capacity = Max(ring->capacity, old_capacity);
+  ring->cursor = ring->capacity;
+#endif
+  scratch_end(scratch);
+}
+
 internal void
 uishell_check_rect_semantics(U32 *failures)
 {
@@ -860,6 +933,9 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   U32 failures_before_rect = failures;
   uishell_check_rect_semantics(&failures);
   fprintf(stderr, "rect semantics: %u failures\n", failures - failures_before_rect);
+  U32 failures_before_uploads = failures;
+  uishell_check_instance_uploads(&failures);
+  fprintf(stderr, "instance uploads: %u failures\n", failures - failures_before_uploads);
   U32 failures_before_batch = failures;
   uishell_check_batch_groups(&failures);
   fprintf(stderr, "batch groups: %u failures\n", failures - failures_before_batch);
