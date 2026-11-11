@@ -4,10 +4,11 @@
 //! read live from a server by its link (#529), or one of given cells, as a
 //! Rich Text table Embed shows (#561).
 use super::*;
-use binnacle_core::{Axis, Key, Viewport};
+use binnacle_core::{Axis, Compared, ConditionState, Key, TextQuery, Viewport};
 use binnacle_ffi::BinnacleGrid;
+use binnacle_memory::column_filter::compare;
 use std::time::Duration;
-use wheelhouse_tables::{Align, Link, Metrics, Table, NAMES};
+use wheelhouse_tables::{Align, Chip, Link, MenuView, Metrics, Table, NAMES};
 
 /// A cell's text sits at its leading edge.
 pub const WHEELHOUSE_TABLE_ALIGN_LEFT: u32 = 0;
@@ -41,6 +42,9 @@ pub struct WheelhouseTable {
     /// The text the last wheelhouse_table_cell or wheelhouse_table_header
     /// returned.
     text: String,
+    /// What the last wheelhouse_table_menu and wheelhouse_table_chips read.
+    menu: Option<MenuView>,
+    chips: Vec<Chip>,
 }
 
 /// How many canned tables there are.
@@ -105,7 +109,7 @@ pub unsafe extern "C" fn wheelhouse_table_open(
         return ptr::null_mut();
     };
     let grid = Box::into_raw(BinnacleGrid::from_grid(grid));
-    Box::into_raw(Box::new(WheelhouseTable { table, grid, text: String::new() }))
+    Box::into_raw(Box::new(WheelhouseTable { table, grid, text: String::new(), menu: None, chips: Vec::new() }))
 }
 
 /// Opens a table of row_count rows of column_count plain-text cells, row by
@@ -146,7 +150,7 @@ pub unsafe extern "C" fn wheelhouse_table_open_cells(
         return ptr::null_mut();
     };
     let grid = Box::into_raw(BinnacleGrid::from_grid(grid));
-    Box::into_raw(Box::new(WheelhouseTable { table, grid, text: String::new() }))
+    Box::into_raw(Box::new(WheelhouseTable { table, grid, text: String::new(), menu: None, chips: Vec::new() }))
 }
 
 /// The table's Grid, for binnacle.h's calls, live until wheelhouse_table_free.
@@ -324,6 +328,297 @@ pub unsafe extern "C" fn wheelhouse_table_find_marks(
     let marks = t.table.find_marks(&keys(rows, rows_len), &keys(cols, cols_len));
     for (o, m) in out.iter_mut().zip(marks) {
         *o = m.into();
+    }
+}
+
+/// WheelhouseTableMenu.compared: the column compares no values, numbers, or
+/// dates.
+pub const WHEELHOUSE_TABLE_COMPARE_NONE: u32 = 0;
+pub const WHEELHOUSE_TABLE_COMPARE_NUMBERS: u32 = 1;
+pub const WHEELHOUSE_TABLE_COMPARE_DATES: u32 = 2;
+/// The comparison row's steps, "Any value" (0, none) through "Between"; see
+/// wheelhouse_table_compare_step.
+pub const WHEELHOUSE_TABLE_COMPARE_STEPS: u32 = 8;
+pub const WHEELHOUSE_TABLE_COMPARE_BETWEEN: u32 = 7;
+// Literals, for the header: they must stay binnacle's.
+const _: () = assert!(
+    compare::STEPS.len() == WHEELHOUSE_TABLE_COMPARE_STEPS as usize && compare::BETWEEN == WHEELHOUSE_TABLE_COMPARE_BETWEEN as usize
+);
+
+/// What a column's menu shows, its texts valid until the next
+/// wheelhouse_table_menu on the table. open is 0, and the rest zero, while
+/// no menu is open.
+#[repr(C)]
+pub struct WheelhouseTableMenu {
+    pub open: u32,
+    /// The column's Key.
+    pub key: u64,
+    /// What it takes: Text conditions (text_regex: with regexes), OneOf (the
+    /// checklist) and comparisons (a WHEELHOUSE_TABLE_COMPARE_*).
+    pub takes_text: u32,
+    pub text_regex: u32,
+    pub one_of: u32,
+    pub compared: u32,
+    /// Its Text condition: the text (empty for none), "Does not contain"
+    /// (not), matching case, a regex.
+    pub text: Text,
+    pub not: u32,
+    pub case_sensitive: u32,
+    pub regex: u32,
+    /// Its comparison: the step and the fields, low and (for Between) high.
+    pub step: u32,
+    pub low: Text,
+    pub high: Text,
+    /// The checklist: its search, whether its head is ticked, and how many
+    /// values wheelhouse_table_menu_value reads; listed once the source
+    /// answered, partial when cut at the limit, narrowed by the other
+    /// columns' filters.
+    pub search: Text,
+    pub head_ticked: u32,
+    pub value_count: usize,
+    pub listed: u32,
+    pub partial: u32,
+    pub narrowed: u32,
+    /// The column has a condition, which wheelhouse_table_menu_clear removes.
+    pub filtered: u32,
+}
+
+/// One of the checklist's values, as of the last wheelhouse_table_menu.
+#[repr(C)]
+pub struct WheelhouseTableMenuValue {
+    /// Its text, or "(Blanks)" for the blank (blank 1).
+    pub label: Text,
+    pub blank: u32,
+    pub has_count: u32,
+    pub count: u64,
+    pub ticked: u32,
+    /// A Text condition rejects it: it can't be ticked.
+    pub excluded: u32,
+}
+
+/// One of the rows' conditions as the filter bar's chip shows it, as of the
+/// last wheelhouse_table_chips: its text (`label: text`), its state (a
+/// binnacle BINNACLE_CONDITION_APPLIED, ADDING, REMOVING or NOT_APPLIED) and
+/// the column it is read in.
+#[repr(C)]
+pub struct WheelhouseTableChip {
+    pub text: Text,
+    pub state: u32,
+    pub key: u64,
+}
+
+/// The table and its Grid, for the menu's calls.
+unsafe fn table_and_grid<'a>(table: *mut WheelhouseTable) -> Option<(&'a mut WheelhouseTable, &'a mut binnacle_core::Grid)> {
+    // SAFETY: the caller's contract.
+    let t = unsafe { table.as_mut() }?;
+    // SAFETY: the handle owns its Grid until wheelhouse_table_free.
+    let grid = unsafe { &mut *t.grid }.grid_mut();
+    Some((t, grid))
+}
+
+/// Opens the column menu on the column with key, if the column takes a
+/// condition the menu writes (1), closing any other; 0 otherwise.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_menu_open(table: *mut WheelhouseTable, key: u64) -> u32 {
+    // SAFETY: the caller's contract.
+    let Some((t, grid)) = (unsafe { table_and_grid(table) }) else {
+        return 0;
+    };
+    t.table.open_menu(grid, Key(key)).into()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_menu_close(table: *mut WheelhouseTable) {
+    // SAFETY: the caller's contract.
+    if let Some(t) = unsafe { table.as_mut() } {
+        t.table.close_menu();
+    }
+}
+
+/// What the open column menu shows, its values listed again first if its
+/// search or the other columns' filters changed.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_menu(table: *mut WheelhouseTable) -> WheelhouseTableMenu {
+    let mut out = WheelhouseTableMenu {
+        open: 0,
+        key: 0,
+        takes_text: 0,
+        text_regex: 0,
+        one_of: 0,
+        compared: WHEELHOUSE_TABLE_COMPARE_NONE,
+        text: Text::borrowed(""),
+        not: 0,
+        case_sensitive: 0,
+        regex: 0,
+        step: 0,
+        low: Text::borrowed(""),
+        high: Text::borrowed(""),
+        search: Text::borrowed(""),
+        head_ticked: 0,
+        value_count: 0,
+        listed: 0,
+        partial: 0,
+        narrowed: 0,
+        filtered: 0,
+    };
+    // SAFETY: the caller's contract.
+    let Some((t, grid)) = (unsafe { table_and_grid(table) }) else {
+        return out;
+    };
+    t.menu = t.table.menu_view(grid);
+    let Some(view) = &t.menu else {
+        return out;
+    };
+    out.open = 1;
+    out.key = view.key.0;
+    out.takes_text = view.text.is_some().into();
+    out.text_regex = view.text.is_some_and(|t| t.regex).into();
+    out.one_of = view.one_of.into();
+    out.compared = match view.compared {
+        Some(Compared::Numbers) => WHEELHOUSE_TABLE_COMPARE_NUMBERS,
+        Some(Compared::Dates) => WHEELHOUSE_TABLE_COMPARE_DATES,
+        _ => WHEELHOUSE_TABLE_COMPARE_NONE,
+    };
+    out.text = Text::borrowed(&view.query.text);
+    out.not = view.not.into();
+    out.case_sensitive = view.query.case_sensitive.into();
+    out.regex = view.query.regex.into();
+    out.step = view.step as u32;
+    out.low = Text::borrowed(&view.low);
+    out.high = Text::borrowed(&view.high);
+    out.search = Text::borrowed(&view.search);
+    out.head_ticked = view.head_ticked.into();
+    out.value_count = view.values.len();
+    out.listed = view.listed.into();
+    out.partial = view.partial.into();
+    out.narrowed = view.narrowed.into();
+    out.filtered = view.filtered.into();
+    out
+}
+
+/// The checklist's value index, as of the last wheelhouse_table_menu; all
+/// zero past the count.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_menu_value(table: *mut WheelhouseTable, index: usize) -> WheelhouseTableMenuValue {
+    let none = WheelhouseTableMenuValue { label: Text::borrowed(""), blank: 0, has_count: 0, count: 0, ticked: 0, excluded: 0 };
+    // SAFETY: the caller's contract.
+    let Some(v) = unsafe { table.as_ref() }.and_then(|t| t.menu.as_ref()?.values.get(index)) else {
+        return none;
+    };
+    WheelhouseTableMenuValue {
+        label: Text::borrowed(&v.label),
+        blank: v.blank.into(),
+        has_count: v.count.is_some().into(),
+        count: v.count.unwrap_or(0),
+        ticked: v.ticked.into(),
+        excluded: v.excluded.into(),
+    }
+}
+
+/// Searches the checklist's values for search, ignoring case.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_menu_search(table: *mut WheelhouseTable, search: Text) {
+    // SAFETY: the caller's contract.
+    let (Some(t), Ok(search)) = (unsafe { table.as_mut() }, unsafe { search.read() }) else {
+        return;
+    };
+    t.table.menu_search(&search);
+}
+
+/// Ticks the checklist's row (0 its head, then each value by its index plus
+/// one) if it is not, else unticks it, writing the conditions binnacle's
+/// list-of-values rules give.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_menu_tick(table: *mut WheelhouseTable, row: usize) {
+    // SAFETY: the caller's contract.
+    if let Some((t, grid)) = unsafe { table_and_grid(table) } {
+        t.table.menu_tick(grid, row);
+    }
+}
+
+/// Asks for the column's Text condition: text contained (or, with not, not
+/// contained), matching case and as a regex as asked; none for no text.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_menu_set_text(
+    table: *mut WheelhouseTable,
+    text: Text,
+    not: u32,
+    case_sensitive: u32,
+    regex: u32,
+) {
+    // SAFETY: the caller's contract.
+    let (Some((t, grid)), Ok(text)) = (unsafe { table_and_grid(table) }, unsafe { text.read() }) else {
+        return;
+    };
+    let query = TextQuery::new(text).case_sensitive(case_sensitive != 0).regex(regex != 0);
+    t.table.menu_set_text(grid, query, not != 0);
+}
+
+/// Asks for the column's comparison: step (a WHEELHOUSE_TABLE_COMPARE_STEPS
+/// index, 0 for none) with low and, for Between, high, each a number or a
+/// YYYY-MM-DD date as the column compares; none while a field holds no
+/// such value.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_menu_set_compare(table: *mut WheelhouseTable, step: u32, low: Text, high: Text) {
+    // SAFETY: the caller's contract.
+    let (Some((t, grid)), Ok(low), Ok(high)) = (unsafe { table_and_grid(table) }, unsafe { low.read() }, unsafe { high.read() }) else {
+        return;
+    };
+    t.table.menu_set_compare(grid, step as usize, &low, &high);
+}
+
+/// Removes every condition on the open menu's column.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_menu_clear(table: *mut WheelhouseTable) {
+    // SAFETY: the caller's contract.
+    if let Some((t, grid)) = unsafe { table_and_grid(table) } {
+        t.table.menu_clear(grid);
+    }
+}
+
+/// The comparison row's step index: "Any value", "Equal to" through "At
+/// least", or "Between"; empty past WHEELHOUSE_TABLE_COMPARE_STEPS.
+#[no_mangle]
+pub extern "C" fn wheelhouse_table_compare_step(index: u32) -> Text {
+    Text::borrowed(compare::STEPS.get(index as usize).copied().unwrap_or(""))
+}
+
+/// Reads the rows' conditions as the filter bar's chips show them, for
+/// wheelhouse_table_chip, and returns how many there are.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_chips(table: *mut WheelhouseTable) -> usize {
+    // SAFETY: the caller's contract.
+    let Some((t, grid)) = (unsafe { table_and_grid(table) }) else {
+        return 0;
+    };
+    t.chips = t.table.chips(grid);
+    t.chips.len()
+}
+
+/// Chip index as of the last wheelhouse_table_chips; all zero past the
+/// count.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_chip(table: *mut WheelhouseTable, index: usize) -> WheelhouseTableChip {
+    // SAFETY: the caller's contract.
+    let Some(c) = unsafe { table.as_ref() }.and_then(|t| t.chips.get(index)) else {
+        return WheelhouseTableChip { text: Text::borrowed(""), state: 0, key: 0 };
+    };
+    let state = match c.state {
+        ConditionState::Applied => 0,
+        ConditionState::Adding => 1,
+        ConditionState::Removing => 2,
+        _ => 3,
+    };
+    WheelhouseTableChip { text: Text::borrowed(&c.text), state, key: c.key.0 }
+}
+
+/// Removes the condition chip index shows (as the Grid lists them now),
+/// unless it is already being removed.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_remove_chip(table: *mut WheelhouseTable, index: usize) {
+    // SAFETY: the caller's contract.
+    if let Some((t, grid)) = unsafe { table_and_grid(table) } {
+        t.table.remove_chip(grid, index);
     }
 }
 

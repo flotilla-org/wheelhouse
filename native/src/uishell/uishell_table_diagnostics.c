@@ -74,6 +74,18 @@ uishell_table_diag_keyed(UI_Box *box, String8 string)
   return 0;
 }
 
+// The box built from string this frame, keyed under one of its ancestors;
+// nil if none was.
+internal UI_Box *
+uishell_table_diag_box(String8 string)
+{
+  for(UI_Box *box = ui_state->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, ui_state->root).next)
+  {
+    if(box->last_touched_build_index+1 >= ui_state->build_index && uishell_table_diag_keyed(box, string)) { return box; }
+  }
+  return &ui_nil_box;
+}
+
 // Frame cost of a table: 2000 frames of fill, Snapshot and a one-row scroll.
 internal F64
 uishell_table_diag_bench(String8 name, F32 line, F32 digit)
@@ -900,6 +912,130 @@ uishell_table_diagnostics(RD_WindowState *ws)
           }
           TableCheck(widest > 6.f && d->snap.axes[BINNACLE_COLS].header == widest, "a double-click on the row numbers' edge fits their labels");
         }
+      }
+      rd_fixture_remove(view);
+    }
+    // Column menu (#577): a column that takes conditions has a caret at its
+    // header's end, the ids none; the caret, or Alt+Down on the focused
+    // column, opens the column's menu. Unticking a value in its checklist
+    // writes `not OneOf` and a chip names it; the text row asks for a Text
+    // condition; comparisons write once their field holds a value; the
+    // chip's × and Clear remove conditions, and Escape closes the menu.
+    {
+      CFG_Node *view = rd_fixture_view(panel, str8_lit("table"), str8_lit("records"), 1);
+      RD_ViewAddress address = rd_view_address_from_cfg(view);
+      UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = address, .view = address)
+      {
+        UI_Event none = {0};
+        Vec2F32 away = v2f32(450, 300);
+        UI_Box *part = &ui_nil_box, *grid_box = &ui_nil_box;
+#define MenuFrames(n, at) for(U32 frame_ = 0; frame_ < (n); frame_ += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, (at), UIShell_TableDiagBar_Thumb, &part); }
+#define MenuEvent(e, at) do { UI_Event e_ = (e); uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, e_, (at), UIShell_TableDiagBar_Thumb, &part); } while(0)
+#define MenuClick(string) do { UI_Box *b_ = uishell_table_diag_box(str8_lit(string)); TableCheck(!ui_box_is_nil(b_), "the menu shows " string); \
+          if(!ui_box_is_nil(b_)) { Vec2F32 at_ = center_2f32(b_->rect); MenuFrames(1, at_); \
+          MenuEvent(((UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = at_}), at_); \
+          MenuEvent(((UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at_}), at_); MenuFrames(2, away); } } while(0)
+#define MenuType(text) do { MenuEvent(((UI_Event){.kind = UI_EventKind_Text, .string = str8_lit(text)}), away); MenuFrames(2, away); } while(0)
+        MenuFrames(3, away);
+        UIShell_TableState *state = (UIShell_TableState *)rd_view_state_from_view(address, 0)->user_data;
+        U64 all = state->rows_count;
+        TableCheck(!ui_box_is_nil(uishell_table_diag_box(str8_lit("###table_caret_4"))), "a column that takes conditions has a caret");
+        TableCheck(ui_box_is_nil(uishell_table_diag_box(str8_lit("###table_caret_0"))), "the ids, which take none, have no caret");
+        // The port column's caret opens its menu: the checklist's head,
+        // then its values with counts, blanks first.
+        MenuClick("###table_caret_4");
+        TableCheck(state->menu_open && state->menu_key == 4 && ui_ctx_menu_is_open(uishell_table_menu_key(state)), "the caret opens its column's menu");
+        WheelhouseTableMenu m = wheelhouse_table_menu(state->table);
+        TableCheck(m.open && m.one_of && m.takes_text && m.listed && m.head_ticked && m.value_count > 2, "the menu lists the column's values, all ticked");
+        TableCheck(str8_match(uishell_table_text(wheelhouse_table_menu_value(state->table, 0).label), str8_lit("(Blanks)"), 0), "the blanks come first");
+        size_t bergen = 0;
+        U64 bergens = 0;
+        for(size_t i = 0; i < m.value_count; i += 1)
+        {
+          WheelhouseTableMenuValue v = wheelhouse_table_menu_value(state->table, i);
+          if(str8_match(uishell_table_text(v.label), str8_lit("Bergen"), 0)) { bergen = i; bergens = v.count; }
+        }
+        TableCheck(bergens > 0, "Bergen is listed with its count");
+        // Unticking Bergen leaves the other rows, under a chip.
+        {
+          String8 row = push_str8f(scratch.arena, "###menu_value_%I64u", (U64)(bergen + 1));
+          UI_Box *b = uishell_table_diag_box(row);
+          TableCheck(!ui_box_is_nil(b), "Bergen's row is shown");
+          if(!ui_box_is_nil(b))
+          {
+            Vec2F32 at = center_2f32(b->rect);
+            MenuFrames(1, at);
+            MenuEvent(((UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = at}), at);
+            MenuEvent(((UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at}), at);
+            MenuFrames(3, away);
+          }
+        }
+        TableCheck(state->rows_count == all - bergens, "unticking a value leaves the rows without it");
+        TableCheck(wheelhouse_table_chips(state->table) == 1 &&
+                   str8_match(uishell_table_text(wheelhouse_table_chip(state->table, 0).text), str8_lit("port: not Bergen"), 0),
+                   "a chip names the condition");
+        TableCheck(state->menu_open, "the menu stays open while its rows are used");
+        // The text row: typed text asks for a Text condition.
+        MenuClick("###menu_text");
+        MenuType("en");
+        TableCheck(wheelhouse_table_chips(state->table) == 2 &&
+                   str8_match(uishell_table_text(wheelhouse_table_chip(state->table, 1).text), str8_lit("port: en"), 0),
+                   "typing in the text row asks for a Text condition");
+        // The first chip's × removes its condition (the click, outside the
+        // menu, closes it); the other chip opens its column's menu, showing
+        // the text still asked for.
+        MenuClick("###table_chip_x_0");
+        TableCheck(wheelhouse_table_chips(state->table) == 1 &&
+                   str8_match(uishell_table_text(wheelhouse_table_chip(state->table, 0).text), str8_lit("port: en"), 0),
+                   "a chip's × removes its condition");
+        MenuClick("###table_chip_0");
+        TableCheck(state->menu_open && state->menu_key == 4 &&
+                   str8_match(uishell_table_field_text(&state->menu_text), str8_lit("en"), 0),
+                   "a chip opens its column's menu, showing what is asked for");
+        // Clear removes the column's conditions.
+        MenuClick("###menu_clear");
+        TableCheck(wheelhouse_table_chips(state->table) == 0 && state->rows_count == all && state->menu_text.size == 0,
+                   "Clear removes the column's conditions");
+        // Escape closes the menu.
+        MenuEvent(((UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Esc, .slot = UI_EventActionSlot_Cancel}), away);
+        MenuFrames(2, away);
+        TableCheck(!state->menu_open, "Escape closes the menu");
+        // Alt+Down opens the focused column's menu: the weight's, which
+        // compares numbers; a comparison is asked for once its field holds
+        // a number.
+        UIShell_TableDraw *d = (UIShell_TableDraw *)grid_box->custom_draw_user_data;
+        BinnacleAxisSnapshot *cols = &d->snap.axes[BINNACLE_COLS], *rows = &d->snap.axes[BINNACLE_ROWS];
+        for(size_t c = 0; c < cols->strip_len; c += 1)
+        {
+          if(cols->strip[c].key != 2) { continue; }
+          Vec2F32 cell = v2f32(grid_box->rect.x0 + cols->strip[c].offset + cols->strip[c].size/2,
+                               grid_box->rect.y0 + rows->strip[3].offset + rows->strip[3].size/2);
+          MenuEvent(((UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = cell, .timestamp_us = now_time_us()}), cell);
+          MenuEvent(((UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = cell}), cell);
+          MenuFrames(2, away);
+        }
+        TableCheck(state->focus_col_has && state->focus_col_key == 2, "a cell click focuses its column");
+        MenuEvent(((UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_Down, .modifiers = WM_Modifier_Alt}), away);
+        MenuFrames(2, away);
+        TableCheck(state->menu_open && state->menu_key == 2, "Alt+Down opens the focused column's menu");
+        m = wheelhouse_table_menu(state->table);
+        TableCheck(m.compared == WHEELHOUSE_TABLE_COMPARE_NUMBERS, "the weight compares numbers");
+        MenuClick("###menu_step_5");
+        TableCheck(wheelhouse_table_chips(state->table) == 0 && state->menu_step == 5, "a comparison without a value asks for nothing");
+        MenuClick("###menu_low");
+        MenuType("500");
+        TableCheck(wheelhouse_table_chips(state->table) == 1 &&
+                   str8_match(uishell_table_text(wheelhouse_table_chip(state->table, 0).text), str8_lit("weight: > 500"), 0) &&
+                   state->rows_count > 0 && state->rows_count < all,
+                   "a number in the comparison's field asks for the comparison");
+        MenuType("x");
+        TableCheck(wheelhouse_table_chips(state->table) == 0 && state->menu_step == 5 &&
+                   str8_match(uishell_table_field_text(&state->menu_low), str8_lit("500x"), 0),
+                   "a field that holds no number drops the comparison and keeps what is typed");
+#undef MenuFrames
+#undef MenuEvent
+#undef MenuClick
+#undef MenuType
       }
       rd_fixture_remove(view);
     }
