@@ -308,8 +308,12 @@ State that belongs to one frontend on one device: absolute geometry (window size
 _Avoid_: Workspace, layout (ambiguous), project
 
 **View Spec**:
-The logical definition of a **View**: the content it shows and, optionally, a preferred presentation. The content is either a provider facet, meaning an entity such as a role, convoy or artifact together with which aspect of it to show, or a local recipe such as a command and working directory, a file, a URL or a Jackstay launcher. Each frontend picks a renderer it supports for the content.
+The logical definition of a **View**: the content it shows and, optionally, a preferred presentation. The content is either a provider **Facet**, meaning an entity such as an agent, convoy or artifact together with which Facet of it to show, or a local recipe such as a command and working directory, a file, a URL or a Jackstay launcher. Each frontend picks a renderer it supports for the content.
 _Avoid_: View kind, view settings, tab
+
+**Facet**:
+One way an entity can be shown, named by the entity's provider: an agent's terminal, conversation (watch-only or two-way) or page, or a change request's review or checks. A **View Spec** names the entity and a Facet; switching Facet changes what the **Slot** shows without changing its address.
+_Avoid_: Form (A2UI forms are surfaces inside a conversation), aspect, mode, face
 
 **Renderer**:
 A frontend's way of drawing one or more kinds of **View Spec** content, such as Wheelhouse's terminal view or a Cleat pane in the TUI. Each frontend has one list of its Renderers; control views such as sidebar sections are Renderers too.
@@ -346,6 +350,22 @@ _Avoid_: Presenter, theme, skin
 **Interrupt**:
 Something a run needs from outside before it can continue, such as an approval or an answer. The run ends waiting for it, and a new run resumes from it.
 _Avoid_: Pause, prompt, interrupted
+
+**Agent View**:
+A **View** of one agent session, the stable agent that outlives any one process. It shows one **Facet** of the agent at a time, switched in place, and its **View Dock** holds the agent's state and sources whichever Facet shows. Another Facet can also be opened as a **Slot** of its own.
+_Avoid_: Chat view, agent tab, terminal (a terminal is one Facet)
+
+**Producer**:
+A program that serves an agent's conversation, state and input to watchers, for one harness or agent loop. An orchestrator may run it as the agent's channel, or a person may run it by hand; watchers never depend on which.
+_Avoid_: Bridge, adapter (Flotilla's word for the per-harness definition), server
+
+**Composer**:
+Where a person writes input to an agent in an **Agent View**. It offers only the **Agent Commands** its **Producer** advertises and sends plain text, which the harness interprets.
+_Avoid_: Input box, prompt field
+
+**Agent Command**:
+An entry in a **Producer**'s list of what the **Composer** may offer, such as a slash command, skill or subagent, with the text it inserts.
+_Avoid_: Slash command (one kind), action (Wheelhouse's own actions stay off it)
 
 **Embedded View**:
 A **View** laid out inline inside another View's content, such as a table **Block** in **Rich Text** or a text View in a table cell. It resolves through the same **Handlers** by media type, and its state is part of its parent's, never a separate **Slot**.

@@ -3,11 +3,11 @@
 //! expected generation, and neither invalidates the sidebar's snapshot.
 //! Portable Target Resolutions (#158) are saved per slot in the record.
 mod common;
-use common::{entity, list, set, text, worker, Feed, CONFIG, WORKER};
+use common::{entity, list, set, text, update, worker, Feed, CONFIG, WORKER};
 use std::collections::BTreeMap;
 use wheelhouse_core::managed::{ContentState, Resolved, SlotPlan, TerminalContent};
 use wheelhouse_core::sidebar::{Action, HostEffect, Workspace};
-use wheelhouse_core::slots::{ArrangementDoc, Panel, PanelNode};
+use wheelhouse_core::slots::{flag, ArrangementDoc, Panel, PanelNode};
 use wheelhouse_core::suggested_layout::{Axis, CommandLine, Content, LocalRecipe, RebindPolicy, ViewSpec};
 use wheelhouse_core::target_resolution::PortableResolution;
 use wheelhouse_core::versioned::CommitError;
@@ -689,4 +689,84 @@ workspace kind="vessel" {
     let moved = sidebar.plan_slot(worker(), "t:files", &applied.id).unwrap();
     assert_eq!(moved.state, ContentState::Updating);
     assert_eq!(moved.update.unwrap().resolution.recipe, LocalRecipe::File { path: "/src/w".into() });
+}
+
+/// An agent's Facets are its own layout's slots: a terminal and a
+/// conversation, each ready.
+fn agent_facets() -> MetadataPatch {
+    let facts = [
+        ("layout.version", text("1")),
+        ("layout.slots", list(&["terminal", "conversation"])),
+        ("layout.slot.terminal.state", text("ready")),
+        ("layout.slot.terminal.target", text("a#1")),
+        ("layout.slot.terminal.kind", text("command")),
+        ("layout.slot.terminal.command", text("attach a")),
+        ("layout.slot.conversation.state", text("ready")),
+        ("layout.slot.conversation.target", text("a#1")),
+        ("layout.slot.conversation.kind", text("agent-session")),
+        ("layout.slot.conversation.endpoint", text("/run/a.sock")),
+        ("layout.slot.conversation.thread", text("t1")),
+    ];
+    patch(entity("agent", "a"), &facts, &[])
+}
+
+/// The subject's slot `a`: agent a's conversation, resolved by the subject.
+fn agent_slot() -> MetadataPatch {
+    let facts = vec![
+        ("layout.slot.a.entity".to_owned(), MetadataValue::EntityRefs(vec![entity("agent", "a")])),
+        ("layout.slot.a.facet".to_owned(), text("conversation")),
+        ("layout.slot.a.state".to_owned(), text("ready")),
+        ("layout.slot.a.target".to_owned(), text("a#1")),
+        ("layout.slot.a.kind".to_owned(), text("agent-session")),
+        ("layout.slot.a.endpoint".to_owned(), text("/run/a.sock")),
+        ("layout.slot.a.thread".to_owned(), text("t1")),
+    ];
+    layout("1", vec![facts], &["a"])
+}
+
+/// Apply the slot's pending resolution; returns its recipe and identity.
+fn apply(sidebar: &mut Sidebar, key: &str, applied: &str) -> (LocalRecipe, String) {
+    let plan = sidebar.plan_slot(worker(), key, applied).unwrap();
+    assert_eq!(plan.state, ContentState::Updating);
+    let update = plan.update.unwrap();
+    assert!(sidebar.managed.complete_slot(worker(), key, update.token, true));
+    (update.resolution.recipe, update.id)
+}
+
+#[test]
+fn a_slot_switches_facet_in_place_and_keeps_following_its_provider() {
+    let mut sidebar = session(agent_slot());
+    sidebar.feed(150, [agent_facets()]);
+    let facets = |sidebar: &Sidebar| -> Vec<_> {
+        sidebar.slot_facets(worker(), "a").unwrap().into_iter().map(|f| (f.name, f.ready, f.current)).collect()
+    };
+    assert_eq!(facets(&sidebar), [("terminal".to_owned(), true, false), ("conversation".to_owned(), true, true)]);
+    let (recipe, applied) = apply(&mut sidebar, "a", "");
+    assert!(matches!(recipe, LocalRecipe::AgentSession { .. }));
+
+    // Switching is a facet edit: the slot stays attached, and resolves from
+    // the agent's own terminal slot.
+    assert!(sidebar.set_slot_facet(worker(), "a", "terminal").unwrap());
+    let slot = sidebar.slots(worker()).unwrap().remove(0);
+    assert!(!slot.detached);
+    assert_eq!(slot.flags, flag::FACET);
+    assert!(matches!(&slot.spec.content, Content::ProviderFacet { facet, .. } if facet == "terminal"));
+    assert_eq!(facets(&sidebar)[0], ("terminal".to_owned(), true, true));
+    let (recipe, terminal) = apply(&mut sidebar, "a", &applied);
+    assert!(matches!(recipe, LocalRecipe::Command { .. }));
+
+    // The edit outlives a new baseline that keeps the provider's facet.
+    let mut next = agent_slot();
+    next.set.insert("layout.version".into(), update(text("2")));
+    sidebar.feed(200, [next]);
+    assert_eq!(sidebar.slots(worker()).unwrap()[0].flags, flag::FACET);
+    assert_eq!(sidebar.plan_slot(worker(), "a", &terminal).unwrap().state, ContentState::Current);
+
+    // Choosing the provider's facet drops the edit.
+    assert!(sidebar.set_slot_facet(worker(), "a", "conversation").unwrap());
+    assert_eq!(sidebar.slots(worker()).unwrap()[0].flags, 0);
+    let (recipe, _) = apply(&mut sidebar, "a", &terminal);
+    assert!(matches!(recipe, LocalRecipe::AgentSession { .. }));
+    assert!(!sidebar.set_slot_facet(worker(), "a", "conversation").unwrap());
+    assert!(sidebar.set_slot_facet(worker(), "a", "Not A Key").is_err());
 }

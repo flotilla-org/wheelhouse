@@ -67,6 +67,9 @@ pub mod flag {
     pub const REMOVED: u32 = 1 << 2;
     /// The user changed the slot's rebind policy. This does not detach it.
     pub const REBIND: u32 = 1 << 3;
+    /// The slot shows another Facet of its entity than the provider's. This
+    /// does not detach it: it resolves from that entity's own layout slot.
+    pub const FACET: u32 = 1 << 4;
 }
 
 /// The user's edit of one provider slot, keyed by slot key in
@@ -78,11 +81,14 @@ pub struct SlotEdit {
     pub content: Option<ContentEdit>,
     /// A rebind policy other than the baseline's.
     pub rebind: Option<RebindPolicy>,
+    /// A Facet of the baseline's entity other than the baseline's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facet: Option<String>,
 }
 
 impl SlotEdit {
     pub fn is_empty(&self) -> bool {
-        self.content.is_none() && self.rebind.is_none()
+        self.content.is_none() && self.rebind.is_none() && self.facet.is_none()
     }
 
     fn overridden(&self) -> Option<&ViewSpec> {
@@ -167,6 +173,10 @@ impl WorkspaceSlots {
             let rebind_edit = edit.and_then(|edit| edit.rebind);
             let mut flags = if rebind_edit.is_some() { flag::REBIND } else { 0 };
             let mut spec = slot.spec.clone();
+            if let (Some(chosen), Content::ProviderFacet { facet, .. }) = (edit.and_then(|edit| edit.facet.as_ref()), &mut spec.content) {
+                flags |= flag::FACET;
+                facet.clone_from(chosen);
+            }
             if let Some(content) = edit.and_then(|edit| edit.content.as_ref()) {
                 let changed = content.against != slot.spec;
                 if changed {
@@ -176,7 +186,7 @@ impl WorkspaceSlots {
                     ContentChange::Tombstone if !changed => continue,
                     ContentChange::Tombstone => {}
                     ContentChange::Override(user) => {
-                        flags |= flag::DETACHED;
+                        flags = (flags | flag::DETACHED) & !flag::FACET;
                         spec = user.clone();
                     }
                 }
@@ -272,10 +282,12 @@ impl WorkspaceSlots {
             });
         }
         if let Some(baseline) = self.baseline.as_ref().and_then(|b| b.slot(key)).cloned() {
+            let facet = self.edits.get(key).and_then(|edit| edit.facet.clone());
             let edit = SlotEdit {
                 content: (spec != baseline.spec)
                     .then(|| ContentEdit { change: ContentChange::Override(spec), against: baseline.spec.clone() }),
                 rebind: (rebind != baseline.rebind).then_some(rebind),
+                facet,
             };
             return Ok(self.put(key, edit));
         }
@@ -290,7 +302,8 @@ impl WorkspaceSlots {
         else {
             return Err(format!("no slot {key:?}: add the user's own slots with keys \"{USER_PREFIX}<id>\""));
         };
-        let edit = SlotEdit { content: Some(ContentEdit { change: ContentChange::Override(spec), against }), rebind: Some(rebind) };
+        let edit =
+            SlotEdit { content: Some(ContentEdit { change: ContentChange::Override(spec), against }), rebind: Some(rebind), facet: None };
         Ok(self.put(key, edit))
     }
 
@@ -306,7 +319,11 @@ impl WorkspaceSlots {
             return Ok(true);
         }
         if let Some(baseline) = self.baseline.as_ref().and_then(|b| b.slot(key)).cloned() {
-            let edit = SlotEdit { content: Some(ContentEdit { change: ContentChange::Tombstone, against: baseline.spec }), rebind: None };
+            let edit = SlotEdit {
+                content: Some(ContentEdit { change: ContentChange::Tombstone, against: baseline.spec }),
+                rebind: None,
+                facet: None,
+            };
             return Ok(self.put(key, edit));
         }
         Ok(self.edits.remove(key).is_some())
@@ -325,6 +342,29 @@ impl WorkspaceSlots {
             return false;
         }
         self.put(key, edit)
+    }
+
+    /// Show another Facet of a slot's entity. A baseline slot that follows
+    /// its provider records it as a facet edit, which doesn't detach it, and
+    /// choosing the provider's own Facet drops the edit; any other slot's
+    /// spec changes. Returns whether anything changed.
+    pub fn set_facet(&mut self, key: &str, facet: &str) -> Result<bool, String> {
+        check_key(facet).map_err(|_| format!("invalid facet {facet:?}"))?;
+        let slot = self.slot(key).ok_or_else(|| format!("no slot {key:?}"))?;
+        let Content::ProviderFacet { entity, .. } = &slot.spec.content else {
+            return Err(format!("slot {key:?} shows no entity's Facet"));
+        };
+        if slot.in_baseline && !slot.detached {
+            let baseline = self.baseline.as_ref().and_then(|b| b.slot(key)).expect("a baseline slot");
+            let mut edit = self.edits.get(key).cloned().unwrap_or_default();
+            edit.facet = match &baseline.spec.content {
+                Content::ProviderFacet { facet: provider, .. } if provider == facet => None,
+                _ => Some(facet.to_owned()),
+            };
+            return Ok(self.put(key, edit));
+        }
+        let spec = ViewSpec { content: Content::ProviderFacet { entity: entity.clone(), facet: facet.to_owned() }, ..slot.spec };
+        self.set(key, spec, slot.rebind)
     }
 
     /// Adopt a new baseline, applying the baseline-change rules (ADR 0013):
@@ -365,6 +405,9 @@ impl WorkspaceSlots {
             }
             if edit.rebind == Some(slot.rebind) {
                 edit.rebind = None;
+            }
+            if matches!(&slot.spec.content, Content::ProviderFacet { facet, .. } if edit.facet.as_ref() == Some(facet)) {
+                edit.facet = None;
             }
         }
         let keep: Vec<String> = self

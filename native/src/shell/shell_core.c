@@ -1638,14 +1638,6 @@ rd_view_node_is_live(CFG_Node *view)
 internal void
 rd_view_state_release(RD_ViewState *vs)
 {
-  if(vs->release_user_data) { vs->release_user_data(vs->user_data); }
-  ev_view_release(vs->ev_view);
-  if(vs->held_cmd_arena) { arena_release(vs->held_cmd_arena); }
-  for(RD_ArenaExt *ext = vs->first_arena_ext; ext != 0; ext = ext->next)
-  {
-    arena_release(ext->arena);
-  }
-  arena_release(vs->arena);
   U64 hash = u64_djb2_hash_from_str8(str8_struct(&vs->view));
   RD_ViewStateSlot *slot = &rd_state->view_state_slots[hash%rd_state->view_state_slots_count];
   DLLRemove_NP(slot->first, slot->last, vs, hash_next, hash_prev);
@@ -1653,7 +1645,28 @@ rd_view_state_release(RD_ViewState *vs)
   {
     rd_state->view_state_last_accessed = &rd_nil_view_state;
   }
-  SLLStackPush_N(rd_state->free_view_state, vs, hash_next);
+  // Its arenas can hold draw data this frame already links (a retained bucket
+  // under dr_sub_bucket shares its batches), so they're freed after submit.
+  SLLStackPush_N(rd_state->released_view_state, vs, hash_next);
+}
+
+internal void
+rd_view_states_free_released(void)
+{
+  for(RD_ViewState *vs = rd_state->released_view_state, *next; vs != 0; vs = next)
+  {
+    next = vs->hash_next;
+    if(vs->release_user_data) { vs->release_user_data(vs->user_data); }
+    ev_view_release(vs->ev_view);
+    if(vs->held_cmd_arena) { arena_release(vs->held_cmd_arena); }
+    for(RD_ArenaExt *ext = vs->first_arena_ext; ext != 0; ext = ext->next)
+    {
+      arena_release(ext->arena);
+    }
+    arena_release(vs->arena);
+    SLLStackPush_N(rd_state->free_view_state, vs, hash_next);
+  }
+  rd_state->released_view_state = 0;
 }
 
 internal void
@@ -1865,6 +1878,13 @@ wh_slot_host_ui(WH_Renderer *renderer, WH_ViewContext *ctx, RD_ViewState *vs)
     return;
   }
   wh_slot_host_replay_cmds(vs);
+  // A View of an entity that has Facets keeps its View Dock whichever Facet
+  // shows, so the dock is the host's margin, not the Renderer's.
+  if(rd_view_setting_from_view(ctx->settings.view, str8_lit("facets")).size)
+  {
+    ctx->rect = rd_view_dock_ui(ctx->settings.view, ctx->rect);
+    ctx->docked = 1;
+  }
   renderer->ui(ctx);
   // An unverified instance gets a thin line over its top edge, drawn over
   // the content rather than beside it: its provider's resolution can come
@@ -4477,9 +4497,16 @@ rd_view_label_from_cfg(CFG_Node *view)
   RD_ViewAddress address = rd_view_address_from_cfg(view);
   CFG_Node *label = cfg_node_child_from_string(rd_view_presentation_from_view(address), str8_lit("label"));
   if(label != &cfg_nil_node) { return label->first->string; }
-  // Else the title its producer reports, live and never saved.
+  // Else the title its producer reports, live and never saved; else the name
+  // of the entity it shows a Facet of, or a conversation's kind, which says
+  // more than a Rich Text View's blank title.
   String8 live = uishell_jackstay_title(address);
-  return live.size ? live : rd_label_from_cfg(view);
+  if(live.size) { return live; }
+  String8 entity = cfg_node_child_from_string(view, str8_lit("entity_label"))->first->string;
+  if(entity.size) { return entity; }
+  String8 own = rd_label_from_cfg(view);
+  if(own.size == 0 && cfg_node_child_from_string(view, str8_lit("agent_endpoint"))->first->string.size) { return str8_lit("Conversation"); }
+  return own;
 }
 
 internal void
@@ -7563,6 +7590,31 @@ rd_view_dock_ui(RD_ViewAddress host, Rng2F32 rect)
                                               "%S###view_dock_toggle_%I64x", rd_icon_kind_text_table[collapsed ? RD_IconKind_LeftCaret : RD_IconKind_RightCaret],
                                               key.u64[0]);
       if(ui_clicked(ui_signal_from_box(box))) { rd_view_setting_set(host, str8_lit("dock_collapsed"), collapsed ? str8_lit("0") : str8_lit("1")); }
+    }
+    // The host's Facets, when its entity has several: below the toggle on the
+    // strip, or beside it at the column's foot. The one shown is marked.
+    String8 facets = rd_view_setting_from_view(host, str8_lit("facets"));
+    String8 shown = rd_view_setting_from_view(host, str8_lit("facet"));
+    String8List names = str8_split(scratch.arena, facets, (U8 *)" ", 1, 0);
+    U64 index = 1;
+    for(String8Node *n = names.first; n && names.node_count > 1; n = n->next, index += 1)
+    {
+      Rng2F32 at = collapsed ? r2f32p(column.x0, column.y0 + strip*index, column.x1, column.y0 + strip*(index+1))
+                             : r2f32p(column.x0 + strip*index, column.y1 - strip, column.x0 + strip*(index+1), column.y1);
+      B32 current = str8_match(n->string, shown, 0);
+      RD_IconKind icon = str8_match(n->string, str8_lit("terminal"), 0) ? RD_IconKind_Machine :
+                         str8_match(n->string, str8_lit("conversation"), 0) ? RD_IconKind_Threads :
+                         str8_match(n->string, str8_lit("page"), 0) ? RD_IconKind_Window : RD_IconKind_Dot;
+      UI_Signal sig = {0};
+      UI_Rect(at) RD_Font(RD_FontSlot_Icons) UI_TextAlignment(UI_TextAlign_Center) UI_FontSize(em*0.8f) UI_TagF(current ? "" : "weak")
+      {
+        UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects|
+                                                (current ? UI_BoxFlag_DrawBorder : 0),
+                                                "%S###view_dock_facet_%I64x_%S", rd_icon_kind_text_table[icon], key.u64[0], n->string);
+        sig = ui_signal_from_box(box);
+      }
+      if(ui_hovering(sig)) UI_Tooltip { ui_label(n->string); }
+      if(ui_clicked(sig) && !current) { uishell_store_switch_facet(rd_cfg_from_view(host), n->string); }
     }
     if(collapsed)
     {
@@ -13995,7 +14047,8 @@ rd_frame(void)
     }
     r_end_frame();
   }
-  
+  rd_view_states_free_released();
+
   //////////////////////////////
   //- rjf: show windows after first frame
   //

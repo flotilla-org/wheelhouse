@@ -39,6 +39,10 @@ Setting a baseline slot's key with other content **overrides** it: the slot
 shows the override's spec and is **detached**, so it no longer follows the
 provider. The override records the baseline spec it was made against. A
 different policy alone is a rebind edit, which doesn't detach the slot.
+Showing another **Facet** of the slot's entity (one of the slots of that
+entity's own Suggested Layout) is a facet edit, which doesn't detach it
+either: the slot then resolves from the entity's layout slot of that name, and
+choosing the provider's own Facet drops the edit.
 Setting the baseline's own spec and policy, or reattaching, drops the
 override. A detached slot the baseline later drops is kept as the user's own
 (reported with `in_baseline` false) until the host removes it. Removing a

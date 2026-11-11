@@ -95,6 +95,14 @@ the recipe fields (`kind` and its companions) together with `state` and
 **local recipe**: the recipe fields are its spec, and the frontend resolves
 it. One without the other is an error.
 
+An entity's **Facets** are the slots of its own Suggested Layout, named by
+their keys: an agent might publish `terminal` (`cleat-session`),
+`conversation` (`agent-session`) and `page` (`url`). A slot showing a Facet of
+an entity that publishes a layout can switch to any of them in place
+([Slots and arrangements](slots-and-arrangements.md)); the frontend offers
+them in the View's View Dock, and names the View by the entity's
+`display.label`.
+
 Unknown slot fields and unknown `layout.*` facts are ignored, so producers can
 add fields ahead of readers. Unknown presentation values are carried through;
 a frontend that cannot render one shows a placeholder naming the content, and

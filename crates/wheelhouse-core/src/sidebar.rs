@@ -24,7 +24,7 @@ use crate::{
     slots::{ArrangementCommit, ArrangementDoc, ArrangementView, Baseline, OverlayView, Resolve, SlotInfo},
     state::{ControllerState, ControllerTab, EntityActivation, RevisionEvaluation},
     stream::{self, SidebarDelta, SubscriptionId, UnknownSubscription},
-    suggested_layout::{PrimarySlot, RebindPolicy, ViewSpec},
+    suggested_layout::{Content, Facet, PrimarySlot, RebindPolicy, SlotResolution, ViewSpec},
     target_resolution::{PortableResolution, SavedResolution},
     template_config::{parse_template_config_kdl, TemplateConfigCatalog},
     versioned::{Clock, CommitError, Versioned},
@@ -1217,6 +1217,43 @@ impl Sidebar {
     /// places it. A facet's entity names its provider.
     pub fn set_slot(&mut self, workspace: WorkspaceId, key: &str, spec: ViewSpec, rebind: RebindPolicy) -> Result<bool, String> {
         self.with_workspace(workspace, |record, clock, _, planner| record.set_slot(clock, key, spec, rebind, planner))
+    }
+
+    /// Show another Facet of the entity a slot shows (see
+    /// [`WorkspaceSlots::set_facet`](crate::slots::WorkspaceSlots::set_facet)):
+    /// a baseline slot keeps following its provider.
+    pub fn set_slot_facet(&mut self, workspace: WorkspaceId, key: &str, facet: &str) -> Result<bool, String> {
+        self.with_workspace(workspace, |record, clock, _, _| record.set_slot_facet(clock, key, facet))
+    }
+
+    /// The Facets of the entity a slot shows, in its provider's order: the
+    /// slots of that entity's own Suggested Layout. Empty for a local slot,
+    /// or an entity that publishes no layout.
+    pub fn slot_facets(&self, workspace: WorkspaceId, key: &str) -> Result<Vec<Facet>, String> {
+        let slot = self.workspace(workspace)?.slot(key)?;
+        let Content::ProviderFacet { entity, facet: shown } = &slot.spec.content else {
+            return Ok(Vec::new());
+        };
+        let Ok(Some(layout)) = self.state.suggested_layout(entity, self.state.primary_slot(entity)) else {
+            return Ok(Vec::new());
+        };
+        Ok(layout
+            .slots
+            .into_iter()
+            .map(|slot| Facet {
+                current: slot.key == *shown,
+                ready: matches!(slot.resolution, SlotResolution::Ready { .. }),
+                name: slot.key,
+            })
+            .collect())
+    }
+
+    /// The name of the entity a slot shows a Facet of (its `display.label`).
+    pub fn slot_label(&self, workspace: WorkspaceId, key: &str) -> Result<Option<String>, String> {
+        Ok(match self.workspace(workspace)?.slot(key)?.spec.content {
+            Content::ProviderFacet { entity, .. } => self.state.subject_label(&entity),
+            Content::Local(_) => None,
+        })
     }
 
     /// Remove a slot: the user's own slot or a detached slot its baseline

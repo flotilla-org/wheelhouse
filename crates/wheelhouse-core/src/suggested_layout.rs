@@ -205,6 +205,17 @@ pub enum RebindPolicy {
     Ask,
 }
 
+/// One way an entity can be shown: a slot of its own Suggested Layout,
+/// named by its key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Facet {
+    pub name: String,
+    /// The provider publishes a recipe for it now.
+    pub ready: bool,
+    /// The slot it was listed for shows it.
+    pub current: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SlotResolution {
     /// What a frontend runs now. `target` identifies the backing instance and

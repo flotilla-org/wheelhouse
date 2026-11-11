@@ -71,6 +71,9 @@ struct UIShell_SlotNotice
 
 internal U64 uishell_store_notices(Arena *arena, CFG_Node *view, UIShell_SlotNotice *out, U64 cap);
 internal void uishell_store_act(CFG_Node *view, UIShell_SlotAction action);
+// Shows another Facet of the entity `view`'s Slot shows (its `facets`
+// setting lists them); the View keeps its address and its View Dock.
+internal void uishell_store_switch_facet(CFG_Node *view, String8 facet);
 // The first notice's word, for the tab's title; empty for none.
 internal String8 uishell_slot_badge(Arena *arena, CFG_Node *view);
 // Builds a one-line banner for `view`'s first notice at the top of `rect`,

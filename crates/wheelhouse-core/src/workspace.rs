@@ -16,7 +16,7 @@ use crate::{
     records,
     records::SubjectRecord,
     slots::{
-        Arrangement, ArrangementCommit, ArrangementDoc, ArrangementView, Baseline, OverlayView, Resolve, SlotInfo, StoredArrangement,
+        flag, Arrangement, ArrangementCommit, ArrangementDoc, ArrangementView, Baseline, OverlayView, Resolve, SlotInfo, StoredArrangement,
         WorkspaceSlots,
     },
     suggested_layout::{Content, RebindPolicy, ViewSpec},
@@ -135,11 +135,13 @@ impl WorkspaceRecord {
     }
 
     /// Where a slot's resolution comes from: a baseline slot that follows
-    /// its provider resolves from the subject's layout; any other slot from
-    /// its spec, as a local recipe or a provider facet (`facet` of the
-    /// entity's own layout, `primary` for the `workspace.primary.*` facts).
+    /// its provider, showing the provider's Facet, resolves from the
+    /// subject's layout; any other slot from its spec, as a local recipe or
+    /// a provider facet (`facet` of the entity's own layout, `primary` for
+    /// the `workspace.primary.*` facts).
     pub fn slot_source(&self, slot: &SlotInfo) -> SlotSource {
-        match (self.subject(), slot.in_baseline && !slot.detached, &slot.spec.content) {
+        let follows = slot.in_baseline && !slot.detached && slot.flags & flag::FACET == 0;
+        match (self.subject(), follows, &slot.spec.content) {
             (Some(subject), true, _) => SlotSource::Provider { entity: subject.clone(), slot: slot.key.clone() },
             (_, _, Content::ProviderFacet { entity, facet }) => SlotSource::Provider { entity: entity.clone(), slot: facet.clone() },
             (_, _, Content::Local(recipe)) => SlotSource::Local(recipe.clone()),
@@ -226,6 +228,16 @@ impl WorkspaceRecord {
         if self.slots.get().hidden() != before.hidden() {
             self.follow_unowned(clock, planner);
         }
+        self.forget_resolution_if_edited(clock, key, &before);
+        Ok(changed)
+    }
+
+    /// Show another Facet of a slot's entity (see
+    /// [`WorkspaceSlots::set_facet`]). The slot loses its saved resolution,
+    /// which was another Facet's. Returns whether anything changed.
+    pub fn set_slot_facet(&mut self, clock: &mut Clock, key: &str, facet: &str) -> Result<bool, String> {
+        let before = self.slots.get().clone();
+        let changed = self.slots.edit(clock, |slots| slots.set_facet(key, facet))?;
         self.forget_resolution_if_edited(clock, key, &before);
         Ok(changed)
     }

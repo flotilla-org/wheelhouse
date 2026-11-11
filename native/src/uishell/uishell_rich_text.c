@@ -6339,8 +6339,9 @@ WH_VIEW_UI_FUNCTION_DEF(rich_text)
     uishell_rt_error(&error);
   }
 
-  // A conversation keeps a View Dock at its right (rd_view_dock_ui).
-  if(s->conversation) { ctx->rect = rd_view_dock_ui(ctx->settings.view, ctx->rect); }
+  // A conversation keeps a View Dock at its right (rd_view_dock_ui), unless
+  // its Slot Host gave it one.
+  if(s->conversation && !ctx->docked) { ctx->rect = rd_view_dock_ui(ctx->settings.view, ctx->rect); }
   Vec2F32 dim = dim_2f32(ctx->rect);
   UI_Box *root = &ui_nil_box;
   UI_FixedWidth(dim.x) UI_FixedHeight(dim.y) UI_ChildLayoutAxis(Axis2_Y)

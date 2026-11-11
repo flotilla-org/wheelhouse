@@ -765,6 +765,10 @@ typedef struct BinnacleGrid BinnacleGrid;
 // The user changed the slot's rebind policy.
 #define WHEELHOUSE_SLOT_FLAG_REBIND 8
 
+// The slot shows another Facet of its entity than the provider's; it still
+// follows the provider.
+#define WHEELHOUSE_SLOT_FLAG_FACET 16
+
 // Content is unavailable: missing or expired facts suspend updates; they
 // never delete the current content.
 #define WHEELHOUSE_CONTENT_UNAVAILABLE 0
@@ -1961,6 +1965,23 @@ typedef struct {
   const WheelhouseSlot *slots;
   size_t slot_count;
 } WheelhouseSlots;
+
+typedef struct {
+  WheelhouseText name;
+  // The provider publishes a recipe for it now.
+  uint32_t ready;
+  // The slot shows it.
+  uint32_t current;
+} WheelhouseFacet;
+
+// The Facets of the entity a slot shows, in its provider's order: the slots
+// of that entity's own Suggested Layout. Empty for a local slot.
+typedef struct {
+  const WheelhouseFacet *facets;
+  size_t facet_count;
+  // The entity's name (its display.label); empty when it has none.
+  WheelhouseText label;
+} WheelhouseFacets;
 
 // A slot's plan. While UPDATING, token, resolution (an opaque identity:
 // record it and pass it back as applied), target (the backing instance,
@@ -3503,6 +3524,23 @@ uint32_t wheelhouse_slot_reattach(WheelhouseCore *h,
                                   WheelhouseWorkspaceId workspace,
                                   WheelhouseText key,
                                   char **error_out);
+
+// Show another Facet of the entity a slot shows (a key from
+// wheelhouse_slot_facets). A baseline slot keeps following its provider,
+// and choosing the provider's own Facet drops the edit.
+uint32_t wheelhouse_slot_set_facet(WheelhouseCore *h,
+                                   WheelhouseWorkspaceId workspace,
+                                   WheelhouseText key,
+                                   WheelhouseText facet,
+                                   char **error_out);
+
+// A slot's Facets. Free them with wheelhouse_slot_facets_free.
+WheelhouseFacets *wheelhouse_slot_facets(WheelhouseCore *h,
+                                         WheelhouseWorkspaceId workspace,
+                                         WheelhouseText key,
+                                         char **error_out);
+
+void wheelhouse_slot_facets_free(WheelhouseFacets *facets);
 
 // Plan a slot, given the identity of the resolution the host applied to it
 // (empty for none): prepare the runtime instance without touching the
