@@ -73,6 +73,8 @@ enum
   "@optional @display_name('Thread') @description(\"A conversation's subagent thread to show alone.\") 'thread': string," \
   "@optional @display_name('Agent Endpoint') @description(\"The socket of the producer whose thread this watches.\") 'agent_endpoint': string," \
   "@optional @display_name('Agent Thread') @description(\"The thread watched at the agent endpoint.\") 'agent_thread': string," \
+  "@optional @display_name('Agent Transport') @description(\"How the agent endpoint is reached: local, or ssh to the agent host.\") 'agent_transport': string," \
+  "@optional @display_name('Agent Host') @description(\"The ssh destination of a remote agent endpoint.\") 'agent_host': string," \
   "@optional @display_name('Container Styles') @description(\"How Containers present: document or chat; by default chat for a conversation.\") 'container_styles': string," \
   "@no_callee_helper @no_revert @default(0) @display_name('Transient') @description(\"Controls whether or not this tab will be automatically replaced.\") 'auto': bool," \
   "}"

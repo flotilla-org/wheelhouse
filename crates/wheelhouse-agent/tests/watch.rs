@@ -5,7 +5,7 @@
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,7 +21,7 @@ use rigging_http_wire::Encoding;
 use serde::Deserialize;
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, watch};
-use wheelhouse_agent::{Connection, Endpoint, PostStatus, Update, Watch, MOST_PENDING};
+use wheelhouse_agent::{Connection, Endpoint, PostStatus, Route, Update, Watch, MOST_PENDING};
 
 const THREAD: &str = "t1";
 
@@ -227,7 +227,7 @@ fn a_watcher_joins_at_the_newest_page_and_follows_in_either_encoding() {
         let mut producer = Producer::new(30, 5);
         Arc::get_mut(&mut producer).unwrap().json_only = json_only;
         let socket = serve(&format!("join-{json_only}"), producer.clone());
-        let endpoint = Endpoint::open(&socket).unwrap();
+        let endpoint = Endpoint::open(&Route::Local(socket)).unwrap();
         let mut watcher = Watcher::open(&endpoint, THREAD);
         watcher.until("snapshot", has_seq(30));
         let snapshot = watcher.hellos()[0].snapshot.clone().unwrap();
@@ -245,7 +245,7 @@ fn a_dropped_stream_resumes_after_its_last_seq_without_repeats() {
     let mut producer = Producer::new(10, 10);
     Arc::get_mut(&mut producer).unwrap().overlap = true;
     let socket = serve("resume", producer.clone());
-    let endpoint = Endpoint::open(&socket).unwrap();
+    let endpoint = Endpoint::open(&Route::Local(socket)).unwrap();
     let mut watcher = Watcher::open(&endpoint, THREAD);
     watcher.until("snapshot", has_seq(10));
     producer.drop_streams();
@@ -261,7 +261,7 @@ fn a_dropped_stream_resumes_after_its_last_seq_without_repeats() {
 fn a_resume_from_an_evicted_seq_starts_over_with_a_snapshot() {
     let producer = Producer::new(10, 4);
     let socket = serve("evicted", producer.clone());
-    let endpoint = Endpoint::open(&socket).unwrap();
+    let endpoint = Endpoint::open(&Route::Local(socket)).unwrap();
     let mut watcher = Watcher::open(&endpoint, THREAD);
     watcher.until("snapshot", has_seq(10));
     for seq in 11..=20 {
@@ -280,7 +280,7 @@ fn a_resume_from_an_evicted_seq_starts_over_with_a_snapshot() {
 fn older_items_come_back_a_page_at_a_time() {
     let producer = Producer::new(30, 5);
     let socket = serve("older", producer);
-    let endpoint = Endpoint::open(&socket).unwrap();
+    let endpoint = Endpoint::open(&Route::Local(socket)).unwrap();
     let mut watcher = Watcher::open(&endpoint, THREAD);
     watcher.until("snapshot", has_seq(30));
     watcher.watch.older(26, 10, Duration::ZERO);
@@ -294,7 +294,7 @@ fn older_items_come_back_a_page_at_a_time() {
 fn a_thread_the_producer_does_not_have_fails_for_good() {
     let producer = Producer::new(3, 3);
     let socket = serve("missing", producer.clone());
-    let endpoint = Endpoint::open(&socket).unwrap();
+    let endpoint = Endpoint::open(&Route::Local(socket)).unwrap();
     let mut watcher = Watcher::open(&endpoint, "t2");
     watcher.until("failure", |seen| seen.iter().any(|u| matches!(u, Update::Connection(Connection::Failed(_)))));
     assert_eq!(watcher.seen, [Update::Connection(Connection::Failed("no thread t2".into()))]);
@@ -305,7 +305,7 @@ fn a_stream_with_no_hello_fails_for_good() {
     let mut producer = Producer::new(3, 3);
     Arc::get_mut(&mut producer).unwrap().no_hello = true;
     let socket = serve("no-hello", producer.clone());
-    let endpoint = Endpoint::open(&socket).unwrap();
+    let endpoint = Endpoint::open(&Route::Local(socket)).unwrap();
     let mut watcher = Watcher::open(&endpoint, THREAD);
     watcher.until("failure", |seen| seen.iter().any(|u| matches!(u, Update::Connection(Connection::Failed(_)))));
     assert_eq!(watcher.seen, [Update::Connection(Connection::Failed("TextMessageContent before the hello".into()))]);
@@ -315,7 +315,7 @@ fn a_stream_with_no_hello_fails_for_good() {
 fn a_host_that_stops_taking_catches_up_from_a_snapshot() {
     let producer = Producer::new(10, 10);
     let socket = serve("behind", producer.clone());
-    let endpoint = Endpoint::open(&socket).unwrap();
+    let endpoint = Endpoint::open(&Route::Local(socket)).unwrap();
     let mut watcher = Watcher::open(&endpoint, THREAD);
     watcher.until("snapshot", has_seq(10));
     // More than the watch holds, sent while the host doesn't look.
@@ -343,7 +343,7 @@ fn a_snapshot_larger_than_the_watch_holds_reaches_a_slow_host() {
     let last = 3 * MOST_PENDING as u64;
     let producer = Producer::new(last, last as usize);
     let socket = serve("large", producer.clone());
-    let endpoint = Endpoint::open(&socket).unwrap();
+    let endpoint = Endpoint::open(&Route::Local(socket)).unwrap();
     let mut watcher = Watcher::open(&endpoint, THREAD);
     // A host that takes in batches, slower than the snapshot comes but well
     // within the time a watch gives it.
@@ -361,7 +361,7 @@ fn a_snapshot_larger_than_the_watch_holds_reaches_a_slow_host() {
 fn a_producer_that_is_not_there_yet_is_retried() {
     let dir = std::env::temp_dir().join(format!("wh-agent-absent-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let endpoint = Endpoint::open(&dir.join("nobody.sock")).unwrap();
+    let endpoint = Endpoint::open(&Route::Local(dir.join("nobody.sock"))).unwrap();
     let mut watcher = Watcher::open(&endpoint, THREAD);
     watcher.until("two retries", |seen| seen.iter().filter(|u| matches!(u, Update::Connection(Connection::Retrying { .. }))).count() >= 2);
 }
@@ -369,7 +369,7 @@ fn a_producer_that_is_not_there_yet_is_retried() {
 #[test]
 fn a_post_is_accepted_or_fails_with_the_producers_reason() {
     let socket = serve("post", Producer::new(0, 0));
-    let endpoint = Endpoint::open(&socket).unwrap();
+    let endpoint = Endpoint::open(&Route::Local(socket)).unwrap();
     let settle = |body: &str| {
         let post = endpoint.post("/threads/t1/run", body.as_bytes().to_vec());
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -384,13 +384,152 @@ fn a_post_is_accepted_or_fails_with_the_producers_reason() {
 
 #[test]
 fn watches_and_posts_of_one_endpoint_share_it_while_it_is_in_use() {
-    let socket = serve("shared", Producer::new(3, 3));
-    let first = Endpoint::shared(&socket).unwrap();
-    let second = Endpoint::shared(&socket).unwrap();
+    let local = Route::Local(serve("shared", Producer::new(3, 3)));
+    let first = Endpoint::shared(&local).unwrap();
+    let second = Endpoint::shared(&local).unwrap();
     assert!(first.same(&second));
     let mut watcher = Watcher::open(&second, THREAD);
     drop((first, second));
     // The watch keeps it: a third use gets the same one.
-    assert!(Endpoint::shared(&socket).unwrap().same(&watcher.watch_endpoint()));
+    assert!(Endpoint::shared(&local).unwrap().same(&watcher.watch_endpoint()));
     watcher.until("snapshot", has_seq(3));
+}
+
+/// The ssh forwards go through: a script on `WHEELHOUSE_SSH` that logs
+/// each start under its host, fails as an unresolvable host would for one
+/// named `unreachable-*`, and otherwise runs [`fake_ssh`].
+fn fake_ssh_dir() -> &'static std::path::Path {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("wh-agent-fake-ssh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let script = dir.join("ssh");
+        let body = format!(
+            r#"#!/bin/sh
+for host; do :; done
+echo $$ >> "{dir}/$host.started"
+case "$host" in
+  unreachable-*) echo "ssh: Could not resolve hostname $host: Name or service not known" >&2; exit 255;;
+esac
+FAKE_SSH_ARGS=$(printf '%s\n' "$@") exec "{exe}" --exact fake_ssh --nocapture --test-threads=1
+"#,
+            dir = dir.display(),
+            exe = exe.display()
+        );
+        std::fs::write(&script, body).unwrap();
+        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        std::env::set_var("WHEELHOUSE_SSH", &script);
+        dir
+    })
+}
+
+/// Stands in for ssh at the process boundary when the script runs it, as a
+/// test does nothing: it serves `-L <local>:<remote>` as OpenSSH does,
+/// saying why when the remote socket refuses.
+#[test]
+fn fake_ssh() {
+    let Ok(args) = std::env::var("FAKE_SSH_ARGS") else { return };
+    let args: Vec<&str> = args.lines().collect();
+    for needed in ["-N", "ExitOnForwardFailure=yes", "BatchMode=yes", "--"] {
+        if !args.contains(&needed) {
+            eprintln!("fake ssh: no {needed} in {args:?}");
+            std::process::exit(255);
+        }
+    }
+    let forward = args.iter().position(|a| *a == "-L").and_then(|i| args.get(i + 1)).unwrap();
+    let (local, remote) = forward.split_once(':').unwrap();
+    let listener = std::os::unix::net::UnixListener::bind(local).unwrap();
+    for (n, client) in listener.incoming().enumerate() {
+        let client = client.unwrap();
+        match std::os::unix::net::UnixStream::connect(remote) {
+            Err(error) => eprintln!("channel {n}: open failed: connect failed: {error}"),
+            Ok(producer) => {
+                for (mut from, mut to) in [(client.try_clone().unwrap(), producer.try_clone().unwrap()), (producer, client)] {
+                    thread::spawn(move || {
+                        let _ = std::io::copy(&mut from, &mut to);
+                        let _ = to.shutdown(std::net::Shutdown::Write);
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// The fake ssh processes started for `host`, oldest first.
+fn started(host: &str) -> Vec<String> {
+    std::fs::read_to_string(fake_ssh_dir().join(format!("{host}.started"))).unwrap_or_default().lines().map(str::to_owned).collect()
+}
+
+fn signal(pid: &str, signal: &str) -> bool {
+    std::process::Command::new("kill").args([signal, pid]).status().unwrap().success()
+}
+
+fn settle(post: wheelhouse_agent::Post) -> PostStatus {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while post.status() == PostStatus::Sending && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    post.status()
+}
+
+fn retrying_with(text: &'static str) -> impl Fn(&[Update]) -> bool {
+    move |seen| seen.iter().any(|u| matches!(u, Update::Connection(Connection::Retrying { why, .. }) if why.contains(text)))
+}
+
+// One forward serves every watch and post of a producer over ssh (#737); a
+// forward that dies is started again under the watch's retry, which
+// resumes, and the last user's going ends it.
+#[test]
+fn watches_and_posts_over_ssh_share_one_forward_that_is_restarted_and_ends_with_them() {
+    fake_ssh_dir();
+    let producer = Producer::new(10, 10);
+    let socket = serve("ssh", producer.clone());
+    let route = Route::Ssh { host: "feta".into(), socket: socket.to_str().unwrap().into() };
+    let endpoint = Endpoint::shared(&route).unwrap();
+    assert!(Endpoint::shared(&route).unwrap().same(&endpoint));
+    let mut watcher = Watcher::open(&endpoint, THREAD);
+    watcher.until("snapshot", has_seq(10));
+    producer.emit(11);
+    watcher.until("a live event", has_seq(11));
+    assert_eq!(settle(endpoint.post("/threads/t1/run", br#"{"messages":[]}"#.to_vec())), PostStatus::Accepted);
+    assert_eq!(started("feta").len(), 1, "one forward for the watch and the post");
+
+    assert!(signal(&started("feta")[0], "-KILL"));
+    watcher.until("a retry", |seen| seen.iter().any(|u| matches!(u, Update::Connection(Connection::Retrying { .. }))));
+    producer.emit(12);
+    watcher.until("the event after the forward died", has_seq(12));
+    assert_eq!(watcher.seqs(), (1..=12).collect::<Vec<_>>());
+    let ssh = started("feta");
+    assert_eq!(ssh.len(), 2);
+
+    drop((watcher, endpoint));
+    assert!(!signal(&ssh[1], "-0"), "the forward outlived its last user");
+}
+
+// An endpoint that can't be reached says why, in the watch's connection
+// state and a post's failure, and the watch keeps trying (#737).
+#[test]
+fn an_unreachable_producer_over_ssh_shows_why_and_is_retried() {
+    fake_ssh_dir();
+    let route = Route::Ssh { host: "unreachable-host".into(), socket: "/run/producer.sock".into() };
+    let endpoint = Endpoint::open(&route).unwrap();
+    let mut watcher = Watcher::open(&endpoint, THREAD);
+    watcher.until("two retries saying why", |seen| {
+        seen.iter()
+            .filter(|u| matches!(u, Update::Connection(Connection::Retrying { why, .. }) if why.contains("Could not resolve hostname")))
+            .count()
+            >= 2
+    });
+    assert!(started("unreachable-host").len() >= 2, "each retry starts ssh again");
+    let PostStatus::Failed(why) = settle(endpoint.post("/threads/t1/run", b"{}".to_vec())) else { panic!("a post to nowhere") };
+    assert!(why.contains("Could not resolve hostname"), "{why}");
+
+    // ssh connects, but nothing listens at the far socket.
+    let missing = std::env::temp_dir().join(format!("wh-agent-refused-{}.sock", std::process::id()));
+    let route = Route::Ssh { host: "feta-refused".into(), socket: missing.to_str().unwrap().into() };
+    let mut watcher = Watcher::open(&Endpoint::open(&route).unwrap(), THREAD);
+    watcher.until("the refusal", retrying_with("open failed"));
+    assert_eq!(started("feta-refused").len(), 1, "a refused connection leaves the forward up");
 }

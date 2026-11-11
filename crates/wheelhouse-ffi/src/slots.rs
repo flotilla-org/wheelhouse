@@ -21,7 +21,7 @@ pub const WHEELHOUSE_SLOT_FACET: u32 = 4;
 /// "ssh", cleat_host, cleat_runtime_root, cleat_daemon, cleat_session).
 pub const WHEELHOUSE_SLOT_CLEAT_SESSION: u32 = 5;
 /// An agent thread watched over the Agent View protocol (endpoint, a Local
-/// Endpoint's socket, and agent_thread).
+/// Endpoint's socket, agent_thread, and agent_transport and agent_host).
 pub const WHEELHOUSE_SLOT_AGENT_SESSION: u32 = 6;
 
 /// A rebind closes the instance it replaces.
@@ -86,6 +86,10 @@ pub struct ViewSpecView {
     pub cleat_daemon: Text,
     pub cleat_session: Text,
     pub agent_thread: Text,
+    /// WHEELHOUSE_SLOT_AGENT_SESSION: "local" (or empty) or "ssh", and the
+    /// ssh destination, empty when local.
+    pub agent_transport: Text,
+    pub agent_host: Text,
 }
 
 impl ViewSpecView {
@@ -113,6 +117,8 @@ impl ViewSpecView {
             cleat_daemon: Text::borrowed(""),
             cleat_session: Text::borrowed(""),
             agent_thread: Text::borrowed(""),
+            agent_transport: Text::borrowed(""),
+            agent_host: Text::borrowed(""),
         }
     }
 
@@ -141,9 +147,12 @@ impl ViewSpecView {
                     session: self.cleat_session.read()?,
                 })
             }
-            WHEELHOUSE_SLOT_AGENT_SESSION => {
-                Content::Local(LocalRecipe::AgentSession { endpoint: self.endpoint.read()?, thread: self.agent_thread.read()? })
-            }
+            WHEELHOUSE_SLOT_AGENT_SESSION => Content::Local(LocalRecipe::AgentSession {
+                transport: agent_transport(&self.agent_transport.read()?)?,
+                host: self.agent_host.read()?,
+                endpoint: self.endpoint.read()?,
+                thread: self.agent_thread.read()?,
+            }),
             other => return Err(format!("unknown slot content kind {other}")),
         };
         Ok(ViewSpec {
@@ -194,13 +203,24 @@ fn recipe_view(recipe: &LocalRecipe, out: &mut ViewSpecView) -> SpecStorage {
             out.cleat_daemon = Text::borrowed(daemon);
             out.cleat_session = Text::borrowed(session);
         }
-        LocalRecipe::AgentSession { endpoint, thread } => {
+        LocalRecipe::AgentSession { transport, host, endpoint, thread } => {
             out.content = WHEELHOUSE_SLOT_AGENT_SESSION;
+            out.agent_transport = Text::borrowed(transport.as_str());
+            out.agent_host = Text::borrowed(host);
             out.endpoint = Text::borrowed(endpoint);
             out.agent_thread = Text::borrowed(thread);
         }
     }
     storage
+}
+
+/// An agent session's transport as a host passes it: empty is local, as
+/// from a host that predates it (#737).
+pub(crate) fn agent_transport(text: &str) -> Result<CleatTransport, String> {
+    match text {
+        "" => Ok(CleatTransport::Local),
+        text => CleatTransport::parse(text).ok_or_else(|| format!("unknown agent transport {text:?}")),
+    }
 }
 
 fn spec_view(spec: &ViewSpec) -> (ViewSpecView, SpecStorage) {

@@ -26,8 +26,10 @@ struct UIShell_ViewSpec
   // reached (local or ssh), the ssh destination, and the daemon's runtime
   // root and name there (docs/design/remote-terminals.md).
   String8 cleat_transport, cleat_host, cleat_runtime_root, cleat_daemon, cleat_session;
-  // An agent thread (WHEELHOUSE_SLOT_AGENT_SESSION), watched at `endpoint`.
-  String8 agent_thread;
+  // An agent thread (WHEELHOUSE_SLOT_AGENT_SESSION), watched at `endpoint`,
+  // on this machine, or over ssh on `agent_host` when `agent_transport` is
+  // "ssh". A local one's transport and host are empty.
+  String8 agent_thread, agent_transport, agent_host;
 };
 
 // What a Renderer is told about `view`'s Slot: its address, its View Spec

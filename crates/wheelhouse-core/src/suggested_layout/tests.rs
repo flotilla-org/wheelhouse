@@ -524,3 +524,78 @@ fn a_cleat_session_view_spec_round_trips_through_serde() {
     assert!(json.contains(r#""transport":"local""#), "{json}");
     assert_eq!(serde_json::from_str::<ViewSpec>(&json).unwrap(), spec);
 }
+
+fn agent_slot(extra: &[(&'static str, &str)]) -> FactMap {
+    let base = facts([
+        ("layout.version", text("1")),
+        ("layout.slots", list(&["chat"])),
+        ("layout.slot.chat.kind", text("agent-session")),
+        ("layout.slot.chat.endpoint", text("/run/producer.sock")),
+        ("layout.slot.chat.thread", text("t1")),
+    ]);
+    with(base, extra.iter().map(|(key, value)| (*key, text(value))))
+}
+
+fn agent_content(facts: &FactMap) -> Result<LocalRecipe, LayoutError> {
+    parse(&convoy(), facts, PrimarySlot::IfPublished).map(|layout| match &layout.unwrap().slot("chat").unwrap().spec.content {
+        Content::Local(recipe) => recipe.clone(),
+        other => panic!("not local: {other:?}"),
+    })
+}
+
+// A slot with only today's two fields, or a layout saved before #737
+// without `transport` and `host`, is a local session (#737).
+#[test]
+fn an_agent_session_without_a_transport_is_local() {
+    let local = LocalRecipe::AgentSession {
+        transport: CleatTransport::Local,
+        host: String::new(),
+        endpoint: "/run/producer.sock".into(),
+        thread: "t1".into(),
+    };
+    assert_eq!(agent_content(&agent_slot(&[])), Ok(local.clone()));
+    let saved = r#"{"AgentSession":{"endpoint":"/run/producer.sock","thread":"t1"}}"#;
+    assert_eq!(serde_json::from_str::<LocalRecipe>(saved).unwrap(), local);
+    let ssh = [("layout.slot.chat.transport", "ssh"), ("layout.slot.chat.host", "feta")];
+    let LocalRecipe::AgentSession { transport, host, .. } = agent_content(&agent_slot(&ssh)).unwrap() else { panic!("agent session") };
+    assert_eq!((transport, host.as_str()), (CleatTransport::Ssh, "feta"));
+    let mosh = agent_slot(&[("layout.slot.chat.transport", "mosh"), ("layout.slot.chat.host", "feta")]);
+    assert_eq!(agent_content(&mosh), Err(LayoutError::InvalidValue { key: "layout.slot.chat.transport".into(), value: "mosh".into() }));
+}
+
+/// An agent session slot is accepted exactly when ssh could take its
+/// fields (#737): a local one has no host; over ssh the host is one
+/// argument never read as an option, and the endpoint an absolute path `-L`
+/// reads whole. Each field is a usable value with at most one drawn flaw,
+/// so every rule is crossed alone as well as with the others.
+#[hegel::test(test_cases = 400)]
+fn agent_session_fields_are_accepted_only_when_ssh_takes_them_whole(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    let flaws = ["", "empty", "-", " ", "\t", "\n", "\u{7}", ":", "relative"];
+    let flawed = |tc: &hegel::TestCase, good: &str| -> String {
+        let flaw = tc.draw(gs::sampled_from(&flaws[..]));
+        let at = tc.draw(gs::integers::<usize>().max_value(good.len()));
+        match flaw {
+            "" => good.to_owned(),
+            "empty" => String::new(),
+            "-" => format!("-{good}"),
+            "relative" => good.trim_start_matches('/').to_owned(),
+            other => format!("{}{other}{}", &good[..at], &good[at..]),
+        }
+    };
+    let ssh = tc.draw(gs::booleans());
+    let host = if ssh || tc.draw(gs::booleans()) { flawed(&tc, "robert@feta") } else { String::new() };
+    let endpoint = flawed(&tc, "/run/agent/producer.sock");
+    let argument = !host.is_empty() && !host.starts_with('-') && !host.chars().any(|c| c.is_whitespace() || c.is_control());
+    let path = endpoint.starts_with('/') && !endpoint.chars().any(|c| c == ':' || c.is_control());
+    let usable = if ssh { argument && path } else { host.is_empty() && !endpoint.is_empty() };
+    let mut extra = vec![("layout.slot.chat.endpoint", endpoint.as_str())];
+    if ssh {
+        extra.push(("layout.slot.chat.transport", "ssh"));
+    }
+    if !host.is_empty() {
+        extra.push(("layout.slot.chat.host", host.as_str()));
+    }
+    let parsed = agent_content(&agent_slot(&extra));
+    assert_eq!(parsed.is_ok(), usable, "ssh {ssh}, host {host:?}, endpoint {endpoint:?}: {parsed:?}");
+}

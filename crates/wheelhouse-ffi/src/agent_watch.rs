@@ -2,15 +2,17 @@
 //! conversation each frame, older pages asked for as the View nears them.
 use super::*;
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use conversation_events::Event;
-use wheelhouse_agent::{retry_after, Connection, Endpoint, Update, Watch};
+use wheelhouse_agent::{retry_after, Connection, Endpoint, Route, Update, Watch};
+use wheelhouse_core::suggested_layout::{invalid_agent_field, CleatTransport};
 use wheelhouse_rich_text::{RichText, SubscriptionId};
 
 use crate::rich_text::WheelhouseRichText;
+use crate::slots::agent_transport;
 
 /// wheelhouse_agent_watch_pump's flags: the conversation changed.
 pub const WHEELHOUSE_AGENT_CHANGED: u32 = 1;
@@ -58,23 +60,41 @@ impl Handle for WheelhouseAgentWatch {
     }
 }
 
-/// Watches `thread` at the Local Endpoint whose socket is `endpoint`,
+/// Watches `thread` at the Local Endpoint whose socket is `endpoint`, on
+/// this machine (`transport` "local" or empty) or over "ssh" on `host`,
 /// sharing its connection with every other watch and post of it. `wake`
 /// (if not NULL) is called from another thread whenever updates wait.
 /// Free it with wheelhouse_agent_watch_free.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_agent_watch_open(
+    transport: Text,
+    host: Text,
     endpoint: Text,
     thread: Text,
     wake: Option<extern "C" fn()>,
     error_out: *mut *mut c_char,
 ) -> *mut WheelhouseAgentWatch {
     pure(error_out, || {
-        let endpoint = Endpoint::shared(Path::new(&endpoint.read()?)).map_err(|error| error.to_string())?;
-        let watch = endpoint.watch(&thread.read()?, Arc::new(move || wake.map_or((), |wake| wake())));
+        let thread = thread.read()?;
+        let route = route(&transport.read()?, host.read()?, endpoint.read()?, &thread)?;
+        let endpoint = Endpoint::shared(&route).map_err(|error| error.to_string())?;
+        let watch = endpoint.watch(&thread, Arc::new(move || wake.map_or((), |wake| wake())));
         Ok(Box::into_raw(Box::new(WheelhouseAgentWatch { watch, pump: Pump::default(), connection: None, poisoned: false })))
     })
     .unwrap_or(ptr::null_mut())
+}
+
+/// Where a View's agent session is, if a host can reach it: its settings
+/// are the user's to edit, so they are checked as a Suggested Layout's are.
+pub(crate) fn route(transport: &str, host: String, endpoint: String, thread: &str) -> Result<Route, String> {
+    let transport = agent_transport(transport)?;
+    if let Some(field) = invalid_agent_field(transport, &host, &endpoint, thread) {
+        return Err(format!("the agent session's {field} can't be reached over {}", transport.as_str()));
+    }
+    Ok(match transport {
+        CleatTransport::Local => Route::Local(PathBuf::from(endpoint)),
+        CleatTransport::Ssh => Route::Ssh { host, socket: endpoint },
+    })
 }
 
 #[no_mangle]

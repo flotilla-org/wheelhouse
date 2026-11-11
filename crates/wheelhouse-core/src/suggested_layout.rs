@@ -120,18 +120,25 @@ pub enum LocalRecipe {
         session: String,
     },
     /// An agent thread watched over the Agent View protocol (#691): its
-    /// producer's Local Endpoint (a socket on this machine) and the thread,
-    /// whose id is the same wherever it is watched from (#706).
+    /// producer's Local Endpoint (a socket on this machine, or on the ssh
+    /// destination `host`, #737) and the thread, whose id is the same
+    /// wherever it is watched from (#706). `host` is empty when local.
     AgentSession {
+        // Absent in layouts saved before #737, which are all local.
+        #[serde(default)]
+        transport: CleatTransport,
+        #[serde(default)]
+        host: String,
         endpoint: String,
         thread: String,
     },
 }
 
-/// How a frontend reaches a Cleat session's daemon.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// How a frontend reaches a Cleat session's daemon, or an agent's producer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CleatTransport {
+    #[default]
     Local,
     Ssh,
 }
@@ -165,6 +172,21 @@ pub fn invalid_cleat_field(host: &str, runtime_root: &str, daemon: &str, session
         .into_iter()
         .find(|(_, text, spaces)| !word(text, *spaces))
         .map(|(field, ..)| field)
+}
+
+/// The first agent session field a host could not use, if any. Each is
+/// nonempty but a local session's host, which is empty. Over ssh the host is
+/// one argument, as for [`invalid_cleat_field`], and the endpoint an absolute
+/// path without control characters or `:`, which `-L` reads as a separator.
+pub fn invalid_agent_field(transport: CleatTransport, host: &str, endpoint: &str, thread: &str) -> Option<&'static str> {
+    let (host_ok, endpoint_ok) = match transport {
+        CleatTransport::Local => (host.is_empty(), !endpoint.is_empty()),
+        CleatTransport::Ssh => (
+            !host.is_empty() && !host.starts_with('-') && !host.chars().any(|c| c.is_control() || c.is_whitespace()),
+            endpoint.starts_with('/') && !endpoint.chars().any(|c| c.is_control() || c == ':'),
+        ),
+    };
+    [("host", host_ok), ("endpoint", endpoint_ok), ("thread", !thread.is_empty())].into_iter().find(|(_, ok)| !ok).map(|(field, _)| field)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -523,7 +545,23 @@ fn recipe(f: &Facts, key: &str) -> Result<LocalRecipe, LayoutError> {
             }
             LocalRecipe::CleatSession { transport, host, runtime_root, daemon, session }
         }
-        "agent-session" => LocalRecipe::AgentSession { endpoint: required("endpoint")?, thread: required("thread")? },
+        "agent-session" => {
+            let transport = match f.text(&at("transport"))? {
+                None => CleatTransport::Local,
+                Some(text) => CleatTransport::parse(text).ok_or_else(|| invalid(&at("transport"), text))?,
+            };
+            let host = f.text(&at("host"))?.unwrap_or_default().to_owned();
+            let (endpoint, thread) = (required("endpoint")?, required("thread")?);
+            if let Some(field) = invalid_agent_field(transport, &host, &endpoint, &thread) {
+                let value = match field {
+                    "host" => &host,
+                    "thread" => &thread,
+                    _ => &endpoint,
+                };
+                return Err(invalid(&at(field), value));
+            }
+            LocalRecipe::AgentSession { transport, host, endpoint, thread }
+        }
         other => return Err(invalid(&at("kind"), other)),
     })
 }
