@@ -110,12 +110,12 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 [[package]]
 name = "binnacle-core"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=8ac04f6ddd95101f51d6cb915ecfbd8b016578d6#8ac04f6ddd95101f51d6cb915ecfbd8b016578d6"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=963a7e84db30d9a3152fb23935963c55e27c82b2#963a7e84db30d9a3152fb23935963c55e27c82b2"
 
 [[package]]
 name = "binnacle-described"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=8ac04f6ddd95101f51d6cb915ecfbd8b016578d6#8ac04f6ddd95101f51d6cb915ecfbd8b016578d6"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=963a7e84db30d9a3152fb23935963c55e27c82b2#963a7e84db30d9a3152fb23935963c55e27c82b2"
 dependencies = [
  "binnacle-core",
  "binnacle-format",
@@ -130,7 +130,7 @@ dependencies = [
 [[package]]
 name = "binnacle-described-http"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=8ac04f6ddd95101f51d6cb915ecfbd8b016578d6#8ac04f6ddd95101f51d6cb915ecfbd8b016578d6"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=963a7e84db30d9a3152fb23935963c55e27c82b2#963a7e84db30d9a3152fb23935963c55e27c82b2"
 dependencies = [
  "binnacle-described",
  "bytes",
@@ -143,7 +143,7 @@ dependencies = [
 [[package]]
 name = "binnacle-ffi"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=8ac04f6ddd95101f51d6cb915ecfbd8b016578d6#8ac04f6ddd95101f51d6cb915ecfbd8b016578d6"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=963a7e84db30d9a3152fb23935963c55e27c82b2#963a7e84db30d9a3152fb23935963c55e27c82b2"
 dependencies = [
  "binnacle-core",
  "binnacle-described",
@@ -157,7 +157,7 @@ dependencies = [
 [[package]]
 name = "binnacle-format"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=8ac04f6ddd95101f51d6cb915ecfbd8b016578d6#8ac04f6ddd95101f51d6cb915ecfbd8b016578d6"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=963a7e84db30d9a3152fb23935963c55e27c82b2#963a7e84db30d9a3152fb23935963c55e27c82b2"
 dependencies = [
  "serde_json",
  "unicode-segmentation",
@@ -166,7 +166,7 @@ dependencies = [
 [[package]]
 name = "binnacle-group"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=8ac04f6ddd95101f51d6cb915ecfbd8b016578d6#8ac04f6ddd95101f51d6cb915ecfbd8b016578d6"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=963a7e84db30d9a3152fb23935963c55e27c82b2#963a7e84db30d9a3152fb23935963c55e27c82b2"
 dependencies = [
  "binnacle-core",
  "binnacle-memory",
@@ -175,7 +175,7 @@ dependencies = [
 [[package]]
 name = "binnacle-layout"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=8ac04f6ddd95101f51d6cb915ecfbd8b016578d6#8ac04f6ddd95101f51d6cb915ecfbd8b016578d6"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=963a7e84db30d9a3152fb23935963c55e27c82b2#963a7e84db30d9a3152fb23935963c55e27c82b2"
 dependencies = [
  "binnacle-core",
  "ciborium",
@@ -187,7 +187,7 @@ dependencies = [
 [[package]]
 name = "binnacle-memory"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=8ac04f6ddd95101f51d6cb915ecfbd8b016578d6#8ac04f6ddd95101f51d6cb915ecfbd8b016578d6"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=963a7e84db30d9a3152fb23935963c55e27c82b2#963a7e84db30d9a3152fb23935963c55e27c82b2"
 dependencies = [
  "binnacle-core",
  "regex",
@@ -196,7 +196,7 @@ dependencies = [
 [[package]]
 name = "binnacle-testkit"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle.git?rev=8ac04f6ddd95101f51d6cb915ecfbd8b016578d6#8ac04f6ddd95101f51d6cb915ecfbd8b016578d6"
+source = "git+https://github.com/flotilla-org/binnacle.git?rev=963a7e84db30d9a3152fb23935963c55e27c82b2#963a7e84db30d9a3152fb23935963c55e27c82b2"
 dependencies = [
  "binnacle-core",
  "binnacle-described",
@@ -484,7 +484,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1720,7 +1720,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1733,7 +1733,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1789,7 +1789,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2199,7 +2199,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2696,6 +2696,7 @@ version = "0.1.0"
 dependencies = [
  "binnacle-core",
  "binnacle-ffi",
+ "binnacle-memory",
  "conversation-events",
  "hegeltest",
  "serde_json",
@@ -2867,7 +2868,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2993,15 +2994,6 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
-dependencies = [
- "windows-targets",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.59.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets",
 ]

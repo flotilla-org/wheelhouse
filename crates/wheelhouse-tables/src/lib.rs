@@ -6,8 +6,10 @@
 //! cells draw; the Grid over it is the host's, which pumps it each frame.
 
 mod described;
+mod menu;
 
 pub use described::{Link, Wake};
+pub use menu::{Chip, MenuValue, MenuView};
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -234,6 +236,8 @@ pub struct Table {
     find: Find,
     /// The rows' quick filter of the last View Spec asked for.
     quick: Option<TextQuery>,
+    /// The column menu, while open.
+    menu: Option<menu::Menu>,
 }
 
 /// What the host's find bar shows: the Find Query in force, the last
@@ -361,7 +365,7 @@ impl Table {
                 let id = source.support(Axis::Rows, Key(0)).with_text(None).with_one_of(false).with_compare(None);
                 grid.set_support(Axis::Rows, Key(0), id);
                 let kind = Kind::Records { rows, source: Box::new(source) };
-                Some((Table { kind, metrics, find: Find::default(), quick: None }, grid))
+                Some((Table { kind, metrics, find: Find::default(), quick: None, menu: None }, grid))
             }
             "huge" => {
                 let digits = HUGE_ROWS.to_string().len() as f32;
@@ -374,14 +378,14 @@ impl Table {
                     grid.set_support(Axis::Rows, Key(c), none);
                 }
                 let kind = Kind::Huge(Huge { rows: IdentitySource::new(HUGE_ROWS), cols: IdentitySource::new(HUGE_COLS) });
-                Some((Table { kind, metrics, find: Find::default(), quick: None }, grid))
+                Some((Table { kind, metrics, find: Find::default(), quick: None, menu: None }, grid))
             }
             "live" => {
                 let grid = new_grid(
                     AxisConfig::new(TICKERS as u64, line).header(line),
                     AxisConfig::new(TICKER_HEADERS.len() as u64, 12.0 * digit).header(5.0 * digit).gap(1.0),
                 );
-                Some((Table { kind: Kind::Live(Live::new()), metrics, find: Find::default(), quick: None }, grid))
+                Some((Table { kind: Kind::Live(Live::new()), metrics, find: Find::default(), quick: None, menu: None }, grid))
             }
             _ => None,
         }
@@ -417,7 +421,7 @@ impl Table {
             grid.set_support(Axis::Rows, Key(c), source.support(Axis::Rows, Key(c)));
         }
         let kind = Kind::Cells(Cells { header, rows, right, source: Box::new(source) });
-        (Table { kind, metrics, find: Find::default(), quick: None }, grid)
+        (Table { kind, metrics, find: Find::default(), quick: None, menu: None }, grid)
     }
 
     /// The described table at `link` and an empty Grid for it, sized in
@@ -430,7 +434,7 @@ impl Table {
             AxisConfig::new(0, metrics.line).header(metrics.line),
             AxisConfig::new(0, 14.0 * metrics.digit).header(5.0 * metrics.digit).gap(1.0),
         );
-        Some((Table { kind: Kind::Described(Box::new(described)), metrics, find: Find::default(), quick: None }, grid))
+        Some((Table { kind: Kind::Described(Box::new(described)), metrics, find: Find::default(), quick: None, menu: None }, grid))
     }
 
     /// Resizes `grid` for new `metrics`, as when the host's text size

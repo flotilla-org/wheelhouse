@@ -883,6 +883,20 @@ typedef struct BinnacleGrid BinnacleGrid;
 // wheelhouse_table_frame's answer when the table never changes by itself.
 #define WHEELHOUSE_TABLE_NEVER UINT64_MAX
 
+// WheelhouseTableMenu.compared: the column compares no values, numbers, or
+// dates.
+#define WHEELHOUSE_TABLE_COMPARE_NONE 0
+
+#define WHEELHOUSE_TABLE_COMPARE_NUMBERS 1
+
+#define WHEELHOUSE_TABLE_COMPARE_DATES 2
+
+// The comparison row's steps, "Any value" (0, none) through "Between"; see
+// wheelhouse_table_compare_step.
+#define WHEELHOUSE_TABLE_COMPARE_STEPS 8
+
+#define WHEELHOUSE_TABLE_COMPARE_BETWEEN 7
+
 #define WH_TEXT_FAMILY_MAIN 0
 
 #define WH_TEXT_FAMILY_CODE 1
@@ -2174,6 +2188,65 @@ typedef struct {
   uint64_t index;
   uint32_t wrapped;
 } WheelhouseTableFind;
+
+// What a column's menu shows, its texts valid until the next
+// wheelhouse_table_menu on the table. open is 0, and the rest zero, while
+// no menu is open.
+typedef struct {
+  uint32_t open;
+  // The column's Key.
+  uint64_t key;
+  // What it takes: Text conditions (text_regex: with regexes), OneOf (the
+  // checklist) and comparisons (a WHEELHOUSE_TABLE_COMPARE_*).
+  uint32_t takes_text;
+  uint32_t text_regex;
+  uint32_t one_of;
+  uint32_t compared;
+  // Its Text condition: the text (empty for none), "Does not contain"
+  // (not), matching case, a regex.
+  WheelhouseText text;
+  uint32_t not;
+  uint32_t case_sensitive;
+  uint32_t regex;
+  // Its comparison: the step and the fields, low and (for Between) high.
+  uint32_t step;
+  WheelhouseText low;
+  WheelhouseText high;
+  // The checklist: its search, whether its head is ticked, and how many
+  // values wheelhouse_table_menu_value reads; listed once the source
+  // answered, partial when cut at the limit, narrowed by the other
+  // columns' filters.
+  WheelhouseText search;
+  uint32_t head_ticked;
+  size_t value_count;
+  uint32_t listed;
+  uint32_t partial;
+  uint32_t narrowed;
+  // The column has a condition, which wheelhouse_table_menu_clear removes.
+  uint32_t filtered;
+} WheelhouseTableMenu;
+
+// One of the checklist's values, as of the last wheelhouse_table_menu.
+typedef struct {
+  // Its text, or "(Blanks)" for the blank (blank 1).
+  WheelhouseText label;
+  uint32_t blank;
+  uint32_t has_count;
+  uint64_t count;
+  uint32_t ticked;
+  // A Text condition rejects it: it can't be ticked.
+  uint32_t excluded;
+} WheelhouseTableMenuValue;
+
+// One of the rows' conditions as the filter bar's chip shows it, as of the
+// last wheelhouse_table_chips: its text (`label: text`), its state (a
+// binnacle BINNACLE_CONDITION_APPLIED, ADDING, REMOVING or NOT_APPLIED) and
+// the column it is read in.
+typedef struct {
+  WheelhouseText text;
+  uint32_t state;
+  uint64_t key;
+} WheelhouseTableChip;
 
 typedef struct {
   // WH_TEXT_FONT_*.
@@ -3771,6 +3844,64 @@ void wheelhouse_table_find_marks(WheelhouseTable *table,
                                  const uint64_t *cols,
                                  size_t cols_len,
                                  uint8_t *out);
+
+// Opens the column menu on the column with key, if the column takes a
+// condition the menu writes (1), closing any other; 0 otherwise.
+uint32_t wheelhouse_table_menu_open(WheelhouseTable *table, uint64_t key);
+
+void wheelhouse_table_menu_close(WheelhouseTable *table);
+
+// What the open column menu shows, its values listed again first if its
+// search or the other columns' filters changed.
+WheelhouseTableMenu wheelhouse_table_menu(WheelhouseTable *table);
+
+// The checklist's value index, as of the last wheelhouse_table_menu; all
+// zero past the count.
+WheelhouseTableMenuValue wheelhouse_table_menu_value(WheelhouseTable *table, size_t index);
+
+// Searches the checklist's values for search, ignoring case.
+void wheelhouse_table_menu_search(WheelhouseTable *table, WheelhouseText search);
+
+// Ticks the checklist's row (0 its head, then each value by its index plus
+// one) if it is not, else unticks it, writing the conditions binnacle's
+// list-of-values rules give.
+void wheelhouse_table_menu_tick(WheelhouseTable *table, size_t row);
+
+// Asks for the column's Text condition: text contained (or, with not, not
+// contained), matching case and as a regex as asked; none for no text.
+void wheelhouse_table_menu_set_text(WheelhouseTable *table,
+                                    WheelhouseText text,
+                                    uint32_t not,
+                                    uint32_t case_sensitive,
+                                    uint32_t regex);
+
+// Asks for the column's comparison: step (a WHEELHOUSE_TABLE_COMPARE_STEPS
+// index, 0 for none) with low and, for Between, high, each a number or a
+// YYYY-MM-DD date as the column compares; none while a field holds no
+// such value.
+void wheelhouse_table_menu_set_compare(WheelhouseTable *table,
+                                       uint32_t step,
+                                       WheelhouseText low,
+                                       WheelhouseText high);
+
+// Removes every condition on the open menu's column.
+void wheelhouse_table_menu_clear(WheelhouseTable *table);
+
+// The comparison row's step index: "Any value", "Equal to" through "At
+// least", or "Between"; empty past WHEELHOUSE_TABLE_COMPARE_STEPS.
+WheelhouseText wheelhouse_table_compare_step(uint32_t index);
+
+// Reads the rows' conditions as the filter bar's chips show them, for
+// wheelhouse_table_chip, and returns how many there are.
+size_t wheelhouse_table_chips(WheelhouseTable *table);
+
+// Chip index as of the last wheelhouse_table_chips; all zero past the
+// count.
+WheelhouseTableChip wheelhouse_table_chip(WheelhouseTable *table, size_t index);
+
+// Removes the condition chip index shows (as the Grid lists them now),
+// unless it is already being removed.
+void wheelhouse_table_remove_chip(WheelhouseTable *table, size_t index);
 
 void wheelhouse_table_free(WheelhouseTable *table);
 

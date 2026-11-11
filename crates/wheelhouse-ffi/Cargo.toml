@@ -19,6 +19,7 @@ conversation-events.workspace = true
 wheelhouse-rich-text = { workspace = true, features = ["test-support"] }
 wheelhouse-tables.workspace = true
 binnacle-core.workspace = true
+binnacle-memory.workspace = true
 binnacle-ffi.workspace = true
 wheelhouse-text.workspace = true
 serde_json = { version = "1", optional = true }
