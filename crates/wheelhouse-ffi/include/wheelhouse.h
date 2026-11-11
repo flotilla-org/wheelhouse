@@ -883,18 +883,6 @@ typedef struct BinnacleGrid BinnacleGrid;
 // wheelhouse_table_frame's answer when the table never changes by itself.
 #define WHEELHOUSE_TABLE_NEVER UINT64_MAX
 
-// WheelhouseTablePointer.cursor: the arrow.
-#define WHEELHOUSE_TABLE_CURSOR_DEFAULT 0
-
-// Over a column header border, or resizing a column.
-#define WHEELHOUSE_TABLE_CURSOR_RESIZE_COLS 1
-
-// Over a row header border, or resizing a row.
-#define WHEELHOUSE_TABLE_CURSOR_RESIZE_ROWS 2
-
-// Moving headers.
-#define WHEELHOUSE_TABLE_CURSOR_MOVE 3
-
 #define WH_TEXT_FAMILY_MAIN 0
 
 #define WH_TEXT_FAMILY_CODE 1
@@ -2182,19 +2170,6 @@ typedef struct {
   uint64_t index;
   uint32_t wrapped;
 } WheelhouseTableFind;
-
-// The pointer's shape and a resize's guide, which binnacle's C Snapshot
-// leaves out.
-typedef struct {
-  // WHEELHOUSE_TABLE_CURSOR_*.
-  uint32_t cursor;
-  // 1 while a resize is in progress: a line across the viewport at
-  // guide_offset along guide_axis (0 rows, 1 columns), viewport-relative
-  // as Strip offsets are.
-  uint32_t has_guide;
-  uint32_t guide_axis;
-  float guide_offset;
-} WheelhouseTablePointer;
 
 typedef struct {
   // WH_TEXT_FONT_*.
@@ -3772,18 +3747,9 @@ WheelhouseTableFind wheelhouse_table_find(WheelhouseTable *table);
 // (an invalid regex, say), keeping the one before; 1 otherwise.
 uint32_t wheelhouse_table_quick_filter_applied(WheelhouseTable *table);
 
-// The pointer's shape for this frame and a resize's guide line. Call it
-// after binnacle_grid_snapshot, which would otherwise find the damage
-// taken.
-WheelhouseTablePointer wheelhouse_table_pointer(WheelhouseTable *table);
-
 // 1 when the host fits the columns, once, to the first values it shows:
 // the table brings no widths of its own.
 uint32_t wheelhouse_table_fits_columns(WheelhouseTable *table);
-
-// Drops the Size Override of the item with key on axis (0 rows, 1
-// columns): it goes back to the axis's default size.
-void wheelhouse_table_clear_size(WheelhouseTable *table, uint32_t axis, uint64_t key);
 
 // Marks which cells of the block rows by cols (row and column Keys,
 // rows_len and cols_len of them) match the Find Query in force: out, of
