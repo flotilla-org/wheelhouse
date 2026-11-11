@@ -404,6 +404,8 @@ entry_point(CmdLine *cmd_line)
       { rd_state->frame_diagnostic = uishell_text_view_diagnostics; }
       uishell_table_screenshot_path = cmd_line_string(cmd_line, str8_lit("table_screenshot"));
       if(uishell_table_screenshot_path.size != 0) { uishell_table_screenshot_hook = uishell_table_screenshot; }
+      String8 table_menu = cmd_line_string(cmd_line, str8_lit("table_menu"));
+      if(table_menu.size != 0) { uishell_table_screenshot_menu = u64_from_str8(table_menu, 10) + 1; }
       B32 run_scroll_diagnostics = cmd_line_has_flag(cmd_line, str8_lit("scroll_region_diagnostics"));
       if(cmd_line_has_flag(cmd_line, str8_lit("tooltip_diagnostics")))
       { rd_state->frame_diagnostic = uishell_tooltip_and_card_diagnostics; }
@@ -543,7 +545,7 @@ entry_point(CmdLine *cmd_line)
                                     "--table_diagnostics\nCheck the table View over the canned tables, print TABLE_BENCH frame costs, and exit.\n\n"
                                     "--rich_text_diagnostics\nCheck the Rich Text View over synthetic markdown and a conversation, print RICH_TEXT_BENCH layout costs for the 10k-line document and RICH_TEXT_CONVERSATION_BENCH for the 35 MB transcript, and exit.\n\n"
                                     "--text_view_diagnostics\nCheck the text view's token lookup, print TEXT_VIEW_BENCH frame costs scrolling a 10k-line file, and exit.\n\n"
-                                    "--table:<name> --table_screenshot:PATH\nWrite the window to a PPM once the table has painted, and exit (macOS).\n\n"
+                                    "--table:<name> --table_screenshot:PATH [--table_menu:KEY]\nWrite the window to a PPM once the table has painted, and exit (macOS); with --table_menu, the column with that Key has its menu open.\n\n"
                                     "--overview_benchmark:DIR --overview_benchmark_count:1|16|48\nRun isolated macOS overview replay (use tools/benchmark-overview.py).\n\n"
                                     "--no_preview_render_budget\nDisable background provider and workspace render admission limits.\n\n"
                                     "--no_preview_surface_budget\nDisable demand-sized workspace preview surfaces.\n\n"

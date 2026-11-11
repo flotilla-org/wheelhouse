@@ -15,6 +15,40 @@ internal void uishell_rt_cell_text_release(UIShell_RtCellText *ct);
 internal void uishell_rt_table_cell_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, String8 text, B32 right, Vec4F32 color);
 internal F32 uishell_rt_table_cell_width(UIShell_RtCellText *ct, String8 text, B32 right);
 
+// A text field: its text, and its cursor and mark.
+typedef struct UIShell_TableField UIShell_TableField;
+struct UIShell_TableField
+{
+  U8 buffer[256];
+  U64 size;
+  TxtPt cursor;
+  TxtPt mark;
+};
+
+// Which of the column menu's fields has the keys.
+typedef U32 UIShell_TableMenuField;
+enum
+{
+  UIShell_TableMenuField_None,
+  UIShell_TableMenuField_Text,
+  UIShell_TableMenuField_Low,
+  UIShell_TableMenuField_High,
+  UIShell_TableMenuField_Search,
+};
+
+// A column header's caret, as of the last Snapshot: its column's Key, where
+// it is in the Grid, and whether the column is filtered.
+typedef struct UIShell_TableCaret UIShell_TableCaret;
+struct UIShell_TableCaret
+{
+  U64 key;
+  Rng2F32 rect;
+  B32 filtered;
+};
+
+// The conditions a column header's caret opens a menu for.
+#define UISHELL_TABLE_MENU_SUPPORT (BINNACLE_SUPPORT_TEXT|BINNACLE_SUPPORT_ONE_OF|BINNACLE_SUPPORT_COMPARE_NUMBERS|BINNACLE_SUPPORT_COMPARE_DATES)
+
 typedef struct UIShell_TableState UIShell_TableState;
 struct UIShell_TableState
 {
@@ -79,6 +113,36 @@ struct UIShell_TableState
   U64 rows_count;
   B32 rows_has_total;
   U64 rows_total;
+  // The column menu (#577), while open: its column, which field has the
+  // keys, the fields' text, the comparison's step and the text's toggles,
+  // and the checklist's scroll. The conditions it last showed are kept so a
+  // change made elsewhere (a chip's ×) is taken in without undoing what is
+  // being typed.
+  B32 menu_open;
+  U64 menu_key;
+  UIShell_TableMenuField menu_field;
+  UIShell_TableField menu_text;
+  UIShell_TableField menu_low;
+  UIShell_TableField menu_high;
+  UIShell_TableField menu_search;
+  U32 menu_step;
+  B32 menu_not;
+  B32 menu_case;
+  B32 menu_regex;
+  UI_ScrollPt menu_scroll;
+  U64 menu_seen_text;
+  U64 menu_seen_compare;
+  // The menu has been seen open: once it isn't, it was closed.
+  B32 menu_shown;
+  // As of the last Snapshot: the focused column, for Alt+Down, and where a
+  // menu on it hangs in the Grid (under its header, if shown).
+  B32 focus_col_has;
+  U64 focus_col_key;
+  Vec2F32 focus_col_at;
+  // The carets of the column headers shown, as of the last Snapshot: built
+  // before the Grid takes the pointer, so a press on one is the caret's.
+  UIShell_TableCaret carets[64];
+  U32 carets_count;
 };
 
 // A column's starting fit stays within these, in digits, as a cells table's
@@ -93,11 +157,15 @@ global U64 uishell_table_cells_drawn;
 // few frames (uishell_table_diagnostics.c sets it), and the frames painted.
 global B32 (*uishell_table_screenshot_hook)(RD_WindowState *ws);
 global U64 uishell_table_screenshot_frames;
+// --table_menu: the column whose menu the screenshot shows open, its Key
+// plus one (0 for none).
+global U64 uishell_table_screenshot_menu;
 
 internal void
 uishell_table_close(UIShell_TableState *state)
 {
   if(state->table) { wheelhouse_table_free(state->table); state->table = 0; }
+  state->menu_open = 0;
 }
 
 internal void
@@ -159,6 +227,8 @@ struct UIShell_TableDraw
   // Find is open: mark the cells that match, in match.
   B32 finding;
   Vec4F32 match;
+  // The width a column header that opens a menu keeps clear for its caret.
+  F32 caret;
 };
 
 internal Rng2F32
@@ -327,6 +397,8 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
         DR_ClipScope(intersect_2f32(dr_top_clip(), clip)) { dr_rect(rect, lit, 0, 0, 1.f); }
       }
       if(!h->has_key) { continue; }
+      // A column's caret, a box of its own, sits at its header's end.
+      if(axis_idx == BINNACLE_COLS && (h->support & UISHELL_TABLE_MENU_SUPPORT)) { rect.x1 = Max(rect.x0, rect.x1 - d->caret); }
       Temp scratch = scratch_begin(0, 0);
       String8 label = uishell_table_header_label(scratch.arena, d->table, (U32)axis_idx, h);
       B32 pending = !!(h->flags & (BINNACLE_HEADER_PENDING|BINNACLE_HEADER_MOVE_PENDING|BINNACLE_HEADER_FILTER_PENDING));
@@ -365,6 +437,13 @@ internal UI_BOX_CUSTOM_DRAW(uishell_table_draw)
   scratch_end(scratch);
 }
 
+// The width a column header that opens a menu keeps clear for its caret.
+internal F32
+uishell_table_caret_width(void)
+{
+  return ui_top_font_size()*1.4f;
+}
+
 // The width that shows column strip item c's header and the values of the
 // rows in the Strip whole, as the View draws them; *complete is 0 while the
 // column or any of those rows is still to come.
@@ -378,6 +457,7 @@ uishell_table_fit_width(UIShell_TableState *state, BinnacleSnapshot *snap, size_
   Temp scratch = scratch_begin(0, 0);
   String8 label = uishell_table_header_label(scratch.arena, state->table, BINNACLE_COLS, &cols->headers[c]);
   F32 width = uishell_rt_table_cell_width(state->cell_text, label, 0);
+  if(cols->headers[c].support & UISHELL_TABLE_MENU_SUPPORT) { width += uishell_table_caret_width(); }
   for(size_t r = 0; r < rows->strip_len; r += 1)
   {
     BinnacleStripItem *ri = &rows->strip[r];
@@ -698,6 +778,8 @@ uishell_table_row_count(Arena *arena, U64 count, B32 has_total, U64 total)
   return push_str8f(arena, "%S %s", shown, count == 1 ? "row" : "rows");
 }
 
+internal void uishell_table_menu_open(UIShell_TableState *state, U64 key, UI_Key anchor, Vec2F32 off);
+
 // The filter bar (#535), where the rows take a quick filter: its field,
 // matching case, regexes where the source takes them, a clear button while
 // there is text, "Not applied" while the source leaves the filter out, and
@@ -775,8 +857,370 @@ uishell_table_filter_bar(UIShell_TableState *state, F32 width, F32 height)
       }
       ui_spacer(ui_em(0.5f, 1.f));
       if(state->filter_rejected) UI_TagF("bad") { ui_labelf("Not applied"); }
+      // A chip for each of the rows' conditions (#577): its text opens its
+      // column's menu and its × removes it. One being added or removed is
+      // drawn weak, one the source left out bad.
+      size_t chips = wheelhouse_table_chips(state->table);
+      for(size_t i = 0; i < chips; i += 1)
+      {
+        WheelhouseTableChip chip = wheelhouse_table_chip(state->table, i);
+        char *tag = chip.state == BINNACLE_CONDITION_NOT_APPLIED ? "bad" : chip.state == BINNACLE_CONDITION_APPLIED ? "pop" : "weak";
+        UI_TagF(tag)
+        {
+          String8 text = push_str8_copy(scratch.arena, uishell_table_text(chip.text));
+          UI_Signal sig = ui_buttonf("%S###table_chip_%I64u", text, (U64)i);
+          if(ui_hovering(sig)) UI_Tooltip
+          {
+            ui_label(chip.state == BINNACLE_CONDITION_NOT_APPLIED ? str8_lit("Not applied") :
+                     chip.state == BINNACLE_CONDITION_ADDING ? str8_lit("Being applied") :
+                     chip.state == BINNACLE_CONDITION_REMOVING ? str8_lit("Being removed") : str8_lit("Edit this column's filter"));
+          }
+          if(ui_clicked(sig)) { uishell_table_menu_open(state, chip.key, sig.box->key, v2f32(0, dim_2f32(sig.box->rect).y)); }
+          RD_Font(RD_FontSlot_Icons)
+          {
+            UI_Signal x = ui_buttonf("%S###table_chip_x_%I64u", rd_icon_kind_text_table[RD_IconKind_X], (U64)i);
+            if(ui_hovering(x)) UI_Tooltip RD_Font(RD_FontSlot_Main) { ui_labelf("Remove this condition"); }
+            if(ui_clicked(x)) { wheelhouse_table_remove_chip(state->table, i); rd_request_frame(); }
+          }
+        }
+        ui_spacer(ui_em(0.25f, 1.f));
+      }
       UI_TagF("weak") ui_label(uishell_table_row_count(scratch.arena, state->rows_count, state->rows_has_total, state->rows_total));
     }
+  }
+  scratch_end(scratch);
+}
+
+// Puts text in field, cut on a character, with the cursor at its end.
+internal void
+uishell_table_field_set(UIShell_TableField *field, String8 text)
+{
+  field->size = Min(text.size, sizeof(field->buffer));
+  while(field->size < text.size && field->size > 0 && (text.str[field->size] & 0xC0) == 0x80) { field->size -= 1; }
+  MemoryCopy(field->buffer, text.str, field->size);
+  field->cursor = field->mark = txt_pt(1, field->size+1);
+}
+
+internal String8
+uishell_table_field_text(UIShell_TableField *field)
+{
+  return str8(field->buffer, field->size);
+}
+
+internal UI_Key
+uishell_table_menu_key(UIShell_TableState *state)
+{
+  return ui_key_from_stringf(ui_key_zero(), "table_column_menu_%p", state);
+}
+
+// What the column menu last showed of its Text condition and comparison.
+internal U64
+uishell_table_menu_text_hash(WheelhouseTableMenu *m)
+{
+  return u64_hash_from_seed_str8(m->not | m->case_sensitive<<1 | m->regex<<2, uishell_table_text(m->text));
+}
+
+internal U64
+uishell_table_menu_compare_hash(WheelhouseTableMenu *m)
+{
+  return u64_hash_from_seed_str8(u64_hash_from_seed_str8(m->step, uishell_table_text(m->low)), uishell_table_text(m->high));
+}
+
+// Takes the menu's conditions into its rows where they changed since it
+// last showed them (all of them, with force): a change made elsewhere. What
+// the rows asked for is what it last showed, so typing isn't undone, even
+// while a field holds no value the condition can take.
+internal void
+uishell_table_menu_adopt(UIShell_TableState *state, WheelhouseTableMenu *m, B32 force)
+{
+  U64 text_hash = uishell_table_menu_text_hash(m);
+  if(force || text_hash != state->menu_seen_text)
+  {
+    uishell_table_field_set(&state->menu_text, uishell_table_text(m->text));
+    state->menu_not = m->not;
+    state->menu_case = m->case_sensitive;
+    state->menu_regex = m->regex;
+    state->menu_seen_text = text_hash;
+  }
+  U64 compare_hash = uishell_table_menu_compare_hash(m);
+  if(force || compare_hash != state->menu_seen_compare)
+  {
+    state->menu_step = m->step;
+    uishell_table_field_set(&state->menu_low, uishell_table_text(m->low));
+    uishell_table_field_set(&state->menu_high, uishell_table_text(m->high));
+    state->menu_seen_compare = compare_hash;
+  }
+}
+
+// Opens the column menu on the column with key, if it takes conditions,
+// hung from anchor's corner at off.
+internal void
+uishell_table_menu_open(UIShell_TableState *state, U64 key, UI_Key anchor, Vec2F32 off)
+{
+  if(!wheelhouse_table_menu_open(state->table, key)) { return; }
+  state->menu_open = 1;
+  state->menu_shown = 0;
+  state->menu_key = key;
+  state->menu_field = UIShell_TableMenuField_None;
+  uishell_table_field_set(&state->menu_search, str8_zero());
+  state->menu_scroll = ui_scroll_pt(0, 0);
+  WheelhouseTableMenu m = wheelhouse_table_menu(state->table);
+  uishell_table_menu_adopt(state, &m, 1);
+  ui_ctx_menu_open(uishell_table_menu_key(state), anchor, off);
+  rd_request_frame();
+}
+
+internal void
+uishell_table_menu_close(UIShell_TableState *state)
+{
+  if(state->menu_open && state->table) { wheelhouse_table_menu_close(state->table); }
+  state->menu_open = 0;
+  state->menu_field = UIShell_TableMenuField_None;
+}
+
+// One of the menu's fields, edited in place, with a placeholder while
+// empty; a press gives it the keys. 1 when its text changed.
+internal B32
+uishell_table_menu_field(UIShell_TableState *state, UIShell_TableField *field, UIShell_TableMenuField which, String8 placeholder, String8 id)
+{
+  Temp scratch = scratch_begin(0, 0);
+  U64 hash = u64_hash_from_str8(uishell_table_field_text(field));
+  UI_Focus(state->menu_field == which ? UI_FocusKind_On : UI_FocusKind_Off)
+  {
+    RD_CellParams params = {0};
+    params.flags = RD_CellFlag_Border;
+    params.cursor = &field->cursor;
+    params.mark = &field->mark;
+    params.edit_buffer = field->buffer;
+    params.edit_buffer_size = sizeof(field->buffer);
+    params.edit_string_size_out = &field->size;
+    params.pre_edit_value = uishell_table_field_text(field);
+    if(field->size == 0) UI_TagF("weak")
+    {
+      DR_FStrParams fparams = {ui_top_font(), ui_top_text_raster_flags(), ui_color_from_name(str8_lit("text")), ui_top_font_size()};
+      dr_fstrs_push_new(scratch.arena, &params.value_fstrs, &fparams, placeholder);
+    }
+    UI_Signal sig = rd_cellf(&params, "%S", id);
+    if(ui_pressed(sig)) { state->menu_field = which; }
+  }
+  scratch_end(scratch);
+  return u64_hash_from_str8(uishell_table_field_text(field)) != hash;
+}
+
+// The comparison row's steps as its buttons say them; their tooltips say
+// them in full (wheelhouse_table_compare_step).
+read_only global char *uishell_table_compare_marks[WHEELHOUSE_TABLE_COMPARE_STEPS] = {"Any", "=", "≠", "<", "≤", ">", "≥", "Between"};
+
+// The column menu (#577), as binnacle's web menu has it: the column's Text
+// condition ("Contains" or "Does not contain", matching case, regexes where
+// the column takes them), its comparison where it compares numbers or dates,
+// and the checklist of its values with counts, "(Blanks)" first, searched
+// and narrowed by the other columns' filters; then Clear and Close. Each
+// change asks for its conditions at once, written by binnacle's rules.
+internal void
+uishell_table_menu(UIShell_TableState *state)
+{
+  WheelhouseTable *t = state->table;
+  WheelhouseTableMenu m = wheelhouse_table_menu(t);
+  if(!m.open) { uishell_table_menu_close(state); return; }
+  uishell_table_menu_adopt(state, &m, 0);
+  B32 text_changed = 0, compare_changed = 0, changed = 0, close = 0;
+  F32 em = ui_top_font_size();
+  Temp scratch = scratch_begin(0, 0);
+  UI_CtxMenu(uishell_table_menu_key(state)) RD_Font(RD_FontSlot_Main) UI_PrefWidth(ui_em(24, 1)) UI_PrefHeight(ui_em(2, 1))
+  {
+    String8 name = push_str8_copy(scratch.arena, uishell_table_text(wheelhouse_table_header(t, BINNACLE_COLS, m.key, 0)));
+    UI_Row UI_PrefWidth(ui_text_dim(10, 1))
+    {
+      UI_TagF("weak") ui_labelf("Filter");
+      ui_label(name);
+    }
+    if(m.takes_text) UI_Row
+    {
+      UI_PrefWidth(ui_text_dim(10, 1))
+      {
+        UI_Signal sig = ui_buttonf("%s###menu_not", state->menu_not ? "Does not contain" : "Contains");
+        if(ui_hovering(sig)) UI_Tooltip { ui_labelf("Keep the rows that contain the text, or those that don't"); }
+        if(ui_clicked(sig)) { state->menu_not = !state->menu_not; text_changed = 1; }
+      }
+      UI_PrefWidth(ui_pct(1, 0))
+      {
+        String8 placeholder = m.text_regex ? str8_lit("Text or regex") : str8_lit("Text");
+        text_changed |= uishell_table_menu_field(state, &state->menu_text, UIShell_TableMenuField_Text, placeholder, str8_lit("###menu_text"));
+      }
+      UI_PrefWidth(ui_text_dim(10, 1)) UI_Focus(UI_FocusKind_Off)
+      {
+        UI_TagF(state->menu_case ? "pop" : "")
+        {
+          UI_Signal sig = ui_buttonf("Aa###menu_case");
+          if(ui_hovering(sig)) UI_Tooltip { ui_labelf("Match case"); }
+          if(ui_clicked(sig)) { state->menu_case = !state->menu_case; text_changed = 1; }
+        }
+        if(m.text_regex) UI_TagF(state->menu_regex ? "pop" : "")
+        {
+          UI_Signal sig = ui_buttonf(".*###menu_regex");
+          if(ui_hovering(sig)) UI_Tooltip { ui_labelf("Use regular expression"); }
+          if(ui_clicked(sig)) { state->menu_regex = !state->menu_regex; text_changed = 1; }
+        }
+      }
+    }
+    if(m.compared != WHEELHOUSE_TABLE_COMPARE_NONE)
+    {
+      UI_Row UI_PrefWidth(ui_text_dim(10, 1)) UI_Focus(UI_FocusKind_Off)
+      {
+        for(U32 step = 0; step < WHEELHOUSE_TABLE_COMPARE_STEPS; step += 1) UI_TagF(state->menu_step == step ? "pop" : "")
+        {
+          UI_Signal sig = ui_buttonf("%s###menu_step_%u", uishell_table_compare_marks[step], step);
+          if(ui_hovering(sig)) UI_Tooltip { ui_label(uishell_table_text(wheelhouse_table_compare_step(step))); }
+          if(ui_clicked(sig) && state->menu_step != step)
+          {
+            state->menu_step = step;
+            compare_changed = 1;
+            if(step != 0) { state->menu_field = UIShell_TableMenuField_Low; }
+          }
+        }
+      }
+      if(state->menu_step != 0) UI_Row
+      {
+        String8 placeholder = m.compared == WHEELHOUSE_TABLE_COMPARE_DATES ? str8_lit("YYYY-MM-DD") : str8_lit("Number");
+        UI_PrefWidth(ui_pct(1, 0))
+        {
+          compare_changed |= uishell_table_menu_field(state, &state->menu_low, UIShell_TableMenuField_Low, placeholder, str8_lit("###menu_low"));
+        }
+        if(state->menu_step == WHEELHOUSE_TABLE_COMPARE_BETWEEN)
+        {
+          UI_PrefWidth(ui_text_dim(10, 1)) UI_TagF("weak") ui_labelf("and");
+          UI_PrefWidth(ui_pct(1, 0))
+          {
+            compare_changed |= uishell_table_menu_field(state, &state->menu_high, UIShell_TableMenuField_High, placeholder, str8_lit("###menu_high"));
+          }
+        }
+      }
+    }
+    if(m.one_of)
+    {
+      UI_Row UI_PrefWidth(ui_pct(1, 0))
+      {
+        if(uishell_table_menu_field(state, &state->menu_search, UIShell_TableMenuField_Search, str8_lit("Search values"), str8_lit("###menu_search")))
+        {
+          String8 search = uishell_table_field_text(&state->menu_search);
+          wheelhouse_table_menu_search(t, (WheelhouseText){search.str, search.size});
+          state->menu_scroll = ui_scroll_pt(0, 0);
+          m = wheelhouse_table_menu(t);
+        }
+      }
+      if(!m.listed)
+      {
+        UI_TagF("weak") ui_labelf("Loading values…");
+      }
+      else
+      {
+        // The head, then each value: ticked or not, those a Text condition
+        // rejects dimmed, each with its count.
+        String8 search = uishell_table_field_text(&state->menu_search);
+        F32 row_h = em*1.8f;
+        S64 rows = 1 + (S64)m.value_count;
+        UI_ScrollListParams list = {0};
+        list.dim_px = v2f32(em*24, row_h*Min(rows, 8));
+        list.row_height_px = row_h;
+        list.item_range = r1s64(0, rows);
+        Rng1S64 visible = {0};
+        UI_ScrollList(&list, &state->menu_scroll, 0, 0, &visible, 0)
+        {
+          for(S64 row = visible.min; row < visible.max; row += 1)
+          {
+            String8 label;
+            B32 ticked, excluded = 0, has_count = 0;
+            U64 count = 0;
+            if(row == 0)
+            {
+              label = search.size == 0 ? str8_lit("(Select all)") : push_str8f(scratch.arena, "(Select all matching \"%S\")", search);
+              ticked = m.head_ticked;
+            }
+            else
+            {
+              WheelhouseTableMenuValue v = wheelhouse_table_menu_value(t, (size_t)(row-1));
+              label = push_str8_copy(scratch.arena, uishell_table_text(v.label));
+              ticked = v.ticked;
+              excluded = v.excluded;
+              has_count = v.has_count;
+              count = v.count;
+            }
+            UI_Box *item;
+            UI_PrefWidth(ui_pct(1, 0)) UI_PrefHeight(ui_px(row_h, 1)) UI_ChildLayoutAxis(Axis2_X)
+            {
+              item = ui_build_box_from_stringf((excluded ? UI_BoxFlag_Disabled : UI_BoxFlag_Clickable|UI_BoxFlag_DrawHotEffects|UI_BoxFlag_DrawActiveEffects),
+                                               "###menu_value_%I64d", row);
+            }
+            UI_Parent(item) UI_PrefHeight(ui_pct(1, 1)) UI_TagF(excluded ? "weak" : "")
+            {
+              UI_PrefWidth(ui_em(1.8f, 1)) RD_Font(RD_FontSlot_Icons) UI_TextAlignment(UI_TextAlign_Center)
+              {
+                ui_label(rd_icon_kind_text_table[ticked ? RD_IconKind_CheckFilled : RD_IconKind_CheckHollow]);
+              }
+              UI_PrefWidth(ui_pct(1, 0)) ui_label(label);
+              if(has_count) UI_PrefWidth(ui_text_dim(10, 1)) UI_TagF("weak")
+              {
+                ui_label(str8_from_u64(scratch.arena, count, 10, 0, ','));
+              }
+            }
+            if(!excluded && ui_clicked(ui_signal_from_box(item)))
+            {
+              wheelhouse_table_menu_tick(t, (size_t)row);
+              changed = 1;
+            }
+          }
+        }
+        if(m.partial) UI_TagF("weak") { ui_labelf("Only the first values are listed"); }
+        if(m.narrowed) UI_TagF("weak") { ui_labelf("Narrowed by the other filters"); }
+      }
+    }
+    UI_Row UI_PrefWidth(ui_text_dim(10, 1)) UI_Focus(UI_FocusKind_Off)
+    {
+      UI_Flags(m.filtered ? 0 : UI_BoxFlag_Disabled)
+      {
+        UI_Signal sig = ui_buttonf("Clear###menu_clear");
+        if(ui_hovering(sig)) UI_Tooltip { ui_labelf("Remove this column's conditions"); }
+        if(m.filtered && ui_clicked(sig))
+        {
+          // The fields show what's left: none.
+          wheelhouse_table_menu_clear(t);
+          WheelhouseTableMenu cleared = wheelhouse_table_menu(t);
+          uishell_table_menu_adopt(state, &cleared, 1);
+          changed = 1;
+        }
+      }
+      ui_spacer(ui_pct(1, 0));
+      if(ui_clicked(ui_buttonf("Close###menu_close"))) { close = 1; }
+    }
+    // Enter keeps the conditions and closes the menu, as Escape does.
+    if(state->menu_field != UIShell_TableMenuField_None && ui_slot_press(UI_EventActionSlot_Accept)) { close = 1; }
+  }
+  if(text_changed)
+  {
+    String8 text = uishell_table_field_text(&state->menu_text);
+    wheelhouse_table_menu_set_text(t, (WheelhouseText){text.str, text.size}, state->menu_not, state->menu_case, state->menu_regex);
+    changed = 1;
+  }
+  if(compare_changed)
+  {
+    String8 low = uishell_table_field_text(&state->menu_low), high = uishell_table_field_text(&state->menu_high);
+    wheelhouse_table_menu_set_compare(t, state->menu_step, (WheelhouseText){low.str, low.size}, (WheelhouseText){high.str, high.size});
+    changed = 1;
+  }
+  if(changed)
+  {
+    // What was asked for is what the menu shows from here: not a change to
+    // take in.
+    m = wheelhouse_table_menu(t);
+    state->menu_seen_text = uishell_table_menu_text_hash(&m);
+    state->menu_seen_compare = uishell_table_menu_compare_hash(&m);
+    rd_request_frame();
+  }
+  if(close)
+  {
+    ui_ctx_menu_close();
+    uishell_table_menu_close(state);
   }
   scratch_end(scratch);
 }
@@ -949,6 +1393,35 @@ WH_VIEW_UI_FUNCTION_DEF(table)
     }
   }
 
+  // Each column that takes conditions has a caret at its header's end that
+  // opens its menu, in the accent once the column is filtered. They take a
+  // press before the Grid does, laid out as of the last frame, as the
+  // Grid's input is.
+  UI_Parent(box) RD_Font(RD_FontSlot_Icons) UI_Focus(UI_FocusKind_Off) UI_TextAlignment(UI_TextAlign_Center)
+  {
+    for(U32 i = 0; i < state->carets_count; i += 1)
+    {
+      UIShell_TableCaret *caret = &state->carets[i];
+      B32 open = state->menu_open && state->menu_key == caret->key;
+      Vec4F32 color = caret->filtered || open ? rd_accent_color() : ui_color_from_name(str8_lit("text"));
+      if(!caret->filtered && !open) { color.w *= 0.45f; }
+      ui_set_next_fixed_x(caret->rect.x0);
+      ui_set_next_fixed_y(caret->rect.y0);
+      ui_set_next_fixed_width(dim_2f32(caret->rect).x);
+      ui_set_next_fixed_height(dim_2f32(caret->rect).y);
+      ui_set_next_text_color(color);
+      ui_set_next_hover_cursor(WM_Cursor_HandPoint);
+      UI_Box *caret_box = ui_build_box_from_stringf(UI_BoxFlag_Clickable|UI_BoxFlag_DrawText|UI_BoxFlag_DrawHotEffects, "###table_caret_%I64u", caret->key);
+      ui_box_equip_display_string(caret_box, rd_icon_kind_text_table[RD_IconKind_DownCaret]);
+      UI_Signal caret_sig = ui_signal_from_box(caret_box);
+      if(ui_hovering(caret_sig)) UI_Tooltip RD_Font(RD_FontSlot_Main)
+      {
+        ui_labelf(caret->filtered ? "Filtered: edit the filter (Alt+Down)" : "Filter this column (Alt+Down)");
+      }
+      if(ui_clicked(caret_sig)) { uishell_table_menu_open(state, caret->key, box->key, v2f32(caret->rect.x0, caret->rect.y1)); }
+    }
+  }
+
   // Input from this frame, against last frame's layout.
   UI_Signal sig = ui_signal_from_box(box);
   Vec2F32 mouse = sub_2f32(ui_mouse(), box->rect.p0);
@@ -1024,10 +1497,23 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   }
   // Keys go to the Grid unless its query row has them (Enter there steps
   // find, and Escape closes it) or its filter bar does.
-  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && !row_focused && !state->filter_focused)
+  UI_Focus(UI_FocusKind_On) if(ui_is_focus_active() && !row_focused && !state->filter_focused && !state->menu_open)
   {
     for(UI_Event *evt = 0; ui_next_event(&evt);)
     {
+      // Alt+Down opens the focused column's menu, as on the web.
+      B32 alt_down = (evt->modifiers & (WM_Modifier_Alt|WM_Modifier_Shift|WM_Modifier_Ctrl|WM_Modifier_Super)) == WM_Modifier_Alt &&
+                     ((evt->kind == UI_EventKind_Press && evt->key == WM_Key_Down) ||
+                      (evt->kind == UI_EventKind_Navigate && evt->delta_2s32.y > 0 && evt->delta_2s32.x == 0));
+      if(alt_down)
+      {
+        if(evt->kind == UI_EventKind_Press && state->focus_col_has)
+        {
+          uishell_table_menu_open(state, state->focus_col_key, box->key, state->focus_col_at);
+        }
+        ui_eat_event(evt);
+        continue;
+      }
       if(uishell_table_key(grid, evt)) { ui_eat_event(evt); }
     }
   }
@@ -1070,6 +1556,45 @@ WH_VIEW_UI_FUNCTION_DEF(table)
     case BINNACLE_CURSOR_RESIZE_ROWS:{ box->hover_cursor = WM_Cursor_UpDown; }break;
     case BINNACLE_CURSOR_MOVE:{ box->hover_cursor = WM_Cursor_HandPoint; }break;
     default:{ box->hover_cursor = WM_Cursor_Pointer; }break;
+  }
+  // Each column that takes conditions has a caret at its header's end
+  // (built next frame, before the Grid takes the pointer).
+  draw->caret = uishell_table_caret_width();
+  {
+    BinnacleAxisSnapshot *cols = &draw->snap.axes[BINNACLE_COLS];
+    state->focus_col_has = 0;
+    if(draw->snap.has_focus && cols->focus.has_key)
+    {
+      state->focus_col_has = 1;
+      state->focus_col_key = cols->focus.key;
+      state->focus_col_at = v2f32(cols->header, draw->snap.axes[BINNACLE_ROWS].header);
+    }
+    state->carets_count = 0;
+    for(size_t c = 0; c < cols->headers_len; c += 1)
+    {
+      BinnacleHeader *h = &cols->headers[c];
+      if(!h->has_key) { continue; }
+      if(state->focus_col_has && h->key == state->focus_col_key) { state->focus_col_at = v2f32(h->rect.x, h->rect.y + h->rect.height); }
+      if(!(h->support & UISHELL_TABLE_MENU_SUPPORT) || state->carets_count == ArrayCount(state->carets)) { continue; }
+      // Only where the whole caret shows in its Strip, clear of the row
+      // numbers.
+      Rng1F32 span = uishell_table_strip_clip(cols, c);
+      F32 x1 = h->rect.x + h->rect.width, x0 = x1 - draw->caret;
+      if(x0 < Max(span.min, cols->header) || x1 > span.max || x0 < h->rect.x) { continue; }
+      UIShell_TableCaret *caret = &state->carets[state->carets_count++];
+      caret->key = h->key;
+      caret->rect = r2f32p(x0, h->rect.y, x1, h->rect.y + h->rect.height);
+      caret->filtered = !!(h->flags & BINNACLE_HEADER_FILTERED);
+    }
+  }
+  // The column menu, while open; closed from outside (a click elsewhere,
+  // Escape), it lets go of its column.
+  if(state->menu_open)
+  {
+    B32 shown = ui_ctx_menu_is_open(uishell_table_menu_key(state));
+    if(shown) { state->menu_shown = 1; }
+    if(!shown && state->menu_shown) { uishell_table_menu_close(state); }
+    else { uishell_table_menu(state); }
   }
   state->find_support = draw->snap.find_support;
   state->find_current = draw->snap.has_find_match;
@@ -1121,7 +1646,21 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   if(uishell_table_screenshot_hook != 0)
   {
     uishell_table_screenshot_frames += 1;
-    if(uishell_table_screenshot_frames == 10) { rd_state->frame_diagnostic = uishell_table_screenshot_hook; }
+    BinnacleAxisSnapshot *cols = &draw->snap.axes[BINNACLE_COLS];
+    if(uishell_table_screenshot_frames == 5 && uishell_table_screenshot_menu != 0)
+    {
+      for(size_t c = 0; c < cols->headers_len; c += 1)
+      {
+        BinnacleHeader *h = &cols->headers[c];
+        if(h->has_key && h->key + 1 == uishell_table_screenshot_menu)
+        {
+          uishell_table_menu_open(state, h->key, box->key, v2f32(h->rect.x, h->rect.y + h->rect.height));
+        }
+      }
+    }
+    // A menu opening animates in.
+    U64 shot = uishell_table_screenshot_menu != 0 ? 40 : 10;
+    if(uishell_table_screenshot_frames == shot) { rd_state->frame_diagnostic = uishell_table_screenshot_hook; }
     rd_request_frame();
   }
   scratch_end(scratch);
