@@ -234,6 +234,84 @@ uishell_check_blur_mask(U32 *failures)
   scratch_end(scratch);
 }
 
+// #41: a blur's horizontal pass writes the scratch target only around the
+// blur, and the vertical pass reads it back; texels it reads that the first
+// pass didn't write hold whatever an earlier blur left (Metal's popups showed
+// green strips; docs/validation/metal-popup-blur-2026-09-22.md). Each case
+// first blurs the whole stage over green, so the scratch target is green
+// everywhere, then covers the stage in grey and blurs popups over it. Blurring
+// grey gives grey, so any green-leaning pixel came from the scratch target.
+// Scale 2 doubles every coordinate, as window submission's backing scale
+// does, the way the border diagnostics check 2x.
+internal void
+uishell_check_blur_scratch(U32 *failures)
+{
+  Temp scratch = scratch_begin(0, 0);
+  String8 backend = r_backend_name();
+  struct
+  {
+    char *label;
+    F32 popups[2][4];
+    U32 popup_count;
+    F32 clip[4];
+  }
+  cases[] =
+  {
+    {"one popup", {{24, 24, 104, 72}}, 1, {0}},
+    {"popup past the stage's top edge", {{24, -12, 104, 40}}, 1, {0}},
+    {"popup past the stage's bottom-right corner", {{72, 56, 140, 110}}, 1, {0}},
+    {"popup under a clip", {{24, 24, 104, 72}}, 1, {0, 40, 128, 96}},
+    {"two popups", {{8, 8, 60, 48}, {68, 40, 120, 88}}, 2, {0}},
+  };
+  for(F32 scale = 1; scale <= 2; scale += 1)
+  for EachElement(case_idx, cases)
+  {
+    Vec2S32 size = v2s32((S32)(128*scale), (S32)(96*scale));
+    Rng2F32 stage = r2f32p(0, 0, (F32)size.x, (F32)size.y);
+    DR_Bucket *bucket = dr_bucket_make();
+    DR_BucketScope(bucket)
+    {
+      dr_rect(stage, v4f32(0, 1, 0, 1), 0, 0, 0);
+      dr_blur(stage, 8*scale, 0);
+      dr_rect(stage, v4f32(0.5f, 0.5f, 0.5f, 1), 0, 0, 0);
+      F32 *c = cases[case_idx].clip;
+      Rng2F32 clip = r2f32p(c[0]*scale, c[1]*scale, c[2]*scale, c[3]*scale);
+      DR_ClipScope(clip)
+      {
+        for(U32 idx = 0; idx < cases[case_idx].popup_count; idx += 1)
+        {
+          F32 *r = cases[case_idx].popups[idx];
+          dr_blur(r2f32p(r[0]*scale, r[1]*scale, r[2]*scale, r[3]*scale), 16*scale, 8*scale);
+        }
+      }
+    }
+    R_Readback pixels = r_pass_list_readback(scratch.arena, size, &bucket->passes);
+    B32 ok = (pixels.format == R_Tex2DFormat_BGRA8 && pixels.size.x == size.x && pixels.size.y == size.y &&
+              pixels.data.size >= (U64)size.x*size.y*4);
+    UIImportCheck(ok);
+    if(ok)
+    {
+      // BGRA bytes: green over red by more than a few levels is contamination.
+      U64 green = 0;
+      S32 worst = 0, worst_x = 0, worst_y = 0;
+      for(S32 y = 0; y < size.y; y += 1)
+      for(S32 x = 0; x < size.x; x += 1)
+      {
+        U8 *p = pixels.data.str + ((U64)y*size.x + x)*4;
+        S32 lean = (S32)p[1] - (S32)p[2];
+        if(lean > 8) { green += 1; }
+        if(lean > worst) { worst = lean; worst_x = x; worst_y = y; }
+      }
+      B32 pass = (green == 0);
+      if(!pass) { *failures += 1; }
+      fprintf(stderr, "%.*s blur scratch %s, %.0fx: %s (%llu green pixels, worst %d at %d,%d)\n",
+              str8_varg(backend), cases[case_idx].label, scale, pass ? "ok" : "DIFFERS",
+              (unsigned long long)green, worst, worst_x, worst_y);
+    }
+  }
+  scratch_end(scratch);
+}
+
 // What a rounded rect means, read back from this backend. The hand-written
 // rect shaders differ between backends; these are the cases a single-source
 // shader has to settle (ADR 0015 §5). Each case prints what it measured,
@@ -926,7 +1004,8 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   uishell_check_blur_kernel_bounds(&failures);
   U32 failures_before_blur = failures;
   uishell_check_blur_mask(&failures);
-  fprintf(stderr, "blur mask: %u failures\n", failures - failures_before_blur);
+  uishell_check_blur_scratch(&failures);
+  fprintf(stderr, "blur mask and scratch: %u failures\n", failures - failures_before_blur);
   U32 failures_before_effects = failures;
   uishell_check_effects_compile(&failures);
   fprintf(stderr, "effects: %u failures\n", failures - failures_before_effects);
