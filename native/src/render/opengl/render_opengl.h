@@ -18,7 +18,6 @@ typedef ptrdiff_t GLintptr;
 
 #define GL_MAP_WRITE_BIT                  0x0002
 #define GL_MAP_INVALIDATE_RANGE_BIT       0x0004
-#define GL_MAP_UNSYNCHRONIZED_BIT         0x0020
 
 #define GL_READ_FRAMEBUFFER               0x8CA8
 #define GL_DRAW_FRAMEBUFFER               0x8CA9
@@ -265,8 +264,10 @@ struct R_OGL_Buffer
 };
 
 // Instance data streams through one buffer: each upload is appended at the
-// cursor, written unsynchronized, since no draw has read that range of the
-// current storage. When it is full, the storage is orphaned (re-specified),
+// cursor, into a range no draw has read, mapped with its old contents
+// invalidated. Not unsynchronized: NVIDIA writes such a range through a staging
+// copy that later draws didn't wait for, so they drew from stale data or none.
+// When it is full, the storage is orphaned (re-specified),
 // so draws still in flight keep reading the old one, and the cursor restarts.
 // A frame needing more than the capacity grows it.
 typedef struct R_OGL_InstanceRing R_OGL_InstanceRing;

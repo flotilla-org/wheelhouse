@@ -106,8 +106,10 @@ r_ogl_instance_upload(R_BatchList *batches)
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)ring->capacity, 0, GL_STREAM_DRAW);
     offset = 0;
   }
+  // Never unsynchronized: on NVIDIA, draws then read the range before it lands
+  // (R_OGL_InstanceRing).
   U8 *dst = (U8 *)glMapBufferRange(GL_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)size,
-                                   GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+                                   GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
   if(dst != 0)
   {
     U64 off = 0;
