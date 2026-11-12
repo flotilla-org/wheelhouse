@@ -107,7 +107,7 @@ r_ogl_instance_upload(R_BatchList *batches)
     offset = 0;
   }
   U8 *dst = (U8 *)glMapBufferRange(GL_ARRAY_BUFFER, (GLintptr)offset, (GLsizeiptr)size,
-                                   GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+                                   GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_RANGE_BIT);
   if(dst != 0)
   {
     U64 off = 0;
