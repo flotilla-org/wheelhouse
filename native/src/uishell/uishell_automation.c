@@ -518,7 +518,7 @@ uishell_automation_apply(void *unused, const WheelhouseIngressIntent *in, U64 *r
         why = str8_skip_chop_whitespace(log_scope_end(scratch.arena).strings[LogMsgKind_UserError]);
       }
       // TODO(#441): the Core's request, once its stores take intents.
-      if(allowed && rd_arrangement_apply_intent(intent).applied) { status = 0; *request = in->ticket; rd_request_frame(); }
+      if(allowed && rd_arrangement_apply_intent(intent).applied) { status = 0; why = str8_zero(); *request = in->ticket; rd_request_frame(); }
       else if(allowed) { why = push_str8f(scratch.arena, "%S doesn't apply to that arrangement", name); }
       else if(why.size == 0) { why = str8_lit("the dock rules don't allow that move"); }
     }
