@@ -3592,7 +3592,21 @@ uishell_sidebar_section_hosts_chrome(String8 key)
 // the row's background over its end.
 internal UI_BOX_CUSTOM_DRAW(uishell_sidebar_fade_draw)
 {
-  Vec4F32 color = *(Vec4F32 *)user_data, clear = color;
+  Vec4F32 color = *(Vec4F32 *)user_data;
+  // A selected row brightens while hovered (the shell's hot effect, over its
+  // drawn background); its fade ends in the same colour.
+  for(UI_Box *p = box->parent; !ui_box_is_nil(p); p = p->parent)
+  {
+    if(!(p->flags & UI_BoxFlag_DrawBackground)) { continue; }
+    if(p->flags & UI_BoxFlag_DrawHotEffects && ui_key_match(p->key, ui_hot_key()))
+    {
+      Vec4F32 hover = ui_color_from_tags_key_name(p->tags_key, str8_lit("hover"));
+      color = mix_4f32(color, hover, hover.w*rd_hover_alpha(hover, color, RD_HoverBrightnessStep));
+      color.w = 1.f;
+    }
+    break;
+  }
+  Vec4F32 clear = color;
   clear.w = 0;
   dr_truncated_fancy_run_list(ui_box_text_position(box), &box->display_fruns, 100000.f, (FNT_Run){0});
   F32 width = Min(dim_2f32(box->rect).x, floor_f32(box->font_size*2.5f));
