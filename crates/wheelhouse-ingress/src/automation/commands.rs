@@ -431,24 +431,29 @@ async fn invoked(automation: &Arc<Automation>, body: Result<Json<Invoke>, JsonRe
     };
     let target = target(named, targets, context)?;
     let invocation = Invocation { command: command.name.clone(), target, arg };
-    let (reply, answer) = oneshot::channel();
-    {
-        let mut queue = automation.invocations.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        // Those whose client has gone hold no place.
-        if queue.len() >= MAX_QUEUED {
-            queue.retain(|queued| !queued.reply.is_closed());
-        }
-        if queue.len() >= MAX_QUEUED {
-            return Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "too many invocations are waiting"));
-        }
-        queue.push(Queued { invocation, reply });
-    }
+    let answer = enqueue(automation, invocation)?;
     (automation.wake)();
     // Taken at one frame's end, run in the next, answered at its end.
     match tokio::time::timeout(FRAME_WAIT, answer).await {
         Ok(Ok(answer)) => answer,
         _ => Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "the UI didn't run it in time")),
     }
+}
+
+/// `invocation` queued for the UI, and where its answer will come; refused
+/// when the queue is full of clients that haven't gone.
+fn enqueue(automation: &Automation, invocation: Invocation) -> Result<oneshot::Receiver<Result<String, Refusal>>, Refusal> {
+    let (reply, answer) = oneshot::channel();
+    let mut queue = automation.invocations.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Those whose client has gone hold no place.
+    if queue.len() >= MAX_QUEUED {
+        queue.retain(|queued| !queued.reply.is_closed());
+    }
+    if queue.len() >= MAX_QUEUED {
+        return Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "too many invocations are waiting"));
+    }
+    queue.push(Queued { invocation, reply });
+    Ok(answer)
 }
 
 /// The UI's side of invocation.

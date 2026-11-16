@@ -358,3 +358,17 @@ fn an_invocation_answers_with_the_cursor_of_the_frame_that_ran_it() {
     assert_eq!(endpoint.request("GET", "/v1/commands", "").0, 404);
     assert_eq!(endpoint.ui.lock().unwrap().invoked.len(), 2);
 }
+
+// A full queue turns a client away, unless some of it is clients that have
+// gone: their places are freed first.
+#[test]
+fn a_full_queue_frees_the_places_of_clients_that_have_gone() {
+    extern "C" fn wake() {}
+    let automation = Automation::new(wake);
+    let exit = || Invocation { command: "exit".into(), target: None, arg: None };
+    let waiting: Vec<_> = (0..MAX_QUEUED).map(|_| enqueue(&automation, exit()).unwrap()).collect();
+    assert_eq!(enqueue(&automation, exit()).map(|_| ()).map_err(|refusal| refusal.0), Err(StatusCode::SERVICE_UNAVAILABLE));
+    drop(waiting);
+    assert!(enqueue(&automation, exit()).is_ok());
+    assert_eq!(automation.invocations.lock().unwrap().len(), 1);
+}
