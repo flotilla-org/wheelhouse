@@ -23,7 +23,8 @@ use wheelhouse_core::{
 use super::{caller_views, cbor_wanted, encode, reply, Automation, FRAME_WAIT, MODE_UNKNOWN, SCHEMA};
 use crate::{AUTOMATION_FULL, AUTOMATION_OFF};
 
-/// `UIShell_CmdFlag_ListInUI`: the palette lists it.
+/// `UIShell_CmdFlag_ListInUI`: the palette lists it. These mirror
+/// shell_core.h's values, which uishell_automation.c asserts.
 pub const LIST_IN_UI: u32 = 1 << 0;
 /// `UIShell_CmdFlag_ListInTab`: it opens a tab, in a panel.
 pub const LIST_IN_TAB: u32 = 1 << 2;
@@ -348,7 +349,11 @@ fn target(named: Option<Target>, targets: Targets, context: Option<Vec<String>>)
     }
     let views = context.unwrap_or_default();
     match (views.as_slice(), targets) {
-        ([view], _) => Ok(ViewAddress::from_automation_id(view).map(Target::View)),
+        ([view], _) => match ViewAddress::from_automation_id(view) {
+            Some(view) => Ok(Some(Target::View(view))),
+            // The tree's own IDs always parse.
+            None => Err(Refusal::new(StatusCode::INTERNAL_SERVER_ERROR, format!("the Caller Context's view {view} names no View"))),
+        },
         (_, Targets::None) => Ok(None),
         ([], _) => Err(Refusal::new(StatusCode::BAD_REQUEST, "it needs a target, and no Caller Context shows the session")),
         _ => Err(Refusal::new(StatusCode::CONFLICT, format!("the Caller Context shows several views: {}", views.join(", ")))),

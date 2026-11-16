@@ -204,6 +204,10 @@ uishell_automation_refuse(UIShell_AutomationRun *run, U32 status, String8 reason
   }
 }
 
+// The flags Rust reads (crates/wheelhouse-ingress/src/automation/commands.rs).
+StaticAssert(UIShell_CmdFlag_ListInUI == (1<<0) && UIShell_CmdFlag_ListInTab == (1<<2) && UIShell_CmdFlag_Automation == (1<<6),
+             uishell_automation_cmd_flags);
+
 internal U32
 uishell_automation_arg_from_slot(UIShell_AppRegSlot slot)
 {
@@ -359,6 +363,8 @@ uishell_automation_invoke(void *unused, const WheelhouseIngressInvocation *in, W
   return status;
 }
 
+// At the end of the frame a run ran in. What a command defers past that
+// frame (a file dialog's answer, say) isn't in its result.
 internal U32
 uishell_automation_settle(void *unused, U64 ticket, WheelhouseIngressText *reason)
 {

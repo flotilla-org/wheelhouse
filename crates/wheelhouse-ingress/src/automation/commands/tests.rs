@@ -174,6 +174,7 @@ fn a_target_is_named_or_the_caller_contexts_one_view() {
     assert_eq!(status(target(None, Targets::Panel, context(&[&view, &other]))), Err(StatusCode::CONFLICT));
     assert_eq!(status(target(None, Targets::None, context(&[&view, &other]))), Ok(None));
     assert_eq!(status(target(None, Targets::None, None)), Ok(None));
+    assert_eq!(status(target(None, Targets::View, context(&[&"workspace/x".to_owned()]))), Err(StatusCode::INTERNAL_SERVER_ERROR));
     // What a target can stand for.
     let workspace = Target::Workspace(W.parse().unwrap());
     assert!(workspace.serves(Targets::None) && workspace.serves(Targets::Workspace));
