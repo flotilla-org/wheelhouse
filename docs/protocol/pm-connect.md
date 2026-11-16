@@ -114,8 +114,9 @@ The `/v1` path versions this delivery contract. Metadata keys and values remain
 the core's producer schema. The metadata routes have no activate, focus,
 spawn, or other host-control verbs: selection dispatches the core's local
 host effects. Recipes in facts are materialized only by explicit UI
-activation. The same socket's Automation Endpoint may invoke named commands,
-which reverses the rule that the endpoint has no host-control verbs: see
+activation. The same socket's Automation Endpoint may invoke named commands
+and apply intents, which reverses the rule that the endpoint has no
+host-control verbs: see
 [ADR 0014](../adr/0014-automation-endpoint-invokes-named-commands.md) and
 [the Automation Endpoint](automation-endpoint.md#commands).
 
@@ -153,7 +154,7 @@ present), decoded `body`, original byte-preserving `body_utf8`, and response
 (null over Windows named pipes). Producer identity is self-reported; the PID is
 recorded, never used to admit or attribute a request.
 GETs, including health and discovery, have null bodies; every POST (a
-patch, a snapshot, a command invocation) keeps its body.
+patch, a snapshot, a command invocation, an intent) keeps its body.
 Invalid UTF-8 and oversized bodies have no captured body. Responses can finish
 out of order, so replay sorts by recording/run and sequence, not file order.
 

@@ -407,9 +407,158 @@ uishell_automation_ran(U64 ticket, String8 errors)
   if(run != 0 && errors.size != 0) { uishell_automation_refuse(run, 422, str8_skip_chop_whitespace(errors)); }
 }
 
-// At a frame's end: the setting, the tree while a client wants it, and the
-// invocations: those this frame ran settled, those waiting queued for the
-// next (wheelhouse_ingress_automation).
+//- Intents (ADR 0014's amendment; #643), applied at a frame's end; the
+// answer waits for the next frame's end, by when the stores have committed
+// what changed. Until the Core's stores take intents (#441), an arrangement
+// intent is applied as native's commands apply one, to the owner's live
+// arrangement (rd_arrangement_apply_intent), with a move or drop checked by
+// the dock rules first; its request is the endpoint's ticket. A sidebar
+// intent goes to the window's core, and its host effects are carried out
+// as for a click.
+
+typedef struct UIShell_AutomationIntentName UIShell_AutomationIntentName;
+struct UIShell_AutomationIntentName
+{
+  String8 name;
+  U32 kind;
+};
+
+read_only global UIShell_AutomationIntentName uishell_automation_arrangement_intents[] =
+{
+  {str8_lit_comp("select-tab"), WHEELHOUSE_INTENT_SELECT_TAB},
+  {str8_lit_comp("move-tab"), WHEELHOUSE_INTENT_MOVE_TAB},
+  {str8_lit_comp("close-tab"), WHEELHOUSE_INTENT_CLOSE_TAB},
+  {str8_lit_comp("drop-tab"), WHEELHOUSE_INTENT_DROP_TAB},
+  {str8_lit_comp("split-panel"), WHEELHOUSE_INTENT_SPLIT_PANEL},
+  {str8_lit_comp("close-panel"), WHEELHOUSE_INTENT_CLOSE_PANEL},
+  {str8_lit_comp("reorder-panel"), WHEELHOUSE_INTENT_REORDER_PANEL},
+  {str8_lit_comp("resize-panel"), WHEELHOUSE_INTENT_RESIZE_PANEL},
+  {str8_lit_comp("equalize-panel"), WHEELHOUSE_INTENT_EQUALIZE_PANEL},
+};
+
+read_only global UIShell_AutomationIntentName uishell_automation_sidebar_intents[] =
+{
+  {str8_lit_comp("copy-subject-url"), WHEELHOUSE_INTENT_COPY_SUBJECT_URL},
+  {str8_lit_comp("activate-placement"), WHEELHOUSE_INTENT_ACTIVATE_PLACEMENT},
+  {str8_lit_comp("activate"), WHEELHOUSE_INTENT_ACTIVATE},
+  {str8_lit_comp("toggle-placement"), WHEELHOUSE_INTENT_TOGGLE_PLACEMENT},
+  {str8_lit_comp("set-variable"), WHEELHOUSE_INTENT_SET_VARIABLE},
+  {str8_lit_comp("toggle-display-variable"), WHEELHOUSE_INTENT_TOGGLE_DISPLAY_VARIABLE},
+};
+
+internal String8
+uishell_automation_string(WheelhouseIngressText text)
+{
+  return str8((U8 *)text.data, text.len);
+}
+
+// The View an intent names, or nil when it names none that is there.
+internal RD_ViewAddress
+uishell_automation_intent_view(const WheelhouseIngressView *view)
+{
+  UIShell_WorkspaceId id = {0};
+  MemoryCopy(id.v, view->id, sizeof(id.v));
+  RD_ViewAddress address = rd_view_address_make(view->owner == WHEELHOUSE_AUTOMATION_OWNER_WINDOW ? RD_ViewOwnerKind_Window : RD_ViewOwnerKind_Workspace,
+                                                id, uishell_automation_string(view->key), view->previous ? RD_ViewInstance_Previous : RD_ViewInstance_Current);
+  return rd_cfg_from_view(address) != &cfg_nil_node ? address : rd_nil_view_address;
+}
+
+internal U32
+uishell_automation_apply(void *unused, const WheelhouseIngressIntent *in, U64 *request, WheelhouseIngressText *reason)
+{
+  Temp scratch = scratch_begin(0, 0);
+  if(uishell_automation_arena == 0) { uishell_automation_arena = arena_alloc(); }
+  String8 name = uishell_automation_string(in->name);
+  UIShell_WorkspaceId id = {0};
+  MemoryCopy(id.v, in->owner_id, sizeof(id.v));
+  B32 window_owned = in->owner == WHEELHOUSE_AUTOMATION_OWNER_WINDOW;
+  CFG_Node *host = window_owned ? uishell_window_from_id(id) : cfg_node_from_id(uishell_workspace_cfg_id_from_id(id));
+  U32 status = 422;
+  String8 why = {0};
+  if(host == &cfg_nil_node) { why = str8_lit("no workspace or window has the owner's ID"); }
+  else if(in->family == WHEELHOUSE_INGRESS_INTENT_ARRANGEMENT)
+  {
+    U32 kind = max_U32;
+    for EachElement(i, uishell_automation_arrangement_intents)
+    { if(str8_match(uishell_automation_arrangement_intents[i].name, name, 0)) { kind = uishell_automation_arrangement_intents[i].kind; } }
+    RD_PanelOwner owner = {window_owned ? RD_PanelOwnerKind_Sidebar : RD_PanelOwnerKind_Workspace, id};
+    String8 panels[] = {uishell_automation_string(in->panel), uishell_automation_string(in->after_panel)};
+    RD_PanelID ids[ArrayCount(panels)] = {0};
+    for EachElement(i, panels)
+    {
+      RD_ArrangementPanel *p = panels[i].size ? uishell_automation_panel(scratch.arena, owner, panels[i]) : &rd_nil_arrangement_panel;
+      if(panels[i].size && p == &rd_nil_arrangement_panel && !why.size) { why = push_str8f(scratch.arena, "no panel %S there", panels[i]); }
+      ids[i] = p->id;
+    }
+    RD_ViewAddress tab = in->has_tab ? uishell_automation_intent_view(&in->tab) : rd_nil_view_address;
+    RD_ViewAddress after = in->has_after ? uishell_automation_intent_view(&in->after) : rd_nil_view_address;
+    if(kind == max_U32) { why = push_str8f(scratch.arena, "no arrangement intent %S", name); }
+    else if((in->has_tab && rd_view_address_is_nil(tab)) || (in->has_after && rd_view_address_is_nil(after)))
+    { why = str8_lit("no such view there"); }
+    if(!why.size)
+    {
+      WheelhouseArrangementIntent intent = rd_arrangement_intent(kind, owner);
+      intent.panel = ids[0];
+      intent.after_panel = ids[1];
+      rd_arrangement_intent_tab(&intent, tab);
+      rd_arrangement_intent_after(&intent, after);
+      Dir2 dir = in->dir == WHEELHOUSE_INGRESS_DIR_LEFT ? Dir2_Left : in->dir == WHEELHOUSE_INGRESS_DIR_UP ? Dir2_Up :
+                 in->dir == WHEELHOUSE_INGRESS_DIR_RIGHT ? Dir2_Right : in->dir == WHEELHOUSE_INGRESS_DIR_DOWN ? Dir2_Down : Dir2_Invalid;
+      intent.dir = rd_arrangement_core_dir(dir);
+      intent.delta = in->delta;
+      intent.floor = in->floor;
+      // The dock rules say why, as a user error.
+      B32 allowed = 1;
+      if(kind == WHEELHOUSE_INTENT_MOVE_TAB || kind == WHEELHOUSE_INTENT_DROP_TAB)
+      {
+        log_scope_begin();
+        allowed = rd_dock_move_allowed(scratch.arena, "move", tab, rd_panel_address(owner, intent.panel), dir);
+        why = str8_skip_chop_whitespace(log_scope_end(scratch.arena).strings[LogMsgKind_UserError]);
+      }
+      if(allowed && rd_arrangement_apply_intent(intent).applied) { status = 0; *request = in->ticket; rd_request_frame(); }
+      else if(allowed) { why = push_str8f(scratch.arena, "%S doesn't apply to that arrangement", name); }
+    }
+  }
+  else if(in->family == WHEELHOUSE_INGRESS_INTENT_SIDEBAR)
+  {
+    WheelhouseIntent intent = {.kind = max_U32};
+    for EachElement(i, uishell_automation_sidebar_intents)
+    { if(str8_match(uishell_automation_sidebar_intents[i].name, name, 0)) { intent.kind = uishell_automation_sidebar_intents[i].kind; } }
+    CFG_Node *window = window_owned ? host : rd_window_from_cfg(host);
+    RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
+    UIShell_SidebarState *state = ws != &rd_nil_window_state ? uishell_sidebar_init(ws) : 0;
+    if(intent.kind == max_U32) { why = push_str8f(scratch.arena, "no sidebar intent %S", name); }
+    else if(state == 0 || state->core == 0) { why = str8_lit("no window with a sidebar shows the owner"); }
+    else
+    {
+      intent.key = (WheelhouseText){in->key.data, in->key.len};
+      intent.entity = (WheelhouseEntity){{in->entity_provider.data, in->entity_provider.len}, {in->entity_kind.data, in->entity_kind.len},
+                                         {in->entity_id.data, in->entity_id.len}};
+      intent.name = (WheelhouseText){in->variable.data, in->variable.len};
+      intent.has_value = in->has_value;
+      intent.value = (WheelhouseText){in->value.data, in->value.len};
+      uishell_sidebar_labels_invalidate(state);
+      char *error = 0;
+      if(wheelhouse_apply_intent(state->core, &intent, request, &error) == WHEELHOUSE_INTENT_ACCEPTED)
+      {
+        status = 0;
+        UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+        uishell_sidebar_effects(state, &split);
+        uishell_sidebar_refresh(state);
+        rd_request_frame();
+      }
+      else { why = push_str8_copy(scratch.arena, str8_cstring(error ? error : "the sidebar refused it")); }
+      wheelhouse_string_free(error);
+    }
+  }
+  *reason = uishell_ingress_text(push_str8_copy(uishell_automation_arena, why));
+  scratch_end(scratch);
+  return status;
+}
+
+// At a frame's end: the setting, the tree while a client wants it, and
+// what clients asked: those this frame did answered, invocations waiting
+// queued for the next, and intents applied (wheelhouse_ingress_automation).
 internal void
 uishell_automation_frame_end(void)
 {
@@ -421,6 +570,7 @@ uishell_automation_frame_end(void)
     .commands = uishell_automation_commands,
     .invoke = uishell_automation_invoke,
     .settle = uishell_automation_settle,
+    .apply = uishell_automation_apply,
   };
   wheelhouse_ingress_automation(uishell_ingress, &host);
 }

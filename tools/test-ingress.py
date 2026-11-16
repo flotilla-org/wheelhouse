@@ -739,14 +739,17 @@ class IngressTests(unittest.TestCase):
         # A value it doesn't know is taken as off.
         self.assertEqual(self.launch_nested('unknown', automation='of'), ('', 'unset'))
 
-    def start_automation(self, name, *args, user=''):
+    def start_automation(self, name, *args, user='', sidebar=None):
         """Wheelhouse with one workspace of a terminal and a View of a Cleat
-        session, listening at its own socket; returns the socket's path, the
-        Workspace ID and Wheelhouse's directory."""
+        session, listening at its own socket, with the live sidebar `sidebar`
+        configures when given; returns the socket's path, the Workspace ID and
+        Wheelhouse's directory."""
         path = self.endpoint(name)
+        if sidebar:
+            args = ('--andamento_config:' + str(sidebar), *args)
         session = {'content': {'Local': {'CleatSession': {'transport': 'local', 'host': 'nowhere', 'runtime_root': str(Path(self.dir.name, 'cleat')),
                                                            'daemon': 'none', 'session': 'agent-session'}}}, 'presentation': 'terminal'}
-        process, root, workspace, failure = self.launch(name, '--automation_socket:' + path, *args, user=user, label='Automated',
+        process, root, workspace, failure = self.launch(name, ('--andamento_socket:' if sidebar else '--automation_socket:') + path, *args, user=user, label='Automated',
                                                         specs=[workspace_seed.terminal(WAIT, ELSEWHERE), session])
         self.serve(path, process, failure)
         return path, workspace, root
@@ -868,6 +871,7 @@ class IngressTests(unittest.TestCase):
             for target in ['/v1/observed/semantic', '/v1/observed/self?session=agent-session', '/v1/observed/events', '/v1/commands']:
                 self.assertEqual(self.get(path, target)[0], 404, (value, target))
             self.assertEqual(self.post(path, '/v1/commands/invoke', {'command': 'command/exit'})[0], 404, value)
+            self.assertEqual(self.intend(path, {'intent': 'toggle-display-variable', 'owner': 'window/x', 'name': 'x'})[0], 404, value)
             # The metadata routes are not affected.
             self.assertEqual(self.get(path, '/v1/observed/workdirs')[0], 200)
             publish(path, patch('project', 'p', {'display.label': 'still served'}))
@@ -1014,6 +1018,49 @@ class IngressTests(unittest.TestCase):
         views = [node['id'] for node in self.preorder(self.tree_at(path, ran['cursor'])['nodes']) if node['kind'] == 'view']
         self.assertEqual(views, [w + '/view/u:1', w + '/view/u:2', w + '/view/u:4'])
 
+    def intend(self, path, body):
+        """POSTs an intent: the status and the receipt."""
+        connection = UnixHTTPConnection(path)
+        try:
+            connection.request('POST', '/v1/intents/apply', json.dumps(body).encode(), {'Content-Type': 'application/json'})
+            response = connection.getresponse()
+            answer = response.read()
+            return response.status, json.loads(answer) if response.status in (200, 422) else answer.decode()
+        finally:
+            connection.close()
+
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_intents_apply_with_a_receipt(self):
+        path, workspace, _ = self.start_automation('intents', sidebar=ROOT / 'data/sidebar/fixture.kdl')
+        w = 'workspace/' + workspace
+        # An arrangement intent, by Automation IDs: the tab goes, as the tree
+        # at the receipt's cursor shows.
+        status, receipt = self.intend(path, {'intent': 'close-tab', 'owner': w, 'tab': w + '/view/u:2'})
+        self.assertEqual(status, 200, receipt)
+        self.assertTrue(receipt['accepted'])
+        self.assertIsInstance(receipt['request'], int)
+        views = [node['id'] for node in self.preorder(self.tree_at(path, receipt['cursor'])['nodes']) if node['kind'] == 'view']
+        self.assertEqual(views, [w + '/view/u:1'])
+        # One the arrangement refuses, with why: the root panel can't close.
+        status, receipt = self.intend(path, {'intent': 'close-panel', 'owner': w, 'panel': w + '/panel/1'})
+        self.assertEqual((status, receipt['accepted']), (422, False))
+        self.assertIn('close-panel', receipt['reason'])
+        # One whose IDs name nothing there.
+        status, receipt = self.intend(path, {'intent': 'split-panel', 'owner': w, 'panel': w + '/panel/7', 'dir': 'right'})
+        self.assertEqual((status, receipt['accepted']), (422, False))
+        self.assertIn('panel 7', receipt['reason'])
+        status, receipt = self.intend(path, {'intent': 'split-panel', 'owner': w, 'panel': w + '/panel/1', 'dir': 'right'})
+        self.assertEqual(status, 200, receipt)
+        panels = [node['id'] for node in self.preorder(self.tree_at(path, receipt['cursor'])['nodes']) if node['kind'] == 'panel']
+        self.assertEqual(len(panels), 3)
+        # A sidebar intent goes to the window's core: its receipt, or its refusal.
+        status, receipt = self.intend(path, {'intent': 'toggle-display-variable', 'owner': w, 'name': 'show-issues'})
+        self.assertEqual(status, 200, receipt)
+        self.assertTrue(receipt['accepted'])
+        status, receipt = self.intend(path, {'intent': 'toggle-display-variable', 'owner': w, 'name': 'nonesuch'})
+        self.assertEqual((status, receipt['accepted']), (422, False))
+        self.assertTrue(receipt['reason'])
+
     @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
     def test_observe_refuses_commands_with_why(self):
         path, workspace, _ = self.start_automation('observe', user='automation: "observe"\n')
@@ -1021,6 +1068,9 @@ class IngressTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertIn('observe', reason)
         self.assertEqual(self.get(path, '/v1/commands')[0], 403)
+        status, reason = self.intend(path, {'intent': 'close-panel', 'owner': 'workspace/' + workspace, 'panel': 'workspace/%s/panel/1' % workspace})
+        self.assertEqual(status, 403)
+        self.assertIn('observe', reason)
         # The reads still answer.
         self.assertEqual(self.get(path, '/v1/observed/semantic')[0], 200)
 

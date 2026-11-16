@@ -20,7 +20,7 @@ use wheelhouse_core::{
     WorkspaceId,
 };
 
-use super::{caller_views, cbor_wanted, encode, reply, Automation, FRAME_WAIT, MODE_UNKNOWN, SCHEMA};
+use super::{caller_views, cbor_wanted, encode, intents::Intent, reply, Automation, FRAME_WAIT, MODE_UNKNOWN, SCHEMA};
 use crate::{AUTOMATION_FULL, AUTOMATION_OFF};
 
 /// `UIShell_CmdFlag_ListInUI`: the palette lists it. These mirror
@@ -246,7 +246,7 @@ pub struct Invocation {
 pub struct Refusal(pub StatusCode, pub String);
 
 impl Refusal {
-    fn new(status: StatusCode, reason: impl Into<String>) -> Self {
+    pub fn new(status: StatusCode, reason: impl Into<String>) -> Self {
         Refusal(status, reason.into())
     }
 }
@@ -360,16 +360,43 @@ fn target(named: Option<Target>, targets: Targets, context: Option<Vec<String>>)
     }
 }
 
-/// An invocation the UI has yet to take, and where its answer goes.
+/// What a client asks the UI to do.
+pub enum Work {
+    Invoke(Invocation),
+    Apply(Intent),
+}
+
+/// Work done: the cursor of the frame it shows in, and an intent's request.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Done {
+    pub cursor: String,
+    pub request: Option<u64>,
+}
+
+/// Where work's answer goes.
+pub type Reply = oneshot::Sender<Result<Done, Refusal>>;
+
+/// Work the UI has yet to take, and where its answer goes.
 pub struct Queued {
-    pub invocation: Invocation,
-    pub reply: oneshot::Sender<Result<String, Refusal>>,
+    pub work: Work,
+    pub reply: Reply,
+}
+
+/// `work` done by the UI, once the frame it shows in has ended.
+pub(super) async fn queue(automation: &Automation, work: Work) -> Result<Done, Refusal> {
+    let answer = enqueue(automation, work)?;
+    (automation.wake)();
+    // Taken at one frame's end, done in the next, answered at its end.
+    match tokio::time::timeout(FRAME_WAIT, answer).await {
+        Ok(Ok(answer)) => answer,
+        _ => Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "the UI didn't do it in time")),
+    }
 }
 
 impl Automation {
     /// Whether the setting lets a client act: off is 404, as for the reads;
     /// observe is 403. Before any frame has said, one is waited for.
-    async fn acting(self: &Arc<Self>) -> Result<(), Refusal> {
+    pub(super) async fn acting(self: &Arc<Self>) -> Result<(), Refusal> {
         if self.mode.load(SeqCst) == MODE_UNKNOWN {
             self.fresh(false).await.map_err(|status| Refusal::new(status, ""))?;
         }
@@ -436,20 +463,14 @@ async fn invoked(automation: &Arc<Automation>, body: Result<Json<Invoke>, JsonRe
     };
     let target = target(named, targets, context)?;
     let invocation = Invocation { command: command.name.clone(), target, arg };
-    let answer = enqueue(automation, invocation)?;
-    (automation.wake)();
-    // Taken at one frame's end, run in the next, answered at its end.
-    match tokio::time::timeout(FRAME_WAIT, answer).await {
-        Ok(Ok(answer)) => answer,
-        _ => Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "the UI didn't run it in time")),
-    }
+    queue(automation, Work::Invoke(invocation)).await.map(|done| done.cursor)
 }
 
-/// `invocation` queued for the UI, and where its answer will come; refused
-/// when the queue is full of clients that haven't gone.
-fn enqueue(automation: &Automation, invocation: Invocation) -> Result<oneshot::Receiver<Result<String, Refusal>>, Refusal> {
+/// `work` queued for the UI, and where its answer will come; refused when
+/// the queue is full of clients that haven't gone.
+fn enqueue(automation: &Automation, work: Work) -> Result<oneshot::Receiver<Result<Done, Refusal>>, Refusal> {
     let (reply, answer) = oneshot::channel();
-    let mut queue = automation.invocations.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut queue = automation.queued.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     // Those whose client has gone hold no place.
     if queue.len() >= MAX_QUEUED {
         queue.retain(|queued| !queued.reply.is_closed());
@@ -457,43 +478,50 @@ fn enqueue(automation: &Automation, invocation: Invocation) -> Result<oneshot::R
     if queue.len() >= MAX_QUEUED {
         return Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "too many invocations are waiting"));
     }
-    queue.push(Queued { invocation, reply });
+    queue.push(Queued { work, reply });
     Ok(answer)
 }
 
-/// The UI's side of invocation.
+/// The UI's side of commands and intents.
 pub trait Host {
     /// Queue `invocation` to run in the next frame, under `ticket`; or why not.
     fn invoke(&mut self, ticket: u64, invocation: &Invocation) -> Result<(), Refusal>;
     /// After the frame `ticket` ran in: whether it ran, or what refused it.
     fn settle(&mut self, ticket: u64) -> Result<(), Refusal>;
+    /// Apply `intent` now: its request, or why it was refused.
+    fn apply(&mut self, ticket: u64, intent: &Intent) -> Result<u64, Refusal>;
 }
 
-/// Invocations the UI is running: queued at one frame's end, settled at
-/// the next.
+/// Work the UI is doing: taken at one frame's end, and answered at the
+/// next, once what it did shows in the tree.
 #[derive(Default)]
 pub struct Running {
     next: u64,
-    running: Vec<(u64, oneshot::Sender<Result<String, Refusal>>)>,
+    /// Each one's ticket, an intent's request, and where its answer goes.
+    running: Vec<(u64, Option<u64>, Reply)>,
 }
 
 impl Running {
-    /// Whether this frame ran any, so its end must build the tree for a
-    /// cursor that follows them.
+    /// Whether this frame did any, so its end must build the tree for a
+    /// cursor that follows it.
     pub fn any(&self) -> bool {
         !self.running.is_empty()
     }
 
     /// At a frame's end, once its tree is published as `generation`: answer
-    /// those this frame ran with its cursor, then queue those waiting for
-    /// the next.
+    /// what this frame did with its cursor, then take what waits: an intent
+    /// is applied now, an invocation queued to run in the next frame.
     pub fn frame_end(&mut self, automation: &Automation, mode: u32, generation: u64, host: &mut impl Host) {
-        for (ticket, reply) in self.running.drain(..) {
-            let _ = reply.send(host.settle(ticket).map(|()| automation.cursor(generation)));
+        for (ticket, request, reply) in self.running.drain(..) {
+            let ran = match request {
+                Some(_) => Ok(()),
+                None => host.settle(ticket),
+            };
+            let _ = reply.send(ran.map(|()| Done { cursor: automation.cursor(generation), request }));
         }
-        let queued = std::mem::take(&mut *automation.invocations.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
-        for Queued { invocation, reply } in queued {
-            // A client that has gone has its command left unrun.
+        let queued = std::mem::take(&mut *automation.queued.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+        for Queued { work, reply } in queued {
+            // A client that has gone has its work left undone.
             if reply.is_closed() {
                 continue;
             }
@@ -503,8 +531,16 @@ impl Running {
                 _ => Some(Refusal::new(StatusCode::FORBIDDEN, "automation is observe: commands and intents need automation: full")),
             };
             self.next += 1;
-            match refused.map_or_else(|| host.invoke(self.next, &invocation), Err) {
-                Ok(()) => self.running.push((self.next, reply)),
+            let ticket = self.next;
+            let taken = refused.map_or_else(
+                || match &work {
+                    Work::Invoke(invocation) => host.invoke(ticket, invocation).map(|()| None),
+                    Work::Apply(intent) => host.apply(ticket, intent).map(Some),
+                },
+                Err,
+            );
+            match taken {
+                Ok(request) => self.running.push((ticket, request, reply)),
                 Err(refusal) => {
                     let _ = reply.send(Err(refusal));
                 }
@@ -517,4 +553,4 @@ impl Running {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

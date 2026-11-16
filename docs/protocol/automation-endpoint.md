@@ -2,16 +2,16 @@
 
 The **Automation Endpoint** is the set of routes on Wheelhouse's ingress
 **Local Endpoint** that let local clients (agents running in Wheelhouse
-terminals, test harnesses, scripts) observe the shell and invoke its named
-commands. It is the endpoint
+terminals, test harnesses, scripts) observe the shell, invoke its named
+commands and apply the Core's intents. It is the endpoint
 that [metadata producers](pm-connect.md) publish to: one socket serves both.
 The design is on [#343](https://github.com/flotilla-org/wheelhouse/issues/343):
 Automation IDs (#346), the Semantic and Placement Trees (#347), Caller
 Context and discovery (#348), and gating in
 [ADR 0014](../adr/0014-automation-endpoint-invokes-named-commands.md).
 
-Intents come later (ADR 0014's amendment), as do the Placement Tree (#564)
-and the Dashboard part of the Semantic Tree.
+The Placement Tree (#564) and the Dashboard part of the Semantic Tree come
+later.
 
 ## Discovery
 
@@ -69,7 +69,8 @@ warning on stderr, so a mistyped `off` leaves automation off.
   for metadata, and the automation routes answer 404 there. Turning it off
   while Wheelhouse runs makes them answer 404 from the next frame, as does
   changing it to a value it doesn't know.
-- `observe` serves the reads; [commands](#commands) answer 403, with why.
+- `observe` serves the reads; [commands](#commands) and
+  [intents](#intents) answer 403, with why.
 - `full` serves every route.
 
 The metadata routes, `/v1/observed/workdirs` included, are not affected by
@@ -405,6 +406,70 @@ it, it may still run. A command that `run_command` or `open_tab` runs, as
 their `command` argument, is held to what invoking it would be: listed, and
 needing no argument.
 
+## Intents
+
+`POST /v1/intents/apply` applies one of the Core's intents
+(`docs/design/change-stream.md`) by its stable name, and answers with the
+Core's receipt: whether a logical change worked, which a command's 200
+can't say (ADR 0014's amendment). It needs `automation: full`, as commands
+do.
+
+```json
+{"intent": "close-tab", "owner": "workspace/<uuid>", "tab": "workspace/<uuid>/view/u:2"}
+```
+
+`owner` names whose state it changes, and every panel, tab and row is an
+Automation ID; a field the intent doesn't take is refused.
+
+| Intent | Fields |
+| --- | --- |
+| `select-tab` | `panel`, `tab` (none selects none) |
+| `move-tab` | `tab`, `to` (a panel), `after` (a tab; none: first) |
+| `close-tab` | `tab` |
+| `drop-tab` | `tab` (from any arrangement), `to`, `dir` (none: into `to`), `after` |
+| `split-panel` | `panel`, `dir` |
+| `close-panel` | `panel` |
+| `reorder-panel` | `panel`, `after` (a panel; none: first) |
+| `resize-panel` | `panel`, `delta` (of its parent, for the boundary after it), `floor` (default 0) |
+| `equalize-panel` | `panel` |
+| `copy-subject-url`, `activate` | `entity`: `{provider, kind, id}` |
+| `activate-placement`, `toggle-placement` | `key`: a row, `section/<region-key>/row/<node-key>` |
+| `set-variable` | `key`, `name`, `value` (none resets it) |
+| `toggle-display-variable` | `name` |
+
+`dir` is `left`, `up`, `right` or `down`.
+
+- **Arrangement intents** (the first nine) take `workspace/<uuid>`, or
+  `window/<uuid>` for a window's sidebar dock, as `owner`, and panels and
+  tabs of the owner's (a dropped tab may be another's). Until the Core's
+  stores take intents (#441), Wheelhouse applies one as its own commands
+  do, to the owner's live arrangement, the dock rules checking a move or a
+  drop first, and the store commits it in the next frame. Its `request` is
+  the endpoint's own number until then.
+- **Sidebar intents** (the rest) take the window whose sidebar it is, or
+  `workspace/<uuid>` for the window that shows that workspace. Their host
+  effects (opening or focusing a workspace, copying a URL) are carried out
+  as for a click. The Dashboard part of the Semantic Tree, which will give
+  rows their IDs, comes later.
+
+The UI applies an intent at a frame's end; the request waits for the next
+frame's end, by when what it changed is committed, and then:
+
+```json
+{"accepted": true, "request": 12, "cursor": "<instance-uuid>:<generation>"}
+```
+
+The tree at `cursor` shows what it changed, as for a command. A refusal,
+by the Core, by the dock rules, or because an ID names nothing there, is
+422 with nothing changed:
+
+```json
+{"accepted": false, "reason": "close-panel doesn't apply to that arrangement"}
+```
+
+Other errors are as for commands: 400 for a body that isn't JSON, 503 when
+the queue is full or the UI didn't answer within 5 seconds.
+
 ## Observed workdirs
 
 `GET /v1/observed/workdirs` (README, "Live core facts") gives each terminal's
@@ -416,5 +481,5 @@ outside this process. Use `view`.
 
 `--ingress_record` captures these requests with the others, as
 `pm-connect.md` describes: for a read or a stream, its method, path (without
-the query) and status; for an invocation, its body too, so a recorded agent
-session can be replayed as a test.
+the query) and status; for an invocation or an intent, its body too, so a
+recorded agent session can be replayed as a test.

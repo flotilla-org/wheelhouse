@@ -18,9 +18,15 @@ use std::sync::atomic::Ordering::SeqCst;
 #[cfg(any(unix, windows))]
 use automation::commands::{self, Arg, ArgKind, ArgValue, Host, Invocation as Planned, Refusal, Target as Named};
 #[cfg(any(unix, windows))]
+use automation::intents;
+#[cfg(any(unix, windows))]
 use axum::http::StatusCode;
 #[cfg(any(unix, windows))]
-use wheelhouse_core::automation::ViewOwner;
+use wheelhouse_core::{
+    arrangement::{Dir, OwnerKind},
+    automation::{ViewAddress, ViewOwner},
+    EntityRef,
+};
 
 pub type Wake = extern "C" fn();
 
@@ -110,6 +116,7 @@ pub struct AutomationHost {
     pub commands: Option<AutomationCommands>,
     pub invoke: Option<AutomationInvoke>,
     pub settle: Option<AutomationSettle>,
+    pub apply: Option<AutomationApply>,
 }
 
 /// Gives `out` every command table entry, through
@@ -125,6 +132,51 @@ pub type AutomationInvoke = unsafe extern "C" fn(context: *mut c_void, invocatio
 /// After the frame an invocation ran in: 0 when it ran, or the HTTP status
 /// of what refused it with why in `reason`, which need only last the call.
 pub type AutomationSettle = unsafe extern "C" fn(context: *mut c_void, ticket: u64, reason: *mut Text) -> u32;
+
+/// Applies an intent now: 0 with its request in `request`, or the HTTP
+/// status that refuses it (422 for the Core's refusal) with why in
+/// `reason`, which need only last the call.
+pub type AutomationApply = unsafe extern "C" fn(context: *mut c_void, intent: *const Intent, request: *mut u64, reason: *mut Text) -> u32;
+
+/// An intent, by its stable name, for its owner, with its fields: an
+/// arrangement's panels by their ID as the Semantic Tree gives them (`to`
+/// is `panel`), its tabs by View; a sidebar's row by its node key and its
+/// entity by parts. Fields the intent doesn't read are empty.
+#[repr(C)]
+pub struct Intent {
+    pub ticket: u64,
+    /// An `INTENT_*`.
+    pub family: u32,
+    pub name: Text,
+    /// An `AUTOMATION_OWNER_*`, and the owner's ID.
+    pub owner: u32,
+    pub owner_id: [u8; 16],
+    pub panel: Text,
+    pub after_panel: Text,
+    pub has_tab: u32,
+    pub tab: View,
+    pub has_after: u32,
+    pub after: View,
+    /// An `INTENT_DIR_*`.
+    pub dir: u32,
+    pub delta: f32,
+    pub floor: f32,
+    pub key: Text,
+    pub entity_provider: Text,
+    pub entity_kind: Text,
+    pub entity_id: Text,
+    /// A variable's name.
+    pub variable: Text,
+    pub has_value: u32,
+    pub value: Text,
+}
+pub const INTENT_ARRANGEMENT: u32 = 1;
+pub const INTENT_SIDEBAR: u32 = 2;
+pub const INTENT_DIR_NONE: u32 = 0;
+pub const INTENT_DIR_LEFT: u32 = 1;
+pub const INTENT_DIR_UP: u32 = 2;
+pub const INTENT_DIR_RIGHT: u32 = 3;
+pub const INTENT_DIR_DOWN: u32 = 4;
 
 /// A command table entry (uishell_commands.h, shell_commands.h); Rust
 /// decides which are listed and formats them.
@@ -703,6 +755,7 @@ mod transport {
                     commands: None,
                     invoke: None,
                     settle: None,
+                    apply: None,
                 };
                 unsafe { wheelhouse_ingress_automation(&mut server, &host) };
                 assert_eq!(server.automation.published.borrow().tree.is_some(), published);
@@ -1228,6 +1281,118 @@ impl Host for HostInvoker<'_> {
         let mut reason = Text { data: std::ptr::null(), len: 0 };
         refusal(unsafe { settle(self.0.context, ticket, &mut reason) }, &reason)
     }
+
+    fn apply(&mut self, ticket: u64, intent: &intents::Intent) -> Result<u64, Refusal> {
+        let apply = self.0.apply.ok_or_else(|| unavailable("this endpoint applies no intents"))?;
+        let record = intent_record(ticket, intent);
+        let (mut request, mut reason) = (0, Text { data: std::ptr::null(), len: 0 });
+        // The record borrows `intent`, which outlives the call.
+        refusal(unsafe { apply(self.0.context, &record, &mut request, &mut reason) }, &reason).map(|()| request)
+    }
+}
+
+/// `source` as the host reads it, borrowing its texts.
+#[cfg(any(unix, windows))]
+fn intent_record(ticket: u64, source: &intents::Intent) -> Intent {
+    use intents::{Arrangement, Intent as Named, Sidebar};
+    let borrow = |s: &str| Text { data: s.as_ptr(), len: s.len() };
+    let none = || View { owner: AUTOMATION_OWNER_NONE, id: [0; 16], key: borrow(""), previous: 0 };
+    let view = |view: &ViewAddress| {
+        let (owner, id) = owner_record(view.owner);
+        View { owner, id, key: borrow(&view.key), previous: u32::from(view.previous) }
+    };
+    let (family, owner) = match source {
+        Named::Arrangement { owner, .. } if owner.kind == OwnerKind::Sidebar => (INTENT_ARRANGEMENT, ViewOwner::Window(owner.id)),
+        Named::Arrangement { owner, .. } => (INTENT_ARRANGEMENT, ViewOwner::Workspace(owner.id)),
+        Named::Sidebar { owner, .. } => (INTENT_SIDEBAR, *owner),
+    };
+    let (owner, owner_id) = owner_record(owner);
+    let mut record = Intent {
+        ticket,
+        family,
+        name: borrow(source.name()),
+        owner,
+        owner_id,
+        panel: borrow(""),
+        after_panel: borrow(""),
+        has_tab: 0,
+        tab: none(),
+        has_after: 0,
+        after: none(),
+        dir: INTENT_DIR_NONE,
+        delta: 0.0,
+        floor: 0.0,
+        key: borrow(""),
+        entity_provider: borrow(""),
+        entity_kind: borrow(""),
+        entity_id: borrow(""),
+        variable: borrow(""),
+        has_value: 0,
+        value: borrow(""),
+    };
+    let dir = |dir: Option<Dir>| match dir {
+        None => INTENT_DIR_NONE,
+        Some(Dir::Left) => INTENT_DIR_LEFT,
+        Some(Dir::Up) => INTENT_DIR_UP,
+        Some(Dir::Right) => INTENT_DIR_RIGHT,
+        Some(Dir::Down) => INTENT_DIR_DOWN,
+    };
+    let (panel, after_panel, tab, after) = match source {
+        Named::Arrangement { intent, .. } => match intent {
+            Arrangement::SelectTab { panel, tab } => (Some(panel), None, tab.as_ref(), None),
+            Arrangement::MoveTab { tab, to, after } => (Some(to), None, Some(tab), after.as_ref()),
+            Arrangement::CloseTab { tab } => (None, None, Some(tab), None),
+            Arrangement::DropTab { tab, to, dir: d, after } => {
+                record.dir = dir(*d);
+                (Some(to), None, Some(tab), after.as_ref())
+            }
+            Arrangement::SplitPanel { panel, dir: d } => {
+                record.dir = dir(Some(*d));
+                (Some(panel), None, None, None)
+            }
+            Arrangement::ClosePanel { panel } | Arrangement::EqualizePanel { panel } => (Some(panel), None, None, None),
+            Arrangement::ReorderPanel { panel, after } => (Some(panel), after.as_ref(), None, None),
+            Arrangement::ResizePanel { panel, delta, floor } => {
+                (record.delta, record.floor) = (*delta, *floor);
+                (Some(panel), None, None, None)
+            }
+        },
+        Named::Sidebar { intent, .. } => {
+            let entity = |record: &mut Intent, entity: &EntityRef| {
+                (record.entity_provider, record.entity_kind, record.entity_id) =
+                    (borrow(&entity.provider), borrow(&entity.kind), borrow(&entity.id));
+            };
+            match intent {
+                Sidebar::CopySubjectUrl { entity: e } | Sidebar::Activate { entity: e } => entity(&mut record, e),
+                Sidebar::ActivatePlacement { row } | Sidebar::TogglePlacement { row } => record.key = borrow(&row.key),
+                Sidebar::SetVariable { row, name, value } => {
+                    (record.key, record.variable) = (borrow(&row.key), borrow(name));
+                    if let Some(value) = value {
+                        (record.has_value, record.value) = (1, borrow(value));
+                    }
+                }
+                Sidebar::ToggleDisplayVariable { name } => record.variable = borrow(name),
+            }
+            (None, None, None, None)
+        }
+    };
+    record.panel = borrow(panel.map_or("", String::as_str));
+    record.after_panel = borrow(after_panel.map_or("", String::as_str));
+    if let Some(tab) = tab {
+        (record.has_tab, record.tab) = (1, view(tab));
+    }
+    if let Some(after) = after {
+        (record.has_after, record.after) = (1, view(after));
+    }
+    record
+}
+
+#[cfg(any(unix, windows))]
+fn owner_record(owner: ViewOwner) -> (u32, [u8; 16]) {
+    match owner {
+        ViewOwner::Workspace(id) => (AUTOMATION_OWNER_WORKSPACE, id.to_bytes()),
+        ViewOwner::Window(id) => (AUTOMATION_OWNER_WINDOW, id.to_bytes()),
+    }
 }
 
 #[cfg(any(unix, windows))]
@@ -1259,11 +1424,7 @@ fn invocation_record(ticket: u64, source: &Planned) -> Invocation {
         Some(Named::Panel(panel)) => (TARGET_PANEL, Some(panel.owner), panel.id.as_str(), false),
         Some(Named::View(view)) => (TARGET_VIEW, Some(view.owner), view.key.as_str(), view.previous),
     };
-    let (owner, id) = match owner {
-        None => (AUTOMATION_OWNER_NONE, [0; 16]),
-        Some(ViewOwner::Workspace(id)) => (AUTOMATION_OWNER_WORKSPACE, id.to_bytes()),
-        Some(ViewOwner::Window(id)) => (AUTOMATION_OWNER_WINDOW, id.to_bytes()),
-    };
+    let (owner, id) = owner.map_or((AUTOMATION_OWNER_NONE, [0; 16]), owner_record);
     let mut record = Invocation {
         ticket,
         command: borrow(&source.command),
