@@ -81,6 +81,7 @@ pub enum Body {
     },
     DropTab {
         owner: String,
+        /// Any arrangement's: a drop may bring it from another.
         tab: String,
         to: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

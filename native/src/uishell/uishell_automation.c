@@ -179,7 +179,8 @@ struct UIShell_AutomationRun
 };
 
 // Runs and the reasons given back live here; it is cleared only when no run
-// is left, at the next invocation, after Rust has copied every reason.
+// is left, at the next invocation or intent, after Rust has copied every
+// reason.
 global Arena *uishell_automation_arena = 0;
 global UIShell_AutomationRun *uishell_automation_runs = 0;
 
@@ -468,6 +469,7 @@ uishell_automation_apply(void *unused, const WheelhouseIngressIntent *in, U64 *r
 {
   Temp scratch = scratch_begin(0, 0);
   if(uishell_automation_arena == 0) { uishell_automation_arena = arena_alloc(); }
+  if(uishell_automation_runs == 0) { arena_clear(uishell_automation_arena); }
   String8 name = uishell_automation_string(in->name);
   UIShell_WorkspaceId id = {0};
   MemoryCopy(id.v, in->owner_id, sizeof(id.v));
@@ -515,6 +517,7 @@ uishell_automation_apply(void *unused, const WheelhouseIngressIntent *in, U64 *r
         allowed = rd_dock_move_allowed(scratch.arena, "move", tab, rd_panel_address(owner, intent.panel), dir);
         why = str8_skip_chop_whitespace(log_scope_end(scratch.arena).strings[LogMsgKind_UserError]);
       }
+      // TODO(#441): the Core's request, once its stores take intents.
       if(allowed && rd_arrangement_apply_intent(intent).applied) { status = 0; *request = in->ticket; rd_request_frame(); }
       else if(allowed) { why = push_str8f(scratch.arena, "%S doesn't apply to that arrangement", name); }
       else if(why.size == 0) { why = str8_lit("the dock rules don't allow that move"); }
