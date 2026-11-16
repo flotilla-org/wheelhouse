@@ -480,7 +480,7 @@ uishell_automation_apply(void *unused, const WheelhouseIngressIntent *in, U64 *r
   {
     U32 kind = max_U32;
     for EachElement(i, uishell_automation_arrangement_intents)
-    { if(str8_match(uishell_automation_arrangement_intents[i].name, name, 0)) { kind = uishell_automation_arrangement_intents[i].kind; } }
+    { if(str8_match(uishell_automation_arrangement_intents[i].name, name, 0)) { kind = uishell_automation_arrangement_intents[i].kind; break; } }
     RD_PanelOwner owner = {window_owned ? RD_PanelOwnerKind_Sidebar : RD_PanelOwnerKind_Workspace, id};
     String8 panels[] = {uishell_automation_string(in->panel), uishell_automation_string(in->after_panel)};
     RD_PanelID ids[ArrayCount(panels)] = {0};
@@ -517,13 +517,14 @@ uishell_automation_apply(void *unused, const WheelhouseIngressIntent *in, U64 *r
       }
       if(allowed && rd_arrangement_apply_intent(intent).applied) { status = 0; *request = in->ticket; rd_request_frame(); }
       else if(allowed) { why = push_str8f(scratch.arena, "%S doesn't apply to that arrangement", name); }
+      else if(why.size == 0) { why = str8_lit("the dock rules don't allow that move"); }
     }
   }
   else if(in->family == WHEELHOUSE_INGRESS_INTENT_SIDEBAR)
   {
     WheelhouseIntent intent = {.kind = max_U32};
     for EachElement(i, uishell_automation_sidebar_intents)
-    { if(str8_match(uishell_automation_sidebar_intents[i].name, name, 0)) { intent.kind = uishell_automation_sidebar_intents[i].kind; } }
+    { if(str8_match(uishell_automation_sidebar_intents[i].name, name, 0)) { intent.kind = uishell_automation_sidebar_intents[i].kind; break; } }
     CFG_Node *window = window_owned ? host : rd_window_from_cfg(host);
     RD_WindowState *ws = rd_window_state_from_cfg__existing(window);
     UIShell_SidebarState *state = ws != &rd_nil_window_state ? uishell_sidebar_init(ws) : 0;
