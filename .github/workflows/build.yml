@@ -42,6 +42,8 @@ jobs:
         if: runner.os != 'Windows'
       - run: python3 tools/test-embed-sidebar-fixture.py
         if: runner.os != 'Windows'
+      - run: python3 tools/test-check-shader-reflection.py
+        if: runner.os != 'Windows'
       - run: python3 ci/test_pins.py
         if: runner.os != 'Windows'
       - run: python3 ci/test_run_ui_diagnostics.py

@@ -9,6 +9,7 @@ on:
       - 'native/src/shaders/**'
       - 'native/src/effects/**'
       - 'tools/generate-shaders.py'
+      - 'tools/check-shader-reflection.py'
       - '.github/workflows/shaders.yml'
   push:
     branches: [main]
@@ -16,6 +17,7 @@ on:
       - 'native/src/shaders/**'
       - 'native/src/effects/**'
       - 'tools/generate-shaders.py'
+      - 'tools/check-shader-reflection.py'
       - '.github/workflows/shaders.yml'
   workflow_dispatch:
 

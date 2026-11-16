@@ -18,6 +18,8 @@
 # error Renderer backend not specified.
 #endif
 
+#include "shaders/generated/shader_layouts.h"
+
 // The renderer this build draws with, as Help shows it.
 internal String8
 r_backend_name(void)
