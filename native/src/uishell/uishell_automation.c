@@ -362,7 +362,9 @@ uishell_automation_invoke(void *unused, const WheelhouseIngressInvocation *in, W
 internal U32
 uishell_automation_settle(void *unused, U64 ticket, WheelhouseIngressText *reason)
 {
-  U32 status = 0;
+  // A run lost track of is no success.
+  U32 status = 500;
+  *reason = uishell_ingress_text(str8_lit("the UI lost track of the invocation"));
   for(UIShell_AutomationRun **link = &uishell_automation_runs; *link != 0; link = &(*link)->next)
   {
     if((*link)->ticket == ticket)

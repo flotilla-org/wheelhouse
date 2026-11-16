@@ -434,6 +434,10 @@ async fn invoked(automation: &Arc<Automation>, body: Result<Json<Invoke>, JsonRe
     let (reply, answer) = oneshot::channel();
     {
         let mut queue = automation.invocations.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Those whose client has gone hold no place.
+        if queue.len() >= MAX_QUEUED {
+            queue.retain(|queued| !queued.reply.is_closed());
+        }
         if queue.len() >= MAX_QUEUED {
             return Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "too many invocations are waiting"));
         }
