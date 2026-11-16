@@ -769,6 +769,24 @@ fn a_slot_switches_facet_in_place_and_keeps_following_its_provider() {
     assert!(matches!(recipe, LocalRecipe::AgentSession { .. }));
     assert!(!sidebar.set_slot_facet(worker(), "a", "conversation").unwrap());
     assert!(sidebar.set_slot_facet(worker(), "a", "Not A Key").is_err());
+    // A Facet the entity's layout doesn't list.
+    assert!(sidebar.set_slot_facet(worker(), "a", "shell").is_err());
+}
+
+#[test]
+fn a_facet_edit_is_dropped_when_the_provider_names_another_entity() {
+    let mut sidebar = session(agent_slot());
+    sidebar.feed(150, [agent_facets()]);
+    assert!(sidebar.set_slot_facet(worker(), "a", "terminal").unwrap());
+    let mut next = agent_slot();
+    next.set.insert("layout.version".into(), update(text("2")));
+    next.set.insert("layout.slot.a.entity".into(), update(MetadataValue::EntityRefs(vec![entity("agent", "b")])));
+    sidebar.feed(200, [next]);
+    let slot = sidebar.slots(worker()).unwrap().remove(0);
+    assert_eq!(slot.flags, 0);
+    assert!(
+        matches!(&slot.spec.content, Content::ProviderFacet { entity: e, facet } if *e == entity("agent", "b") && facet == "conversation")
+    );
 }
 
 // What a workspace's overlay reads beyond its content (#475): the host polls

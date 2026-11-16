@@ -406,8 +406,13 @@ impl WorkspaceSlots {
             if edit.rebind == Some(slot.rebind) {
                 edit.rebind = None;
             }
-            if matches!(&slot.spec.content, Content::ProviderFacet { facet, .. } if edit.facet.as_ref() == Some(facet)) {
-                edit.facet = None;
+            // A Facet was chosen among one entity's: it lasts while the
+            // provider still names that entity, with another Facet shown.
+            let was = old.as_ref().and_then(|b| b.slot(key)).map(|slot| &slot.spec.content);
+            match (&slot.spec.content, was) {
+                (Content::ProviderFacet { entity, facet }, Some(Content::ProviderFacet { entity: was, .. }))
+                    if entity == was && edit.facet.as_ref() != Some(facet) => {}
+                _ => edit.facet = None,
             }
         }
         let keep: Vec<String> = self

@@ -1291,10 +1291,13 @@ impl Sidebar {
         self.with_workspace(workspace, |record, clock, _, planner| record.set_slot(clock, key, spec, rebind, planner))
     }
 
-    /// Show another Facet of the entity a slot shows (see
-    /// [`WorkspaceSlots::set_facet`](crate::slots::WorkspaceSlots::set_facet)):
+    /// Show another Facet of the entity a slot shows, one its layout lists
+    /// (see [`WorkspaceSlots::set_facet`](crate::slots::WorkspaceSlots::set_facet)):
     /// a baseline slot keeps following its provider.
     pub fn set_slot_facet(&mut self, workspace: WorkspaceId, key: &str, facet: &str) -> Result<bool, String> {
+        if !self.slot_facets(workspace, key)?.iter().any(|f| f.name == facet) {
+            return Err(format!("slot {key:?}'s entity has no Facet {facet:?}"));
+        }
         self.with_workspace(workspace, |record, clock, _, _| record.set_slot_facet(clock, key, facet))
     }
 
