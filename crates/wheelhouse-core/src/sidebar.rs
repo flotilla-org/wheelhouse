@@ -787,6 +787,14 @@ impl Sidebar {
         if keeping.is_empty() {
             return Err(format!("no workspace keeps {}", entity.id));
         }
+        // Each is closable before any is closed, so a refusal changes nothing.
+        let (order, _) = self.observed_order();
+        for id in &keeping {
+            let kept = self.workspace(*id)?.life.get().kept == Some(true);
+            if !kept && !order.contains(id) {
+                return Err(format!("workspace {id} is not open"));
+            }
+        }
         let mut effects = Vec::new();
         for id in keeping {
             let kept = self.workspaces.get(&id).is_some_and(|entry| entry.record.life.get().kept == Some(true));
@@ -798,6 +806,8 @@ impl Sidebar {
                 // Open: closed as its row's close would, ended so destroyed.
                 effects.extend(self.close_workspace(id, false)?);
             }
+            // Neither close drops its path; the next observe would, so the
+            // row goes now rather than after it.
             self.retained_paths.remove(&id);
         }
         Ok(effects)

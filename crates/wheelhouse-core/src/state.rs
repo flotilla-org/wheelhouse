@@ -2876,11 +2876,6 @@ impl ControllerState {
             .collect()
     }
 
-    /// Keep just the subjects and ancestors needed by open workspace paths.
-    /// This is presentation history, never input to producer fact arbitration.
-    ///
-    /// `saved` seeds presentation history when a path is first retained.
-    /// Current lifecycle evidence takes precedence over that history.
     /// Which subjects a workspace's path retains, as opposed to a pin.
     pub(crate) fn set_workspace_retained(&mut self, subjects: BTreeSet<EntityRef>) -> bool {
         let changed = self.workspace_retained != subjects;
@@ -2888,6 +2883,11 @@ impl ControllerState {
         changed
     }
 
+    /// Keep just the subjects and ancestors needed by open workspace paths.
+    /// This is presentation history, never input to producer fact arbitration.
+    ///
+    /// `saved` seeds presentation history when a path is first retained.
+    /// Current lifecycle evidence takes precedence over that history.
     pub(crate) fn retain_workspace_paths(&mut self, subjects: BTreeSet<EntityRef>, saved: &BTreeMap<EntityRef, SubjectRecord>) -> bool {
         let before = (self.retained_subjects.len(), self.ended_subjects.len());
         let mut changed = false;
