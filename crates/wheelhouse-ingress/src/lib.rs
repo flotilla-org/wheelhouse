@@ -335,7 +335,8 @@ mod transport {
     impl Ingress {
         pub fn start(path: PathBuf, wake: Wake, recording: Option<(PathBuf, u64, usize)>) -> Result<Self, String> {
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
-            // Unix: a private parent, mode 0600, live endpoints refused, stale ones reclaimed.
+            // Unix: a private parent, mode 0600, `<path>.lock` held while it
+            // serves, live endpoints refused, stale ones reclaimed.
             #[cfg(unix)]
             let listener = runtime.block_on(rigging_http_serve::UnixServer::bind(&path, 0o600));
             #[cfg(windows)]
@@ -582,6 +583,8 @@ mod transport {
             assert!(healthy(&path));
             drop(first);
             assert!(!path.exists(), "clean shutdown left the socket");
+            // The listener's lock file stays, by design (rigging-http-serve).
+            assert!(dir.join("socket.lock").exists());
             std::fs::remove_dir_all(&dir).unwrap();
         }
         // pm-connect.md: a socket nothing serves, as a killed process leaves

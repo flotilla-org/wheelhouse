@@ -400,6 +400,11 @@ message instead, until refusal codes come (#557).
 | 422 | a target or argument it can't take, or that isn't there; or what refused it |
 | 503 | 64 invocations wait already, or the UI didn't run it within 5 seconds |
 
+A 503 for the deadline doesn't take the command back: once the UI has taken
+it, it may still run. A command that `run_command` or `open_tab` runs, as
+their `command` argument, is held to what invoking it would be: listed, and
+needing no argument.
+
 ## Observed workdirs
 
 `GET /v1/observed/workdirs` (README, "Live core facts") gives each terminal's

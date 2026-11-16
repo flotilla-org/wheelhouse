@@ -178,6 +178,8 @@ struct UIShell_AutomationRun
   String8 reason;
 };
 
+// Runs and the reasons given back live here; it is cleared only when no run
+// is left, at the next invocation, after Rust has copied every reason.
 global Arena *uishell_automation_arena = 0;
 global UIShell_AutomationRun *uishell_automation_runs = 0;
 
@@ -332,7 +334,7 @@ uishell_automation_invoke(void *unused, const WheelhouseIngressInvocation *in, W
     UIShell_AutomationRun *run = push_array(uishell_automation_arena, UIShell_AutomationRun, 1);
     run->ticket = in->ticket;
     run->focus = (info.flags & UIShell_CmdFlag_Focus) != 0;
-    run->focused = uishell_workspace_mount_from_window(scratch.arena, window).panel_tree.focused->address;
+    if(window != &cfg_nil_node) { run->focused = uishell_workspace_mount_from_window(scratch.arena, window).panel_tree.focused->address; }
     SLLStackPush(uishell_automation_runs, run);
     String8 text = str8((U8 *)in->text.data, in->text.len);
     UIShell_RegsScope(.window = window->id, .panel = panel, .tab = view, .view = view, .prev_tab = rd_nil_view_address,

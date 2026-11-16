@@ -298,8 +298,22 @@ pub fn plan<'a>(table: &'a [Command], body: &Invoke) -> Result<(&'a Command, Opt
     let bad = || unprocessable(format!("{}'s argument {name} is malformed", body.command));
     let value = match arg.kind {
         ArgKind::FilePath | ArgKind::String | ArgKind::Cfg => ArgValue::Text(value.as_str().ok_or_else(bad)?.to_owned()),
+        // The command it runs is held to what invoking it would be: listed,
+        // and with no argument it would need, as it gets none.
         ArgKind::Command => {
             let named = value.as_str().and_then(|v| v.strip_prefix("command/")).ok_or_else(bad)?;
+            let Some(inner) = table.iter().find(|command| command.name == named) else {
+                return Err(Refusal::new(StatusCode::NOT_FOUND, format!("no command command/{named}")));
+            };
+            if !inner.listed() {
+                return Err(Refusal::new(
+                    StatusCode::FORBIDDEN,
+                    format!("command/{named} is not invocable: neither the palette nor automation lists it"),
+                ));
+            }
+            if inner.arg.is_some_and(|arg| arg.required) {
+                return Err(unprocessable(format!("command/{named} needs an argument; invoke it itself")));
+            }
             ArgValue::Text(named.to_owned())
         }
         ArgKind::Address => ArgValue::Address(value.as_u64().ok_or_else(bad)?),
@@ -315,7 +329,8 @@ pub fn plan<'a>(table: &'a [Command], body: &Invoke) -> Result<(&'a Command, Opt
                 1
             }
             let cursor: Cursor = serde_json::from_value(value.clone()).map_err(|_| bad())?;
-            if cursor.line == 0 || cursor.column == 0 {
+            // The UI's text points are signed.
+            if cursor.line == 0 || cursor.column == 0 || i64::try_from(cursor.line.max(cursor.column)).is_err() {
                 return Err(bad());
             }
             ArgValue::Cursor { line: cursor.line, column: cursor.column }

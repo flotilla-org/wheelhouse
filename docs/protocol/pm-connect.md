@@ -13,9 +13,12 @@ an address of its own under the runtime directory, as the
 same endpoint. Producers discover it through `WHEELHOUSE_SOCKET`, which
 Wheelhouse sets for its terminals, or an explicit socket argument.
 On Unix, the socket must live in a private directory (mode 0700); the listener
-uses mode 0600. Startup fails if a live endpoint already serves the path, or
-if the path is anything but a socket; a socket nothing serves, as a killed
-process leaves one, is reclaimed. Clean shutdown removes its own socket.
+uses mode 0600. A listener holds an exclusive lock on `<socket>.lock` (mode
+0600, beside the socket) for as long as it serves, so two can't race for one
+path. Startup fails if a live endpoint already serves the path, or if the
+path is anything but a socket; a socket nothing serves, as a killed process
+leaves one, is reclaimed. Clean shutdown removes its own socket; the lock
+file is left in place by design.
 On Windows the name is used directly, without filesystem-path mapping. The
 listener follows [ADR 0011](../adr/0011-windows-local-ipc-uses-named-pipes-with-logical-endpoints.md):
 a protected DACL grants SYSTEM and the current user, remote clients are rejected,

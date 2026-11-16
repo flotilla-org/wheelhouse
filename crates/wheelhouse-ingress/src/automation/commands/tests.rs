@@ -33,6 +33,7 @@ fn table() -> Vec<Command> {
         command("exit", LIST_IN_UI, "", None),
         command("goto_line", LIST_IN_UI, "view", Some(Arg { kind: ArgKind::Cursor, required: true })),
         command("new_user", LIST_IN_UI, "", Some(Arg { kind: ArgKind::FilePath, required: false })),
+        command("run_command", LIST_IN_UI, "", Some(Arg { kind: ArgKind::Command, required: true })),
     ]
 }
 
@@ -144,6 +145,16 @@ fn a_plan_checks_the_command_and_its_argument() {
     assert_eq!(plan(json!({"command": "command/goto_line", "args": {"cursor": {"line": 0}}})), Err(StatusCode::UNPROCESSABLE_ENTITY));
     // An optional argument may be left out.
     assert_eq!(plan(json!({"command": "command/new_user"})), Ok(None));
+    assert_eq!(
+        plan(json!({"command": "command/goto_line", "args": {"cursor": {"line": u64::MAX}}})),
+        Err(StatusCode::UNPROCESSABLE_ENTITY)
+    );
+    // A command another runs is held to what invoking it would be.
+    let run = |name: &str| plan(json!({"command": "command/run_command", "args": {"command": name}}));
+    assert_eq!(run("command/exit"), Ok(Some((ArgKind::Command, ArgValue::Text("exit".into())))));
+    assert_eq!(run("command/set_current_path"), Err(StatusCode::FORBIDDEN));
+    assert_eq!(run("command/nope"), Err(StatusCode::NOT_FOUND));
+    assert_eq!(run("command/open_url"), Err(StatusCode::UNPROCESSABLE_ENTITY));
 }
 
 // A named target wins; without one, a command that acts on something takes
