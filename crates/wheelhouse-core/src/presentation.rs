@@ -568,6 +568,7 @@ fn repository_prefixes(entities: &[Rc<EvaluatedPlacement>]) -> FastHashMap<Strin
 }
 
 const SUBJECT_REPOSITORY: &str = "flotilla.subject.repository_alias";
+const SUBJECT_NUMBER: &str = "flotilla.subject.number";
 
 /// A change request's short reference marks it `!`, an issue's `#`.
 fn subject_mark(kind: &str) -> Option<char> {
@@ -582,7 +583,7 @@ fn subject_mark(kind: &str) -> Option<char> {
 fn subject_label(entity: &EvaluatedPlacement, prefixes: &FastHashMap<String, usize>) -> Option<String> {
     let mark = subject_mark(&entity.entity.kind)?;
     let alias = metadata_text(&entity.metadata, SUBJECT_REPOSITORY)?;
-    let number = metadata_text(&entity.metadata, "flotilla.subject.number")?;
+    let number = metadata_text(&entity.metadata, SUBJECT_NUMBER)?;
     let prefix: String = alias.chars().take(*prefixes.get(alias)?).collect();
     Some(format!("{prefix}{mark}{number}"))
 }

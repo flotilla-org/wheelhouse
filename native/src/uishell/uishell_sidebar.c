@@ -1998,7 +1998,13 @@ uishell_sidebar_subject_fixture_config(Arena *arena)
   String8 issues = str8_lit("    apply-template \"issue/native\"\n  }\n}\n");
   String8 loop = str8_lit("for \"issue\" kind=\"issue\" visibility=\"wheelhouse/activity\" tier=\"medium\" layout=\"inline\"");
   U64 at = str8_find_needle(config, str8_find_needle(config, 0, loop, 0), issues, 0);
-  if(at >= config.size) { return config; }
+  if(at >= config.size)
+  {
+    // The daily driver's issue loop changed: say so here, not in the
+    // scenarios that then find no vessels.
+    fprintf(stderr, "subject fixture: daily-driver.kdl has no issue loop to put vessels after; using it without vessels\n");
+    return config;
+  }
   at += issues.size-str8_lit("}\n").size;
   return push_str8f(arena, "%S  for \"vessel\" kind=\"vessel\" visibility=\"wheelhouse/activity\" layout=\"inline\" {\n"
     "    match \"flotilla.convoy\" of=\"convoy\"\n    order \"display.label\"\n    apply-template \"wheelhouse/entry\"\n  }\n%S",
