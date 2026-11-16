@@ -742,15 +742,23 @@ fn a_host_following_the_stream_has_what_the_snapshot_presents() {
         assert_eq!(wheelhouse_changed_since(h, subscription, ptr::null_mut()), 0, "neither changed anything");
 
         // A fact change arrives as a delta too.
-        let rename = r#"{"target":{"kind":"entity","value":{"kind":"vessel","id":"chip-v"}},"source_id":"fixture","set":{"display.label":{"value":{"type":"text","value":"Renamed"}}},"unset":[]}"#;
+        let rename = r#"{"target":{"kind":"entity","value":{"kind":"convoy","id":"build"}},"source_id":"fixture","set":{"display.label":{"value":{"type":"text","value":"Renamed"}}},"unset":[]}"#;
         assert_eq!(wheelhouse_apply_patch_json(h, 1, text(PROVIDER), text(rename), &mut error), 1);
         follow(&mut followed);
         assert!(followed.nodes.values().any(|(label, ..)| label == "Renamed"));
 
-        // Renames that sort a node to the end of its list move it.
-        for (i, id) in ["v", "multi", "chip-v"].into_iter().enumerate() {
+        // Renames that sort a node to the end of its list move it: the
+        // project's convoys, with two more beside the fixture's.
+        for id in ["more-1", "more-2"] {
+            let convoy = format!(
+                r#"{{"target":{{"kind":"entity","value":{{"kind":"convoy","id":"{id}"}}}},"source_id":"fixture","set":{{"flotilla.convoy":{{"value":{{"type":"text","value":"{id}"}}}},"flotilla.project":{{"value":{{"type":"text","value":"p"}}}},"display.label":{{"value":{{"type":"text","value":"{id}"}}}}}},"unset":[]}}"#
+            );
+            assert_eq!(wheelhouse_apply_patch_json(h, 2, text(PROVIDER), text(&convoy), &mut error), 1);
+            follow(&mut followed);
+        }
+        for (i, id) in ["build", "more-1", "more-2"].into_iter().enumerate() {
             let rename = format!(
-                r#"{{"target":{{"kind":"entity","value":{{"kind":"vessel","id":"{id}"}}}},"source_id":"fixture","set":{{"display.label":{{"value":{{"type":"text","value":"~{i}"}}}}}},"unset":[]}}"#
+                r#"{{"target":{{"kind":"entity","value":{{"kind":"convoy","id":"{id}"}}}},"source_id":"fixture","set":{{"display.label":{{"value":{{"type":"text","value":"~{i}"}}}}}},"unset":[]}}"#
             );
             assert_eq!(wheelhouse_apply_patch_json(h, 2, text(PROVIDER), text(&rename), &mut error), 1);
             follow(&mut followed);

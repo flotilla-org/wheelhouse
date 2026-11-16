@@ -138,7 +138,33 @@ def patch(kind, identity, **facts):
                                               for k, v in facts.items()}, 'unset': []}
 
 
+CONVOY_ISSUES = '''  for "issue" kind="issue" visibility="wheelhouse/activity" tier="medium" layout="inline" {
+    match "flotilla.subject_of" of="convoy"
+    order "flotilla.subject.number" natural=true
+    apply-template "issue/native"
+  }
+'''
+
+
+def daily_driver_with_vessels():
+    """The daily driver as it was before a convoy's row stood for its workspace
+    alone: its vessels inline under it. The daily driver shows no vessels; the
+    template mechanisms these tests cover still nest them (fixture.kdl)."""
+    config = (ROOT / 'data/sidebar/daily-driver.kdl').read_text()
+    assert config.count(CONVOY_ISSUES) == 1
+    return config.replace(CONVOY_ISSUES, CONVOY_ISSUES + '''  for "vessel" kind="vessel" visibility="wheelhouse/activity" layout="inline" {
+    match "flotilla.convoy" of="convoy"
+    order "display.label"
+    apply-template "wheelhouse/entry"
+  }
+''')
+
+
 class NativeSidebarTests(unittest.TestCase):
+    def with_vessels(self, config=None):
+        config = config or daily_driver_with_vessels()
+        self.assertEqual(lib.wheelhouse_configure(self.core, Text.of(config), None), 1)
+
     def setUp(self):
         config = (ROOT / 'data/sidebar/daily-driver.kdl').read_bytes()
         error = C.c_char_p()
@@ -371,7 +397,7 @@ int main(void) {
         snapshot, nodes = self.snapshot()
         role = next(n for n in nodes if n.entity_id.string() == 'p/governor')
         self.assertTrue(role.openable)
-        self.assertEqual(role.layout.string(), 'inline')
+        self.assertEqual(role.layout.string(), '')  # a row of its own
         self.assertIn('running', self.values(snapshot, role))
         details = self.values(snapshot, role, detail=True)
         self.assertIn('Current attempt: governor', details)
@@ -695,8 +721,8 @@ int main(void) {
         roles = [n for n in nodes if n.entity_kind.string() == 'role']
         self.assertEqual([n.entity_id.string() for n in roles], ['p/governor', 'p/quartermaster'])
         self.assertTrue(all(n.parent == project and n.openable for n in roles))
-        self.assertTrue(all(n.layout.string() == 'inline' for n in roles),
-                        'standing roles must be actions on the project row')
+        self.assertTrue(all(n.layout.string() == '' for n in roles),
+                        'standing roles are rows of their own under the project')
         ids = {n.entity_id.string() for n in nodes}
         for hidden in ('g', 'g-v', 'q', 'q-v'):
             self.assertNotIn(hidden, ids)
@@ -704,8 +730,10 @@ int main(void) {
         self.toggle_variable('Role history')
         _, nodes = self.snapshot()
         ids = {n.entity_id.string() for n in nodes}
-        for shown in ('g', 'g-v', 'q', 'q-v', 'task', 'p/governor'):
+        for shown in ('g', 'q', 'task', 'p/governor'):
             self.assertIn(shown, ids)
+        # An attempt's vessel is a detail of its convoy, not a row in the tree.
+        self.assertNotIn('q-v', ids)
         # Role attempts and project convoys both start closed.
         convoys = [n for n in nodes if n.entity_kind.string() == 'convoy' and not n.is_section]
         self.assertEqual({n.entity_id.string() for n in convoys}, {'c', 'c2', 'g', 'q', 'task'})
@@ -779,6 +807,7 @@ int main(void) {
     # Lifecycle scenario through the real daily-driver KDL and C ABI: an ended
     # workspace stays on its subject, follows Show finished, and remains focusable.
     def test_ended_workspace_retains_subject_after_producer_removal(self):
+        self.with_vessels()
         self.open_workspace('v', 42)
         # Removal has the real producer shape: identity unsets and a source heartbeat.
         removal = patch('vessel', 'v', source='flotilla')
@@ -943,6 +972,7 @@ int main(void) {
         self.assertIn('Convoys: 3', fields(project.first_detail, project.detail_count))
 
     def test_hierarchy_and_truthful_openability(self):
+        self.with_vessels()
         snapshot, nodes = self.snapshot()
         find = lambda identity: next(n for n in nodes if n.entity_id.string() == identity)
         self.assertEqual(nodes[find('checkout').parent].entity_id.string(), 'p')
@@ -959,6 +989,7 @@ int main(void) {
         self.assertEqual((kind, recipe), (1, ''))
 
     def test_inline_siblings_keep_independent_bindings_when_parent_collapses(self):
+        self.with_vessels()
         update = patch('vessel', 'review', **{'flotilla.convoy': 'c',
                                              'action.primary.recipe': 'exec review'})
         self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
@@ -1015,6 +1046,7 @@ int main(void) {
                         self.assertTrue(all(n.workspace_id == 42 and bool(n.selected) == (selected == 42) for n in vessels))
 
     def test_open_from_attention_then_focus_from_tree(self):
+        self.with_vessels()
         snapshot, nodes = self.snapshot()
         vessels = [n for n in nodes if n.entity_id.string() == 'v']
         self.assertEqual(len(vessels), 2)
@@ -1040,6 +1072,7 @@ int main(void) {
             self.assertEqual(lib.wheelhouse_dispatch(self.core, snapshot, node.toggle, None), 1)
 
         # Convoys start closed; c2 is opened away from that default.
+        self.with_vessels()
         _, before = self.snapshot()
         self.assertTrue(all(n.collapsed for n in before if n.entity_id.string() in ('c', 'c2')))
         toggle('c2')
@@ -1090,9 +1123,8 @@ int main(void) {
         self.assertEqual(next(n.key.string() for n in nodes if n.entity_id.string() == 'issue'), original)
 
     def test_abbreviated_row_retains_full_label_and_declared_field_slots(self):
-        config = (ROOT / 'data/sidebar/daily-driver.kdl').read_text().replace(
-            'for "vessel" kind="vessel" visibility=', 'for "vessel" kind="vessel" tier="short" visibility=')
-        self.assertEqual(lib.wheelhouse_configure(self.core, Text.of(config), None), 1)
+        self.with_vessels(daily_driver_with_vessels().replace(
+            'for "vessel" kind="vessel" visibility=', 'for "vessel" kind="vessel" tier="short" visibility='))
         update = patch('vessel', 'v', **{'display.label': 'Full worker label', 'display.label.short': 'w'})
         self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
         snapshot, nodes = self.snapshot()
@@ -1107,6 +1139,7 @@ int main(void) {
         self.assertTrue(vessel.openable)
 
     def test_loop_keys_group_siblings_but_separate_attention_aliases(self):
+        self.with_vessels()
         update = patch('vessel', 'v2', **{'flotilla.project': 'p', 'flotilla.convoy': 'c'})
         self.assertEqual(lib.wheelhouse_apply_patch_json(self.core, 1, Text.of(json.dumps(update)), None), 1)
         snapshot, nodes = self.snapshot()

@@ -53,7 +53,7 @@ window 1
     rows
       region "Projects"
         row project/p "Example project" openable collapsed
-          row role/p/governor "governor" layout=inline openable status="running"
+          row role/p/governor "governor" openable status="running"
           row convoy/build "Ship sidebar subjects" openable status="active" collapsed
             row change_request/pr-281 "!281" layout=inline openable status="ready_to_merge"
             row change_request/pr-1000 "c!1000" layout=inline openable status="ci_failing"

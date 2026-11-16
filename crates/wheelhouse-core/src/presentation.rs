@@ -1,6 +1,10 @@
 //! Semantic placement snapshots shared by all frontends.
 use crate::FastHashMap;
-use std::{collections::BTreeMap, ops::ControlFlow, rc::Rc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::ControlFlow,
+    rc::Rc,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -390,6 +394,7 @@ impl SurfaceSnapshot {
             orders: model.sibling_orders.iter().cloned().collect(),
             next: FastHashMap::with_capacity_and_hasher(prior.len(), Default::default()),
             prior,
+            prefixes: FastHashMap::default(),
         };
         let root = model.template_config.effective_variables.iter().find(|variables| variables.node == NodeKey::Root);
         for region in sections {
@@ -400,6 +405,7 @@ impl SurfaceSnapshot {
             if let Some(error) = &content.error {
                 snapshot.diagnostics.push(format!("region {}: {error}", definition.name));
             }
+            resolver.prefixes = repository_prefixes(&region.entities);
             let nodes = region.entities.iter().filter_map(|entity| resolver.node(entity, definition)).collect();
             snapshot.sections.push(Section {
                 name: definition.name.clone(),
@@ -439,6 +445,7 @@ pub(crate) struct SurfaceMemo {
     stale: bool,
     has_url: bool,
     close: Option<CloseKind>,
+    subject_label: Option<String>,
     node: Rc<PlacementNode>,
 }
 
@@ -458,6 +465,8 @@ struct Resolver<'a> {
     orders: BTreeMap<PlacementLoopKey, Vec<EntityRef>>,
     prior: FastHashMap<*const EvaluatedPlacement, SurfaceMemo>,
     next: FastHashMap<*const EvaluatedPlacement, SurfaceMemo>,
+    /// The region's repository prefixes, by alias (`repository_prefixes`).
+    prefixes: FastHashMap<String, usize>,
 }
 
 impl Resolver<'_> {
@@ -473,6 +482,7 @@ impl Resolver<'_> {
         let stale = (self.cx.stale)(&entity.entity);
         let has_url = (self.cx.has_url)(&entity.entity);
         let close = (self.cx.close)(&entity.entity, &state);
+        let subject_label = subject_label(entity, &self.prefixes);
         if let Some(memo) = self.prior.remove(&address) {
             let same = Rc::ptr_eq(&memo.placement, entity)
                 && match (&memo.variables, &variables) {
@@ -485,6 +495,7 @@ impl Resolver<'_> {
                 && memo.stale == stale
                 && memo.has_url == has_url
                 && memo.close == close
+                && memo.subject_label == subject_label
                 && memo.node.children.len() == children.len()
                 && memo.node.children.iter().zip(&children).all(|(before, now)| Rc::ptr_eq(before, now));
             if same {
@@ -493,13 +504,88 @@ impl Resolver<'_> {
                 return Some(node);
             }
         }
-        let node = Rc::new(resolve_node(entity, variables.as_deref(), region, state.clone(), collapsed, stale, has_url, close, children)?);
+        let node = Rc::new(resolve_node(
+            entity,
+            variables.as_deref(),
+            region,
+            state.clone(),
+            collapsed,
+            stale,
+            has_url,
+            close,
+            subject_label.as_deref(),
+            children,
+        )?);
         self.next.insert(
             address,
-            SurfaceMemo { placement: entity.clone(), variables, state, collapsed, stale, has_url, close, node: node.clone() },
+            SurfaceMemo {
+                placement: entity.clone(),
+                variables,
+                state,
+                collapsed,
+                stale,
+                has_url,
+                close,
+                subject_label,
+                node: node.clone(),
+            },
         );
         Some(node)
     }
+}
+
+/// The repository aliases of the subjects in a region, each with how many of
+/// its characters tell it from the others there. Surfaces may compact a short
+/// reference to the prefix that is unique in the view (flotilla ADR 0049):
+/// `cleat!281` shows as `c!281`, or `!281` when one repository shows.
+fn repository_prefixes(entities: &[Rc<EvaluatedPlacement>]) -> FastHashMap<String, usize> {
+    fn collect<'a>(entities: &'a [Rc<EvaluatedPlacement>], aliases: &mut BTreeSet<&'a str>) {
+        for entity in entities {
+            if subject_mark(&entity.entity.kind).is_some() {
+                if let Some(alias) = metadata_text(&entity.metadata, SUBJECT_REPOSITORY) {
+                    aliases.insert(alias);
+                }
+            }
+            collect(&entity.children, aliases);
+        }
+    }
+    let mut aliases = BTreeSet::new();
+    collect(entities, &mut aliases);
+    let sorted: Vec<&str> = aliases.into_iter().collect();
+    // In sorted order an alias shares its longest common prefix with a
+    // neighbour; one character more tells it apart, unless it is all shared.
+    let common = |a: &str, b: &str| a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+    sorted
+        .iter()
+        .enumerate()
+        .map(|(i, alias)| {
+            let before = i.checked_sub(1).map_or(0, |j| common(sorted[j], alias));
+            let after = sorted.get(i + 1).map_or(0, |next| common(alias, next));
+            let length = if sorted.len() == 1 { 0 } else { (before.max(after) + 1).min(alias.chars().count()) };
+            ((*alias).to_owned(), length)
+        })
+        .collect()
+}
+
+const SUBJECT_REPOSITORY: &str = "flotilla.subject.repository_alias";
+const SUBJECT_NUMBER: &str = "flotilla.subject.number";
+
+/// A change request's short reference marks it `!`, an issue's `#`.
+fn subject_mark(kind: &str) -> Option<char> {
+    match kind {
+        "change_request" => Some('!'),
+        "issue" => Some('#'),
+        _ => None,
+    }
+}
+
+/// A subject's compact reference: its repository prefix, mark and number.
+fn subject_label(entity: &EvaluatedPlacement, prefixes: &FastHashMap<String, usize>) -> Option<String> {
+    let mark = subject_mark(&entity.entity.kind)?;
+    let alias = metadata_text(&entity.metadata, SUBJECT_REPOSITORY)?;
+    let number = metadata_text(&entity.metadata, SUBJECT_NUMBER)?;
+    let prefix: String = alias.chars().take(*prefixes.get(alias)?).collect();
+    Some(format!("{prefix}{mark}{number}"))
 }
 
 /// Resolve the declared tier without measuring or shortening producer text.
@@ -596,6 +682,7 @@ fn resolve_node(
     stale: bool,
     has_url: bool,
     close: Option<CloseKind>,
+    subject_label: Option<&str>,
     children: Vec<Rc<PlacementNode>>,
 ) -> Option<PlacementNode> {
     let key = entity.placement.clone()?;
@@ -614,7 +701,7 @@ fn resolve_node(
         .map(|(label, _)| label)
         .filter(|label| metadata_text(&display_facts, "display.label") != Some(label))
         .map(str::to_owned);
-    if let Some(label) = declared {
+    if let Some(label) = subject_label.map(str::to_owned).or(declared) {
         Rc::make_mut(&mut display_facts).insert("display.label".to_owned().into(), MetadataValue::Text(label.into()));
     }
     Some(PlacementNode {

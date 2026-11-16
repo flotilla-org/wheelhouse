@@ -198,7 +198,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {0};
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
   fixture.initialized = 1;
-  String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
+  String8 config = uishell_sidebar_subject_fixture_config(scratch.arena);
   fixture.core = wheelhouse_create(config.str, config.size, 0);
   if(!fixture.core)
   {

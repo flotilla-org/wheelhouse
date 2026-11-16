@@ -29,13 +29,31 @@ preset "Groups redesign"; the operator's knob values are at the end.
 - **Actions** appear on hover after the title: `⋯` opens the same menu as a
   right-click.
 
-## Expanding rows
+## One row, one workspace
 
-A collapsed convoy keeps its workspace actions as chips. Expanding it presents
-its vessels as child rows, where their workspace actions are available in the
-margin. PR and issue references stay inline in both states. References alone
-do not need a collapse indicator. Project and group headers keep their inline
-summary actions while their child rows collapse.
+Settled with the operator on 2026-11-16, replacing "Expanding rows" (a
+collapsed convoy's vessel chips, expanded to vessel rows). Several workspaces
+on one row came from a vessel being a workspace; it made the sidebar hard to
+predict.
+
+- **A row is one workspace.** A header is a row too: a project's header is
+  its project workspace, and nesting stays (roles and convoys under it).
+- **A convoy's row is its convoy workspace.** Its vessels are a detail inside
+  it (its agents, its strip), not rows or chips. Agents and vessels are to
+  come apart, with vessels less in focus.
+- **Roles are rows** under the project, first. They may later be an option,
+  reached through the project workspace's strip instead.
+- **PR and issue references stay inline, small.** A reference shows the
+  shortest prefix of its repository's alias that no other repository in the
+  region shares (flotilla ADR 0049): `f!2343`, or `!2343` when one
+  repository shows. Clicking opens it in the browser for now (#754).
+- **Still to change, in the native chrome:** a group header's `+` and `▾`
+  on hover replace the footers below (kept behind a dev toggle to compare);
+  a row ends in a status mark that becomes `⋯` on hover, and close moves into
+  that menu from the margin; a name truncates and fades, with no
+  abbreviation tiers; only references fold into "+N". Follow-ups: #751
+  (making a workspace), #752 (when a row goes away), #753 (reference
+  overflow).
 
 ## Making workspaces and groups
 
