@@ -184,12 +184,13 @@ fn a_target_is_named_or_the_caller_contexts_one_view() {
 }
 
 /// A UI that runs what it is given, as `(ticket, invocation)`, and refuses
-/// a target it doesn't have.
+/// a target it doesn't have; it applies intents, but not to panel 9.
 #[derive(Default)]
-struct Ui {
-    invoked: Vec<(u64, Invocation)>,
-    ran: Vec<u64>,
-    refuse: Option<Refusal>,
+pub(crate) struct Ui {
+    pub invoked: Vec<(u64, Invocation)>,
+    pub ran: Vec<u64>,
+    pub refuse: Option<Refusal>,
+    pub applied: Vec<(u64, Intent)>,
 }
 
 impl Host for Ui {
@@ -205,22 +206,30 @@ impl Host for Ui {
         self.ran.push(ticket);
         self.refuse.take().map_or(Ok(()), Err)
     }
+
+    fn apply(&mut self, ticket: u64, intent: &Intent) -> Result<u64, Refusal> {
+        if format!("{:?}", intent.body()).contains("/panel/9") {
+            return Err(Refusal::new(StatusCode::UNPROCESSABLE_ENTITY, "no panel 9"));
+        }
+        self.applied.push((ticket, intent.clone()));
+        Ok(100 + ticket)
+    }
 }
 
 /// An endpoint on a real socket whose UI ends a frame every 10ms, running
 /// what is invoked, under the `mode` setting.
 #[cfg(unix)]
-struct Endpoint {
+pub(crate) struct Endpoint {
     path: std::path::PathBuf,
     stop: Arc<std::sync::atomic::AtomicBool>,
     frames: Option<std::thread::JoinHandle<()>>,
-    ui: Arc<std::sync::Mutex<Ui>>,
-    mode: Arc<AtomicU32>,
+    pub ui: Arc<std::sync::Mutex<Ui>>,
+    pub mode: Arc<AtomicU32>,
 }
 
 #[cfg(unix)]
 impl Endpoint {
-    fn start() -> Self {
+    pub fn start() -> Self {
         use std::os::unix::fs::DirBuilderExt;
         extern "C" fn wake() {}
         let dir = crate::socket_test_dir();
@@ -244,8 +253,11 @@ impl Endpoint {
                 let (mut generation, mut running) = (Generation::default(), Running::default());
                 let mut tree = nodes();
                 while !stop.load(SeqCst) {
-                    // Each command that ran changes the tree.
-                    let ran = ui.lock().unwrap().invoked.len();
+                    // Each command that ran, and intent applied, changes the tree.
+                    let ran = {
+                        let ui = ui.lock().unwrap();
+                        ui.invoked.len() + ui.applied.len()
+                    };
                     tree[1].name = Some(format!("ran {ran}"));
                     let mode = mode.load(SeqCst);
                     frame_end(&automation, &mut generation, mode, running.any(), |screens| Some(build(tree.clone(), screens)));
@@ -257,7 +269,7 @@ impl Endpoint {
         Endpoint { path, stop, frames: Some(frames), ui, mode }
     }
 
-    fn request(&self, method: &str, target: &str, body: &str) -> (u16, String) {
+    pub fn request(&self, method: &str, target: &str, body: &str) -> (u16, String) {
         use std::io::{Read, Write};
         let mut stream = std::os::unix::net::UnixStream::connect(&self.path).unwrap();
         let length = body.len();
@@ -270,7 +282,7 @@ impl Endpoint {
     }
 
     /// Whether an event stream from `cursor` sends nothing at first.
-    fn resumes_quietly(&self, cursor: &str) -> bool {
+    pub fn resumes_quietly(&self, cursor: &str) -> bool {
         use std::io::{BufRead, Write};
         let mut stream = std::os::unix::net::UnixStream::connect(&self.path).unwrap();
         write!(stream, "GET /v1/observed/events?since={cursor} HTTP/1.0\r\n\r\n").unwrap();
@@ -366,10 +378,10 @@ fn an_invocation_answers_with_the_cursor_of_the_frame_that_ran_it() {
 fn a_full_queue_frees_the_places_of_clients_that_have_gone() {
     extern "C" fn wake() {}
     let automation = Automation::new(wake);
-    let exit = || Invocation { command: "exit".into(), target: None, arg: None };
+    let exit = || Work::Invoke(Invocation { command: "exit".into(), target: None, arg: None });
     let waiting: Vec<_> = (0..MAX_QUEUED).map(|_| enqueue(&automation, exit()).unwrap()).collect();
     assert_eq!(enqueue(&automation, exit()).map(|_| ()).map_err(|refusal| refusal.0), Err(StatusCode::SERVICE_UNAVAILABLE));
     drop(waiting);
     assert!(enqueue(&automation, exit()).is_ok());
-    assert_eq!(automation.invocations.lock().unwrap().len(), 1);
+    assert_eq!(automation.queued.lock().unwrap().len(), 1);
 }

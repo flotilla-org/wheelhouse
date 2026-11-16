@@ -128,10 +128,47 @@ typedef struct {
   WheelhouseIngressText text;
   uint64_t line, column, address;
 } WheelhouseIngressInvocation;
+// An intent (POST /v1/intents/apply), by its stable name (the Core's), for
+// owner, a WHEELHOUSE_AUTOMATION_OWNER_* and its ID. family ARRANGEMENT is
+// for the owner's arrangement (a window's is its sidebar's dock): panels by
+// their ID as the Semantic Tree gives them, a number or a provider's word
+// (panel, which is also move-tab's and drop-tab's to, and after_panel);
+// Views as tab and after, when has_tab and has_after; dir a
+// WHEELHOUSE_INGRESS_DIR_*. family SIDEBAR is for the sidebar of the owner
+// window, or of the window that shows the owner workspace: a row's node key
+// as key, an entity by its parts, a variable's name and its value when
+// has_value. Its texts last only the call.
+#define WHEELHOUSE_INGRESS_INTENT_ARRANGEMENT 1u
+#define WHEELHOUSE_INGRESS_INTENT_SIDEBAR 2u
+#define WHEELHOUSE_INGRESS_DIR_NONE 0u
+#define WHEELHOUSE_INGRESS_DIR_LEFT 1u
+#define WHEELHOUSE_INGRESS_DIR_UP 2u
+#define WHEELHOUSE_INGRESS_DIR_RIGHT 3u
+#define WHEELHOUSE_INGRESS_DIR_DOWN 4u
+typedef struct {
+  uint64_t ticket;
+  uint32_t family;
+  WheelhouseIngressText name;
+  uint32_t owner;
+  uint8_t owner_id[16];
+  WheelhouseIngressText panel, after_panel;
+  uint32_t has_tab;
+  WheelhouseIngressView tab;
+  uint32_t has_after;
+  WheelhouseIngressView after;
+  uint32_t dir;
+  float delta, floor;
+  WheelhouseIngressText key, entity_provider, entity_kind, entity_id, variable;
+  uint32_t has_value;
+  WheelhouseIngressText value;
+} WheelhouseIngressIntent;
 // invoke queues an invocation to run in the next frame and returns 0, or
 // refuses it with an HTTP status and why in reason, which need last only the
 // call. At the end of the frame it ran in, settle says 0 when it ran, or the
 // status and reason of what refused it. NULL invoke and settle run nothing.
+// apply applies an intent at once: 0 with its request, or an HTTP status
+// (422 for a refusal) and why in reason, which need last only the call; NULL
+// applies none.
 typedef struct {
   uint32_t mode;
   uint32_t (*observe)(void *context, WheelhouseIngressAutomationBuild *out, uint32_t screens);
@@ -139,6 +176,7 @@ typedef struct {
   void (*commands)(void *context, WheelhouseIngressCommandTable *out);
   uint32_t (*invoke)(void *context, const WheelhouseIngressInvocation *invocation, WheelhouseIngressText *reason);
   uint32_t (*settle)(void *context, uint64_t ticket, WheelhouseIngressText *reason);
+  uint32_t (*apply)(void *context, const WheelhouseIngressIntent *intent, uint64_t *request, WheelhouseIngressText *reason);
 } WheelhouseIngressAutomationHost;
 extern void wheelhouse_ingress_automation(WheelhouseIngress *, const WheelhouseIngressAutomationHost *);
 extern void wheelhouse_ingress_stop(WheelhouseIngress *);

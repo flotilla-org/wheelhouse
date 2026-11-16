@@ -3,7 +3,7 @@
 //! `/v1/observed/events`, are here: the UI thread builds the Semantic Tree at
 //! a frame's end while a client wants it, and publishes `(generation, tree)`
 //! on a watch channel; handlers read and follow that. Commands are in
-//! [`commands`].
+//! [`commands`], and intents in [`intents`].
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
@@ -34,6 +34,7 @@ use wheelhouse_core::{
 use crate::{address::instance_uuid, Wake, AUTOMATION_FULL, AUTOMATION_OFF};
 
 pub mod commands;
+pub mod intents;
 
 /// The schema every response carries.
 pub const SCHEMA: u32 = 1;
@@ -148,8 +149,8 @@ pub struct Automation {
     pub published: watch::Sender<Arc<Published>>,
     /// The command tables, as the UI gave them once.
     pub commands: OnceLock<Vec<commands::Command>>,
-    /// Invocations waiting for a frame's end.
-    pub invocations: Mutex<Vec<commands::Queued>>,
+    /// Commands and intents waiting for a frame's end.
+    pub queued: Mutex<Vec<commands::Queued>>,
 }
 
 impl Automation {
@@ -163,7 +164,7 @@ impl Automation {
             screen_streams: AtomicUsize::new(0),
             published: watch::channel(Arc::default()).0,
             commands: OnceLock::new(),
-            invocations: Mutex::new(Vec::new()),
+            queued: Mutex::new(Vec::new()),
         }
     }
 
@@ -196,6 +197,7 @@ pub fn router(automation: Arc<Automation>) -> Router {
         .route("/v1/observed/events", get(events))
         .route("/v1/commands", get(commands::commands))
         .route("/v1/commands/invoke", post(commands::invoke))
+        .route("/v1/intents/apply", post(intents::apply))
         .with_state(automation)
 }
 
@@ -521,7 +523,7 @@ impl Generation {
 /// screens: when a waiting read asked, or when the tree changed and a stream
 /// asked. It gives `None` when the tree isn't available now; reads then time
 /// out. A setting it doesn't know is taken as off. `settling` is that this
-/// frame ran invocations, whose cursor must follow what they did.
+/// frame did commands or intents, whose cursor must follow what they did.
 pub fn frame_end(
     automation: &Automation,
     generation: &mut Generation,
