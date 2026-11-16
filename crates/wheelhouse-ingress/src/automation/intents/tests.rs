@@ -180,6 +180,8 @@ fn an_intents_ids_must_be_its_owners() {
     assert!(!ok(json!({"intent": "toggle-placement", "owner": w, "key": "row/4:root"})));
     let endless = Body::ResizePanel { owner: w.clone(), panel: format!("{w}/panel/2"), delta: f32::INFINITY, floor: 0.0 };
     assert!(Intent::from_body(&endless).is_err());
+    let sunken = Body::ResizePanel { owner: w.clone(), panel: format!("{w}/panel/2"), delta: 0.1, floor: -0.1 };
+    assert!(Intent::from_body(&sunken).is_err());
     // Fields an intent doesn't take, and a name the Core doesn't have.
     assert!(serde_json::from_value::<Body>(json!({"intent": "close-panel", "owner": w, "panel": "p", "tab": "t"})).is_err());
     assert!(serde_json::from_value::<Body>(json!({"intent": "close-everything", "owner": w})).is_err());

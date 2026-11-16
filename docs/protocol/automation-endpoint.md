@@ -430,7 +430,7 @@ Automation ID; a field the intent doesn't take is refused.
 | `split-panel` | `panel`, `dir` |
 | `close-panel` | `panel` |
 | `reorder-panel` | `panel`, `after` (a panel; none: first) |
-| `resize-panel` | `panel`, `delta` (of its parent, for the boundary after it), `floor` (default 0) |
+| `resize-panel` | `panel`, `delta` (of its parent, for the boundary after it; the Core keeps both sides at `floor`), `floor` (0 to 0.5, default 0) |
 | `equalize-panel` | `panel` |
 | `copy-subject-url`, `activate` | `entity`: `{provider, kind, id}` |
 | `activate-placement`, `toggle-placement` | `key`: a row, `section/<region-key>/row/<node-key>` |
@@ -467,8 +467,15 @@ by the Core, by the dock rules, or because an ID names nothing there, is
 {"accepted": false, "reason": "close-panel doesn't apply to that arrangement"}
 ```
 
-Other errors are as for commands: 400 for a body that isn't JSON, 503 when
-the queue is full or the UI didn't answer within 5 seconds.
+Both answers are a receipt: read `accepted`. Other errors are text, as for
+commands: 400 for a body that isn't JSON, 503 when the queue is full or the
+UI didn't answer within 5 seconds. A 503 for the deadline means the outcome
+is unknown: the intent may have been applied, so check the tree before
+sending one again, as most intents (`toggle-placement`, `split-panel`)
+aren't safe to repeat.
+
+A row's region is read but not checked: the Core keys rows by node key
+alone, so a wrong region with a right key still names that row.
 
 ## Observed workdirs
 

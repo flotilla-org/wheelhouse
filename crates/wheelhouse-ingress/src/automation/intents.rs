@@ -287,8 +287,10 @@ impl Intent {
                 Ok(Arrangement::ReorderPanel { panel: panel(o, p)?, after: after.as_deref().map(|a| panel(o, a)).transpose()? })
             }),
             Body::ResizePanel { owner, panel: p, delta, floor } => {
-                if !delta.is_finite() || !floor.is_finite() {
-                    return Err("delta and floor must be finite".into());
+                // The Core clamps delta to keep both sides at the floor, but a
+                // floor below 0 or past half would let a side go negative.
+                if !delta.is_finite() || !(0.0..=0.5).contains(floor) {
+                    return Err("delta must be finite, and floor between 0 and 0.5".into());
                 }
                 arranged(owner, &|o| Ok(Arrangement::ResizePanel { panel: panel(o, p)?, delta: *delta, floor: *floor }))
             }

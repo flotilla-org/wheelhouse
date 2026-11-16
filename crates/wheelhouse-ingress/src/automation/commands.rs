@@ -389,7 +389,7 @@ pub(super) async fn queue(automation: &Automation, work: Work) -> Result<Done, R
     // Taken at one frame's end, done in the next, answered at its end.
     match tokio::time::timeout(FRAME_WAIT, answer).await {
         Ok(Ok(answer)) => answer,
-        _ => Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "the UI didn't do it in time")),
+        _ => Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "the UI didn't answer in time; once taken, it may still have been done")),
     }
 }
 
@@ -476,7 +476,7 @@ fn enqueue(automation: &Automation, work: Work) -> Result<oneshot::Receiver<Resu
         queue.retain(|queued| !queued.reply.is_closed());
     }
     if queue.len() >= MAX_QUEUED {
-        return Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "too many invocations are waiting"));
+        return Err(Refusal::new(StatusCode::SERVICE_UNAVAILABLE, "too much work is waiting for the UI"));
     }
     queue.push(Queued { work, reply });
     Ok(answer)
