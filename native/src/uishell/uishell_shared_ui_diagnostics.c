@@ -360,6 +360,19 @@ uishell_row_cache_step_matches(Arena *arena, UIShell_RowCacheFixture *f, U64 exp
   return pass;
 }
 
+// Scrolls the fixture up one row as SCROLL_COPY does: every row keeps its
+// generation and moves up, and a new row (a copy of snapshot row 3) enters at
+// the bottom with a new generation.
+internal void
+uishell_row_cache_scroll_one(UIShell_RowCacheFixture *f, cleat_cell *cells, U64 *gens, cleat_snapshot const *snapshot, U64 *next_gen)
+{
+  U64 cols = f->feed.cols, rows = f->feed.rows;
+  MemoryCopy(cells, cells + cols, sizeof(*cells)*cols*(rows - 1));
+  for(U64 c = 0; c < cols; c += 1) { cells[(rows - 1)*cols + c] = snapshot->cells[3*cols + c]; }
+  MemoryCopy(gens, gens + 1, sizeof(*gens)*(rows - 1));
+  gens[rows - 1] = (*next_gen)++;
+}
+
 internal void
 uishell_check_terminal_row_cache(U32 *failures)
 {
@@ -419,11 +432,20 @@ uishell_check_terminal_row_cache(U32 *failures)
   // Cursors stay out of it (they'd damage the rows they sit on).
   f.cursors.count = 0;
   uishell_row_cache_step_matches(scratch.arena, &f, 3, 0, "cursors hidden", failures);
-  MemoryCopy(cells, cells + cols, sizeof(*cells)*cols*(rows - 1));
-  for(U64 c = 0; c < cols; c += 1) { cells[(U64)(rows - 1)*cols + c] = snapshot.cells[3*(U64)cols + c]; }
-  MemoryCopy(gens, gens + 1, sizeof(*gens)*(rows - 1));
-  gens[rows - 1] = next_gen++;
+  uishell_row_cache_scroll_one(&f, cells, gens, &snapshot, &next_gen);
   uishell_row_cache_step_matches(scratch.arena, &f, 1, rows - 1, "scrolled one row", failures);
+
+  // A cursor that stays on screen row 10 while the rows scroll under it: the
+  // row it leaves (now row 9) and the row it lands on (now row 10) build, as
+  // does the new bottom row; the rest move.
+  f.cursors.count = 1;
+  f.cursors.v[0].row = 10;
+  f.cursors.v[0].visible = 1;
+  uishell_row_cache_step_matches(scratch.arena, &f, 1, 0, "cursor shown on row 10", failures);
+  uishell_row_cache_scroll_one(&f, cells, gens, &snapshot, &next_gen);
+  uishell_row_cache_step_matches(scratch.arena, &f, 3, rows - 3, "scrolled under the cursor", failures);
+  f.cursors.count = 0;
+  uishell_row_cache_step_matches(scratch.arena, &f, 1, 0, "cursor hidden again", failures);
 
   // Kitty images draw afresh over and under retained rows.
   {
@@ -443,6 +465,13 @@ uishell_check_terminal_row_cache(U32 *failures)
     r_tex2d_release(resource.texture);
   }
 
+  // A feed without row generations names no row, so nothing is kept: every
+  // draw builds every row.
+  f.feed.row_generations = 0;
+  uishell_row_cache_step_matches(scratch.arena, &f, rows, 0, "no row generations", failures);
+  uishell_row_cache_step_matches(scratch.arena, &f, rows, 0, "no row generations, again", failures);
+  f.feed.row_generations = gens;
+
   // Style: the canvas moves, so every row's position changes.
   f.params.canvas_rect = shift_2f32(f.params.canvas_rect, v2f32(cell_width, 0));
   f.style_key = 2;
@@ -461,6 +490,18 @@ uishell_check_terminal_row_cache(U32 *failures)
   f.params.canvas_rect.y1 = f.params.canvas_rect.y0 + cell_height*(rows - 4);
   f.style_key = 3;
   uishell_row_cache_step_matches(scratch.arena, &f, rows - 4, 0, "resized", failures);
+
+  // A fractional cell height: a row's top is floored at each position, so a
+  // scrolled row's drawing can't be moved exactly. Rows kept in place stay;
+  // a scroll builds every row instead of moving any.
+  F32 fractional_height = cell_height + 0.5f;
+  f.params.cell_height_px = fractional_height;
+  f.params.canvas_rect.y1 = f.params.canvas_rect.y0 + fractional_height*(rows - 4);
+  f.style_key = 4;
+  uishell_row_cache_step_matches(scratch.arena, &f, rows - 4, 0, "fractional cell height", failures);
+  uishell_row_cache_step_matches(scratch.arena, &f, 0, 0, "fractional cell height, unchanged", failures);
+  uishell_row_cache_scroll_one(&f, cells, gens, &snapshot, &next_gen);
+  uishell_row_cache_step_matches(scratch.arena, &f, rows - 4, 0, "scrolled, fractional cell height", failures);
 
   uishell_terminal_row_cache_release(&f.rows);
   scratch_end(scratch);
