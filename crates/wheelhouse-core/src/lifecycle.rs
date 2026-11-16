@@ -69,6 +69,10 @@ pub enum CloseKind {
     Destroy,
     /// A pin's: remove the pin, never its source.
     RemovePin,
+    /// An ended row no open workspace stands for, kept only by workspaces
+    /// on its path (its own, or its vessels', kept or open elsewhere):
+    /// discard them, and the row goes.
+    Remove,
 }
 
 /// What a close did to the workspace.
@@ -192,12 +196,15 @@ pub struct LiveWorkspace {
 
 /// What a row's close control offers: a pin removes itself; a row bound to
 /// an open workspace detaches it when closing would keep it, else destroys
-/// it; any other row offers nothing.
-pub fn close_kind(entity: &EntityRef, live: Option<LiveWorkspace>) -> Option<CloseKind> {
+/// it; an ended row bound to none removes the workspaces that keep it; any
+/// other row offers nothing.
+pub fn close_kind(entity: &EntityRef, live: Option<LiveWorkspace>, ended: bool) -> Option<CloseKind> {
     if entity.kind == system::REF {
         return Some(CloseKind::RemovePin);
     }
-    let live = live?;
+    let Some(live) = live else {
+        return ended.then_some(CloseKind::Remove);
+    };
     Some(match keeps(true, live.subject, live.subject_ended) {
         true => CloseKind::Detach,
         false => CloseKind::Destroy,

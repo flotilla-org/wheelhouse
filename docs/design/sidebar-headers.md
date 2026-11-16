@@ -37,7 +37,10 @@ on one row came from a vessel being a workspace; it made the sidebar hard to
 predict.
 
 - **A row is one workspace.** A header is a row too: a project's header is
-  its project workspace, and nesting stays (roles and convoys under it).
+  its project workspace, and nesting stays (roles and convoys under it). A
+  click on a project's header opens its workspace; its disclosure collapses
+  it. A local group's header is no workspace, so a click collapses it.
+  Workspaces that live with a project (its `+`) are rows in its card.
 - **A convoy's row is its convoy workspace.** Its vessels are a detail inside
   it (its agents, its strip), not rows or chips. Agents and vessels are to
   come apart, with vessels less in focus.
@@ -50,7 +53,8 @@ predict.
 - **New is on the header.** A group or project header shows `+` and `▾`
   while hovered, as the Claude app's groups do: `+` names a new workspace in
   the group's footer, and `▾` opens the header's menu (as a right-click
-  does). A section header's `+` offers New workspace (when its footer makes
+  does). A project's menu is its project workspace's (its close, its
+  layouts) with Reset order, so its `▾` shows only while that has an item. A section header's `+` offers New workspace (when its footer makes
   them: one group, or Workspaces) and New group (a section you made); with
   one, it does that. The footers below open on hover only with the dev
   toggle `sidebar_footer_rows`, kept to compare (see Making workspaces and
@@ -59,7 +63,10 @@ predict.
 - **A row ends in its status, which becomes `⋯` while hovered** (or while
   its menu is open). `⋯` opens the row's menu, which leads with the close
   the core chooses: Detach workspace for a subject, Close workspace for
-  none. There is no margin control: rows stop a small gap short of the edge
+  none, and Remove for an ended row no open workspace stands for. An ended
+  row stays only while a workspace on its path is open (a convoy's, or one
+  opened on its vessel before vessels left the sidebar); Remove destroys
+  those workspaces, so the row goes. There is no margin control: rows stop a small gap short of the edge
   (and of an overlay scroll bar's strip).
 - **A name fades out at its end** when it doesn't fit, rather than ending in
   an ellipsis; there are no abbreviation tiers. A name gives way to its

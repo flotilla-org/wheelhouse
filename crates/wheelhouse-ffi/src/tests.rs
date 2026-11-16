@@ -1685,6 +1685,7 @@ fn the_lifecycle_crosses_the_abi() {
                                 Some(CloseKind::Detach) => WHEELHOUSE_CLOSE_DETACH,
                                 Some(CloseKind::Destroy) => WHEELHOUSE_CLOSE_DESTROY,
                                 Some(CloseKind::RemovePin) => WHEELHOUSE_CLOSE_REMOVE_PIN,
+                                Some(CloseKind::Remove) => WHEELHOUSE_CLOSE_REMOVE,
                             });
                         }
                     }

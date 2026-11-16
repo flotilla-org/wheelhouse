@@ -999,6 +999,16 @@ uishell_sidebar_loop_key(UIShell_SidebarState *state, U64 index)
   return uishell_sidebar_string(node.loop_key);
 }
 
+// The loop of a header's first child row, which its Reset order resets;
+// empty when it has none.
+internal String8
+uishell_sidebar_project_items_loop(UIShell_SidebarState *state, U64 index)
+{
+  UIShell_SidebarNode first = {0};
+  if(!uishell_sidebar_node(state, index+1, &first) || first.parent != index) { return str8_zero(); }
+  return uishell_sidebar_loop_key(state, index+1);
+}
+
 // Siblings in displayed order, which is preorder for one loop key.
 internal U64
 uishell_sidebar_siblings(Arena *arena, UIShell_SidebarState *state, String8 loop, WheelhouseEntity **out)
@@ -2897,20 +2907,24 @@ typedef enum UIShell_SidebarCloseKind
   UIShell_SidebarCloseKind_None,
   UIShell_SidebarCloseKind_Detach,
   UIShell_SidebarCloseKind_Destroy,
-  // A ghost's margin control removes the ghost, never its source.
+  // A ghost's removes the ghost, never its source.
   UIShell_SidebarCloseKind_RemovePin,
+  // An ended row no open workspace stands for removes the workspaces that
+  // keep it (a convoy's, its vessels').
+  UIShell_SidebarCloseKind_Remove,
 }
 UIShell_SidebarCloseKind;
 
 // The affordance says what closing loses, as the core's close role says
 // (lifecycle.rs, close_kind): a workspace closing would keep detaches, so its
 // row stays and reopens the same layout; one that can't come back (an ended
-// subject's, or a subjectless one) is destroyed. A row whose workspace isn't
-// in this window offers nothing.
+// subject's, or a subjectless one) is destroyed. An ended row bound to none
+// is removed. A row whose workspace isn't in this window offers nothing.
 internal UIShell_SidebarCloseKind
 uishell_sidebar_close_kind(UIShell_SidebarNode node)
 {
   if(node.close == WHEELHOUSE_CLOSE_REMOVE_PIN) { return UIShell_SidebarCloseKind_RemovePin; }
+  if(node.close == WHEELHOUSE_CLOSE_REMOVE) { return UIShell_SidebarCloseKind_Remove; }
   if(node.is_section || uishell_sidebar_node_cfg(&node) == 0 || cfg_node_from_id(uishell_sidebar_node_cfg(&node)) == &cfg_nil_node)
   { return UIShell_SidebarCloseKind_None; }
   return node.close == WHEELHOUSE_CLOSE_DETACH ? UIShell_SidebarCloseKind_Detach :
@@ -2921,7 +2935,8 @@ internal String8
 uishell_sidebar_close_label(UIShell_SidebarCloseKind kind)
 {
   return kind == UIShell_SidebarCloseKind_Detach ? str8_lit("Detach workspace") :
-    kind == UIShell_SidebarCloseKind_RemovePin ? str8_lit("Remove pin") : str8_lit("Close workspace");
+    kind == UIShell_SidebarCloseKind_RemovePin ? str8_lit("Remove pin") :
+    kind == UIShell_SidebarCloseKind_Remove ? str8_lit("Remove") : str8_lit("Close workspace");
 }
 
 internal B32 uishell_sidebar_is_subject(UIShell_SidebarNode node);
@@ -3006,6 +3021,7 @@ uishell_sidebar_close_workspace(RD_WindowState *ws, UIShell_SidebarNode node, UI
     uishell_sidebar_pin_remove(cfg_node_from_id(ws->cfg_id), uishell_sidebar_string(node.entity.id));
     rd_request_frame();
   }
+  if(kind == UIShell_SidebarCloseKind_Remove) { uishell_workspace_remove_ended(cfg_node_from_id(ws->cfg_id), node.entity); }
 }
 
 // A detached workspace keeps its layout; its menu also offers to discard it.
@@ -3100,11 +3116,18 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     loop = uishell_sidebar_loop_key(state, node_index);
     ordered = uishell_sidebar_order_saved(state, loop);
   }
-  // A group header's click collapses it; the release ending a double click
-  // that renames it does not.
+  // A project's header is its project workspace: a click opens it, and its
+  // disclosure collapses it. A local group's header is no workspace, so its
+  // click collapses it; the release ending a double click that renames it
+  // does not.
+  B32 local_group = str8_match(kind, str8_lit(".group"), 0);
   B32 swallow = header && ui_key_match(state->header_click_swallow, sig.box->key);
   if(swallow && ui_released(sig)) { state->header_click_swallow = ui_key_zero(); }
-  if(header)
+  if(header && !local_group && can_activate)
+  {
+    if(ui_clicked(sig) && !row_drag) { action = uishell_sidebar_activate_intent(node); }
+  }
+  else if(header)
   {
     if(ui_clicked(sig) && !row_drag && !swallow) { action = uishell_sidebar_toggle_intent(node); }
   }
@@ -3120,7 +3143,7 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
       rd_request_frame();
     }
   }
-  if(!menu && str8_match(uishell_sidebar_string(node.entity.kind), str8_lit(".group"), 0))
+  if(!menu && local_group)
   {
     // A local group's header: its menu (uishell_local_groups.c), with its
     // items' loop for Reset order.
@@ -3148,30 +3171,22 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
   }
   else if(header)
   {
-    // A project's header: New workspace here (it lives with the project),
-    // and Reset order once its rows have been reordered.
+    // A project's header: its project workspace's menu (the close the core
+    // chooses, its layouts), and Reset order once its rows have been
+    // reordered. New workspace is the header's +.
     UI_Key menu_key = ui_key_from_stringf(sig.box->key, "project_menu");
-    String8 items_loop = str8_zero();
-    UIShell_SidebarNode first = {0};
-    if(uishell_sidebar_node(state, node_index+1, &first) && first.parent == node_index)
-    { items_loop = uishell_sidebar_loop_key(state, node_index+1); }
-    String8 labels[20] = {str8_lit("New workspace here"), str8_lit("Reset order")};
-    String8 names[16];
-    U64 label_count = 2;
-    if(ui_ctx_menu_is_open(menu_key))
-    { label_count += uishell_sidebar_layout_labels(ui_build_arena(), uishell_sidebar_node_workspace(node), labels+label_count, names, ArrayCount(names)); }
-    UIShell_SidebarMenu(menu_key, uishell_sidebar_menu_width(labels, label_count))
+    String8 items_loop = uishell_sidebar_project_items_loop(state, node_index);
+    UIShell_SidebarMenu(menu_key, uishell_sidebar_row_menu_width(node, close_kind))
     {
+      if(close_kind != UIShell_SidebarCloseKind_None && ui_clicked(ui_button(uishell_sidebar_close_label(close_kind))))
+      { uishell_sidebar_close_workspace(ws, node, close_kind); ui_ctx_menu_close(); }
+      uishell_sidebar_discard_button(ws, node, close_kind);
       uishell_sidebar_layout_buttons(node);
-      if(ui_clicked(ui_button(str8_lit("New workspace here"))))
-      {
-        uishell_sidebar_make(cfg_node_from_id(ws->cfg_id),
-          (UIShell_MakeAction){UIShell_Make_ProjectWorkspace, str8_lit("New workspace"), str8_zero(), uishell_sidebar_string(node.entity.id)}, str8_zero());
-        ui_ctx_menu_close();
-      }
       if(items_loop.size && uishell_sidebar_order_saved(state, items_loop)) { uishell_sidebar_order_reset_button(state, items_loop); }
     }
-    if(ui_right_clicked(sig)) { uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
+    // An empty menu doesn't open.
+    B32 has_menu = close_kind != UIShell_SidebarCloseKind_None || (items_loop.size && uishell_sidebar_order_saved(state, items_loop));
+    if(ui_right_clicked(sig) && has_menu) { uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
     if(state->header_more_open) { state->header_more_open = 0; ui_ctx_menu_open(menu_key, state->header_more_anchor, v2f32(0, em*1.8f)); }
   }
   else if(subject)
@@ -5122,9 +5137,16 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                 uishell_sidebar_make_begin(state, push_str8f(scratch.arena, "workspace_%S", node_key), 0);
                 if(node.collapsed) { action = uishell_sidebar_toggle_intent(node); }
               }
-              UI_Signal more = uishell_sidebar_header_button(str8_lit("▾"), push_str8f(scratch.arena, "header_more_%S", node_key), 0, 1,
-                project_header ? str8_lit("Project options") : str8_lit("Group options"), str8_lit("Or right-click the header"));
-              if(ui_clicked(more)) { state->header_more_anchor = more.box->key; state->header_more_open = 1; }
+              // A project's menu is its workspace's: ▾ shows while it has one.
+              String8 items_loop = project_header ? uishell_sidebar_project_items_loop(state, i) : str8_zero();
+              B32 has_menu = local_header || uishell_sidebar_close_kind(node) != UIShell_SidebarCloseKind_None ||
+                (items_loop.size && uishell_sidebar_order_saved(state, items_loop));
+              if(has_menu)
+              {
+                UI_Signal more = uishell_sidebar_header_button(str8_lit("▾"), push_str8f(scratch.arena, "header_more_%S", node_key), 0, 1,
+                  project_header ? str8_lit("Project workspace") : str8_lit("Group options"), str8_lit("Or right-click the header"));
+                if(ui_clicked(more)) { state->header_more_anchor = more.box->key; state->header_more_open = 1; }
+              }
             }
             UIShell_SidebarCloseKind close = uishell_sidebar_close_kind(node);
             UI_Key menu_key = ui_key_from_stringf(r.row->key, uishell_sidebar_is_subject(node) ? "subject_menu" : "workspace_menu");

@@ -13,6 +13,7 @@ global B32 uishell_workspace_shown;
 internal UIShell_SidebarState *uishell_sidebar_window_state(CFG_Node *window);
 internal void uishell_sidebar_observe(UIShell_SidebarState *state, UIShell_ControlledSplit *split);
 internal void uishell_sidebar_effects(UIShell_SidebarState *state, UIShell_ControlledSplit *split);
+internal WheelhouseEntity uishell_sidebar_card_entity_copy(Arena *arena, WheelhouseEntity entity);
 
 // The one entry point for a lifecycle intent: observe the window's
 // workspaces into its core first (so their order and selection are
@@ -99,6 +100,25 @@ uishell_workspace_close(CFG_Node *window, UIShell_WorkspaceId id, B32 keep)
   // No workspace shown after: it was the last open.
   if(closed && !uishell_workspace_shown) { uishell_new_workspace(window); }
   return closed;
+}
+
+// Removes an ended row (WHEELHOUSE_CLOSE_REMOVE): destroys the workspaces on
+// its path, open or kept (a convoy's include its vessels'), so nothing keeps
+// it. Removing the last open one leaves a fresh workspace, as a close does.
+internal B32
+uishell_workspace_remove_ended(CFG_Node *window, WheelhouseEntity entity)
+{
+  // A row's entity is the snapshot's, which the apply's observe can
+  // replace: the intent carries a copy.
+  Temp scratch = scratch_begin(0, 0);
+  WheelhouseIntent intent = {.kind = WHEELHOUSE_INTENT_REMOVE_ENDED, .entity = uishell_sidebar_card_entity_copy(scratch.arena, entity)};
+  B32 removed = uishell_workspace_lifecycle_apply(window, &intent);
+  scratch_end(scratch);
+  B32 open = cfg_node_child_from_string(window, str8_lit("workspace_id")) != &cfg_nil_node;
+  for(CFG_Node *c = window->first; c != &cfg_nil_node && !open; c = c->next)
+  { open = str8_match(c->string, str8_lit("workspace"), 0); }
+  if(removed && !open) { uishell_new_workspace(window); }
+  return removed;
 }
 
 // Re-homes a local workspace, as a row's drop does: onto local group `group`
