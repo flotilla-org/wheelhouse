@@ -84,6 +84,7 @@ struct UIShell_TerminalViewState
   B32 retained_bucket_has_images;
   U64 retained_bucket_frame; // the shell frame that built retained_bucket
   FNT_AtlasUse retained_bucket_atlases; // the run atlases its glyphs come from
+  UIShell_TerminalRowCache row_cache; // retained_bucket's rows, rebuilt only where damaged
   U16 cols;
   U16 rows;
   F32 cell_width_px;
@@ -559,6 +560,7 @@ uishell_terminal_runtime_release(void *data)
   Arena *arenas[] = {tv->retained_bucket_arena, tv->glyph_cache.arena, tv->cell_cache.arena,
                     tv->image_cache.arena, tv->image_cache.placement_arena};
   for(U64 i = 0; i < ArrayCount(arenas); i++) { if(arenas[i]) { arena_release(arenas[i]); } }
+  uishell_terminal_row_cache_release(&tv->row_cache);
   MemoryZeroStruct(tv);
 }
 
@@ -4966,6 +4968,11 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
         bucket_key_data.render_generation = 0;
         bucket_key_data.image_generation = 0; // this mirrors every provider update, even without images
         U64 style_key = u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1;
+        // A row's drawing depends on neither the generations (each row carries
+        // its own) nor selection (drawn over the rows); the rest, it does.
+        bucket_key_data.has_selection = bucket_key_data.selecting = bucket_key_data.selection_rectangular = 0;
+        bucket_key_data.sel_mark = bucket_key_data.sel_cursor = txt_pt(0, 0);
+        U64 row_style_key = u64_hash_from_str8(str8_struct(&bucket_key_data)) | 1;
         RD_WindowState *window_state = rd_window_state_from_cfg__existing(cfg_node_from_id(uishell_regs()->window));
         RD_WorkspaceSurfaceEntry *surface = window_state != &rd_nil_window_state ? window_state->active_workspace_surface_entry : 0;
         // A preview rebuilds its glyphs once its surface has drawn the last
@@ -4994,7 +5001,6 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
           if(metrics != 0)
           {
             metrics->rebuilds++;
-            metrics->cells_built += feed.cell_count;
           }
           if(tv->retained_bucket_arena == 0)
           {
@@ -5013,7 +5019,9 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
           glyph_renderer.trace_all_rows = rd_state->terminal_glyph_trace_all_rows;
           glyph_renderer.trace_row = rd_state->terminal_glyph_trace_row;
           glyph_renderer.trace_generation = tv->cell_cache.render_generation;
-          uishell_terminal_glyph_renderer_draw_cell_feed(scratch.arena, &glyph_renderer, &draw_params, &feed);
+          UIShell_TerminalCursorArray no_extra_cursors = {0};
+          uishell_terminal_glyph_renderer_draw_cell_feed_rows(scratch.arena, &glyph_renderer, &draw_params, &feed, no_extra_cursors, &tv->row_cache, row_style_key);
+          if(metrics != 0) { metrics->cells_built += tv->row_cache.cells_built; }
           // Use exactly the same cell bounds as clipboard extraction.
           if(tv->has_selection || tv->selecting)
           {

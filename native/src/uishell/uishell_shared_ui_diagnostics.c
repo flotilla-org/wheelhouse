@@ -312,6 +312,251 @@ uishell_check_blur_scratch(U32 *failures)
   scratch_end(scratch);
 }
 
+// #103: a terminal's rows are retained apart, and a draw rebuilds only rows
+// whose cells, cursor or style changed. Each step changes the fixture as a
+// provider update would, then draws it both ways: through the row cache and
+// by the full draw. The pixels must match exactly, and the row cache must
+// have built just the rows the step changed.
+typedef struct UIShell_RowCacheFixture UIShell_RowCacheFixture;
+struct UIShell_RowCacheFixture
+{
+  UIShell_TerminalGlyphRenderer renderer;
+  UIShell_TerminalDrawParams params;
+  UIShell_TerminalCellFeed feed;
+  UIShell_TerminalCursorArray cursors;
+  UIShell_TerminalRowCache rows;
+  U64 style_key;
+};
+
+internal B32
+uishell_row_cache_step_matches(Arena *arena, UIShell_RowCacheFixture *f, U64 expect_built, U64 expect_moved, char *label, U32 *failures)
+{
+  Vec2S32 size = v2s32((S32)ceil_f32(f->params.canvas_rect.x1), (S32)ceil_f32(f->params.canvas_rect.y1));
+  DR_Bucket *cached = dr_bucket_make();
+  DR_BucketScope(cached)
+  { uishell_terminal_glyph_renderer_draw_cell_feed_rows(arena, &f->renderer, &f->params, &f->feed, f->cursors, &f->rows, f->style_key); }
+  R_Readback a = r_pass_list_readback(arena, size, &cached->passes);
+  DR_Bucket *full = dr_bucket_make();
+  DR_BucketScope(full)
+  { uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(arena, &f->renderer, &f->params, &f->feed, f->cursors); }
+  R_Readback b = r_pass_list_readback(arena, size, &full->passes);
+  U64 bytes = (U64)size.x*size.y*4;
+  B32 read = (a.data.size >= bytes && b.data.size >= bytes);
+  U64 differing = 0;
+  S64 first = -1;
+  for(U64 idx = 0; read && idx < bytes; idx += 1)
+  {
+    if(a.data.str[idx] != b.data.str[idx]) { differing += 1; if(first < 0) { first = (S64)idx; } }
+  }
+  // expect_built of max_U64: any rows, as long as some were built.
+  B32 built_ok = (expect_built == max_U64 ? f->rows.rows_built != 0 : f->rows.rows_built == expect_built);
+  B32 pass = (read && differing == 0 && built_ok && f->rows.rows_moved == expect_moved);
+  if(!pass) { *failures += 1; }
+  fprintf(stderr, "%.*s terminal row cache, %s: %s (built %llu of %u rows, moved %llu, reused %llu; %llu bytes differ%s)\n",
+          str8_varg(r_backend_name()), label, pass ? "ok" : "DIFFERS",
+          (unsigned long long)f->rows.rows_built, f->feed.rows, (unsigned long long)f->rows.rows_moved,
+          (unsigned long long)f->rows.rows_reused, (unsigned long long)differing, read ? "" : ", no readback");
+  if(first >= 0) { fprintf(stderr, "  first at pixel %lld,%lld\n", (long long)((first/4)%size.x), (long long)((first/4)/size.x)); }
+  return pass;
+}
+
+// Scrolls the fixture up one row as SCROLL_COPY does: every row keeps its
+// generation and moves up, and a new row (a copy of snapshot row 3) enters at
+// the bottom with a new generation.
+internal void
+uishell_row_cache_scroll_one(UIShell_RowCacheFixture *f, cleat_cell *cells, U64 *gens, cleat_snapshot const *snapshot, U64 *next_gen)
+{
+  U64 cols = f->feed.cols, rows = f->feed.rows;
+  MemoryCopy(cells, cells + cols, sizeof(*cells)*cols*(rows - 1));
+  for(U64 c = 0; c < cols; c += 1) { cells[(rows - 1)*cols + c] = snapshot->cells[3*cols + c]; }
+  MemoryCopy(gens, gens + 1, sizeof(*gens)*(rows - 1));
+  gens[rows - 1] = (*next_gen)++;
+}
+
+internal void
+uishell_check_terminal_row_cache(U32 *failures)
+{
+  Temp scratch = scratch_begin(0, 0);
+  UIShell_RowCacheFixture f = {0};
+  FNT_Tag code = fnt_tag_from_static_data_string(&rd_default_code_font_bytes);
+  FNT_Tag main = fnt_tag_from_static_data_string(&rd_default_main_font_bytes);
+  F32 font_size = 13.f;
+  UIShell_TerminalFontSet font_set = uishell_terminal_font_set_from_fonts(scratch.arena, code, FNT_RasterFlag_Smooth, font_size, main, str8_zero(), 0, 0, 0, 0);
+  UIShell_TerminalGlyphCache glyph_cache = {0};
+  uishell_terminal_sync_font_cache(&glyph_cache, &font_set);
+  f.renderer = (UIShell_TerminalGlyphRenderer){.font_set = font_set, .cache = &glyph_cache};
+  FNT_Metrics metrics = fnt_metrics_from_tag_size(code, font_size);
+  F32 cell_width = Max(1.f, ceil_f32(fnt_dim_from_tag_size_string(code, font_size, 0, 0, str8_lit("H")).x));
+  F32 cell_height = ceil_f32(ClampBot(1.f, fnt_line_height_from_metrics(&metrics)*1.2f));
+
+  // The glyph fixture: styles, wide and emoji cells, Powerline caps, cursors.
+  U16 cols = 80, rows = 24;
+  cleat_snapshot snapshot = uishell_terminal_fixture_snapshot(scratch.arena, cols, rows);
+  U64 cell_count = (U64)cols*rows;
+  cleat_cell *cells = push_array(scratch.arena, cleat_cell, cell_count);
+  MemoryCopy(cells, snapshot.cells, sizeof(*cells)*cell_count);
+  U64 *gens = push_array(scratch.arena, U64, rows);
+  U64 next_gen = 1;
+  for(U64 r = 0; r < rows; r += 1) { gens[r] = next_gen++; }
+  f.feed = uishell_terminal_cell_feed_from_cleat_snapshot(&snapshot);
+  f.feed.cells = cells;
+  f.feed.row_generations = gens;
+  f.cursors = uishell_terminal_fixture_cursor_array(scratch.arena, cols, rows);
+  f.params = (UIShell_TerminalDrawParams){
+    .canvas_rect = r2f32p(0, 0, cell_width*cols, cell_height*rows),
+    .background_color = v4f32(0.02f, 0.02f, 0.02f, 1),
+    .cell_width_px = cell_width, .cell_height_px = cell_height};
+  f.style_key = 1;
+
+  uishell_row_cache_step_matches(scratch.arena, &f, rows, 0, "first draw", failures);
+  uishell_row_cache_step_matches(scratch.arena, &f, 0, 0, "unchanged", failures);
+
+  // Cursor only: the block cursor on row 22 moves to row 5.
+  for(U64 idx = 0; idx < f.cursors.count; idx += 1)
+  {
+    if(f.cursors.v[idx].row == 22 && f.cursors.v[idx].col == 12) { f.cursors.v[idx].row = 5; f.cursors.v[idx].col = 3; }
+  }
+  uishell_row_cache_step_matches(scratch.arena, &f, 2, 0, "cursor moves between rows", failures);
+
+  // One row's cells replaced.
+  for(U64 c = 0; c < cols; c += 1)
+  {
+    cleat_cell *cell = &cells[7*(U64)cols + c];
+    cell->fg = (cleat_rgb){250, 120, 40};
+    cell->flags ^= CLEAT_CELL_FLAG_UNDERLINE;
+  }
+  gens[7] = next_gen++;
+  uishell_row_cache_step_matches(scratch.arena, &f, 1, 0, "one row replaced", failures);
+
+  // Scrolling: every row moves up one and a new row enters at the bottom.
+  // Cursors stay out of it (they'd damage the rows they sit on).
+  f.cursors.count = 0;
+  uishell_row_cache_step_matches(scratch.arena, &f, 3, 0, "cursors hidden", failures);
+  uishell_row_cache_scroll_one(&f, cells, gens, &snapshot, &next_gen);
+  uishell_row_cache_step_matches(scratch.arena, &f, 1, rows - 1, "scrolled one row", failures);
+
+  // A cursor that stays on screen row 10 while the rows scroll under it: the
+  // row it leaves (now row 9) and the row it lands on (now row 10) build, as
+  // does the new bottom row; the rest move.
+  f.cursors.count = 1;
+  f.cursors.v[0].row = 10;
+  f.cursors.v[0].visible = 1;
+  uishell_row_cache_step_matches(scratch.arena, &f, 1, 0, "cursor shown on row 10", failures);
+  uishell_row_cache_scroll_one(&f, cells, gens, &snapshot, &next_gen);
+  uishell_row_cache_step_matches(scratch.arena, &f, 3, rows - 3, "scrolled under the cursor", failures);
+  f.cursors.count = 0;
+  uishell_row_cache_step_matches(scratch.arena, &f, 1, 0, "cursor hidden again", failures);
+
+  // Kitty images draw afresh over and under retained rows.
+  {
+    U32 texel = 0xff3060e0;
+    UIShell_TerminalImageResource resource = {.image_id = 9, .width_px = 1, .height_px = 1, .valid = 1,
+      .texture = r_tex2d_alloc(R_ResourceKind_Static, v2s32(1, 1), R_Tex2DFormat_RGBA8, &texel)};
+    UIShell_TerminalImagePlacement placements[] =
+    {
+      {.image_id = 9, .z = -1, .viewport_col = 2, .viewport_row = 2, .grid_cols = 6, .grid_rows = 3, .source_width = 1, .source_height = 1},
+      {.image_id = 9, .z = 1, .viewport_col = 40, .viewport_row = 10, .grid_cols = 4, .grid_rows = 2, .source_width = 1, .source_height = 1, .order = 1},
+    };
+    UIShell_TerminalImageCache images = {.first_resource = &resource, .last_resource = &resource,
+      .placements = placements, .placement_count = ArrayCount(placements)};
+    f.params.image_cache = &images;
+    uishell_row_cache_step_matches(scratch.arena, &f, 0, 0, "images placed", failures);
+    f.params.image_cache = 0;
+    r_tex2d_release(resource.texture);
+  }
+
+  // A feed without row generations names no row, so nothing is kept: every
+  // draw builds every row.
+  f.feed.row_generations = 0;
+  uishell_row_cache_step_matches(scratch.arena, &f, rows, 0, "no row generations", failures);
+  uishell_row_cache_step_matches(scratch.arena, &f, rows, 0, "no row generations, again", failures);
+  f.feed.row_generations = gens;
+
+  // Style: the canvas moves, so every row's position changes.
+  f.params.canvas_rect = shift_2f32(f.params.canvas_rect, v2f32(cell_width, 0));
+  f.style_key = 2;
+  uishell_row_cache_step_matches(scratch.arena, &f, rows, 0, "style changed", failures);
+
+  // Evicted atlases: rows drawn from them build again. A row that draws no
+  // glyphs uses no atlas and stays.
+  fnt_reset();
+  uishell_terminal_sync_font_cache(&glyph_cache, &font_set);
+  uishell_row_cache_step_matches(scratch.arena, &f, max_U64, 0, "atlases reset", failures);
+
+  // Resize: fewer rows, all new.
+  f.feed.rows = rows - 4;
+  f.feed.cell_count = (U64)cols*(rows - 4);
+  for(U64 r = 0; r < (U64)rows - 4; r += 1) { gens[r] = next_gen++; }
+  f.params.canvas_rect.y1 = f.params.canvas_rect.y0 + cell_height*(rows - 4);
+  f.style_key = 3;
+  uishell_row_cache_step_matches(scratch.arena, &f, rows - 4, 0, "resized", failures);
+
+  // A fractional cell height: a row's top is floored at each position, so a
+  // scrolled row's drawing can't be moved exactly. Rows kept in place stay;
+  // a scroll builds every row instead of moving any.
+  F32 fractional_height = cell_height + 0.5f;
+  f.params.cell_height_px = fractional_height;
+  f.params.canvas_rect.y1 = f.params.canvas_rect.y0 + fractional_height*(rows - 4);
+  f.style_key = 4;
+  uishell_row_cache_step_matches(scratch.arena, &f, rows - 4, 0, "fractional cell height", failures);
+  uishell_row_cache_step_matches(scratch.arena, &f, 0, 0, "fractional cell height, unchanged", failures);
+  uishell_row_cache_scroll_one(&f, cells, gens, &snapshot, &next_gen);
+  uishell_row_cache_step_matches(scratch.arena, &f, rows - 4, 0, "scrolled, fractional cell height", failures);
+
+  uishell_terminal_row_cache_release(&f.rows);
+  scratch_end(scratch);
+}
+
+// The cell cache names rows by generation: a replaced row gets a new one, a
+// scrolled row keeps its own, and a cursor-only update changes none.
+internal void
+uishell_check_terminal_row_generations(U32 *failures)
+{
+  U32 text[4*3];
+  cleat_render_cell cells[4*3];
+  for EachElement(idx, cells)
+  {
+    text[idx] = 'a' + (U32)idx;
+    cells[idx] = (cleat_render_cell){.size = sizeof(cells[0]), .graphemes = &text[idx], .grapheme_count = 1,
+      .style = {.size = sizeof(cleat_render_style), .width = CLEAT_CELL_WIDTH_NARROW}};
+  }
+  UIShell_TerminalCellCache cache = {0};
+  cleat_render_update_op full = {.size = sizeof(full), .kind = CLEAT_RENDER_OP_FULL_VISIBLE_REPLACE,
+    .row_count = 3, .col_count = 4, .cells = cells, .cell_count = 12};
+  cleat_render_update update = {.size = sizeof(update), .cols = 4, .rows = 3, .ops = &full, .op_count = 1};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  U64 g[3] = {cache.row_generations[0], cache.row_generations[1], cache.row_generations[2]};
+  UIImportCheck(g[0] != 0 && g[0] != g[1] && g[1] != g[2]);
+
+  update = (cleat_render_update){.size = sizeof(update), .cols = 4, .rows = 3, .cursor = {.row = 2, .visible = 1}};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  UIImportCheck(cache.row_generations[0] == g[0] && cache.row_generations[1] == g[1] && cache.row_generations[2] == g[2]);
+
+  cleat_render_update_op row = {.size = sizeof(row), .kind = CLEAT_RENDER_OP_ROW_REPLACE,
+    .first_row = 1, .row_count = 1, .col_count = 4, .cells = cells, .cell_count = 4};
+  update = (cleat_render_update){.size = sizeof(update), .cols = 4, .rows = 3, .ops = &row, .op_count = 1};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  UIImportCheck(cache.row_generations[0] == g[0] && cache.row_generations[1] != g[1] && cache.row_generations[2] == g[2]);
+  g[1] = cache.row_generations[1];
+
+  cleat_render_update_op scroll[2] =
+  {
+    {.size = sizeof(scroll[0]), .kind = CLEAT_RENDER_OP_SCROLL_COPY, .src_row = 1, .dst_row = 0, .row_count = 2},
+    {.size = sizeof(scroll[0]), .kind = CLEAT_RENDER_OP_ROW_REPLACE, .first_row = 2, .row_count = 1, .col_count = 4, .cells = cells, .cell_count = 4},
+  };
+  update = (cleat_render_update){.size = sizeof(update), .cols = 4, .rows = 3, .ops = scroll, .op_count = 2};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  UIImportCheck(cache.row_generations[0] == g[1] && cache.row_generations[1] == g[2] &&
+                cache.row_generations[2] != g[2] && cache.row_generations[2] != g[0]);
+
+  update = (cleat_render_update){.size = sizeof(update), .cols = 4, .rows = 2, .ops = &full, .op_count = 1};
+  full.row_count = 2; full.cell_count = 8;
+  U64 before[2] = {cache.row_generations[0], cache.row_generations[1]};
+  uishell_terminal_cell_cache_apply_render_update(&cache, &update);
+  UIImportCheck(cache.rows == 2 && cache.row_generations[0] != before[0] && cache.row_generations[1] != before[1]);
+  if(cache.arena != 0) { arena_release(cache.arena); }
+}
+
 // What a rounded rect means, read back from this backend. The hand-written
 // rect shaders differ between backends; these are the cases a single-source
 // shader has to settle (ADR 0015 §5). Each case prints what it measured,
@@ -1012,6 +1257,10 @@ uishell_shared_ui_diagnostics(RD_WindowState *ws)
   U32 failures_before_rect = failures;
   uishell_check_rect_semantics(&failures);
   fprintf(stderr, "rect semantics: %u failures\n", failures - failures_before_rect);
+  U32 failures_before_rows = failures;
+  uishell_check_terminal_row_generations(&failures);
+  uishell_check_terminal_row_cache(&failures);
+  fprintf(stderr, "terminal row cache: %u failures\n", failures - failures_before_rows);
   U32 failures_before_uploads = failures;
   uishell_check_instance_uploads(&failures);
   fprintf(stderr, "instance uploads: %u failures\n", failures - failures_before_uploads);
