@@ -429,18 +429,19 @@ fn an_intent_that_changes_nothing_is_listed() {
     assert_eq!(sidebar.poll(id).unwrap().expect("it is listed").intents, [request]);
 }
 
-/// One vessel's status changing in a fleet-sized catalog is a delta of a
-/// few operations: the walk skips everything that didn't change.
+/// One row's status changing in a fleet-sized catalog is a delta of a few
+/// operations: the walk skips everything that didn't change. The daily
+/// driver shows convoys, not their vessels.
 #[test]
 fn a_small_patch_at_fleet_scale_is_a_small_delta() {
-    for config in [CONFIG, DAILY_DRIVER] {
+    for (config, kind) in [(CONFIG, "vessel"), (DAILY_DRIVER, "convoy")] {
         let mut sidebar = Sidebar::new(config).unwrap();
         sidebar.apply(1, PROVIDER, catalog(580)).unwrap();
         let id = sidebar.subscribe();
         let first = sidebar.poll(id).unwrap().unwrap();
         assert!(first.ops.len() > nodes(&sidebar).len(), "the first poll gives everything");
-        for (i, status) in ["running", "done", "running"].into_iter().enumerate() {
-            sidebar.apply(2 + i as u64, PROVIDER, [change("vessel", 5, vec![("status.state", text(status))], &[])]).unwrap();
+        for (i, status) in ["waiting", "done", "waiting"].into_iter().enumerate() {
+            sidebar.apply(2 + i as u64, PROVIDER, [change(kind, 5, vec![("status.state", text(status))], &[])]).unwrap();
             // Evaluate first, to time only the walk.
             sidebar.snapshot_shared();
             let started = std::time::Instant::now();

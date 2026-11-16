@@ -227,6 +227,45 @@ fn abbreviation_uses_placement_variable_and_preserves_full_fallback() {
     assert_eq!(after.surface.sections[0].nodes[0].key, node.key);
 }
 
+// A subject's chip names its repository by the shortest prefix no other
+// repository in the region shares (flotilla ADR 0049), and none when one
+// repository shows; a new repository relabels the subjects already there.
+#[test]
+fn subject_labels_compact_to_the_prefix_unique_in_the_region() {
+    let config = r#"
+region "tree" root-template="title" form="compact" placement="tree"
+template "title" { field "label" source="literal" value="Subjects"; }
+placement "tree" {
+  for "change_request" kind="change_request" { order "flotilla.subject.number" natural=true; apply-template "entry"; }
+  for "issue" kind="issue" { order "flotilla.subject.number" natural=true; apply-template "entry"; }
+}
+template "entry" { field "label" key="display.label"; }
+"#;
+    let subject = |kind: &str, alias: &str, number: &str| {
+        patch(
+            entity(kind, &format!("{alias}/{number}")),
+            &[
+                ("display.label", text(&format!("flotilla-org/{alias}#{number}"))),
+                ("flotilla.subject.repository_alias", text(alias)),
+                ("flotilla.subject.number", text(number)),
+            ],
+        )
+    };
+    let labels = |sidebar: &mut Sidebar| -> Vec<String> {
+        sidebar.snapshot().surface.sections[0].nodes.iter().map(|node| node.content.text()).collect()
+    };
+    let mut sidebar = Sidebar::new(config).unwrap();
+    sidebar.feed(0, [subject("change_request", "flotilla", "2343")]);
+    assert_eq!(labels(&mut sidebar), ["!2343"]);
+    sidebar.feed(1, [subject("issue", "drydock", "12"), subject("change_request", "rigging", "7")]);
+    assert_eq!(labels(&mut sidebar), ["r!7", "f!2343", "d#12"]);
+    // An alias that is all prefix of another keeps all of itself.
+    sidebar.feed(2, [subject("change_request", "flotilla-web", "5")]);
+    assert_eq!(labels(&mut sidebar), ["flotilla-!5", "r!7", "flotilla!2343", "d#12"]);
+    let snapshot = sidebar.snapshot();
+    assert_eq!(snapshot.surface.sections[0].nodes[2].label, "flotilla-org/flotilla#2343");
+}
+
 #[test]
 fn unchanged_resends_and_ticks_reuse_the_snapshot() {
     let mut sidebar = sidebar();
