@@ -282,9 +282,17 @@ impl WorkspaceSlots {
             });
         }
         if let Some(baseline) = self.baseline.as_ref().and_then(|b| b.slot(key)).cloned() {
-            let facet = self.edits.get(key).and_then(|edit| edit.facet.clone());
+            // The spec it shows on its chosen Facet keeps that choice; any
+            // other spec replaces it.
+            let mut facet = self.edits.get(key).and_then(|edit| edit.facet.clone());
+            let mut shown = baseline.spec.clone();
+            if let (Some(chosen), Content::ProviderFacet { facet: provider, .. }) = (&facet, &mut shown.content) {
+                provider.clone_from(chosen);
+            }
+            let keeps = facet.is_some() && spec == shown;
+            facet = facet.filter(|_| keeps);
             let edit = SlotEdit {
-                content: (spec != baseline.spec)
+                content: (!keeps && spec != baseline.spec)
                     .then(|| ContentEdit { change: ContentChange::Override(spec), against: baseline.spec.clone() }),
                 rebind: (rebind != baseline.rebind).then_some(rebind),
                 facet,
@@ -347,7 +355,9 @@ impl WorkspaceSlots {
     /// Show another Facet of a slot's entity. A baseline slot that follows
     /// its provider records it as a facet edit, which doesn't detach it, and
     /// choosing the provider's own Facet drops the edit; any other slot's
-    /// spec changes. Returns whether anything changed.
+    /// spec changes. Returns whether anything changed. Only the key's syntax
+    /// is checked here; `Sidebar::set_slot_facet`, which can read the
+    /// entity's layout, checks it lists the Facet.
     pub fn set_facet(&mut self, key: &str, facet: &str) -> Result<bool, String> {
         check_key(facet).map_err(|_| format!("invalid facet {facet:?}"))?;
         let slot = self.slot(key).ok_or_else(|| format!("no slot {key:?}"))?;

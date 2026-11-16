@@ -774,6 +774,30 @@ fn a_slot_switches_facet_in_place_and_keeps_following_its_provider() {
 }
 
 #[test]
+fn setting_a_slot_keeps_its_facet_only_for_the_spec_it_shows() {
+    let mut sidebar = session(agent_slot());
+    sidebar.feed(150, [agent_facets()]);
+    assert!(sidebar.set_slot_facet(worker(), "a", "terminal").unwrap());
+
+    // The spec it shows, with another rebind policy: a rebind edit, still on
+    // its chosen Facet and following its provider.
+    let shown = sidebar.slots(worker()).unwrap().remove(0).spec;
+    assert!(sidebar.set_slot(worker(), "a", shown.clone(), RebindPolicy::Ask).unwrap());
+    let slot = sidebar.slots(worker()).unwrap().remove(0);
+    assert_eq!(slot.flags, flag::FACET | flag::REBIND);
+    assert_eq!(slot.spec, shown);
+
+    // Any other spec overrides it, and the override replaces the choice:
+    // reattached, it shows the provider's Facet.
+    let other = ViewSpec { role: Some("other".into()), ..shown };
+    assert!(sidebar.set_slot(worker(), "a", other, RebindPolicy::Ask).unwrap());
+    assert!(sidebar.reattach_slot(worker(), "a").unwrap());
+    let slot = sidebar.slots(worker()).unwrap().remove(0);
+    assert_eq!(slot.flags, flag::REBIND);
+    assert!(matches!(&slot.spec.content, Content::ProviderFacet { facet, .. } if facet == "conversation"));
+}
+
+#[test]
 fn a_facet_edit_is_dropped_when_the_provider_names_another_entity() {
     let mut sidebar = session(agent_slot());
     sidebar.feed(150, [agent_facets()]);
