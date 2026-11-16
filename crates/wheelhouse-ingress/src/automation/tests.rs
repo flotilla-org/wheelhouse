@@ -23,7 +23,7 @@ fn terminal(id: &str, session: &str, text: &str) -> Value {
 
 /// Two workspaces: one with a split of a terminal and a sessions View, the
 /// other with a terminal showing the same session.
-fn nodes() -> Vec<Node> {
+pub(super) fn nodes() -> Vec<Node> {
     let mut first = node(
         A,
         "workspace",
@@ -42,7 +42,7 @@ fn nodes() -> Vec<Node> {
 
 /// What the UI gives for `nodes`: their terminals' screens apart, and only
 /// when `screens`.
-fn build(mut nodes: Vec<Node>, screens: bool) -> Build {
+pub(super) fn build(mut nodes: Vec<Node>, screens: bool) -> Build {
     let mut terminals = Vec::new();
     for node in &mut nodes {
         node.visit_mut(&mut |node| {
@@ -196,7 +196,7 @@ impl Endpoint {
         endpoint.frames = Some(std::thread::spawn(move || {
             let mut generation = Generation::default();
             while !stop.load(SeqCst) {
-                frame_end(&automation, &mut generation, mode.load(SeqCst), |asked| {
+                frame_end(&automation, &mut generation, mode.load(SeqCst), false, |asked| {
                     screens.store(asked, SeqCst);
                     Some(build(tree.lock().unwrap().clone(), asked))
                 });
@@ -406,7 +406,7 @@ fn reads_answer_from_the_next_frame() {
 fn an_unknown_mode_is_off() {
     extern "C" fn wake() {}
     let automation = Automation::new(wake);
-    frame_end(&automation, &mut Generation::default(), AUTOMATION_FULL + 1, |screens| Some(build(nodes(), screens)));
+    frame_end(&automation, &mut Generation::default(), AUTOMATION_FULL + 1, false, |screens| Some(build(nodes(), screens)));
     assert_eq!(automation.mode.load(SeqCst), AUTOMATION_OFF);
 }
 
@@ -502,9 +502,9 @@ fn a_change_waits_for_its_screens() {
     automation.streams.store(1, SeqCst);
     automation.screen_streams.store(1, SeqCst);
     let mut generation = Generation::default();
-    frame_end(&automation, &mut generation, AUTOMATION_FULL, |screens| (!screens).then(|| build(nodes(), false)));
+    frame_end(&automation, &mut generation, AUTOMATION_FULL, false, |screens| (!screens).then(|| build(nodes(), false)));
     assert!(automation.published.borrow().tree.is_none(), "published without its screens");
-    frame_end(&automation, &mut generation, AUTOMATION_FULL, |screens| Some(build(nodes(), screens)));
+    frame_end(&automation, &mut generation, AUTOMATION_FULL, false, |screens| Some(build(nodes(), screens)));
     let published = automation.published.borrow().clone();
     assert_eq!(published.tree.as_deref(), Some(&nodes()));
 }

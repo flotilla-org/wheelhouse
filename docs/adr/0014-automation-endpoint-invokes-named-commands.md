@@ -1,9 +1,10 @@
 # The Automation Endpoint May Invoke Named Commands
 
-**Status:** accepted, not yet implemented. Decided in
+**Status:** accepted. Decided in
 [Define command invocation over the Automation Endpoint](https://github.com/flotilla-org/wheelhouse/issues/349),
 on [Map: Wheelhouse's UI is machine-readable and locale-ready](https://github.com/flotilla-org/wheelhouse/issues/343).
-Implementation is on hold until the current Andamento change lands.
+Commands are implemented (#643; `docs/protocol/automation-endpoint.md`);
+intents are not yet.
 
 ## Context
 
@@ -48,8 +49,7 @@ The **Automation Endpoint** may invoke **named commands**, the same
   list can't drift from the code.
 - Command requests are recorded by `--ingress_record` like every other route,
   so a recorded agent session can be replayed as a test.
-- `pm-connect.md` will be updated when this is implemented. Until then it
-  describes today's endpoint.
+- `pm-connect.md` points here for the change to host-control verbs.
 
 ## Amendment: intents (2026-10-31)
 

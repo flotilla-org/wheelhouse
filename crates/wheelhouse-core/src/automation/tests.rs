@@ -144,6 +144,23 @@ fn view_addresses_round_trip() {
 }
 
 #[test]
+fn panel_addresses_round_trip() {
+    let id: WorkspaceId = WORKSPACE.parse().unwrap();
+    for address in [
+        PanelAddress { owner: ViewOwner::Workspace(id), id: "3".into() },
+        PanelAddress { owner: ViewOwner::Workspace(id), id: "main".into() },
+        PanelAddress { owner: ViewOwner::Window(id), id: "1".into() },
+    ] {
+        assert_eq!(PanelAddress::from_automation_id(&address.automation_id()), Some(address));
+    }
+    for bad in ["", format!("workspace/{WORKSPACE}").as_str(), format!("workspace/{WORKSPACE}/panel/").as_str(), "workspace/nope/panel/1"] {
+        assert_eq!(PanelAddress::from_automation_id(bad), None, "{bad}");
+    }
+    assert_eq!(ViewOwner::from_automation_id(&format!("window/{WORKSPACE}")), Some(ViewOwner::Window(id)));
+    assert_eq!(ViewOwner::from_automation_id(&format!("window/{WORKSPACE}/panel/1")), None);
+}
+
+#[test]
 fn content_names_what_a_view_shows() {
     let local = |recipe| ViewSpec { content: Content::Local(recipe), presentation: None, role: None };
     let command = LocalRecipe::Command { line: CommandLine::Shell("x".into()), cwd: None };
