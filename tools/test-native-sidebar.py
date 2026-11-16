@@ -227,7 +227,7 @@ class NativeSidebarTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('cc') or (os.environ.get('CI') == 'true' and sys.platform != 'win32'),
                          'A C compiler is required for the standalone layout test')
-    def test_chip_layout_width_ladder_and_attention(self):
+    def test_chip_layout_name_floor_and_attention(self):
         self.assertIsNotNone(shutil.which('cc'), 'C compiler required for Unix CI width coverage')
         # Exercise the production resolver with measured widths independent of
         # the native display. Status space is subtracted by the caller.
@@ -237,14 +237,14 @@ class NativeSidebarTests(unittest.TestCase):
 #include <assert.h>
 #include "uishell/uishell_sidebar_chips.h"
 int main(void) {
-  float names[] = {180, 130, 100};
+  // A name fades rather than abbreviating: it gives way to its floor (80)
+  // before any chip folds.
+  float names = 180;
   UIShell_ChipMeasure chips[] = {{50, 1, 0, 0}, {60, 1, 0, 0}, {35, 0, 0, 0}, {35, 0, 0, 0}};
   UIShell_ChipLayout r = uishell_chip_layout(400, names, 80, chips, 4, 30);
-  assert(r.tier == 0 && r.folded == 0);
+  assert(r.folded == 0 && r.name_width == 220);
   r = uishell_chip_layout(320, names, 80, chips, 4, 30);
-  assert(r.tier == 1 && r.folded == 0);
-  r = uishell_chip_layout(285, names, 80, chips, 4, 30);
-  assert(r.tier == 2 && r.folded == 0);
+  assert(r.folded == 0 && r.name_width == 140);
   r = uishell_chip_layout(260, names, 80, chips, 4, 30);
   assert(r.folded == 0 && r.name_width == 80);
   r = uishell_chip_layout(240, names, 80, chips, 4, 30);

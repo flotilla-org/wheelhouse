@@ -155,7 +155,7 @@ The expected common use is moving the things you are watching to the top of thei
 
 An entity ghost is a reference to a core entity.
 
-- **Compact form.** By default it appears as a row with live status and the same margin control as other rows.
+- **Compact form.** By default it appears as a row with live status and the same `⋯` menu as other rows.
 - **Expanded form.** It can expand in place into the full card, which is today's detached card.
 - **Presentation modes.** The expanded card offers modes such as details, labels, preview and facts (possibly grouped), with presets to cycle through. The aim is a small control surface that shows what you need and no more. The modes themselves are part of the card design in #89.
 - **Pin.** A card's Pin adds a ghost to the first group, other than Workspaces, of the topmost local section that is showing (its panel's selected tab). With none showing, Pin makes a section at the top of the sidebar. Pin never targets the default Workspaces group. If the entity already has a ghost in that group, Pin reads "Show pin" and reveals it. A ghost in another group doesn't count, so Pin adds one here too: an entity may have any number of ghosts.
@@ -176,7 +176,7 @@ A View ghost is a reference to one live pane inside a workspace. Example: a conv
   - When a subject ends, its ghost shows the ended state: dimmed, marked ×.
   - When a subject vanishes, or a View's source closes, the ghost shows "unavailable" with its last known label or last frame, plus Remove and Reopen.
 - **A per-group setting can remove ended ghosts after a delay.** It is off by default, and #159's expiry policy plugs in here.
-- **A ghost's margin control removes the ghost, never its source.** Holding it opens a menu with "Focus source" and "Close source workspace…" as explicitly named actions. A ghost carries a subtle "lives elsewhere" marker, and its tooltip makes the difference from a homed row clear.
+- **A ghost's menu removes the ghost, never its source.** Its `⋯` (or a right-click) offers "Go to source", "Show as card" and "Remove pin". A ghost carries a subtle "lives elsewhere" marker, and its tooltip makes the difference from a homed row clear.
 - **Deleting a local group** moves its homed workspaces to the default Workspaces group, so nothing is destroyed, and drops its ghosts. It asks for confirmation only when the group has homed workspaces.
 
 ## Titles
