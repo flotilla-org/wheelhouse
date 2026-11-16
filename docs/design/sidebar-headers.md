@@ -55,6 +55,7 @@ predict.
   one, it does that. The footers below open on hover only with the dev
   toggle `sidebar_footer_rows`, kept to compare (see Making workspaces and
   groups), and Workspaces' fixed first row goes with them.
+  The toggle and its footers go once making a workspace is settled (#751).
 - **A row ends in its status, which becomes `⋯` while hovered** (or while
   its menu is open). `⋯` opens the row's menu, which leads with the close
   the core chooses: Detach workspace for a subject, Close workspace for

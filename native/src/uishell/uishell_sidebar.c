@@ -3707,6 +3707,13 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
       Vec4F32 *background = push_array(arena, Vec4F32, 1);
       *background = r->selected ? uishell_sidebar_selection_fill(0) : r->background;
       ui_box_equip_custom_draw(label, uishell_sidebar_fade_draw, background);
+      // A row's rich hover names it in full; a header's title has none, and
+      // the shell's truncated-text hover only reads text it draws itself.
+      if(r->project && contains_2f32(label->rect, ui_mouse()) && !rd_drag_is_active()) UI_Tooltip RD_Font(RD_FontSlot_Main)
+      {
+        ui_state->tooltip_anchor_key = label->key;
+        ui_label(r->text);
+      }
     }
   }
   if(r->disclosure)
