@@ -75,12 +75,22 @@ uishell_shared_diag_build(UIShell_SharedDiag *d, CFG_Node *view, Vec2F32 size)
   uishell_shared_diag_build_focus(d, view, size, 0);
 }
 
+// The end of a frame, as uishell's: rd_frame frees the View States
+// released in it (their attachments with them), then attachments no View
+// holds close.
+internal void
+uishell_shared_diag_end_frame(void)
+{
+  rd_view_states_free_released();
+  uishell_cleat_attachments_end_frame();
+}
+
 // One frame: each View is built, then the frame ends as uishell's does.
 internal void
 uishell_shared_diag_frame(UIShell_SharedDiag *d, CFG_Node **views, U64 count)
 {
   for(U64 i = 0; i < count; i++) { if(views[i] != 0) { uishell_shared_diag_build(d, views[i], v2f32(640, 480)); } }
-  uishell_cleat_attachments_end_frame();
+  uishell_shared_diag_end_frame();
 }
 
 internal void
@@ -220,7 +230,7 @@ uishell_shared_terminal_diagnostics(RD_WindowState *ws)
       uishell_shared_diag_build(&d, views[0], v2f32(640, 480));
       uishell_shared_diag_build(&d, views[1], v2f32(320, 240));
       uishell_shared_diag_build(&d, views[2], v2f32(640, 480));
-      uishell_cleat_attachments_end_frame();
+      uishell_shared_diag_end_frame();
       inspect = uishell_shared_diag_run(scratch.arena, "'%S' --runtime-root '%S' inspect '%S' --json 2>&1", d.cleat, d.root, one);
       if(str8_find_needle(inspect, 0, want, 0) < inspect.size || now_time_us() > deadline) { break; }
       sleep_ms(50);
@@ -245,7 +255,7 @@ uishell_shared_terminal_diagnostics(RD_WindowState *ws)
     views[2] = 0;
     uishell_shared_diag_build(&d, views[0], v2f32(640, 480));
     a = uishell_shared_diag_state(&d, views[0]);
-    uishell_cleat_attachments_end_frame();
+    uishell_shared_diag_end_frame();
     SharedCheck(uishell_cleat_attachment_count() == 1 && a->shared && a->shared->attachment == attachment &&
                 attachment->attaches == attaches && attachment->session == session, "a View released and re-acquired in one frame doesn't re-attach");
     SharedWait(views, 1, uishell_shared_diag_streaming(a));
@@ -253,7 +263,7 @@ uishell_shared_terminal_diagnostics(RD_WindowState *ws)
     uishell_shared_diag_release(&d, views[0]);
     views[0] = 0;
     SharedCheck(uishell_cleat_attachment_count() == 1, "a released attachment stays until the end of the frame");
-    uishell_cleat_attachments_end_frame();
+    uishell_shared_diag_end_frame();
     SharedCheck(uishell_cleat_attachment_count() == 0, "an attachment no View holds closes at the end of the frame");
   }
 
@@ -303,7 +313,7 @@ uishell_shared_terminal_diagnostics(RD_WindowState *ws)
                 uishell_shared_diag_streaming(r1) && uishell_shared_diag_streaming(r2),
                 "a session ending on a live connection leaves the connection and the other sessions streaming");
     uishell_shared_diag_release(&d, with_third[2]);
-    uishell_cleat_attachments_end_frame();
+    uishell_shared_diag_end_frame();
   }
 
   //- 4. After the last attachment on a connection goes, the connection stays
@@ -311,7 +321,7 @@ uishell_shared_terminal_diagnostics(RD_WindowState *ws)
   {
     uishell_shared_diag_release(&d, remote[0]);
     uishell_shared_diag_release(&d, remote[1]);
-    uishell_cleat_attachments_end_frame();
+    uishell_shared_diag_end_frame();
     U64 released = now_time_us();
     SharedCheck(uishell_cleat_attachment_count() == 0 && uishell_shared_diag_ssh_connections() == 1 &&
                 uishell_shared_diag_bridges(scratch.arena, &d) == 1, "the connection lingers after its last attachment");
@@ -325,11 +335,11 @@ uishell_shared_terminal_diagnostics(RD_WindowState *ws)
     SharedCheck(lingering && r1->shared && r1->shared->attachment->connection == lingering && lingering->opens == opens &&
                 uishell_shared_diag_streaming(r1), "a View within the linger reuses the connection");
     uishell_shared_diag_release(&d, remote[0]);
-    uishell_cleat_attachments_end_frame();
+    uishell_shared_diag_end_frame();
     released = now_time_us();
     while(uishell_shared_diag_ssh_connections() != 0 && now_time_us() < released + 5*Million(1))
     {
-      uishell_cleat_attachments_end_frame();
+      uishell_shared_diag_end_frame();
       sleep_ms(20);
     }
     U64 closed_after = now_time_us() - released;
@@ -379,7 +389,7 @@ uishell_shared_terminal_diagnostics(RD_WindowState *ws)
                 "the scrolled View keeps its place in history");
     uishell_shared_diag_release(&d, pair[0]);
     uishell_shared_diag_release(&d, pair[1]);
-    uishell_cleat_attachments_end_frame();
+    uishell_shared_diag_end_frame();
   }
 
   //- 7. With Direct Cleat Attach off, a subject's terminal opens through its
