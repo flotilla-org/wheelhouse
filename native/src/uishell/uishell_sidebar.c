@@ -1987,6 +1987,24 @@ uishell_sidebar_store_settle(UIShell_SidebarState *state, CFG_Node *window)
 
 internal void uishell_sidebar_sync_direct_attach(UIShell_SidebarState *state);
 
+// The subject fixture's sidebar (--sidebar_subject_fixture): the daily driver
+// with its convoys' vessels inline under them, as it was before a convoy's row
+// stood for its workspace alone. The daily driver shows no vessels; the
+// fixture's scenarios (state behaviour, chip geometry) still open and nest them.
+internal String8
+uishell_sidebar_subject_fixture_config(Arena *arena)
+{
+  String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
+  String8 issues = str8_lit("    apply-template \"issue/native\"\n  }\n}\n");
+  String8 loop = str8_lit("for \"issue\" kind=\"issue\" visibility=\"wheelhouse/activity\" tier=\"medium\" layout=\"inline\"");
+  U64 at = str8_find_needle(config, str8_find_needle(config, 0, loop, 0), issues, 0);
+  if(at >= config.size) { return config; }
+  at += issues.size-str8_lit("}\n").size;
+  return push_str8f(arena, "%S  for \"vessel\" kind=\"vessel\" visibility=\"wheelhouse/activity\" layout=\"inline\" {\n"
+    "    match \"flotilla.convoy\" of=\"convoy\"\n    order \"display.label\"\n    apply-template \"wheelhouse/entry\"\n  }\n%S",
+    str8_prefix(config, at), str8_skip(config, at));
+}
+
 internal UIShell_SidebarState *
 uishell_sidebar_init(RD_WindowState *ws)
 {
@@ -2005,9 +2023,12 @@ uishell_sidebar_init(RD_WindowState *ws)
       scratch_end(scratch);
       return state;
     }
+    Temp scratch = scratch_begin(0, 0);
     String8 config = uishell_sidebar_live ? uishell_sidebar_live_config :
-      str8_cstring((char *)(uishell_sidebar_subject_fixture ? uishell_sidebar_daily_config : uishell_sidebar_fixture ? uishell_sidebar_fixture_config : uishell_sidebar_local_config));
+      uishell_sidebar_subject_fixture ? uishell_sidebar_subject_fixture_config(scratch.arena) :
+      str8_cstring((char *)(uishell_sidebar_fixture ? uishell_sidebar_fixture_config : uishell_sidebar_local_config));
     state->core = wheelhouse_create(config.str, config.size, &error);
+    scratch_end(scratch);
     if(uishell_sidebar_result(state, state->core != 0, error))
     {
       // Before any facts or records: what publishes as whom, and how

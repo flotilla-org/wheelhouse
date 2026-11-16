@@ -1603,7 +1603,7 @@ entry_point(CmdLine *cmdline)
   {
     state = ws->sidebar;
     window = cfg_node_from_id(ws->cfg_id);
-    String8 daily = str8_cstring((char *)uishell_sidebar_daily_config);
+    String8 daily = uishell_sidebar_subject_fixture_config(scratch.arena);
     U64 at = str8_find_needle(daily, 0, str8_lit("region \"sessions\""), 0);
     U64 end = str8_find_needle(daily, at, str8_lit("\n"), 0);
     StateCheck(at < daily.size);

@@ -190,23 +190,6 @@ uishell_tool_strip_chip_diagnostics(RD_WindowState *ws, UIShell_SidebarState *fi
   return ok;
 }
 
-// The daily driver with its convoys' vessels inline under them, as it was
-// before a convoy's row stood for its workspace alone. The daily driver shows
-// no vessels; the chips these diagnostics exercise still nest them.
-internal String8
-uishell_chip_diagnostics_config(Arena *arena)
-{
-  String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
-  String8 issues = str8_lit("    apply-template \"issue/native\"\n  }\n}\n");
-  String8 loop = str8_lit("for \"issue\" kind=\"issue\" visibility=\"wheelhouse/activity\" tier=\"medium\" layout=\"inline\"");
-  U64 at = str8_find_needle(config, str8_find_needle(config, 0, loop, 0), issues, 0);
-  if(at >= config.size) { return config; }
-  at += issues.size-str8_lit("}\n").size;
-  return push_str8f(arena, "%S  for \"vessel\" kind=\"vessel\" visibility=\"wheelhouse/activity\" layout=\"inline\" {\n"
-    "    match \"flotilla.convoy\" of=\"convoy\"\n    order \"display.label\"\n    apply-template \"wheelhouse/entry\"\n  }\n%S",
-    str8_prefix(config, at), str8_skip(config, at));
-}
-
 // Exercise real row geometry, rather than relying only on measured fold plans.
 internal B32
 uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *split)
@@ -215,7 +198,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {0};
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
   fixture.initialized = 1;
-  String8 config = uishell_chip_diagnostics_config(scratch.arena);
+  String8 config = uishell_sidebar_subject_fixture_config(scratch.arena);
   fixture.core = wheelhouse_create(config.str, config.size, 0);
   if(!fixture.core)
   {
