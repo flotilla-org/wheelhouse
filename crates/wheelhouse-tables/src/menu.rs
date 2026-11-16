@@ -85,6 +85,8 @@ pub struct Chip {
     pub state: ConditionState,
     /// The column it is read in.
     pub key: Key,
+    /// The condition it names.
+    pub condition: Condition,
 }
 
 impl Table {
@@ -114,10 +116,15 @@ impl Table {
     }
 
     /// What the menu shows, the column's values listed again first if the
-    /// search or the other columns' filters changed.
+    /// search or the other columns' filters changed. A column that no longer
+    /// takes a condition the menu writes closes it.
     pub fn menu_view(&mut self, grid: &Grid) -> Option<MenuView> {
         let key = self.menu.as_ref()?.key;
         let support = grid.support(Axis::Rows, key);
+        if support.text.is_none() && !support.one_of && support.compare.is_none() {
+            self.menu = None;
+            return None;
+        }
         if support.one_of {
             self.list(grid);
         }
@@ -291,18 +298,15 @@ impl Table {
                 text: chip_text(&self.header(Axis::Cols, condition.key, 0), &condition),
                 state,
                 key: condition.key,
+                condition,
             })
             .collect()
     }
 
-    /// Removes the condition chip `index` shows, unless it is already
-    /// being removed.
-    pub fn remove_chip(&self, grid: &mut Grid, index: usize) {
-        let listed = grid.conditions(Axis::Rows);
-        if let Some((condition, state)) = listed.get(index) {
-            if *state != ConditionState::Removing {
-                grid.remove_condition(Axis::Rows, condition);
-            }
-        }
+    /// Removes the condition `chip` names, unless the rows' latest request
+    /// no longer holds it: a chip read before the conditions changed removes
+    /// only its own.
+    pub fn remove_chip(&self, grid: &mut Grid, chip: &Chip) {
+        grid.remove_condition(Axis::Rows, &chip.condition);
     }
 }

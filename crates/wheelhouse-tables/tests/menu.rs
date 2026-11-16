@@ -2,7 +2,7 @@
 //! which columns open one, the conditions its rows write and the rows they
 //! leave, the chips naming them, and the checklist narrowed by the other
 //! columns.
-use binnacle_core::{Axis, Condition, ConditionState, Grid, Key, TextQuery, Value, Viewport};
+use binnacle_core::{Axis, Condition, ConditionState, Grid, Key, Support, TextQuery, Value, Viewport};
 use wheelhouse_tables::{Metrics, Table};
 
 const METRICS: Metrics = Metrics { line: 20.0, digit: 8.0 };
@@ -137,7 +137,8 @@ fn a_chips_cross_and_clear_remove_conditions_and_the_menu_follows() {
     table.menu_tick(&mut grid, aberdeen);
     answer(&mut table, &mut grid);
     assert_eq!(table.chips(&grid).len(), 2);
-    table.remove_chip(&mut grid, 0);
+    let chips = table.chips(&grid);
+    table.remove_chip(&mut grid, &chips[0]);
     // Removed, until the answer.
     assert_eq!(table.chips(&grid).iter().map(|c| c.state).collect::<Vec<_>>(), [ConditionState::Applied, ConditionState::Removing]);
     // The menu shows it gone at once.
@@ -146,7 +147,36 @@ fn a_chips_cross_and_clear_remove_conditions_and_the_menu_follows() {
     let view = table.menu_view(&grid).unwrap();
     assert_eq!(view.query.text, "");
     assert!(view.filtered);
+    // A chip read before then removes nothing: its condition is gone.
+    table.remove_chip(&mut grid, &chips[0]);
+    assert_eq!(table.chips(&grid).len(), 1);
     table.menu_clear(&mut grid);
     assert_eq!(answer(&mut table, &mut grid), all);
     assert!(table.chips(&grid).is_empty() && !table.menu_view(&grid).unwrap().filtered);
+}
+
+#[test]
+fn a_chip_read_before_the_conditions_shift_removes_its_own() {
+    let (mut table, mut grid) = records();
+    table.open_menu(&grid, WEIGHT);
+    table.menu_set_compare(&mut grid, 5, "500", "");
+    table.open_menu(&grid, PORT);
+    table.menu_set_text(&mut grid, TextQuery::new("a"), false);
+    answer(&mut table, &mut grid);
+    let shown = table.chips(&grid);
+    // The first is removed and answered before the second's × lands.
+    table.remove_chip(&mut grid, &shown[0]);
+    answer(&mut table, &mut grid);
+    table.remove_chip(&mut grid, &shown[1]);
+    answer(&mut table, &mut grid);
+    assert_eq!(conditions(&grid), vec![]);
+}
+
+#[test]
+fn the_menu_closes_once_its_column_takes_no_condition() {
+    let (mut table, mut grid) = records();
+    table.open_menu(&grid, PORT);
+    grid.set_support(Axis::Rows, PORT, Support::default().with_text(None));
+    assert_eq!(table.menu_view(&grid), None);
+    assert_eq!(table.menu_key(), None);
 }

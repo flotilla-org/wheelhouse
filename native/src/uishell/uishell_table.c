@@ -780,6 +780,21 @@ uishell_table_row_count(Arena *arena, U64 count, B32 has_total, U64 total)
 
 internal void uishell_table_menu_open(UIShell_TableState *state, U64 key, UI_Key anchor, Vec2F32 off);
 
+// Chip index's id, as of the last wheelhouse_table_chips: what it names, and
+// how many before it name the same. A click lands on the chip drawn where it
+// was, not on whichever chip has moved into that place.
+internal U64
+uishell_table_chip_id(WheelhouseTable *table, size_t index)
+{
+  String8 text = uishell_table_text(wheelhouse_table_chip(table, index).text);
+  U64 same = 0;
+  for(size_t i = 0; i < index; i += 1)
+  {
+    if(str8_match(uishell_table_text(wheelhouse_table_chip(table, i).text), text, 0)) { same += 1; }
+  }
+  return u64_hash_from_seed_str8(same, text);
+}
+
 // The filter bar (#535), where the rows take a quick filter: its field,
 // matching case, regexes where the source takes them, a clear button while
 // there is text, "Not applied" while the source leaves the filter out, and
@@ -868,7 +883,8 @@ uishell_table_filter_bar(UIShell_TableState *state, F32 width, F32 height)
         UI_TagF(tag)
         {
           String8 text = push_str8_copy(scratch.arena, uishell_table_text(chip.text));
-          UI_Signal sig = ui_buttonf("%S###table_chip_%I64u", text, (U64)i);
+          U64 id = uishell_table_chip_id(state->table, i);
+          UI_Signal sig = ui_buttonf("%S###table_chip_%I64x", text, id);
           if(ui_hovering(sig)) UI_Tooltip
           {
             ui_label(chip.state == BINNACLE_CONDITION_NOT_APPLIED ? str8_lit("Not applied") :
@@ -878,7 +894,7 @@ uishell_table_filter_bar(UIShell_TableState *state, F32 width, F32 height)
           if(ui_clicked(sig)) { uishell_table_menu_open(state, chip.key, sig.box->key, v2f32(0, dim_2f32(sig.box->rect).y)); }
           RD_Font(RD_FontSlot_Icons)
           {
-            UI_Signal x = ui_buttonf("%S###table_chip_x_%I64u", rd_icon_kind_text_table[RD_IconKind_X], (U64)i);
+            UI_Signal x = ui_buttonf("%S###table_chip_x_%I64x", rd_icon_kind_text_table[RD_IconKind_X], id);
             if(ui_hovering(x)) UI_Tooltip RD_Font(RD_FontSlot_Main) { ui_labelf("Remove this condition"); }
             if(ui_clicked(x)) { wheelhouse_table_remove_chip(state->table, i); rd_request_frame(); }
           }

@@ -496,8 +496,8 @@ pub unsafe extern "C" fn wheelhouse_table_menu(table: *mut WheelhouseTable) -> W
     out
 }
 
-/// The checklist's value index, as of the last wheelhouse_table_menu; all
-/// zero past the count.
+/// The checklist's value index as of the last wheelhouse_table_menu, its
+/// label valid until the next; all zero past the count.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_table_menu_value(table: *mut WheelhouseTable, index: usize) -> WheelhouseTableMenuValue {
     let none = WheelhouseTableMenuValue { label: Text::borrowed(""), blank: 0, has_count: 0, count: 0, ticked: 0, excluded: 0 };
@@ -595,8 +595,8 @@ pub unsafe extern "C" fn wheelhouse_table_chips(table: *mut WheelhouseTable) -> 
     t.chips.len()
 }
 
-/// Chip index as of the last wheelhouse_table_chips; all zero past the
-/// count.
+/// Chip index as of the last wheelhouse_table_chips, its text valid until
+/// the next; all zero past the count.
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_table_chip(table: *mut WheelhouseTable, index: usize) -> WheelhouseTableChip {
     // SAFETY: the caller's contract.
@@ -607,18 +607,22 @@ pub unsafe extern "C" fn wheelhouse_table_chip(table: *mut WheelhouseTable, inde
         ConditionState::Applied => 0,
         ConditionState::Adding => 1,
         ConditionState::Removing => 2,
+        // Not applied: the source left it out.
         _ => 3,
     };
     WheelhouseTableChip { text: Text::borrowed(&c.text), state, key: c.key.0 }
 }
 
-/// Removes the condition chip index shows (as the Grid lists them now),
-/// unless it is already being removed.
+/// Removes the condition chip index named as of the last
+/// wheelhouse_table_chips, unless the rows' latest request no longer holds
+/// it (removed, or being removed, since).
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_table_remove_chip(table: *mut WheelhouseTable, index: usize) {
     // SAFETY: the caller's contract.
     if let Some((t, grid)) = unsafe { table_and_grid(table) } {
-        t.table.remove_chip(grid, index);
+        if let Some(chip) = t.chips.get(index) {
+            t.table.remove_chip(grid, chip);
+        }
     }
 }
 

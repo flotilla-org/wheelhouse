@@ -935,6 +935,10 @@ uishell_table_diagnostics(RD_WindowState *ws)
           if(!ui_box_is_nil(b_)) { Vec2F32 at_ = center_2f32(b_->rect); MenuFrames(1, at_); \
           MenuEvent(((UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = at_}), at_); \
           MenuEvent(((UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at_}), at_); MenuFrames(2, away); } } while(0)
+#define MenuClickF(fmt, ...) do { UI_Box *b_ = uishell_table_diag_box(push_str8f(scratch.arena, fmt, __VA_ARGS__)); TableCheck(!ui_box_is_nil(b_), "the bar shows the chip"); \
+          if(!ui_box_is_nil(b_)) { Vec2F32 at_ = center_2f32(b_->rect); MenuFrames(1, at_); \
+          MenuEvent(((UI_Event){.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = at_}), at_); \
+          MenuEvent(((UI_Event){.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = at_}), at_); MenuFrames(2, away); } } while(0)
 #define MenuType(text) do { MenuEvent(((UI_Event){.kind = UI_EventKind_Text, .string = str8_lit(text)}), away); MenuFrames(2, away); } while(0)
         MenuFrames(3, away);
         UIShell_TableState *state = (UIShell_TableState *)rd_view_state_from_view(address, 0)->user_data;
@@ -984,11 +988,11 @@ uishell_table_diagnostics(RD_WindowState *ws)
         // The first chip's × removes its condition (the click, outside the
         // menu, closes it); the other chip opens its column's menu, showing
         // the text still asked for.
-        MenuClick("###table_chip_x_0");
+        MenuClickF("###table_chip_x_%I64x", uishell_table_chip_id(state->table, 0));
         TableCheck(wheelhouse_table_chips(state->table) == 1 &&
                    str8_match(uishell_table_text(wheelhouse_table_chip(state->table, 0).text), str8_lit("port: en"), 0),
                    "a chip's × removes its condition");
-        MenuClick("###table_chip_0");
+        MenuClickF("###table_chip_%I64x", uishell_table_chip_id(state->table, 0));
         TableCheck(state->menu_open && state->menu_key == 4 &&
                    str8_match(uishell_table_field_text(&state->menu_text), str8_lit("en"), 0),
                    "a chip opens its column's menu, showing what is asked for");
@@ -1035,6 +1039,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
 #undef MenuFrames
 #undef MenuEvent
 #undef MenuClick
+#undef MenuClickF
 #undef MenuType
       }
       rd_fixture_remove(view);

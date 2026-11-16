@@ -3855,8 +3855,8 @@ void wheelhouse_table_menu_close(WheelhouseTable *table);
 // search or the other columns' filters changed.
 WheelhouseTableMenu wheelhouse_table_menu(WheelhouseTable *table);
 
-// The checklist's value index, as of the last wheelhouse_table_menu; all
-// zero past the count.
+// The checklist's value index as of the last wheelhouse_table_menu, its
+// label valid until the next; all zero past the count.
 WheelhouseTableMenuValue wheelhouse_table_menu_value(WheelhouseTable *table, size_t index);
 
 // Searches the checklist's values for search, ignoring case.
@@ -3895,12 +3895,13 @@ WheelhouseText wheelhouse_table_compare_step(uint32_t index);
 // wheelhouse_table_chip, and returns how many there are.
 size_t wheelhouse_table_chips(WheelhouseTable *table);
 
-// Chip index as of the last wheelhouse_table_chips; all zero past the
-// count.
+// Chip index as of the last wheelhouse_table_chips, its text valid until
+// the next; all zero past the count.
 WheelhouseTableChip wheelhouse_table_chip(WheelhouseTable *table, size_t index);
 
-// Removes the condition chip index shows (as the Grid lists them now),
-// unless it is already being removed.
+// Removes the condition chip index named as of the last
+// wheelhouse_table_chips, unless the rows' latest request no longer holds
+// it (removed, or being removed, since).
 void wheelhouse_table_remove_chip(WheelhouseTable *table, size_t index);
 
 void wheelhouse_table_free(WheelhouseTable *table);
