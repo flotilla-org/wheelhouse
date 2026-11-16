@@ -445,7 +445,8 @@ Automation ID; a field the intent doesn't take is refused.
   stores take intents (#441), Wheelhouse applies one as its own commands
   do, to the owner's live arrangement, the dock rules checking a move or a
   drop first, and the store commits it in the next frame. Its `request` is
-  the endpoint's own number until then.
+  the endpoint's own number until then, so don't compare it with a sidebar
+intent's, which is the Core's.
 - **Sidebar intents** (the rest) take the window whose sidebar it is, or
   `workspace/<uuid>` for the window that shows that workspace. Their host
   effects (opening or focusing a workspace, copying a URL) are carried out
