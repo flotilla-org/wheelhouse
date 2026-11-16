@@ -290,6 +290,96 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     { row_keys[row_key_count++] = push_str8_copy(scratch.arena, uishell_sidebar_string(n.key)); }
   }
 
+  //- A project's header is its project workspace (sidebar-headers.md, One
+  //  row, one workspace): a click on it opens the workspace, leaving the
+  //  project open (its disclosure collapses it). ⋯ in its status slot, as
+  //  a row's, opens the project workspace's menu, so it shows only once that
+  //  has something.
+  {
+    String8 config = push_str8f(scratch.arena, "%s\nworkspace kind=\"project\"\n", uishell_sidebar_fixture_config);
+    LifecycleCheck(wheelhouse_configure(state->core, uishell_sidebar_text(config), 0), "configure a project workspace");
+    uishell_sidebar_refresh(state);
+    UIShell_SidebarNode project = {0};
+    LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_lit("p"), 0, &project) && project.state != WHEELHOUSE_LIVE,
+                   "the fixture project isn't open");
+    String8 key = push_str8_copy(scratch.arena, uishell_sidebar_string(project.key));
+    UI_State *saved_ui = ui_state, *test = ui_state_alloc();
+    ui_select_state(test);
+    Vec2F32 title = {0};
+    B32 more_closed = 0, more_open = 0, more_inside = 0, menu_opened = 0;
+    Vec2F32 more_at = {0};
+    // Frames: 0-1 hover the header (no ⋯), 2 presses its title, 3 releases,
+    // 4-5 hover it again (⋯, the workspace open), 6 presses ⋯, 7 releases,
+    // 8 settles with its menu open.
+    for(U32 frame = 0; frame < 9; frame++)
+    {
+      split = uishell_root_controlled_split_from_window(scratch.arena, window);
+      UI_IconInfo icons = ws->ui->icon_info;
+      UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+      if(frame == 2 || frame == 3 || frame == 6 || frame == 7)
+      {
+        event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame % 2 == 0 ? UI_EventKind_Press : UI_EventKind_Release,
+                             .pos = frame < 6 ? title : more_at};
+        events.first = events.last = &event; events.count = 1;
+      }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      U64 built = test->build_index;
+      ui_state->mouse = frame == 0 ? v2f32(-100, -100) : frame >= 6 ? more_at : title;
+      UIShell_RegsScope(.window = window->id)
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_sidebar_ui(r2f32p(0, 0, 320, 900), &split); }
+      uishell_sidebar_drag_finish(ws);
+      ui_end_build();
+      if(frame == 0)
+      {
+        // Just inside the row's start: its title, short of + and ⋯.
+        UI_Box *row = ui_box_from_key(ui_key_zero());
+        for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
+        { if(!ui_box_is_nil(b->parent) && ui_key_match(b->key, ui_key_from_stringf(b->parent->key, "###entry_%S", key))) { row = b; break; } }
+        title = v2f32(row->rect.x0+20.f, (row->rect.y0+row->rect.y1)*0.5f);
+      }
+      B32 more = 0;
+      UI_Box *row = &ui_nil_box;
+      for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
+      {
+        if(!ui_box_is_nil(b->parent) && ui_key_match(b->key, ui_key_from_stringf(b->parent->key, "###entry_%S", key))) { row = b; }
+        if(str8_ends_with(b->string, push_str8f(scratch.arena, "###more_%S", key), 0) && b->last_touched_build_index == built)
+        {
+          more = 1;
+          if(frame == 5)
+          {
+            more_at = center_2f32(b->rect);
+            more_inside = !ui_box_is_nil(row) && b->rect.x0 >= row->rect.x0 && b->rect.x1 <= row->rect.x1+0.5f;
+          }
+        }
+      }
+      if(frame == 8) { menu_opened = ui_any_ctx_menu_is_open(); ui_ctx_menu_close(); }
+      // As a window's frame does, the sidebar observes what the click opened.
+      if(frame >= 3)
+      {
+        split = uishell_root_controlled_split_from_window(scratch.arena, window);
+        uishell_sidebar_observe(state, &split);
+        uishell_sidebar_refresh(state);
+      }
+      if(frame == 1) { more_closed = more; }
+      if(frame == 5) { more_open = more; }
+    }
+    ui_select_state(saved_ui); ui_state_release(test);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    uishell_workspace_lifecycle_find(state, str8_lit("p"), 0, &project);
+    LifecycleCheck(title.x > 0 && !more_closed, "a project with no open workspace or order shows no ⋯");
+    LifecycleCheck(project.state == WHEELHOUSE_LIVE && !project.collapsed, "a click on its header opens its workspace, and leaves it open");
+    LifecycleCheck(more_open && more_inside && uishell_sidebar_close_kind(project) != UIShell_SidebarCloseKind_None,
+                   "once open, it shows ⋯ in its status slot, as a row does, for the workspace's menu, which leads with its close");
+    LifecycleCheck(menu_opened, "⋯ opens the project workspace's menu");
+    CFG_Node *opened = cfg_node_from_id(uishell_sidebar_node_cfg(&project));
+    if(opened != &cfg_nil_node) { uishell_workspace_close(window, uishell_workspace_id_from_cfg(opened), 0); }
+    LifecycleCheck(wheelhouse_configure(state->core, uishell_sidebar_text(str8_cstring((char *)uishell_sidebar_fixture_config)), 0), "restore the fixture config");
+    uishell_sidebar_refresh(state);
+  }
+
   //- Hovering a row swaps its status mark for ⋯, inside the row, and ⋯ opens
   //  the row's menu, which leads with the close the core chooses: Detach
   //  workspace for a subject, Close workspace for none. The Workspaces group
@@ -601,6 +691,20 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     ws->root_controlled_split_selected_workspace_id = subject_id;
     UIShell_RegsScope(.window = window->id) { uishell_dispatch_window_command(str8_lit("detach_workspace")); }
     LifecycleCheck(cfg_node_from_id(subject_id) == &cfg_nil_node, "detaching an ended subject's workspace destroys it");
+
+    //- An ended row no open workspace stands for offers Remove (sidebar-
+    //  headers.md, One row, one workspace; the core's lifecycle tests cover
+    //  what it destroys). With nothing keeping the row it is refused, and
+    //  nothing changes.
+    UIShell_SidebarNode removable = {.close = WHEELHOUSE_CLOSE_REMOVE};
+    LifecycleCheck(uishell_sidebar_close_kind(removable) == UIShell_SidebarCloseKind_Remove &&
+                   str8_match(uishell_sidebar_close_label(UIShell_SidebarCloseKind_Remove), str8_lit("Remove"), 0), "an ended row's close is Remove");
+    UIShell_SidebarNode gone = {0};
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    U64 before = split.inventory.count;
+    LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_lit("multi"), 0, &gone) && !uishell_workspace_remove_ended(window, gone.entity) &&
+                   uishell_root_controlled_split_from_window(scratch.arena, window).inventory.count == before,
+                   "removing a row nothing keeps is refused, changing nothing");
   }
 
   //- Default names never repeat an open workspace's name, even after a close.
@@ -674,7 +778,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     uishell_sidebar_refresh(state);
   }
 
-  fprintf(stderr, "Workspace lifecycle diagnostics: %s (detach/reopen, palette target, row ⋯ menu and section +, destroy, Workspaces entry row, reserved names, ended detach, unique names, last close, legacy last close, default group by mark)\n",
+  fprintf(stderr, "Workspace lifecycle diagnostics: %s (detach/reopen, palette target, project header opens its workspace, row ⋯ menu and section +, destroy, Workspaces entry row, reserved names, ended detach and Remove, unique names, last close, legacy last close, default group by mark)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

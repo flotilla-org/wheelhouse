@@ -15,8 +15,9 @@ version 1
 // placement loops with the subject bound by its kind's name. Flotilla's
 // hierarchy facts are text ids, which `in=` can't follow, so each loop
 // matches on the fact both sides carry.
+// No shell: a project spans repositories and may have no checkout on this
+// machine, so it has no {checkout.path} to open one in.
 workspace kind="project" {
-  slot "shell" role="shell" kind="command" command="exec \"$SHELL\" -l" cwd="{checkout.path}"
   layout "tui-and-shell" {
     split axis="row" {
       tabs id="main" weight=3 { slots role="tui"; slots role="agent"; };

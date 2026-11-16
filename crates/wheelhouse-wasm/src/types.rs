@@ -22,6 +22,7 @@ pub enum CloseKind {
     Detach,
     Destroy,
     RemovePin,
+    Remove,
 }
 
 impl From<CoreCloseKind> for CloseKind {
@@ -30,6 +31,7 @@ impl From<CoreCloseKind> for CloseKind {
             CoreCloseKind::Detach => Self::Detach,
             CoreCloseKind::Destroy => Self::Destroy,
             CoreCloseKind::RemovePin => Self::RemovePin,
+            CoreCloseKind::Remove => Self::Remove,
         }
     }
 }
@@ -530,6 +532,10 @@ pub enum Intent {
         workspace_id: String,
         edit: HomeEdit,
     },
+    /// Remove an ended row: destroy the workspaces that keep it.
+    RemoveEnded {
+        entity: Entity,
+    },
 }
 
 impl Intent {
@@ -550,6 +556,7 @@ impl Intent {
             Self::SetWorkspaceHome { workspace_id, edit } => {
                 CoreIntent::SetWorkspaceHome { workspace: workspace(workspace_id)?, edit: edit.clone().into() }
             }
+            Self::RemoveEnded { entity } => CoreIntent::RemoveEnded { entity: entity.into() },
         })
     }
 }

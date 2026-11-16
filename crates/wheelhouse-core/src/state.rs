@@ -951,6 +951,9 @@ pub struct ControllerState {
     panes: FastHashMap<PaneTarget, ControllerPane>,
     metadata: MetadataStore,
     retained_subjects: BTreeMap<EntityRef, CatalogEntity>,
+    /// The retained subjects on an open or kept workspace's path (not only
+    /// a pin's), which removing that workspace would let go.
+    workspace_retained: BTreeSet<EntityRef>,
     // Authoritative ends are terminal for an identity; new attempts use new IDs.
     ended_subjects: BTreeSet<EntityRef>,
     pane_statuses: FastHashMap<PaneTarget, StoredPaneStatus>,
@@ -984,6 +987,7 @@ impl Default for ControllerState {
             panes: Default::default(),
             metadata: Default::default(),
             retained_subjects: Default::default(),
+            workspace_retained: Default::default(),
             ended_subjects: Default::default(),
             pane_statuses: Default::default(),
             pinned_tabs: Default::default(),
@@ -1877,7 +1881,9 @@ impl ControllerState {
         };
         let surface_phase = profile::span("surface");
         let has_url = |entity: &EntityRef| self.subject_url(entity).is_some();
-        // A row bound to an open workspace closes it by the lifecycle rule.
+        // A row bound to an open workspace closes it by the lifecycle rule;
+        // an ended one bound to none is only here for the workspaces on its
+        // path, which it removes.
         let close = |entity: &EntityRef, state: &PresentationState| {
             let live = match state {
                 PresentationState::Live { workspace_id, .. } => {
@@ -1887,7 +1893,7 @@ impl ControllerState {
                 }
                 _ => None,
             };
-            close_kind(entity, live)
+            close_kind(entity, live, self.workspace_retained.contains(entity) && self.subject_ended(entity))
         };
         let cx = SurfaceContext {
             generation: self.template_generation,
@@ -2551,8 +2557,8 @@ impl ControllerState {
             .collect::<Vec<_>>();
         // A join on a provider's entity (`of`) stays within that provider:
         // another subscription's facts with the same text are another
-        // provider's entities. Joins on local entities (sections, groups)
-        // span providers.
+        // provider's entities. Joins on local entities (sections, groups),
+        // and the host's entities joined to anything, span providers.
         let joined_providers = loop_definition
             .predicates
             .iter()
@@ -2583,7 +2589,9 @@ impl ControllerState {
             })
             .filter(|position| {
                 let entity = &entities[*position];
-                joined_providers.iter().all(|provider| entity.entity.provider == *provider)
+                // The host's own kinds (a workspace living with a project)
+                // name what they join to, so they span providers too.
+                (system::is_system(&entity.entity.kind) || joined_providers.iter().all(|provider| entity.entity.provider == *provider))
                     && !scope.is_ancestor(&entity.entity)
                     && (show_finished
                         || !self.ended_subjects.contains(&entity.entity)
@@ -2866,6 +2874,13 @@ impl ControllerState {
                 })
             })
             .collect()
+    }
+
+    /// Which subjects a workspace's path retains, as opposed to a pin.
+    pub(crate) fn set_workspace_retained(&mut self, subjects: BTreeSet<EntityRef>) -> bool {
+        let changed = self.workspace_retained != subjects;
+        self.workspace_retained = subjects;
+        changed
     }
 
     /// Keep just the subjects and ancestors needed by open workspace paths.
