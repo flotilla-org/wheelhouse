@@ -2349,6 +2349,27 @@ entry_point(CmdLine *cmdline)
     StateCheck(str8_match(uishell_store_setting(reviewer, str8_lit("label")), str8_lit("reviewer"), 0));
   }
 
+  //- A fact about an entity no workspace's overlay reads (an issue's, as a
+  // connector posts all day) is no work for the workspace store: it syncs
+  // no workspace (#475). A subject's label is: the test above.
+  {
+    state = ws->sidebar;
+    state_frame(ws);
+    state_frame(ws);
+    // The sidebar sees a core change after the store syncs, so the store
+    // takes it up the frame after: two frames.
+    U64 syncs = state->store_syncs;
+    String8 patch = str8_lit("{\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"issue\",\"id\":\"unrelated-1\"}},"
+      "\"source_id\":\"fixture\",\"set\":{\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"Unrelated\"}}},\"unset\":[]}");
+    char *error = 0;
+    StateCheck(uishell_sidebar_result(state, wheelhouse_apply_patch_json(state->core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), &error), error));
+    U64 revisions = state->revision_count;
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(state->revision_count == revisions+1);
+    StateCheck(state->store_syncs == syncs);
+  }
+
   //- Renaming a workspace and giving it a mood are overlay edits: they are
   // in its record, not this device's file, and survive a restart.
   {

@@ -3010,6 +3010,12 @@ uint64_t wheelhouse_sidebar_arrangement_generation(WheelhouseCore *h, char **err
 // it is separate from the snapshot's.
 uint64_t wheelhouse_workspace_content_revision(WheelhouseCore *h, char **error_out);
 
+// The revision of what a workspace's overlay reads beyond its content:
+// which workspaces are registered, their subjects, and their subjects'
+// labels. Poll it with the content revision to learn when to read overlays
+// again; facts no overlay reads don't move it.
+uint64_t wheelhouse_workspace_overlay_revision(WheelhouseCore *h, char **error_out);
+
 // The Semantic Tree of the core's registered workspaces, as a JSON array
 // of workspace nodes (docs/protocol/automation-endpoint.md): each its panel
 // tree as shown and the current Views of its Slots. The host adds what

@@ -668,6 +668,15 @@ pub unsafe extern "C" fn wheelhouse_workspace_content_revision(h: *mut Wheelhous
     run(h, error_out, |h| Ok(h.sidebar.content_revision())).unwrap_or(0)
 }
 
+/// The revision of what a workspace's overlay reads beyond its content:
+/// which workspaces are registered, their subjects, and their subjects'
+/// labels. Poll it with the content revision to learn when to read overlays
+/// again; facts no overlay reads don't move it.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_workspace_overlay_revision(h: *mut WheelhouseCore, error_out: *mut *mut c_char) -> u64 {
+    run(h, error_out, |h| Ok(h.sidebar.overlay_revision())).unwrap_or(0)
+}
+
 /// The Semantic Tree of the core's registered workspaces, as a JSON array
 /// of workspace nodes (docs/protocol/automation-endpoint.md): each its panel
 /// tree as shown and the current Views of its Slots. The host adds what

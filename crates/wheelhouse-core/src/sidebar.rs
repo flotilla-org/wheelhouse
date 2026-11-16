@@ -308,6 +308,9 @@ pub struct Sidebar {
     content_changed: u64,
     /// When a workspace was last forgotten, for [`life_generation`](Self::life_generation).
     lives_changed: u64,
+    /// When a registered workspace's subject's label last changed, for
+    /// [`overlay_revision`](Self::overlay_revision).
+    names_changed: u64,
     /// The Dashboard's sidebar arrangement, and what its last
     /// reconciliation did.
     sidebar_arrangement: Versioned<SidebarArrangement>,
@@ -332,6 +335,8 @@ struct WorkspaceEntry {
     record: WorkspaceRecord,
     /// Retained subjects a producer published at the last refresh.
     observed: BTreeSet<EntityRef>,
+    /// Its subject's label at the last refresh that saw the subject change.
+    subject_name: Option<String>,
 }
 
 /// The kinds of local entities: sections, groups and refs people make, which
@@ -1103,7 +1108,7 @@ impl Sidebar {
                 self.state.bind_workspace_subject(id, record.subject());
                 // A path from this session is no longer the recorded one.
                 self.retained_paths.remove(&id);
-                self.workspaces.insert(id, WorkspaceEntry { record, observed: BTreeSet::new() });
+                self.workspaces.insert(id, WorkspaceEntry { record, observed: BTreeSet::new(), subject_name: None });
                 self.maintain(true);
             }
         }
@@ -1143,6 +1148,22 @@ impl Sidebar {
         if published {
             self.content_changed = self.clock.tick();
         }
+        // A workspace's overlay names it by its subject's label, open or not.
+        let mut renamed = false;
+        for entry in self.workspaces.values_mut() {
+            let Some(subject) = entry.record.subject() else { continue };
+            if !entities.contains(subject) {
+                continue;
+            }
+            let name = self.state.subject_label(subject);
+            if entry.subject_name != name {
+                entry.subject_name = name;
+                renamed = true;
+            }
+        }
+        if renamed {
+            self.names_changed = self.clock.tick();
+        }
         let open: BTreeSet<WorkspaceId> = self.state.workspaces().iter().map(|tab| tab.tab_id).collect();
         for (id, entry) in self.workspaces.iter_mut() {
             let record = &mut entry.record;
@@ -1172,6 +1193,15 @@ impl Sidebar {
     /// sidebar's [`revision`](Self::revision) does not change with them.
     pub fn content_revision(&self) -> u64 {
         self.workspaces.values().map(|entry| entry.record.content_generation()).fold(self.content_changed, u64::max)
+    }
+
+    /// Revision of what a workspace's [`overlay`](Self::overlay) reads beyond
+    /// its content: which workspaces are registered, their subjects, and their
+    /// subjects' labels. With [`content_revision`](Self::content_revision) it
+    /// moves whenever an overlay may read differently, and not for facts no
+    /// workspace's overlay reads. Cheap enough to read every frame.
+    pub fn overlay_revision(&self) -> u64 {
+        self.workspaces.values().map(|entry| entry.record.subject.generation()).fold(self.names_changed.max(self.lives_changed), u64::max)
     }
 
     fn workspace(&self, id: WorkspaceId) -> Result<&WorkspaceRecord, String> {

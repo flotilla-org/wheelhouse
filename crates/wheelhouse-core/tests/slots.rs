@@ -690,3 +690,35 @@ workspace kind="vessel" {
     assert_eq!(moved.state, ContentState::Updating);
     assert_eq!(moved.update.unwrap().resolution.recipe, LocalRecipe::File { path: "/src/w".into() });
 }
+
+// What a workspace's overlay reads beyond its content (#475): the host polls
+// the overlay revision each frame, so it moves when a workspace registers and
+// when its subject's label changes, open or closed, and not for facts about
+// entities no overlay reads.
+#[test]
+fn the_overlay_revision_moves_only_for_what_overlays_read() {
+    let mut sidebar = session(layout("1", vec![command_slot("a", "top")], &["a"]));
+    let start = sidebar.overlay_revision();
+    sidebar.feed(200, [patch(entity("issue", "unrelated"), &[("display.label", text("Unrelated"))], &[])]);
+    assert_eq!(sidebar.overlay_revision(), start);
+
+    sidebar.feed(300, [patch(subject(), &[("display.label", text("Vee renamed"))], &[])]);
+    let renamed = sidebar.overlay_revision();
+    assert!(renamed > start);
+    assert_eq!(sidebar.overlay(worker()).unwrap().subject_name.as_deref(), Some("Vee renamed"));
+
+    // Closed but registered, it still reads its subject's label.
+    sidebar.observe(vec![], vec![]);
+    let closed = sidebar.overlay_revision();
+    sidebar.feed(400, [patch(subject(), &[("display.label", text("Vee again"))], &[])]);
+    assert!(sidebar.overlay_revision() > closed);
+    assert_eq!(sidebar.overlay(worker()).unwrap().subject_name.as_deref(), Some("Vee again"));
+    let relabelled = sidebar.overlay_revision();
+    sidebar.feed(500, [patch(entity("issue", "unrelated"), &[("display.label", text("Still unrelated"))], &[])]);
+    assert_eq!(sidebar.overlay_revision(), relabelled);
+
+    // A workspace the core didn't know registers.
+    let other: wheelhouse_core::WorkspaceId = "01920a6b-7c3d-7e4f-8a1b-2c3d4e5f6a7d".parse().unwrap();
+    assert!(sidebar.register_workspace(other));
+    assert!(sidebar.overlay_revision() > relabelled);
+}
