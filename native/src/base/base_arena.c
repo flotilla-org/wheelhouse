@@ -78,7 +78,10 @@ arena_alloc_(ArenaParams *params)
   Arena *arena                = base;
   arena->current              = arena;
   arena->flags                = params->flags;
-  arena->cmt_size             = params->commit_size;
+  // The page-rounded step: commits grow by it, and a step smaller than a page
+  // (4 KB on 16 KB macOS pages) would commit at unaligned addresses, which
+  // mprotect refuses, leaving the arena writing into uncommitted memory.
+  arena->cmt_size             = commit_size;
   arena->res_size             = params->reserve_size;
   arena->base_pos             = 0;
   arena->pos                  = ARENA_HEADER_SIZE;
