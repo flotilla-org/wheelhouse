@@ -223,6 +223,8 @@ impl Rotating {
 }
 
 /// Installed only when opted in; the ordinary router has no recording work.
+/// A POST is kept with its body (a patch, a snapshot, an invocation), so a
+/// recorded session can be replayed.
 pub async fn capture(
     axum::extract::State(recorder): axum::extract::State<Arc<Recorder>>,
     request: axum::extract::Request,
@@ -233,7 +235,7 @@ pub async fn capture(
     let method = request.method().to_string();
     let pid = crate::transport::caller_pid(request.extensions());
     let (parts, body) = request.into_parts();
-    if method != "POST" || (path != "/v1/metadata/patch" && path != "/v1/metadata/snapshot") {
+    if method != "POST" {
         let (received_ms, timestamp_ms) = received_time();
         let sequence = recorder.sequence.fetch_add(1, Ordering::Relaxed);
         let response = next.run(axum::extract::Request::from_parts(parts, body)).await;

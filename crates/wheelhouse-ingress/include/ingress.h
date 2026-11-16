@@ -83,10 +83,62 @@ typedef struct {
 extern void wheelhouse_ingress_automation_workspaces(WheelhouseIngressAutomationBuild *, WheelhouseIngressText json);
 extern void wheelhouse_ingress_automation_selected(WheelhouseIngressAutomationBuild *, const uint8_t (*workspace_id)[16]);
 extern void wheelhouse_ingress_automation_terminal(WheelhouseIngressAutomationBuild *, const WheelhouseIngressTerminal *);
+// A View keys go to in its window: the Selected View of the focused panel of
+// the workspace the window shows.
+extern void wheelhouse_ingress_automation_focused(WheelhouseIngressAutomationBuild *, const WheelhouseIngressView *);
+// The Automation Endpoint's commands (GET /v1/commands, POST
+// /v1/commands/invoke; ADR 0014). commands gives out every command table
+// entry, once, through wheelhouse_ingress_automation_command; Rust decides
+// which are listed. flags are the entry's UIShell_CmdFlags, context its
+// context filter (workspace, panel, view or empty), and arg what its query
+// slot takes (WHEELHOUSE_COMMAND_ARG_*), required or not.
+typedef struct WheelhouseIngressCommandTable WheelhouseIngressCommandTable;
+#define WHEELHOUSE_COMMAND_ARG_NONE 0u
+#define WHEELHOUSE_COMMAND_ARG_FILE_PATH 1u
+#define WHEELHOUSE_COMMAND_ARG_STRING 2u
+#define WHEELHOUSE_COMMAND_ARG_CURSOR 3u
+#define WHEELHOUSE_COMMAND_ARG_CFG 4u
+#define WHEELHOUSE_COMMAND_ARG_ADDRESS 5u
+#define WHEELHOUSE_COMMAND_ARG_COMMAND 6u
+typedef struct {
+  WheelhouseIngressText name, display_name, description, tags, context;
+  uint32_t flags, arg, required;
+} WheelhouseIngressCommand;
+extern void wheelhouse_ingress_automation_command(WheelhouseIngressCommandTable *, const WheelhouseIngressCommand *);
+// What an invocation's target's Automation ID names: an owner (a workspace,
+// or a window) by view.owner and view.id; a panel of the owner's, its ID in
+// view.key; or a View of the owner's, its key in view.key.
+#define WHEELHOUSE_TARGET_NONE 0u
+#define WHEELHOUSE_TARGET_OWNER 1u
+#define WHEELHOUSE_TARGET_PANEL 2u
+#define WHEELHOUSE_TARGET_VIEW 3u
+typedef struct {
+  uint32_t kind;
+  WheelhouseIngressView view;
+} WheelhouseIngressTarget;
+// A command to run, by name, under ticket, with its argument: arg is the
+// one given (WHEELHOUSE_COMMAND_ARG_*, or none); a file path, string, cfg's
+// name or command's name is text, a cursor line and column, an offset
+// address. Its texts last only the call.
+typedef struct {
+  uint64_t ticket;
+  WheelhouseIngressText command;
+  WheelhouseIngressTarget target;
+  uint32_t arg;
+  WheelhouseIngressText text;
+  uint64_t line, column, address;
+} WheelhouseIngressInvocation;
+// invoke queues an invocation to run in the next frame and returns 0, or
+// refuses it with an HTTP status and why in reason, which need last only the
+// call. At the end of the frame it ran in, settle says 0 when it ran, or the
+// status and reason of what refused it. NULL invoke and settle run nothing.
 typedef struct {
   uint32_t mode;
   uint32_t (*observe)(void *context, WheelhouseIngressAutomationBuild *out, uint32_t screens);
   void *context;
+  void (*commands)(void *context, WheelhouseIngressCommandTable *out);
+  uint32_t (*invoke)(void *context, const WheelhouseIngressInvocation *invocation, WheelhouseIngressText *reason);
+  uint32_t (*settle)(void *context, uint64_t ticket, WheelhouseIngressText *reason);
 } WheelhouseIngressAutomationHost;
 extern void wheelhouse_ingress_automation(WheelhouseIngress *, const WheelhouseIngressAutomationHost *);
 extern void wheelhouse_ingress_stop(WheelhouseIngress *);

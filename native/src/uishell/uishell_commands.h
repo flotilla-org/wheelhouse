@@ -54,6 +54,9 @@ read_only global UIShell_CmdInfo uishell_nil_cmd_info = {0};
 #define UISHELL_Q_CURSOR     {UIShell_QueryFlag_CodeInput|UIShell_QueryFlag_Required, UIShell_RegSlot_Cursor, {0}, {0}}
 #define UISHELL_Q_ADDR       {UIShell_QueryFlag_CodeInput|UIShell_QueryFlag_Required, UIShell_RegSlot_Vaddr, {0}, {0}}
 #define UISHELL_CMD(name, display, icon, desc, tags, flags, query) {str8_lit_comp(name), str8_lit_comp(display), RD_IconKind_##icon, str8_lit_comp(desc), str8_lit_comp(tags), {0}, flags, query}
+// One that acts on a target: its context filter is `workspace`, `panel` or
+// `view`, which the Automation Endpoint lists as its targets (ADR 0014).
+#define UISHELL_CMD_IN(ctx, name, display, icon, desc, tags, flags, query) {str8_lit_comp(name), str8_lit_comp(display), RD_IconKind_##icon, str8_lit_comp(desc), str8_lit_comp(tags), str8_lit_comp(ctx), flags, query}
 
 read_only global UIShell_CmdInfo uishell_app_config_cmd_info_table[] =
 {
@@ -79,28 +82,28 @@ read_only global UIShell_CmdInfo uishell_app_file_cmd_info_table[] =
 
 read_only global UIShell_CmdInfo uishell_app_viewer_cmd_info_table[] =
 {
-  UISHELL_CMD("goto_line", "Go To Line", Null, "Jumps to a line number.", "line", UISHELL_CMD_FLAG_UI, UISHELL_Q_CURSOR),
-  UISHELL_CMD("center_cursor", "Center Cursor", Null, "Centers the cursor.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("contain_cursor", "Contain Cursor", Null, "Scrolls to contain the cursor.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("find_next", "Find Next", Find, "Finds the next match.", "find,search", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("find_prev", "Find Previous", Find, "Finds the previous match.", "find,search", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("search", "Search", Find, "Begins searching.", "find,search", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
-  UISHELL_CMD("search_backwards", "Search Backwards", Find, "Begins searching backwards.", "find,search", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
-  UISHELL_CMD("goto_address", "Go To Address", Null, "Jumps to a file offset in the binary view.", "offset,address", UISHELL_CMD_FLAG_UI, UISHELL_Q_ADDR),
-  UISHELL_CMD("copy_markdown", "Copy as Markdown", Clipboard, "Copies the Rich Text selection as markdown.", "copy,markdown,rich text", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("open_conversation_thread", "Open Conversation Thread", Thread, "Opens a conversation's subagent thread as a View of its own.", "conversation,thread,subagent,rich text", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("toggle_markdown_source", "Toggle Markdown Source", FileOutline, "Shows a markdown file's source, or its Rich Text again.", "markdown,source,rich text", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("view", "goto_line", "Go To Line", Null, "Jumps to a line number.", "line", UISHELL_CMD_FLAG_UI, UISHELL_Q_CURSOR),
+  UISHELL_CMD_IN("view", "center_cursor", "Center Cursor", Null, "Centers the cursor.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("view", "contain_cursor", "Contain Cursor", Null, "Scrolls to contain the cursor.", "", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("view", "find_next", "Find Next", Find, "Finds the next match.", "find,search", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("view", "find_prev", "Find Previous", Find, "Finds the previous match.", "find,search", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("view", "search", "Search", Find, "Begins searching.", "find,search", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
+  UISHELL_CMD_IN("view", "search_backwards", "Search Backwards", Find, "Begins searching backwards.", "find,search", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
+  UISHELL_CMD_IN("view", "goto_address", "Go To Address", Null, "Jumps to a file offset in the binary view.", "offset,address", UISHELL_CMD_FLAG_UI, UISHELL_Q_ADDR),
+  UISHELL_CMD_IN("view", "copy_markdown", "Copy as Markdown", Clipboard, "Copies the Rich Text selection as markdown.", "copy,markdown,rich text", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("view", "open_conversation_thread", "Open Conversation Thread", Thread, "Opens a conversation's subagent thread as a View of its own.", "conversation,thread,subagent,rich text", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("view", "toggle_markdown_source", "Toggle Markdown Source", FileOutline, "Shows a markdown file's source, or its Rich Text again.", "markdown,source,rich text", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   
   UISHELL_CMD("output", "Output", List, "Opens an Output tab.", "tab", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("text", "Text", FileOutline, "Opens a Text tab.", "tab,file", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("jackstay", "Open Jackstay Source", Machine, "Opens a Jackstay source connection view.", "tab,jackstay,stream", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("terminal", "Terminal", Machine, "Opens a Terminal tab.", "tab,terminal,shell", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("web", "Web", Window, "Opens a web page tab, on the start page.", "tab,web,browser,page", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
-  UISHELL_CMD("open_url", "Open URL", Window, "Opens a web page tab at an address.", "web,browser,page,url,open", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
-  UISHELL_CMD("terminal_scroll_page_up", "Scroll Terminal View Up", Machine, "Scrolls the outer terminal document up one visible page without child input.", "terminal,scroll,page", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("terminal_scroll_page_down", "Scroll Terminal View Down", Machine, "Scrolls the outer terminal document down one visible page without child input.", "terminal,scroll,page", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("terminal_transfer", "Hand Terminal to Daemon", Machine, "Moves this live terminal to its configured daemon (default if unset).", "terminal,transfer,daemon", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
-  UISHELL_CMD("terminal_adopt", "Adopt Terminal", Machine, "Moves this live terminal into Wheelhouse without replacing its view.", "terminal,adopt,hosting", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("panel", "open_url", "Open URL", Window, "Opens a web page tab at an address.", "web,browser,page,url,open", UISHELL_CMD_FLAG_UI, UISHELL_Q_STRING),
+  UISHELL_CMD_IN("view", "terminal_scroll_page_up", "Scroll Terminal View Up", Machine, "Scrolls the outer terminal document up one visible page without child input.", "terminal,scroll,page", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("view", "terminal_scroll_page_down", "Scroll Terminal View Down", Machine, "Scrolls the outer terminal document down one visible page without child input.", "terminal,scroll,page", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("view", "terminal_transfer", "Hand Terminal to Daemon", Machine, "Moves this live terminal to its configured daemon (default if unset).", "terminal,transfer,daemon", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
+  UISHELL_CMD_IN("view", "terminal_adopt", "Adopt Terminal", Machine, "Moves this live terminal into Wheelhouse without replacing its view.", "terminal,adopt,hosting", UISHELL_CMD_FLAG_UI, UISHELL_Q_NONE),
   UISHELL_CMD("terminal_fixture", "Terminal Fixture", Machine, "Opens a deterministic terminal glyph fixture tab.", "tab,terminal,glyph,fixture", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("scroll_region_fixture", "Scroll Region Fixture", Grid, "Opens a two-axis scroll region fixture.", "tab,scroll,fixture", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
   UISHELL_CMD("open_table", "Open Table", Grid, "Opens a table tab over one of the canned tables.", "tab,table,grid,binnacle", UISHELL_CMD_FLAG_TAB, UISHELL_Q_NONE),
@@ -185,6 +188,7 @@ uishell_app_reg_slot_from_query_reg_slot(UIShell_RegSlot slot)
   return result;
 }
 
+#undef UISHELL_CMD_IN
 #undef UISHELL_CMD
 #undef UISHELL_Q_ADDR
 #undef UISHELL_Q_CURSOR

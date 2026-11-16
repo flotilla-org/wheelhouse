@@ -612,4 +612,10 @@ global String8 uishell_launch_user_path;
 #define UISHELL_APP_OPEN_PROJECT_COMMAND_NAME() str8_lit("open_project")
 #define UISHELL_APP_REGISTER_CMD_PACKS() uishell_register_app_cmd_packs()
 
+// Invocations over the Automation Endpoint (uishell_automation.c).
+internal B32 uishell_automation_admit(String8 name, UIShell_Regs *regs);
+internal void uishell_automation_ran(U64 ticket, String8 errors);
+#define UISHELL_APP_AUTOMATION_ADMIT(name, regs) uishell_automation_admit((name), (regs))
+#define UISHELL_APP_AUTOMATION_RAN(ticket, errors) uishell_automation_ran((ticket), (errors))
+
 #endif // UISHELL_DISPATCH_H

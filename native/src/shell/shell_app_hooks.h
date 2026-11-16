@@ -55,4 +55,14 @@
 # define UISHELL_APP_OPEN_PROJECT_COMMAND_NAME() str8_zero()
 #endif
 
+// Before each command an Automation Endpoint invocation pushed runs: 0
+// skips it. After it, the user errors it logged.
+#if !defined(UISHELL_APP_AUTOMATION_ADMIT)
+# define UISHELL_APP_AUTOMATION_ADMIT(name, regs) ((void)(name), (void)(regs), 1)
+#endif
+
+#if !defined(UISHELL_APP_AUTOMATION_RAN)
+# define UISHELL_APP_AUTOMATION_RAN(ticket, errors) ((void)(ticket), (void)(errors))
+#endif
+
 #endif // SHELL_APP_HOOKS_H

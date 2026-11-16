@@ -2,15 +2,16 @@
 
 The **Automation Endpoint** is the set of routes on Wheelhouse's ingress
 **Local Endpoint** that let local clients (agents running in Wheelhouse
-terminals, test harnesses, scripts) observe the shell. It is the endpoint
+terminals, test harnesses, scripts) observe the shell and invoke its named
+commands. It is the endpoint
 that [metadata producers](pm-connect.md) publish to: one socket serves both.
 The design is on [#343](https://github.com/flotilla-org/wheelhouse/issues/343):
 Automation IDs (#346), the Semantic and Placement Trees (#347), Caller
 Context and discovery (#348), and gating in
 [ADR 0014](../adr/0014-automation-endpoint-invokes-named-commands.md).
 
-Everything here is read-only. Commands and intents come later (ADR 0014),
-as do the Placement Tree (#564) and the Dashboard part of the Semantic Tree.
+Intents come later (ADR 0014's amendment), as do the Placement Tree (#564)
+and the Dashboard part of the Semantic Tree.
 
 ## Discovery
 
@@ -68,7 +69,8 @@ warning on stderr, so a mistyped `off` leaves automation off.
   for metadata, and the automation routes answer 404 there. Turning it off
   while Wheelhouse runs makes them answer 404 from the next frame, as does
   changing it to a value it doesn't know.
-- `observe` and `full` behave the same until commands exist (ADR 0014).
+- `observe` serves the reads; [commands](#commands) answer 403, with why.
+- `full` serves every route.
 
 The metadata routes, `/v1/observed/workdirs` included, are not affected by
 the setting. Each Dashboard subscription's own endpoint serves none of the
@@ -191,7 +193,9 @@ Empty fields are left out, and the Semantic Tree has no `bounds`.
 - **kind:** `workspace`, `panel` or `view`. The Placement Tree (#564) adds
   its own.
 - **state:** flags. `selected` is a window's shown workspace, or the View a
-  panel shows. `collapsed` is a panel shown without space.
+  panel shows. `collapsed` is a panel shown without space. `focused` is the
+  View keys go to in its window: the Selected View of the focused panel of
+  the workspace the window shows. A window with no focused panel has none.
 - **workspace:** `name` is the user's name for it, else its subject's.
   `props.subject` is its Workspace Subject, `{provider, kind, id}`. Its child
   is its panel tree, followed by the Views of Slots the arrangement doesn't
@@ -307,6 +311,100 @@ No view showing the session is an empty list, not an error. Several views
 can show one session. The caller states its session and the endpoint
 doesn't verify it: Caller Context is a convenience, not security.
 
+## Commands
+
+The shell's named commands, the ones the palette and keybindings run
+(ADR 0014). There is no synthetic input: what an agent needs to do is given
+a named command.
+
+| Route | Answers |
+| --- | --- |
+| `GET /v1/commands` | the commands a client may invoke |
+| `POST /v1/commands/invoke` | runs one, once the frame that runs it ends |
+
+Both need `automation: full`: `observe` answers 403 with why, and `off` 404.
+Responses are `Cache-Control: no-store`, in JSON or, with `Accept:
+application/cbor`, CBOR, as for the reads. Errors are text: the reason.
+
+### Discovery
+
+`GET /v1/commands` is built from the command tables
+(`native/src/uishell/uishell_commands.h`, `native/src/shell/shell_commands.h`)
+as the UI gives them, so it can't drift from them. It lists each command the
+palette lists (`ListInUI`), and each internal one whose own entry opts in
+with `UIShell_CmdFlag_Automation` (`select_workspace`, for now). There is no
+allow-list elsewhere.
+
+```json
+{"schema": 1, "commands": [
+  {"id": "command/open_url", "display_name": "Open URL", "description": "Opens a web page tab at an address.",
+   "tags": ["web", "browser", "page", "url", "open"], "args": [{"name": "string", "required": true}], "targets": "panel"}
+]}
+```
+
+- **args:** what the command's query slot takes, named `file_path`,
+  `string`, `cursor`, `cfg`, `address` (a binary view's offset) or `command`
+  (another command, for `run_command` and `open_tab`), and whether it is
+  required. Most commands take none.
+- **targets:** what it acts on: `panel` for one that opens a tab (the tab
+  flag) or whose entry's context filter says `panel`; `view` or `workspace`
+  for one whose filter says so; otherwise `none`.
+
+### Invoking
+
+```json
+{"command": "command/split_panel", "target": "workspace/<uuid>/panel/1", "session": "<cleat-session-id>", "args": {}}
+```
+
+Only `command` is required; any other field is a 422.
+
+- **target:** an Automation ID: `workspace/<uuid>` or `window/<uuid>`, a
+  panel (`<owner>/panel/<id>`; a window's are its sidebar's), or a View.
+  It fills the window, panel and view registers: a View's panel and window,
+  and a panel's Selected View. A command that acts on a panel or a View
+  takes a panel or a View, and a workspace's takes any.
+- **session:** with no target, a command that acts on something takes the
+  one View its **Caller Context** shows, resolved as `self` resolves it.
+  Several are a 409; none, or neither field, a 400. It never falls back to
+  whatever has focus. A command that acts on nothing runs on that View when
+  there is exactly one, and on none otherwise.
+- **args:** by name, as the listing gives them: a string for each, but
+  `cursor`, `{"line": 3, "column": 1}` (column defaults to 1), and
+  `address`, a number. A required argument that is missing is a 422.
+
+**Non-interactive.** An invocation never opens a prompt or palette: a
+command that would (`open_palette`, say) refuses, 403. It never raises or
+activates the OS window, and moves no keyboard focus, unless the command is
+about focus (`focus_panel`, `next_tab`, and the others flagged
+`UIShell_CmdFlag_Focus`): focus moves only off a panel it closed.
+
+**Result.** It is taken at a frame's end and runs in the next frame, with
+what it pushes; the request waits for that frame's end, and then:
+
+```json
+{"cursor": "<instance-uuid>:<generation>"}
+```
+
+The cursor is that frame's, as `/v1/observed/events` gives them, so the
+tree at it shows what the command did: resume the stream there to follow
+what comes after. A 200 says the command ran, not that it did what was
+wanted; a user error it logs (a refused dock move, say) is a 422 with that
+message instead, until refusal codes come (#557).
+
+| Status | Meaning |
+| --- | --- |
+| 400 | no target, and no Caller Context to take one from |
+| 403 | not invocable: not listed, or it would open a prompt; or `automation: observe` |
+| 404 | no such command; or automation is off |
+| 409 | the Caller Context shows several views |
+| 422 | a target or argument it can't take, or that isn't there; or what refused it |
+| 503 | 64 invocations wait already, or the UI didn't run it within 5 seconds |
+
+A 503 for the deadline doesn't take the command back: once the UI has taken
+it, it may still run. A command that `run_command` or `open_tab` runs, as
+their `command` argument, is held to what invoking it would be: listed, and
+needing no argument.
+
 ## Observed workdirs
 
 `GET /v1/observed/workdirs` (README, "Live core facts") gives each terminal's
@@ -318,4 +416,5 @@ outside this process. Use `view`.
 
 `--ingress_record` captures these requests with the others, as
 `pm-connect.md` describes: for a read or a stream, its method, path (without
-the query) and status.
+the query) and status; for an invocation, its body too, so a recorded agent
+session can be replayed as a test.
