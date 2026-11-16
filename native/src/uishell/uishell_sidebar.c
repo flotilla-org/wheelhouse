@@ -310,9 +310,6 @@ struct UIShell_SidebarState
   // A group header double-clicked to rename: the release that ends the
   // double click is not another collapse.
   UI_Key header_click_swallow;
-  // A group header's ⋯, clicked this build: its menu opens there.
-  UI_Key header_more_anchor;
-  B32 header_more_open;
   // A drop or Reset order waits for the end of render, which reads the model.
   B32 order_pending;
   String8 order_loop;
@@ -3156,11 +3153,6 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     UIShell_LocalGroup *group = uishell_sidebar_local_group(window, uishell_sidebar_string(node.entity.id));
     uishell_sidebar_local_group_menu(state, window, group, items_loop, menu_key);
     if(ui_right_clicked(sig)) { state->confirm_delete = 0; uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
-    if(header && state->header_more_open)
-    {
-      state->header_more_open = 0; state->confirm_delete = 0;
-      ui_ctx_menu_open(menu_key, state->header_more_anchor, v2f32(0, em*1.8f));
-    }
     // Double-clicking it renames it in place. The double click's first click
     // collapsed it, so it opens again, and its closing release is no click.
     if(ui_double_clicked(sig) && group)
@@ -3187,7 +3179,6 @@ uishell_sidebar_entry_signal(UIShell_SidebarState *state, RD_WindowState *ws,
     // An empty menu doesn't open.
     B32 has_menu = close_kind != UIShell_SidebarCloseKind_None || (items_loop.size && uishell_sidebar_order_saved(state, items_loop));
     if(ui_right_clicked(sig) && has_menu) { uishell_sidebar_menu_open_at_pointer(menu_key, sig.box); }
-    if(state->header_more_open) { state->header_more_open = 0; ui_ctx_menu_open(menu_key, state->header_more_anchor, v2f32(0, em*1.8f)); }
   }
   else if(subject)
   {
@@ -3750,7 +3741,7 @@ uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   F32 slot_width = floor_f32(ui_top_font_size()*(change_request && r->present ? 10.f : 1.2f));
   // A row with a menu shows ⋯ in its status slot while hovered, or while
   // its menu is open; its status otherwise (as the Claude app's sessions do).
-  B32 more = r->menu && r->present && !r->project &&
+  B32 more = r->menu && r->present &&
     (r->menu_open || (contains_2f32(r->row->rect, ui_mouse()) && !rd_drag_is_active()));
   // A change request's status is a badge, not a mark.
   String8 status = r->status, badge = str8_lit("~ pending");
@@ -5123,9 +5114,9 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               UI_Parent(chip_area) { ui_spacer(ui_px(chip_clearance, 1)); }
               ui_signal_from_box(chip_area);
             }
-            // A group header's actions follow it, shown while hovered (as the
-            // Claude app's groups do): + names a new workspace in the group's
-            // footer, and ▾ opens the header's menu, as a right-click does.
+            // A group header's + follows it, shown while hovered (as the
+            // Claude app's groups do), and names a new workspace in the
+            // group's footer.
             B32 local_header = project && str8_match(kind, str8_lit(".group"), 0);
             B32 project_header = project && str8_match(kind, str8_lit("project"), 0);
             if((local_header || project_header) && contains_2f32(r.row->rect, ui_mouse()) && !rd_drag_is_active() && !r.renaming)
@@ -5137,20 +5128,17 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
                 uishell_sidebar_make_begin(state, push_str8f(scratch.arena, "workspace_%S", node_key), 0);
                 if(node.collapsed) { action = uishell_sidebar_toggle_intent(node); }
               }
-              // A project's menu is its workspace's: ▾ shows while it has one.
-              String8 items_loop = project_header ? uishell_sidebar_project_items_loop(state, i) : str8_zero();
-              B32 has_menu = local_header || uishell_sidebar_close_kind(node) != UIShell_SidebarCloseKind_None ||
-                (items_loop.size && uishell_sidebar_order_saved(state, items_loop));
-              if(has_menu)
-              {
-                UI_Signal more = uishell_sidebar_header_button(str8_lit("▾"), push_str8f(scratch.arena, "header_more_%S", node_key), 0, 1,
-                  project_header ? str8_lit("Project workspace") : str8_lit("Group options"), str8_lit("Or right-click the header"));
-                if(ui_clicked(more)) { state->header_more_anchor = more.box->key; state->header_more_open = 1; }
-              }
             }
             UIShell_SidebarCloseKind close = uishell_sidebar_close_kind(node);
-            UI_Key menu_key = ui_key_from_stringf(r.row->key, uishell_sidebar_is_subject(node) ? "subject_menu" : "workspace_menu");
-            r.menu = !project && (close != UIShell_SidebarCloseKind_None || uishell_sidebar_is_subject(node));
+            // A header's menu is a right-click on it, or ⋯ in its status slot
+            // as a row's is: a group's, or a project's workspace's while that
+            // has an item (uishell_sidebar_entry_signal builds them).
+            String8 items_loop = project_header ? uishell_sidebar_project_items_loop(state, i) : str8_zero();
+            B32 header_menu = local_header ||
+              (project_header && (close != UIShell_SidebarCloseKind_None || (items_loop.size && uishell_sidebar_order_saved(state, items_loop))));
+            UI_Key menu_key = ui_key_from_stringf(r.row->key, local_header ? "group_menu" : project_header ? "project_menu" :
+                                                  uishell_sidebar_is_subject(node) ? "subject_menu" : "workspace_menu");
+            r.menu = project ? header_menu : (close != UIShell_SidebarCloseKind_None || uishell_sidebar_is_subject(node));
             // ⋯ stays while either of the row's menus is open: the row's
             // own (⋯, a right-click on the row) or its label's.
             r.menu_open = r.menu && (ui_ctx_menu_is_open(menu_key) || (!ui_box_is_nil(r.entry_sig.box) &&
@@ -5172,7 +5160,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             // Below ⋯, right-aligned to it, so the menu stays over the sidebar.
             if(ui_clicked(r.more))
             {
-              F32 width = uishell_sidebar_row_menu_width(node, close);
+              CFG_Node *window = cfg_node_from_id(ws->cfg_id);
+              UIShell_LocalGroup *group = local_header ? uishell_sidebar_local_group(window, uishell_sidebar_string(node.entity.id)) : 0;
+              F32 width = local_header ? uishell_sidebar_local_menu_width(state, window, 0, group) : uishell_sidebar_row_menu_width(node, close);
+              state->confirm_delete = 0;
               ui_ctx_menu_open(menu_key, r.more.box->key, v2f32(dim_2f32(r.more.box->rect).x-width, dim_2f32(r.more.box->rect).y));
             }
             // Project cards already stop short of the margin.

@@ -50,11 +50,12 @@ predict.
   shortest prefix of its repository's alias that no other repository in the
   region shares (flotilla ADR 0049): `f!2343`, or `!2343` when one
   repository shows. Clicking opens it in the browser for now (#754).
-- **New is on the header.** A group or project header shows `+` and `▾`
-  while hovered, as the Claude app's groups do: `+` names a new workspace in
-  the group's footer, and `▾` opens the header's menu (as a right-click
-  does). A project's menu is its project workspace's (its close, its
-  layouts) with Reset order, so its `▾` shows only while that has an item. A section header's `+` offers New workspace (when its footer makes
+- **New is on the header.** A group or project header shows `+` while
+  hovered, as the Claude app's groups do, and it names a new workspace in
+  the group's footer. A header's menu is a right-click on it, or `⋯` in its
+  status slot, as a row's is. A project's menu is its project workspace's
+  (its close, its layouts) with Reset order, so its `⋯` shows only while
+  that has an item. A section header's `+` offers New workspace (when its footer makes
   them: one group, or Workspaces) and New group (a section you made); with
   one, it does that. The footers below open on hover only with the dev
   toggle `sidebar_footer_rows`, kept to compare (see Making workspaces and

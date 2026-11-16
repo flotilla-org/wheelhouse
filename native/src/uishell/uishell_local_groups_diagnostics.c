@@ -690,7 +690,7 @@ uishell_local_groups_diagnostics(CFG_Node *window)
 
     //- The group header (sidebar-headers.md): a click anywhere on it
     //  collapses the group and shows its count; double-clicking renames it
-    //  and leaves it open; ▾ opens its menu.
+    //  and leaves it open; ⋯ opens its menu.
     String8 alpha_header = uishell_local_groups_row(arena, state, alpha_id);
     UI_Box *header_box = uishell_local_groups_box(alpha_header);
     GroupsCheck(!ui_box_is_nil(header_box) && ui_box_is_nil(uishell_sidebar_reorder_box(header_box->first, str8_lit("###identity_"))),
@@ -735,14 +735,14 @@ uishell_local_groups_diagnostics(CFG_Node *window)
                 "double-clicking a group header renames it in place and leaves it open");
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Press, WM_Key_Esc);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    // ▾ shows while the header is hovered.
+    // ⋯ shows in the header's status slot while it is hovered, as a row's does.
     uishell_local_groups_frame(ws, window, arena, alpha_header, UI_EventKind_Null, 0);
     uishell_local_groups_frame(ws, window, arena, alpha_header, UI_EventKind_Null, 0);
-    String8 more = push_str8f(arena, "###header_more_%S", uishell_sidebar_string(uishell_sidebar_reorder_node(state, alpha_id).key));
+    String8 more = push_str8f(arena, "###more_%S", uishell_sidebar_string(uishell_sidebar_reorder_node(state, alpha_id).key));
     B32 more_found = uishell_local_groups_frame(ws, window, arena, more, UI_EventKind_Press, WM_Key_LeftMouseButton);
     uishell_local_groups_frame(ws, window, arena, more, UI_EventKind_Release, WM_Key_LeftMouseButton);
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
-    GroupsCheck(more_found && ui_any_ctx_menu_is_open(), "a hovered group header's ▾ opens its menu");
+    GroupsCheck(more_found && ui_any_ctx_menu_is_open(), "a hovered group header's ⋯ opens its menu");
     ui_ctx_menu_close();
     uishell_local_groups_frame(ws, window, arena, str8_zero(), UI_EventKind_Null, 0);
     uishell_local_groups_drag_inset = 3.f; // from the header's left edge, not its title (#261)
