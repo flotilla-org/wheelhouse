@@ -47,15 +47,34 @@ predict.
   shortest prefix of its repository's alias that no other repository in the
   region shares (flotilla ADR 0049): `f!2343`, or `!2343` when one
   repository shows. Clicking opens it in the browser for now (#754).
-- **Still to change, in the native chrome:** a group header's `+` and `▾`
-  on hover replace the footers below (kept behind a dev toggle to compare);
-  a row ends in a status mark that becomes `⋯` on hover, and close moves into
-  that menu from the margin; a name truncates and fades, with no
-  abbreviation tiers; only references fold into "+N". Follow-ups: #751
-  (making a workspace), #752 (when a row goes away), #753 (reference
-  overflow).
+- **New is on the header.** A group or project header shows `+` and `▾`
+  while hovered, as the Claude app's groups do: `+` names a new workspace in
+  the group's footer, and `▾` opens the header's menu (as a right-click
+  does). A section header's `+` offers New workspace (when its footer makes
+  them: one group, or Workspaces) and New group (a section you made); with
+  one, it does that. The footers below open on hover only with the dev
+  toggle `sidebar_footer_rows`, kept to compare (see Making workspaces and
+  groups), and Workspaces' fixed first row goes with them.
+  The toggle and its footers go once making a workspace is settled (#751).
+- **A row ends in its status, which becomes `⋯` while hovered** (or while
+  its menu is open). `⋯` opens the row's menu, which leads with the close
+  the core chooses: Detach workspace for a subject, Close workspace for
+  none. There is no margin control: rows stop a small gap short of the edge
+  (and of an overlay scroll bar's strip).
+- **A name fades out at its end** when it doesn't fit, rather than ending in
+  an ellipsis; there are no abbreviation tiers. A name gives way to its
+  references down to a floor (about 40% of the row), then the references
+  fold into "+N". A project's header has no overview chip: it is the
+  workspace.
+- **Rows show no buttons of their own** (a row's controls used to add rows
+  below it).
+- Follow-ups: #751 (making a workspace), #752 (when a row goes away), #753
+  (reference overflow).
 
 ## Making workspaces and groups
+
+With the dev toggle `sidebar_footer_rows` (otherwise a header's `+` opens
+the footer, already a name field; see One row, one workspace):
 
 - **New workspace** is a footer. When the pointer reaches a group's last
   row, a "+ New workspace" row pushes in below it, and leaves with the
@@ -122,10 +141,9 @@ collapsed. A size the operator set by hand is kept.
 
 The overlay scrollbar shows while scrolling, while it is dragged, and while
 the pointer is on its own strip at the outermost edge, then fades after about
-a second. A faded thumb takes no clicks. A row reserves the widest scrollbar
-strip separately from its margin control, so its close glyph fits without
-truncating or triggering a truncated-label tooltip. This is a change to the
-shared scroll region, so every scrolled area gets it.
+a second. A faded thumb takes no clicks. A row stops short of the widest
+scrollbar strip, so the bar never covers its status or `⋯`. This is a change
+to the shared scroll region, so every scrolled area gets it.
 
 On macOS it follows "Show scroll bars": when that is "Always", the bar keeps
 the subtle style but its width is reserved.
