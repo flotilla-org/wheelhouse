@@ -495,6 +495,7 @@ uishell_automation_apply(void *unused, const WheelhouseIngressIntent *in, U64 *r
     RD_ViewAddress tab = in->has_tab ? uishell_automation_intent_view(&in->tab) : rd_nil_view_address;
     RD_ViewAddress after = in->has_after ? uishell_automation_intent_view(&in->after) : rd_nil_view_address;
     if(kind == max_U32) { why = push_str8f(scratch.arena, "no arrangement intent %S", name); }
+    else if(in->dir > WHEELHOUSE_INGRESS_DIR_DOWN) { why = str8_lit("no such dir"); }
     else if((in->has_tab && rd_view_address_is_nil(tab)) || (in->has_after && rd_view_address_is_nil(after)))
     { why = str8_lit("no such view there"); }
     if(!why.size)
