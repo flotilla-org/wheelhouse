@@ -435,8 +435,10 @@ struct UIShell_SidebarState
   UIShell_StoreEntry *store_entries;
   U64 store_entry_count, store_entry_capacity;
   B32 store_synced;
-  U64 store_cfg_gen, store_arrangement_version, store_content_revision, store_revision_count;
-  U64 store_calls, store_commits;
+  U64 store_cfg_gen, store_arrangement_version, store_content_revision, store_overlay_revision;
+  // Calls to the core, commits, and full syncs of every workspace (the
+  // frames whose skip test failed), which the behaviour harness counts.
+  U64 store_calls, store_commits, store_syncs;
   // Workspace Lives read (wheelhouse_workspace_life), which the behaviour
   // harness counts across frames.
   U64 life_calls;
