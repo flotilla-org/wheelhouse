@@ -5408,6 +5408,17 @@ uishell_terminal_cell_copy_from_render_cell(Arena *arena, cleat_cell *dst, cleat
   }
 }
 
+// Row generations are unique for the process, so a row cache can't mistake
+// one terminal's or one resize's rows for another's.
+global U64 uishell_terminal_row_generation_counter = 0;
+
+internal U64
+uishell_terminal_row_generation_next(void)
+{
+  uishell_terminal_row_generation_counter += 1;
+  return uishell_terminal_row_generation_counter;
+}
+
 internal void
 uishell_terminal_cell_cache_apply_render_row(Arena *arena, UIShell_TerminalCellCache *cache, cleat_render_row const *row)
 {
@@ -5415,6 +5426,7 @@ uishell_terminal_cell_cache_apply_render_row(Arena *arena, UIShell_TerminalCellC
   {
     cache->row_wraps[row->row] = (UIShell_TerminalRowWrap){row->wrap, row->wrap_continuation};
     if(row->cells == 0) { return; }
+    if(cache->row_generations != 0) { cache->row_generations[row->row] = uishell_terminal_row_generation_next(); }
     U64 col_count = Min((U64)cache->cols, row->cell_count);
     U64 row_start = (U64)row->row*(U64)cache->cols;
     for(U64 col_idx = 0; col_idx < col_count; col_idx += 1)
@@ -5435,6 +5447,7 @@ uishell_terminal_cell_feed_from_cache(UIShell_TerminalCellCache *cache)
     .rows = cache->rows,
     .cells = cache->cells,
     .row_wraps = cache->row_wraps,
+    .row_generations = cache->row_generations,
     .cell_count = cache->cell_count,
     .cursor = cache->cursor,
   };
@@ -5462,6 +5475,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
     cleat_cell *new_cells = push_array(new_arena, cleat_cell, cell_count);
     String8 *new_links = push_array(new_arena, String8, cell_count);
     UIShell_TerminalRowWrap *new_wraps = push_array(new_arena, UIShell_TerminalRowWrap, update->rows);
+    U64 *new_row_gens = push_array(new_arena, U64, update->rows);
     B32 can_copy_old = (cache->cells != 0 &&
                         cache->cols == update->cols &&
                         cache->rows == update->rows &&
@@ -5474,6 +5488,14 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
         has_full_replace = 1;
         break;
       }
+    }
+    if(can_copy_old && !has_full_replace && cache->row_generations != 0)
+    {
+      MemoryCopy(new_row_gens, cache->row_generations, sizeof(*new_row_gens)*update->rows);
+    }
+    else
+    {
+      for(U64 row_idx = 0; row_idx < update->rows; row_idx += 1) { new_row_gens[row_idx] = uishell_terminal_row_generation_next(); }
     }
     if(can_copy_old && !has_full_replace)
     {
@@ -5493,6 +5515,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
       .cells = new_cells,
       .hyperlinks = new_links,
       .row_wraps = new_wraps,
+      .row_generations = new_row_gens,
       .cell_count = cell_count,
       .cursor = update->cursor,
       .scrollbar = update->scrollbar,
@@ -5510,6 +5533,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
           if(op->kind == CLEAT_RENDER_OP_FULL_VISIBLE_REPLACE)
           {
             MemoryZero(new_wraps, sizeof(*new_wraps)*new_cache.rows);
+            for(U64 row_idx = 0; row_idx < new_cache.rows; row_idx += 1) { new_row_gens[row_idx] = uishell_terminal_row_generation_next(); }
           }
           if(op->rows != 0)
           {
@@ -5527,6 +5551,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
             {
               // Legacy cell-only replacement carries no row facts.
               new_wraps[first_row + row_idx] = (UIShell_TerminalRowWrap){0};
+              new_row_gens[first_row + row_idx] = uishell_terminal_row_generation_next();
               for(U64 col_idx = 0; col_idx < col_count; col_idx += 1)
               {
                 U64 src_idx = row_idx*(U64)op->col_count + col_idx;
@@ -5552,6 +5577,7 @@ uishell_terminal_cell_cache_apply_render_update(UIShell_TerminalCellCache *cache
               U64 src_row = (U64)op->src_row + row_idx;
               U64 dst_row = (U64)op->dst_row + row_idx;
               new_wraps[dst_row] = new_wraps[src_row];
+              new_row_gens[dst_row] = new_row_gens[src_row];
               for(U64 col_idx = 0; col_idx < new_cache.cols; col_idx += 1)
               {
                 U64 src_idx = src_row*(U64)new_cache.cols + col_idx;
@@ -9536,18 +9562,217 @@ uishell_terminal_draw_image_plane(Arena *arena, UIShell_TerminalDrawParams const
   scratch_end(scratch);
 }
 
+// One row's cell backgrounds (cursor fill included), as the cell feed draw
+// lays them down before any row's text.
+internal void
+uishell_terminal_draw_row_backgrounds(UIShell_TerminalDrawParams const *params, UIShell_TerminalCellFeed const *feed, U64 cell_count, UIShell_TerminalCursorArray cursors, U64 row_idx)
+{
+  Rng2F32 canvas_rect = params->canvas_rect;
+  F32 cell_width_px = params->cell_width_px;
+  F32 cell_height_px = params->cell_height_px;
+  F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
+  F32 row_y1 = ceil_f32(canvas_rect.y0 + (F32)(row_idx + 1)*cell_height_px);
+  if(row_y0 >= canvas_rect.y1 || row_y1 <= canvas_rect.y0)
+  {
+    return;
+  }
+
+  for(U64 col_start = 0; col_start < feed->cols;)
+  {
+    U64 cell_idx = row_idx*(U64)feed->cols + col_start;
+    if(cell_idx >= cell_count)
+    {
+      break;
+    }
+    cleat_cell const *cell = &feed->cells[cell_idx];
+    cleat_rgb bg = uishell_terminal_cell_bg(cell);
+    if(uishell_terminal_cursor_array_cell_is_filled(feed, cell_count, cursors, row_idx, col_start))
+    {
+      bg = uishell_terminal_cell_fg(cell);
+    }
+    U64 col_opl = col_start + 1;
+    for(; col_opl < feed->cols; col_opl += 1)
+    {
+      U64 run_cell_idx = row_idx*(U64)feed->cols + col_opl;
+      if(run_cell_idx >= cell_count)
+      {
+        break;
+      }
+      cleat_cell const *run_cell = &feed->cells[run_cell_idx];
+      cleat_rgb run_bg = uishell_terminal_cell_bg(run_cell);
+      if(uishell_terminal_cursor_array_cell_is_filled(feed, cell_count, cursors, row_idx, col_opl))
+      {
+        run_bg = uishell_terminal_cell_fg(run_cell);
+      }
+      if(!uishell_terminal_rgb_match(run_bg, bg))
+      {
+        break;
+      }
+    }
+
+    F32 x0 = floor_f32(canvas_rect.x0 + (F32)col_start*cell_width_px);
+    F32 x1 = ceil_f32(canvas_rect.x0 + (F32)col_opl*cell_width_px);
+    dr_rect(r2f32p(x0, row_y0, x1, row_y1), uishell_terminal_rgba_from_rgb(bg), 0, 0, 0);
+    col_start = col_opl;
+  }
+}
+
+// One row's text, sprites and lines, drawn after every row's background so a
+// glyph that overhangs its row isn't covered by the next row's.
+internal void
+uishell_terminal_draw_row_text(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams const *params, UIShell_TerminalCellFeed const *feed, U64 cell_count, UIShell_TerminalCursorArray cursors, U64 row_idx)
+{
+  FNT_Tag font = renderer->font_set.primary_font;
+  FNT_RasterFlags raster_flags = renderer->font_set.raster_flags;
+  F32 font_size = renderer->font_set.font_size;
+  F32 cell_width_px = params->cell_width_px;
+  F32 cell_height_px = params->cell_height_px;
+  FNT_Metrics font_metrics = fnt_metrics_from_tag_size(font, font_size);
+  Rng2F32 canvas_rect = params->canvas_rect;
+  F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
+  F32 row_y1 = ceil_f32(canvas_rect.y0 + (F32)(row_idx + 1)*cell_height_px);
+  if(row_y0 >= canvas_rect.y1 || row_y1 <= canvas_rect.y0)
+  {
+    return;
+  }
+
+  F32 text_y = floor_f32((row_y0 + row_y1)/2.f + font_metrics.ascent/2.f - font_metrics.descent/2.f);
+  for(U64 col_idx = 0; col_idx < feed->cols;)
+  {
+    U64 cell_idx = row_idx*(U64)feed->cols + col_idx;
+    if(cell_idx >= cell_count)
+    {
+      break;
+    }
+    cleat_cell const *cell = &feed->cells[cell_idx];
+    U64 cell_cols = uishell_terminal_cell_display_cols(cell);
+    cell_cols = Min(cell_cols, (U64)feed->cols - col_idx);
+    FNT_Tag run_font = {0};
+    Vec4F32 run_fg = {0};
+    String8 run_string = {0};
+    if(uishell_terminal_cell_text_run_info(arena, renderer, feed, cell_count, cursors, row_idx, col_idx, &run_font, &run_fg, &run_string))
+    {
+      U64 run_col_start = col_idx;
+      U64 run_col_opl = col_idx + 1;
+      String8List run_parts = {0};
+      str8_list_push(arena, &run_parts, run_string);
+      for(; run_col_opl < feed->cols; run_col_opl += 1)
+      {
+        FNT_Tag next_font = {0};
+        Vec4F32 next_fg = {0};
+        String8 next_string = {0};
+        if(!uishell_terminal_cell_text_run_info(arena, renderer, feed, cell_count, cursors, row_idx, run_col_opl, &next_font, &next_fg, &next_string) ||
+           !fnt_tag_match(next_font, run_font) ||
+           !uishell_terminal_vec4_match(next_fg, run_fg))
+        {
+          break;
+        }
+        str8_list_push(arena, &run_parts, next_string);
+      }
+      String8 joined = str8_list_join(arena, &run_parts, 0);
+      if(joined.size != 0)
+      {
+        Vec2F32 text_pos =
+        {
+          .x = canvas_rect.x0 + (F32)run_col_start*cell_width_px,
+          .y = text_y,
+        };
+        FNT_Run joined_run = dr_fnt_run_from_string(run_font, font_size, 0, 0, raster_flags, joined);
+        if(renderer->trace_enabled && (renderer->trace_all_rows || renderer->trace_row == row_idx))
+        {
+          uishell_terminal_trace_run(arena, renderer, str8_lit("batched"), row_idx, run_col_start, run_col_opl, &feed->cells[row_idx*(U64)feed->cols + run_col_start], UIShell_TerminalCellTextPath_NormalMask, run_font, raster_flags, joined, joined_run, text_pos, font_metrics.descent, run_fg);
+        }
+        uishell_terminal_draw_run_at_row_baseline(joined_run, text_pos, run_fg);
+      }
+      col_idx = run_col_opl;
+      continue;
+    }
+
+    if(cell->grapheme_count != 0 &&
+       !uishell_terminal_cell_is_spacer(cell) &&
+       !uishell_terminal_cell_is_kitty_placeholder(cell) &&
+       !(cell->flags & CLEAT_CELL_FLAG_INVISIBLE))
+    {
+      String8 string = uishell_terminal_string_from_cell(arena, cell);
+      B32 drew_sprite = 0;
+      Vec4F32 fg = uishell_terminal_text_color_from_cell(cell);
+      if(uishell_terminal_cursor_array_cell_is_filled(feed, cell_count, cursors, row_idx, col_idx))
+      {
+        fg = uishell_terminal_rgba_from_rgb(uishell_terminal_cell_bg(cell));
+      }
+      Rng2F32 cell_rect =
+      {
+        .x0 = floor_f32(canvas_rect.x0 + (F32)col_idx*cell_width_px),
+        .y0 = row_y0,
+        .x1 = ceil_f32(canvas_rect.x0 + (F32)(col_idx + cell_cols)*cell_width_px),
+        .y1 = row_y1,
+      };
+      if(cell->grapheme_count == 1)
+      {
+        drew_sprite = uishell_terminal_draw_direct_sprite(cell->graphemes[0], cell_rect, fg);
+      }
+      if(!drew_sprite && !(string.size == 1 && string.str[0] == ' '))
+      {
+        UIShell_TerminalCellTextDecision text_decision = uishell_terminal_cell_text_decision_from_cell(arena, renderer, cell);
+        if(text_decision.path == UIShell_TerminalCellTextPath_Missing)
+        {
+          uishell_terminal_draw_missing_glyph(cell_rect, fg);
+        }
+        else
+        {
+          // Backgrounds/cursors cover whole pixels, but glyph origins share
+          // the fractional grid used within text runs. A cursor, style or
+          // colour boundary must not change the phase of subsequent glyphs.
+          // At 1x, fractional-width cells intentionally retain subpixel
+          // sampling instead of changing sharpness as the cursor moves.
+          if(text_decision.path == UIShell_TerminalCellTextPath_NormalMask)
+          { cell_rect.x0 = canvas_rect.x0 + (F32)col_idx*cell_width_px; }
+          if(renderer->trace_enabled && (renderer->trace_all_rows || renderer->trace_row == row_idx))
+          {
+            uishell_terminal_trace_run(arena, renderer, str8_lit("cell"), row_idx, col_idx, col_idx + cell_cols, cell, text_decision.path, text_decision.font, text_decision.raster_flags, text_decision.string, text_decision.run, v2f32(cell_rect.x0, text_y), font_metrics.descent, fg);
+          }
+          uishell_terminal_draw_text_decision_in_cell(text_decision, cell_rect, text_y, fg);
+          if((cell->flags & CLEAT_CELL_FLAG_BOLD) && text_decision.path != UIShell_TerminalCellTextPath_SourceColor)
+          {
+            Rng2F32 bold_rect = shift_2f32(cell_rect, v2f32(1.f, 0));
+            uishell_terminal_draw_text_decision_in_cell(text_decision, bold_rect, text_y, fg);
+          }
+        }
+      }
+
+      if(cell->flags & (CLEAT_CELL_FLAG_UNDERLINE|CLEAT_CELL_FLAG_STRIKETHROUGH|CLEAT_CELL_FLAG_OVERLINE))
+      {
+        Vec4F32 line_color = uishell_terminal_text_color_from_cell(cell);
+        F32 x0 = floor_f32(canvas_rect.x0 + (F32)col_idx*cell_width_px);
+        F32 x1 = ceil_f32(canvas_rect.x0 + (F32)(col_idx + cell_cols)*cell_width_px);
+        F32 thickness = Clamp(1.f, floor_f32(cell_height_px*0.08f), 2.f);
+        if(cell->flags & CLEAT_CELL_FLAG_UNDERLINE)
+        {
+          dr_rect(r2f32p(x0, row_y1 - thickness, x1, row_y1), line_color, 0, 0, 0);
+        }
+        if(cell->flags & CLEAT_CELL_FLAG_STRIKETHROUGH)
+        {
+          F32 y = floor_f32((row_y0 + row_y1)*0.5f);
+          dr_rect(r2f32p(x0, y, x1, y + thickness), line_color, 0, 0, 0);
+        }
+        if(cell->flags & CLEAT_CELL_FLAG_OVERLINE)
+        {
+          dr_rect(r2f32p(x0, row_y0, x1, row_y0 + thickness), line_color, 0, 0, 0);
+        }
+      }
+    }
+    col_idx += 1;
+  }
+}
+
 internal void
 uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, UIShell_TerminalCellFeed const *feed, UIShell_TerminalCursorArray cursors)
 {
   uishell_terminal_cursor_array_from_feed(feed, &cursors);
   if(feed->cells != 0 && feed->cols != 0 && feed->rows != 0)
   {
-    FNT_Tag font = renderer->font_set.primary_font;
-    FNT_RasterFlags raster_flags = renderer->font_set.raster_flags;
-    F32 font_size = renderer->font_set.font_size;
     F32 cell_width_px = params->cell_width_px;
     F32 cell_height_px = params->cell_height_px;
-    FNT_Metrics font_metrics = fnt_metrics_from_tag_size(font, font_size);
     U64 expected_cell_count = (U64)feed->cols*(U64)feed->rows;
     U64 cell_count = Min(feed->cell_count, expected_cell_count);
     Rng2F32 canvas_rect = params->canvas_rect;
@@ -9555,51 +9780,7 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
 
     for(U64 row_idx = 0; row_idx < feed->rows; row_idx += 1)
     {
-      F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
-      F32 row_y1 = ceil_f32(canvas_rect.y0 + (F32)(row_idx + 1)*cell_height_px);
-      if(row_y0 >= canvas_rect.y1 || row_y1 <= canvas_rect.y0)
-      {
-        continue;
-      }
-
-      for(U64 col_start = 0; col_start < feed->cols;)
-      {
-        U64 cell_idx = row_idx*(U64)feed->cols + col_start;
-        if(cell_idx >= cell_count)
-        {
-          break;
-        }
-        cleat_cell const *cell = &feed->cells[cell_idx];
-        cleat_rgb bg = uishell_terminal_cell_bg(cell);
-        if(uishell_terminal_cursor_array_cell_is_filled(feed, cell_count, cursors, row_idx, col_start))
-        {
-          bg = uishell_terminal_cell_fg(cell);
-        }
-        U64 col_opl = col_start + 1;
-        for(; col_opl < feed->cols; col_opl += 1)
-        {
-          U64 run_cell_idx = row_idx*(U64)feed->cols + col_opl;
-          if(run_cell_idx >= cell_count)
-          {
-            break;
-          }
-          cleat_cell const *run_cell = &feed->cells[run_cell_idx];
-          cleat_rgb run_bg = uishell_terminal_cell_bg(run_cell);
-          if(uishell_terminal_cursor_array_cell_is_filled(feed, cell_count, cursors, row_idx, col_opl))
-          {
-            run_bg = uishell_terminal_cell_fg(run_cell);
-          }
-          if(!uishell_terminal_rgb_match(run_bg, bg))
-          {
-            break;
-          }
-        }
-
-        F32 x0 = floor_f32(canvas_rect.x0 + (F32)col_start*cell_width_px);
-        F32 x1 = ceil_f32(canvas_rect.x0 + (F32)col_opl*cell_width_px);
-        dr_rect(r2f32p(x0, row_y0, x1, row_y1), uishell_terminal_rgba_from_rgb(bg), 0, 0, 0);
-        col_start = col_opl;
-      }
+      uishell_terminal_draw_row_backgrounds(params, feed, cell_count, cursors, row_idx);
     }
 
     // Image plane below text (z < 0), drawn above cell backgrounds. The loop is
@@ -9608,140 +9789,7 @@ uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShel
 
     for(U64 row_idx = 0; row_idx < feed->rows; row_idx += 1)
     {
-      F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
-      F32 row_y1 = ceil_f32(canvas_rect.y0 + (F32)(row_idx + 1)*cell_height_px);
-      if(row_y0 >= canvas_rect.y1 || row_y1 <= canvas_rect.y0)
-      {
-        continue;
-      }
-
-      F32 text_y = floor_f32((row_y0 + row_y1)/2.f + font_metrics.ascent/2.f - font_metrics.descent/2.f);
-      for(U64 col_idx = 0; col_idx < feed->cols;)
-      {
-        U64 cell_idx = row_idx*(U64)feed->cols + col_idx;
-        if(cell_idx >= cell_count)
-        {
-          break;
-        }
-        cleat_cell const *cell = &feed->cells[cell_idx];
-        U64 cell_cols = uishell_terminal_cell_display_cols(cell);
-        cell_cols = Min(cell_cols, (U64)feed->cols - col_idx);
-        FNT_Tag run_font = {0};
-        Vec4F32 run_fg = {0};
-        String8 run_string = {0};
-        if(uishell_terminal_cell_text_run_info(arena, renderer, feed, cell_count, cursors, row_idx, col_idx, &run_font, &run_fg, &run_string))
-        {
-          U64 run_col_start = col_idx;
-          U64 run_col_opl = col_idx + 1;
-          String8List run_parts = {0};
-          str8_list_push(arena, &run_parts, run_string);
-          for(; run_col_opl < feed->cols; run_col_opl += 1)
-          {
-            FNT_Tag next_font = {0};
-            Vec4F32 next_fg = {0};
-            String8 next_string = {0};
-            if(!uishell_terminal_cell_text_run_info(arena, renderer, feed, cell_count, cursors, row_idx, run_col_opl, &next_font, &next_fg, &next_string) ||
-               !fnt_tag_match(next_font, run_font) ||
-               !uishell_terminal_vec4_match(next_fg, run_fg))
-            {
-              break;
-            }
-            str8_list_push(arena, &run_parts, next_string);
-          }
-          String8 joined = str8_list_join(arena, &run_parts, 0);
-          if(joined.size != 0)
-          {
-            Vec2F32 text_pos =
-            {
-              .x = canvas_rect.x0 + (F32)run_col_start*cell_width_px,
-              .y = text_y,
-            };
-            FNT_Run joined_run = dr_fnt_run_from_string(run_font, font_size, 0, 0, raster_flags, joined);
-            if(renderer->trace_enabled && (renderer->trace_all_rows || renderer->trace_row == row_idx))
-            {
-              uishell_terminal_trace_run(arena, renderer, str8_lit("batched"), row_idx, run_col_start, run_col_opl, &feed->cells[row_idx*(U64)feed->cols + run_col_start], UIShell_TerminalCellTextPath_NormalMask, run_font, raster_flags, joined, joined_run, text_pos, font_metrics.descent, run_fg);
-            }
-            uishell_terminal_draw_run_at_row_baseline(joined_run, text_pos, run_fg);
-          }
-          col_idx = run_col_opl;
-          continue;
-        }
-
-        if(cell->grapheme_count != 0 &&
-           !uishell_terminal_cell_is_spacer(cell) &&
-           !uishell_terminal_cell_is_kitty_placeholder(cell) &&
-           !(cell->flags & CLEAT_CELL_FLAG_INVISIBLE))
-        {
-          String8 string = uishell_terminal_string_from_cell(arena, cell);
-          B32 drew_sprite = 0;
-          Vec4F32 fg = uishell_terminal_text_color_from_cell(cell);
-          if(uishell_terminal_cursor_array_cell_is_filled(feed, cell_count, cursors, row_idx, col_idx))
-          {
-            fg = uishell_terminal_rgba_from_rgb(uishell_terminal_cell_bg(cell));
-          }
-          Rng2F32 cell_rect =
-          {
-            .x0 = floor_f32(canvas_rect.x0 + (F32)col_idx*cell_width_px),
-            .y0 = row_y0,
-            .x1 = ceil_f32(canvas_rect.x0 + (F32)(col_idx + cell_cols)*cell_width_px),
-            .y1 = row_y1,
-          };
-          if(cell->grapheme_count == 1)
-          {
-            drew_sprite = uishell_terminal_draw_direct_sprite(cell->graphemes[0], cell_rect, fg);
-          }
-          if(!drew_sprite && !(string.size == 1 && string.str[0] == ' '))
-          {
-            UIShell_TerminalCellTextDecision text_decision = uishell_terminal_cell_text_decision_from_cell(arena, renderer, cell);
-            if(text_decision.path == UIShell_TerminalCellTextPath_Missing)
-            {
-              uishell_terminal_draw_missing_glyph(cell_rect, fg);
-            }
-            else
-            {
-              // Backgrounds/cursors cover whole pixels, but glyph origins share
-              // the fractional grid used within text runs. A cursor, style or
-              // colour boundary must not change the phase of subsequent glyphs.
-              // At 1x, fractional-width cells intentionally retain subpixel
-              // sampling instead of changing sharpness as the cursor moves.
-              if(text_decision.path == UIShell_TerminalCellTextPath_NormalMask)
-              { cell_rect.x0 = canvas_rect.x0 + (F32)col_idx*cell_width_px; }
-              if(renderer->trace_enabled && (renderer->trace_all_rows || renderer->trace_row == row_idx))
-              {
-                uishell_terminal_trace_run(arena, renderer, str8_lit("cell"), row_idx, col_idx, col_idx + cell_cols, cell, text_decision.path, text_decision.font, text_decision.raster_flags, text_decision.string, text_decision.run, v2f32(cell_rect.x0, text_y), font_metrics.descent, fg);
-              }
-              uishell_terminal_draw_text_decision_in_cell(text_decision, cell_rect, text_y, fg);
-              if((cell->flags & CLEAT_CELL_FLAG_BOLD) && text_decision.path != UIShell_TerminalCellTextPath_SourceColor)
-              {
-                Rng2F32 bold_rect = shift_2f32(cell_rect, v2f32(1.f, 0));
-                uishell_terminal_draw_text_decision_in_cell(text_decision, bold_rect, text_y, fg);
-              }
-            }
-          }
-
-          if(cell->flags & (CLEAT_CELL_FLAG_UNDERLINE|CLEAT_CELL_FLAG_STRIKETHROUGH|CLEAT_CELL_FLAG_OVERLINE))
-          {
-            Vec4F32 line_color = uishell_terminal_text_color_from_cell(cell);
-            F32 x0 = floor_f32(canvas_rect.x0 + (F32)col_idx*cell_width_px);
-            F32 x1 = ceil_f32(canvas_rect.x0 + (F32)(col_idx + cell_cols)*cell_width_px);
-            F32 thickness = Clamp(1.f, floor_f32(cell_height_px*0.08f), 2.f);
-            if(cell->flags & CLEAT_CELL_FLAG_UNDERLINE)
-            {
-              dr_rect(r2f32p(x0, row_y1 - thickness, x1, row_y1), line_color, 0, 0, 0);
-            }
-            if(cell->flags & CLEAT_CELL_FLAG_STRIKETHROUGH)
-            {
-              F32 y = floor_f32((row_y0 + row_y1)*0.5f);
-              dr_rect(r2f32p(x0, y, x1, y + thickness), line_color, 0, 0, 0);
-            }
-            if(cell->flags & CLEAT_CELL_FLAG_OVERLINE)
-            {
-              dr_rect(r2f32p(x0, row_y0, x1, row_y0 + thickness), line_color, 0, 0, 0);
-            }
-          }
-        }
-        col_idx += 1;
-      }
+      uishell_terminal_draw_row_text(arena, renderer, params, feed, cell_count, cursors, row_idx);
     }
 
     // Image plane over text (z >= 0).
@@ -9756,6 +9804,154 @@ uishell_terminal_glyph_renderer_draw_cell_feed(Arena *arena, UIShell_TerminalGly
 {
   UIShell_TerminalCursorArray cursors = {0};
   uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(arena, renderer, params, feed, cursors);
+}
+
+//- row-granular retained drawing
+
+// What a row's drawing depends on from the cursors: the ones on that row.
+// Fields are hashed one by one; cleat_cursor has padding.
+internal U64
+uishell_terminal_row_cursor_key(UIShell_TerminalCursorArray cursors, U64 row_idx)
+{
+  U64 key = 0;
+  for(U64 idx = 0; idx < cursors.count; idx += 1)
+  {
+    cleat_cursor const *c = &cursors.v[idx];
+    if(c->row != row_idx) { continue; }
+    U64 fields[] = {idx, c->col, c->visible, c->style, c->blink, c->wide_tail};
+    key = key*1099511628211ull ^ u64_hash_from_str8(str8((U8 *)fields, sizeof(fields)));
+  }
+  return key;
+}
+
+internal void
+uishell_terminal_row_cache_release(UIShell_TerminalRowCache *row_cache)
+{
+  for(U64 idx = 0; idx < row_cache->count; idx += 1)
+  {
+    if(row_cache->entries[idx].arena != 0) { arena_release(row_cache->entries[idx].arena); }
+  }
+  if(row_cache->arena != 0) { arena_release(row_cache->arena); }
+  MemoryZeroStruct(row_cache);
+}
+
+// Draws what uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors draws,
+// in the same order, keeping each row's backgrounds and text in row_cache and
+// rebuilding only the rows whose cells (feed->row_generations), cursor or
+// style_key changed since the last draw. style_key must change with anything
+// else a row's drawing depends on: canvas, cell size, font, raster scale. A
+// row a scroll moved is drawn from its old row's drawing, moved, when the
+// cell height is a whole number of pixels, so the move is exact. Images and
+// the cursor overlay are drawn afresh; they're cheap.
+internal void
+uishell_terminal_glyph_renderer_draw_cell_feed_rows(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, UIShell_TerminalCellFeed const *feed, UIShell_TerminalCursorArray cursors, UIShell_TerminalRowCache *row_cache, U64 style_key)
+{
+  row_cache->rows_built = row_cache->rows_moved = row_cache->rows_reused = row_cache->cells_built = 0;
+  uishell_terminal_cursor_array_from_feed(feed, &cursors);
+  if(feed->cells == 0 || feed->cols == 0 || feed->rows == 0) { return; }
+  U64 expected_cell_count = (U64)feed->cols*(U64)feed->rows;
+  U64 cell_count = Min(feed->cell_count, expected_cell_count);
+  Rng2F32 canvas_rect = params->canvas_rect;
+  F32 cell_height_px = params->cell_height_px;
+  B32 rows_can_move = (cell_height_px == floor_f32(cell_height_px));
+
+  // Lay out this draw's rows: take each row's entry from wherever its cells
+  // were last drawn, or start it empty.
+  U64 count = feed->rows;
+  Temp scratch = scratch_begin(&arena, 1);
+  UIShell_TerminalRowCacheEntry *entries = push_array(scratch.arena, UIShell_TerminalRowCacheEntry, count);
+  B8 *moved = push_array(scratch.arena, B8, count);
+  S64 delta_hint = 0;
+  for(U64 row_idx = 0; row_idx < count; row_idx += 1)
+  {
+    U64 row_generation = feed->row_generations ? feed->row_generations[row_idx] : 0;
+    if(row_generation == 0) { continue; }
+    S64 found = -1;
+    S64 hinted = (S64)row_idx + delta_hint;
+    if(hinted >= 0 && hinted < (S64)row_cache->count && row_cache->entries[hinted].row_generation == row_generation) { found = hinted; }
+    for(U64 old_idx = 0; found < 0 && old_idx < row_cache->count; old_idx += 1)
+    {
+      if(row_cache->entries[old_idx].row_generation == row_generation) { found = (S64)old_idx; }
+    }
+    if(found >= 0 && (found == (S64)row_idx || rows_can_move))
+    {
+      entries[row_idx] = row_cache->entries[found];
+      MemoryZeroStruct(&row_cache->entries[found]);
+      moved[row_idx] = (found != (S64)row_idx);
+      delta_hint = found - (S64)row_idx;
+    }
+  }
+  // Rows nothing took are gone.
+  for(U64 old_idx = 0; old_idx < row_cache->count; old_idx += 1)
+  {
+    if(row_cache->entries[old_idx].arena != 0) { arena_release(row_cache->entries[old_idx].arena); }
+  }
+  if(row_cache->arena == 0) { row_cache->arena = arena_alloc(.reserve_size = KB(64), .commit_size = KB(4), .name = "terminal row cache"); }
+  if(row_cache->count != count)
+  {
+    arena_clear(row_cache->arena);
+    row_cache->entries = push_array(row_cache->arena, UIShell_TerminalRowCacheEntry, count);
+    row_cache->count = count;
+  }
+  MemoryCopy(row_cache->entries, entries, count*sizeof(*entries));
+  entries = row_cache->entries;
+
+  // Build what's stale.
+  for(U64 row_idx = 0; row_idx < count; row_idx += 1)
+  {
+    UIShell_TerminalRowCacheEntry *entry = &entries[row_idx];
+    F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
+    F32 row_y1 = ceil_f32(canvas_rect.y0 + (F32)(row_idx + 1)*cell_height_px);
+    B32 visible = !(row_y0 >= canvas_rect.y1 || row_y1 <= canvas_rect.y0);
+    U64 row_generation = feed->row_generations ? feed->row_generations[row_idx] : 0;
+    U64 cursor_key = uishell_terminal_row_cursor_key(cursors, row_idx);
+    B32 fresh = (entry->row_generation != 0 &&
+                 entry->row_generation == row_generation &&
+                 entry->cursor_key == cursor_key &&
+                 entry->style_key == style_key &&
+                 entry->visible == visible &&
+                 !renderer->trace_enabled &&
+                 fnt_atlas_use_keep(&entry->atlases));
+    if(fresh)
+    {
+      if(moved[row_idx]) { row_cache->rows_moved += 1; }
+      else               { row_cache->rows_reused += 1; }
+      continue;
+    }
+    if(entry->arena == 0) { entry->arena = arena_alloc(.reserve_size = KB(256), .commit_size = KB(4), .name = "terminal row draw"); }
+    else                  { arena_clear(entry->arena); }
+    entry->backgrounds = dr_bucket_make_on(entry->arena);
+    entry->text = dr_bucket_make_on(entry->arena);
+    U64 outer_atlas_use = fnt_atlas_use_begin();
+    DR_BucketScope(entry->backgrounds) { uishell_terminal_draw_row_backgrounds(params, feed, cell_count, cursors, row_idx); }
+    DR_BucketScope(entry->text) { uishell_terminal_draw_row_text(arena, renderer, params, feed, cell_count, cursors, row_idx); }
+    fnt_atlas_use_end(outer_atlas_use, &entry->atlases);
+    // A traced build isn't kept: the next draw traces or builds again.
+    entry->row_generation = renderer->trace_enabled ? 0 : row_generation;
+    entry->cursor_key = cursor_key;
+    entry->style_key = style_key;
+    entry->built_y = row_y0;
+    entry->visible = visible;
+    row_cache->rows_built += 1;
+    row_cache->cells_built += feed->cols;
+  }
+
+  // Lay the rows down as the full draw does.
+  dr_rect(canvas_rect, params->background_color, 0, 0, 0);
+  for(U64 row_idx = 0; row_idx < count; row_idx += 1)
+  {
+    F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
+    dr_append_bucket(entries[row_idx].backgrounds, v2f32(0, row_y0 - entries[row_idx].built_y));
+  }
+  uishell_terminal_draw_image_plane(arena, params, 1);
+  for(U64 row_idx = 0; row_idx < count; row_idx += 1)
+  {
+    F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
+    dr_append_bucket(entries[row_idx].text, v2f32(0, row_y0 - entries[row_idx].built_y));
+  }
+  uishell_terminal_draw_image_plane(arena, params, 0);
+  uishell_terminal_draw_cursor_overlay(feed, cell_count, cursors, canvas_rect, params->cell_width_px, cell_height_px);
+  scratch_end(scratch);
 }
 
 internal void

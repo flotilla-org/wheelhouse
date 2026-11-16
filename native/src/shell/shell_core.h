@@ -204,6 +204,11 @@ enum
   UIShell_CmdFlag_ListInTextPt  = (1<<3),
   UIShell_CmdFlag_ListInTextRng = (1<<4),
   UIShell_CmdFlag_GlobalShortcut = (1<<5), // Binding precedes embedded content.
+  // The Automation Endpoint lists it, and may invoke it, though the palette
+  // doesn't list it (ADR 0014).
+  UIShell_CmdFlag_Automation     = (1<<6),
+  // It is about focus, so an invocation of it may move focus (ADR 0014).
+  UIShell_CmdFlag_Focus          = (1<<7),
 };
 
 typedef enum UIShell_AppRegSlot
@@ -331,6 +336,9 @@ struct UIShell_Regs
   String8 string;
   String8 cmd_name;
   WM_Event *wm_event;
+  // The Automation Endpoint invocation this runs for (uishell_automation.c),
+  // or 0; what it pushes runs for it too.
+  U64 automation;
 };
 
 #define UISHELL_REGS_LIT_INIT_TOP \
@@ -365,7 +373,8 @@ struct UIShell_Regs
 .dir2 = uishell_regs()->dir2,\
 .string = uishell_regs()->string,\
 .cmd_name = uishell_regs()->cmd_name,\
-.wm_event = uishell_regs()->wm_event,
+.wm_event = uishell_regs()->wm_event,\
+.automation = uishell_regs()->automation,
 
 #include "generated/shell.meta.h"
 

@@ -1492,8 +1492,9 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       Rng2F32 view_rect = r2f32p(0, 0, 320, 600);
       // Frames: 0 lays out; 1-2 click the disclosure; 3 checks the card;
       // 4-5 click its ⌄ to collapse it again; 6 settles; 7-8 click the row;
-      // 9 hovers; 10-11 click ×.
-      Vec2F32 expand_at = {0}, row_at = {0}, remove_at = {0}, collapse_at = {0};
+      // 9 hovers; 10-11 click its ⋯; 12 settles with the menu open; 13-14
+      // click Remove pin.
+      Vec2F32 expand_at = {0}, row_at = {0}, remove_at = {0}, item_at = {0}, collapse_at = {0};
       B32 row_seen = 0, card_before = 0, card_after = 0, marker = 0, collapse_control = 0, row_again = 0;
       fixture.card_has_action = 0;
       B32 queued = 0, hover_offered = 0;
@@ -1503,16 +1504,17 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       uishell_sidebar_card_close(&fixture.cards[0]); fixture.cards[0].candidate = (WheelhouseEntity){0};
       // Two settle frames publish and place the ghost before frame 0.
       B32 row_lingers = 0;
-      for(U32 step = 0; step < 16; step++)
+      for(U32 step = 0; step < 22; step++)
       {
         U32 frame = step < 2 ? 0 : step-2;
         B32 settled = step >= 2;
         Vec2F32 at = frame == 1 || frame == 2 ? expand_at : frame == 4 || frame == 5 ? collapse_at :
-          frame >= 7 && frame <= 9 ? row_at : frame >= 10 ? remove_at : v2f32(-100, -100);
+          frame >= 7 && frame <= 9 ? row_at : frame >= 10 && frame <= 12 ? remove_at : frame == 13 || frame == 14 ? item_at : v2f32(-100, -100);
         UI_EventList events = {0};
-        UI_Event event = {.kind = (frame == 1 || frame == 4 || frame == 7 || frame == 10) ? UI_EventKind_Press : UI_EventKind_Release,
+        UI_Event event = {.kind = (frame == 1 || frame == 4 || frame == 7 || frame == 10 || frame == 13) ? UI_EventKind_Press : UI_EventKind_Release,
           .key = WM_Key_LeftMouseButton, .pos = at};
-        if(settled && (frame == 1 || frame == 2 || frame == 4 || frame == 5 || frame == 7 || frame == 8 || frame == 10 || frame == 11))
+        if(settled && (frame == 1 || frame == 2 || frame == 4 || frame == 5 || frame == 7 || frame == 8 || frame == 10 || frame == 11 ||
+                       frame == 13 || frame == 14))
         { ui_event_list_push(test->arena, &events, &event); }
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         test->mouse = at; test->hover_card_extra = 0; MemoryZeroArray(test->hover_card_keys);
@@ -1531,11 +1533,12 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           UIShell_SidebarNode n = {0}; uishell_sidebar_node(&fixture, i, &n);
           if(str8_match(uishell_sidebar_string(n.entity.id), ghost_guid, 0)) { node_key = push_str8_copy(ghost_scratch.arena, uishell_sidebar_string(n.key)); }
         }
-        // After × (frames 10-11), the ghost's row goes too, once republished.
-        if(settled && frame == 13) { row_lingers = node_key.size != 0; }
+        // After Remove pin (frames 13-14), the ghost's row goes too, once
+        // republished.
+        if(settled && frame == 17) { row_lingers = node_key.size != 0; }
         String8 row_suffix = push_str8f(ghost_scratch.arena, "###sidebar_row_%S", node_key);
         String8 expand_suffix = push_str8f(ghost_scratch.arena, "###toggle_%S", node_key);
-        String8 remove_suffix = push_str8f(ghost_scratch.arena, "###close_%S", node_key);
+        String8 remove_suffix = push_str8f(ghost_scratch.arena, "###more_%S", node_key);
         if(settled && frame == 8)
         {
           U64 workspaces_after = 0;
@@ -1553,12 +1556,17 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
           if(ui_key_match(b->key, ui_key_from_string(seed, row_suffix)))
           { row_seen = 1; row_at = v2f32(b->rect.x0+(b->rect.x1-b->rect.x0)*0.6f, (b->rect.y0+b->rect.y1)*0.5f); }
           if(ui_key_match(b->key, ui_key_from_string(seed, expand_suffix))) { expand_at = center_2f32(b->rect); }
-          if(ui_key_match(b->key, ui_key_from_string(seed, remove_suffix))) { remove_at = center_2f32(b->rect); }
+          if(node_key.size && str8_ends_with(b->string, remove_suffix, 0)) { remove_at = center_2f32(b->rect); }
           if(frame == 3 && ui_key_match(b->key, ui_key_from_string(seed, str8_lit("###card_collapse")))) { collapse_control = 1; collapse_at = center_2f32(b->rect); }
           if(settled && frame == 6 && ui_key_match(b->key, ui_key_from_string(seed, expand_suffix))) { row_again = 1; }
           if(ui_key_match(b->key, ui_key_from_string(seed, card_suffix)))
           { if(settled && frame == 0) { card_before = 1; } if(frame == 3) { card_after = 1; } }
           if(settled && frame == 0 && str8_match(ui_box_display_string(b), str8_lit("↗"), 0)) { marker = 1; }
+        }
+        if(settled && frame == 12)
+        {
+          for(UI_Box *b = test->ctx_menu_root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->ctx_menu_root).next)
+          { if(str8_match(ui_box_display_string(b), str8_lit("Remove pin"), 0)) { item_at = center_2f32(b->rect); } }
         }
         if(settled && frame == 9) { hover_offered = uishell_sidebar_card_entity_match(fixture.cards[0].candidate, uishell_sidebar_card_entity(entity)) ||
           (fixture.cards[0].open && uishell_sidebar_card_entity_match(fixture.cards[0].subject, uishell_sidebar_card_entity(entity))); }
@@ -1571,7 +1579,7 @@ uishell_hover_card_diagnostics(RD_WindowState *ws)
       CardCheck(!row_lingers, "a removed ghost's row goes away");
       CardCheck(queued, "clicking a ghost row goes to its source");
       CardCheck(hover_offered, "hovering a ghost row offers its subject's hover card");
-      CardCheck(!uishell_sidebar_pin_by_ghost(window, ghost_guid) && !ghost_card->open, "× on a ghost row removes the ghost");
+      CardCheck(!uishell_sidebar_pin_by_ghost(window, ghost_guid) && !ghost_card->open, "Remove pin in a ghost row's ⋯ menu removes the ghost");
       CardCheck(uishell_sidebar_card_find(&fixture, uishell_sidebar_card_entity(entity), 0) != WHEELHOUSE_NONE, "removing a ghost leaves its source");
       fixture.card_has_action = 0;
       scratch_end(ghost_scratch);

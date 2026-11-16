@@ -13742,6 +13742,13 @@ rd_frame(void)
         // rjf: request frame
         rd_request_frame();
         
+        // An Automation Endpoint invocation's commands may be refused, and
+        // the user errors they log are its result (ADR 0014); they still
+        // reach the user.
+        U64 automation = cmd->regs->automation;
+        if(automation != 0 && !UISHELL_APP_AUTOMATION_ADMIT(cmd->name, cmd->regs)) { continue; }
+        if(automation != 0) { log_scope_begin(); }
+        
         // rjf: process command
         for(UIShell_CmdPack *pack = rd_state->first_cmd_pack; pack != 0; pack = pack->next)
         {
@@ -13749,6 +13756,15 @@ rd_frame(void)
           {
             break;
           }
+        }
+        
+        if(automation != 0)
+        {
+          Temp log_scratch = scratch_begin(0, 0);
+          LogScopeResult log = log_scope_end(log_scratch.arena);
+          UISHELL_APP_AUTOMATION_RAN(automation, log.strings[LogMsgKind_UserError]);
+          for EachEnumVal(LogMsgKind, kind) { if(log.strings[kind].size) { log_msg(kind, log.strings[kind]); } }
+          scratch_end(log_scratch);
         }
       }
     }

@@ -1,5 +1,6 @@
 # The logical state (native/src/uishell/uishell_logical_state.c) main (f17979d) opens main_profile/ with,
 # written by main's build of tools/test-state-behaviour.py (its migrate phase), not by --update-goldens.
+# Since #759 a standing role is a row of its own, not an inline chip: the governor row has no layout=inline.
 subscriptions none
 window 1
   workspaces
@@ -53,7 +54,7 @@ window 1
     rows
       region "Projects"
         row project/p "Example project" openable collapsed
-          row role/p/governor "governor" layout=inline openable status="running"
+          row role/p/governor "governor" openable status="running"
           row .workspace "Notes" live
           row convoy/build "Ship sidebar subjects" openable status="active" collapsed
             row change_request/pr-281 "!281" layout=inline openable status="ready_to_merge"

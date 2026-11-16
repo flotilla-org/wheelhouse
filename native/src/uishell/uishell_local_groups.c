@@ -451,6 +451,22 @@ uishell_sidebar_make(CFG_Node *window, UIShell_MakeAction action, String8 name)
   if(action.kind == UIShell_Make_ProjectWorkspace) { uishell_new_workspace_in(window, name, str8_zero(), action.project); }
 }
 
+// Opens the footer keyed `key` as a name field for its action `index`, as
+// choosing that action there does. A group header's + names what it makes in
+// its group's footer, which needn't be open on hover (DEV_sidebar_footer_rows).
+internal void
+uishell_sidebar_make_begin(UIShell_SidebarState *state, String8 key, U32 index)
+{
+  state->make_key = u64_hash_from_str8(key);
+  state->make_build = ui_state->build_index;
+  state->make_index = index;
+  state->rename_size = 0; state->rename_cursor = state->rename_mark = txt_pt(1, 1);
+  // One name field at a time: this ends a rename in progress
+  // unapplied, as Esc would.
+  state->rename_focus = 1; state->rename_node = 0;
+  rd_request_frame();
+}
+
 // The footer keyed `key`, open while `engaged` or naming; returns the height
 // it takes this frame (it animates open and closed). `inset` lines its
 // text up with the rows above it.
@@ -505,17 +521,7 @@ uishell_sidebar_make_footer(UIShell_SidebarState *state, CFG_Node *window, Strin
         UI_Signal sig;
         UI_PrefWidth(ui_text_dim(10.f, 1)) UI_CornerRadius(3.f) UI_PrefHeight(ui_px(row_height-4.f, 1))
         { sig = uishell_sidebar_button(label); }
-        if(ui_clicked(sig))
-        {
-          state->make_key = u64_hash_from_str8(key);
-          state->make_build = ui_state->build_index;
-          state->make_index = (U32)i;
-          state->rename_size = 0; state->rename_cursor = state->rename_mark = txt_pt(1, 1);
-          // One name field at a time: this ends a rename in progress
-          // unapplied, as Esc would.
-          state->rename_focus = 1; state->rename_node = 0;
-          rd_request_frame();
-        }
+        if(ui_clicked(sig)) { uishell_sidebar_make_begin(state, key, (U32)i); }
       }
     }
   }

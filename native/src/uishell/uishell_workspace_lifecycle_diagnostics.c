@@ -290,9 +290,102 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     { row_keys[row_key_count++] = push_str8_copy(scratch.arena, uishell_sidebar_string(n.key)); }
   }
 
-  //- The Workspaces group offers New workspace in a footer that opens at its
-  //  last row, and reports it hosted chrome. Hovering a row shows detach (subject) or × (none) in the
-  //  right margin beside it, leaving the row's own status mark in place.
+  //- A project's header is its project workspace (sidebar-headers.md, One
+  //  row, one workspace): a click on it opens the workspace, leaving the
+  //  project open (its disclosure collapses it). ⋯ in its status slot, as
+  //  a row's, opens the project workspace's menu, so it shows only once that
+  //  has something.
+  {
+    String8 config = push_str8f(scratch.arena, "%s\nworkspace kind=\"project\"\n", uishell_sidebar_fixture_config);
+    LifecycleCheck(wheelhouse_configure(state->core, uishell_sidebar_text(config), 0), "configure a project workspace");
+    uishell_sidebar_refresh(state);
+    UIShell_SidebarNode project = {0};
+    LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_lit("p"), 0, &project) && project.state != WHEELHOUSE_LIVE,
+                   "the fixture project isn't open");
+    String8 key = push_str8_copy(scratch.arena, uishell_sidebar_string(project.key));
+    UI_State *saved_ui = ui_state, *test = ui_state_alloc();
+    ui_select_state(test);
+    Vec2F32 title = {0};
+    B32 more_closed = 0, more_open = 0, more_inside = 0, menu_opened = 0;
+    Vec2F32 more_at = {0};
+    // Frames: 0-1 hover the header (no ⋯), 2 presses its title, 3 releases,
+    // 4-5 hover it again (⋯, the workspace open), 6 presses ⋯, 7 releases,
+    // 8 settles with its menu open.
+    for(U32 frame = 0; frame < 9; frame++)
+    {
+      split = uishell_root_controlled_split_from_window(scratch.arena, window);
+      UI_IconInfo icons = ws->ui->icon_info;
+      UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
+      if(frame == 2 || frame == 3 || frame == 6 || frame == 7)
+      {
+        event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame % 2 == 0 ? UI_EventKind_Press : UI_EventKind_Release,
+                             .pos = frame < 6 ? title : more_at};
+        events.first = events.last = &event; events.count = 1;
+      }
+      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+      U64 built = test->build_index;
+      ui_state->mouse = frame == 0 ? v2f32(-100, -100) : frame >= 6 ? more_at : title;
+      UIShell_RegsScope(.window = window->id)
+      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+      { uishell_sidebar_ui(r2f32p(0, 0, 320, 900), &split); }
+      uishell_sidebar_drag_finish(ws);
+      ui_end_build();
+      if(frame == 0)
+      {
+        // Just inside the row's start: its title, short of + and ⋯.
+        UI_Box *row = ui_box_from_key(ui_key_zero());
+        for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
+        { if(!ui_box_is_nil(b->parent) && ui_key_match(b->key, ui_key_from_stringf(b->parent->key, "###entry_%S", key))) { row = b; break; } }
+        title = v2f32(row->rect.x0+20.f, (row->rect.y0+row->rect.y1)*0.5f);
+      }
+      B32 more = 0;
+      UI_Box *row = &ui_nil_box;
+      for(UI_Box *b = test->root; !ui_box_is_nil(b); b = ui_box_rec_df_pre(b, test->root).next)
+      {
+        if(!ui_box_is_nil(b->parent) && ui_key_match(b->key, ui_key_from_stringf(b->parent->key, "###entry_%S", key))) { row = b; }
+        if(str8_ends_with(b->string, push_str8f(scratch.arena, "###more_%S", key), 0) && b->last_touched_build_index == built)
+        {
+          more = 1;
+          if(frame == 5)
+          {
+            more_at = center_2f32(b->rect);
+            more_inside = !ui_box_is_nil(row) && b->rect.x0 >= row->rect.x0 && b->rect.x1 <= row->rect.x1+0.5f;
+          }
+        }
+      }
+      if(frame == 8) { menu_opened = ui_any_ctx_menu_is_open(); ui_ctx_menu_close(); }
+      // As a window's frame does, the sidebar observes what the click opened.
+      if(frame >= 3)
+      {
+        split = uishell_root_controlled_split_from_window(scratch.arena, window);
+        uishell_sidebar_observe(state, &split);
+        uishell_sidebar_refresh(state);
+      }
+      if(frame == 1) { more_closed = more; }
+      if(frame == 5) { more_open = more; }
+    }
+    ui_select_state(saved_ui); ui_state_release(test);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(state, &split);
+    uishell_sidebar_refresh(state);
+    uishell_workspace_lifecycle_find(state, str8_lit("p"), 0, &project);
+    LifecycleCheck(title.x > 0 && !more_closed, "a project with no open workspace or order shows no ⋯");
+    LifecycleCheck(project.state == WHEELHOUSE_LIVE && !project.collapsed, "a click on its header opens its workspace, and leaves it open");
+    LifecycleCheck(more_open && more_inside && uishell_sidebar_close_kind(project) != UIShell_SidebarCloseKind_None,
+                   "once open, it shows ⋯ in its status slot, as a row does, for the workspace's menu, which leads with its close");
+    LifecycleCheck(menu_opened, "⋯ opens the project workspace's menu");
+    CFG_Node *opened = cfg_node_from_id(uishell_sidebar_node_cfg(&project));
+    if(opened != &cfg_nil_node) { uishell_workspace_close(window, uishell_workspace_id_from_cfg(opened), 0); }
+    LifecycleCheck(wheelhouse_configure(state->core, uishell_sidebar_text(str8_cstring((char *)uishell_sidebar_fixture_config)), 0), "restore the fixture config");
+    uishell_sidebar_refresh(state);
+  }
+
+  //- Hovering a row swaps its status mark for ⋯, inside the row, and ⋯ opens
+  //  the row's menu, which leads with the close the core chooses: Detach
+  //  workspace for a subject, Close workspace for none. The Workspaces group
+  //  hosts chrome: its header's + makes a workspace, and its New workspace
+  //  footer opens on hover only with the dev toggle sidebar_footer_rows
+  //  (sidebar-headers.md, One row, one workspace).
   {
     UI_State *saved_ui = ui_state, *test = ui_state_alloc();
     ui_select_state(test);
@@ -300,12 +393,12 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     ws->chrome_niche[RD_ChromeElementKind_NewWorkspace] = RD_ChromeNiche_SectionHeader;
     split = uishell_root_controlled_split_from_window(scratch.arena, window);
     B32 entry_row = 0, titled = 0, footer_open[3] = {0};
-    Rng2F32 subjectless_row = {0}, subjectless_close = {0};
     // Frames: 0-1 settle with no hover, 2-3 hover the subject row, 4-5 hover
     // the subjectless row. Each hover reads the previous frame's row rect.
     Vec2F32 row_centers[2] = {0}; // [0] subject, [1] subjectless
+    Rng2F32 row_rects[2] = {0};
     // Boxes not rebuilt are recycled, so record what each hover phase drew.
-    B32 close_seen[3] = {0}, detach_drawn[3] = {0}, x_drawn[3] = {0};
+    B32 more_seen[3] = {0}, more_inside[3] = {0};
     for(U32 frame = 0; frame < 6; frame++)
     {
       UI_IconInfo icons = ws->ui->icon_info;
@@ -320,16 +413,10 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
       for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
       {
         if(ui_box_is_nil(box->parent)) { continue; }
-        // Workspaces offers New workspace in its footer (sidebar-headers.md).
         if(str8_match(box->string, str8_lit("###make_section_.section:workspaces"), 0))
         {
           entry_row = 1;
           if(dim_2f32(box->rect).y >= 1 && frame % 2 == 1) { footer_open[hover] = 1; }
-          for(UI_Box *a = box->parent; !ui_box_is_nil(a) && !ui_box_is_nil(a->parent); a = a->parent)
-          {
-            if(ui_key_match(a->key, ui_key_from_string(a->parent->key, str8_lit("###section_header_.section:workspaces"))))
-            { entry_row = 0; }
-          }
         }
         if(ui_key_match(box->key, ui_key_from_string(box->parent->key, str8_lit("###section_.section:workspaces"))))
         { titled = str8_match(ui_box_display_string(box), str8_lit("WORKSPACES"), 0); }
@@ -338,42 +425,46 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
           U64 slot = r == 0 ? 1 : 0;
           if(ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###sidebar_row_%S", row_keys[r])) &&
              row_centers[slot].x == 0)
-          { row_centers[slot] = center_2f32(box->rect); }
-          if(r == 0 && ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###sidebar_row_%S", row_keys[r])))
-          { subjectless_row = box->rect; }
-          if(frame % 2 == 1 &&
-             ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###close_%S", row_keys[r])))
+          { row_centers[slot] = center_2f32(box->rect); row_rects[slot] = box->rect; }
+          if(frame % 2 == 1 && str8_ends_with(box->string, push_str8f(scratch.arena, "###more_%S", row_keys[r]), 0))
           {
-            close_seen[hover] = 1;
-            detach_drawn[hover] = box->custom_draw == rd_workspace_detach_icon_draw && ui_box_display_string(box).size == 0;
-            x_drawn[hover] = box->custom_draw == 0 && str8_match(ui_box_display_string(box), str8_lit("×"), 0);
-            LifecycleCheck(box->display_fruns.dim.x <= dim_2f32(box->rect).x, "margin control's glyph fits its hit area");
-            if(r == 0) { subjectless_close = box->rect; }
+            more_seen[hover] = 1;
+            Rng2F32 row = row_rects[slot];
+            more_inside[hover] = box->rect.x0 >= row.x0 && box->rect.x1 <= row.x1+0.5f;
           }
         }
       }
     }
-    // Clicking the affordance queues its command for that row's workspace:
-    // hover to reveal it, then press and release on the button itself.
+    LifecycleCheck(row_centers[0].x > 0 && row_centers[1].x > 0, "subject and subjectless rows are rendered");
+    LifecycleCheck(!more_seen[0], "no ⋯ without hover");
+    LifecycleCheck(more_seen[1] && more_inside[1], "hovering a subject row shows ⋯ inside it");
+    LifecycleCheck(more_seen[2] && more_inside[2], "hovering a subjectless row shows ⋯ inside it");
+    LifecycleCheck(ws->chrome_section_header_frame == rd_state->frame_index+1, "Workspaces records the frame it hosted chrome");
+    LifecycleCheck(titled, "the local workspace section is titled Workspaces");
+    LifecycleCheck(entry_row && !footer_open[0] && !footer_open[1] && !footer_open[2],
+                   "without the dev toggle the Workspaces footer is built closed");
+
+    // ⋯ opens the row's menu; its first item is the close, and choosing it
+    // queues that command for the row's workspace.
+    // Frames: 0-1 hover the row, 2 presses ⋯, 3 releases, 4-5 settle with
+    // the menu open, 6 presses its first item, 7 releases, 8 settles.
     for(U32 target = 0; target < 2; target++)
     {
-      // The subject is a tree chip and an Attention row; the row hosts the button.
-      Vec2F32 hover_at = target == 0 ? row_centers[0] : row_centers[1];
-      Vec2F32 button = {0};
       String8 command = target == 0 ? str8_lit("detach_workspace") : str8_lit("close_workspace");
+      String8 label = target == 0 ? str8_lit("Detach workspace") : str8_lit("Close workspace");
       CFG_ID expected = target == 0 ? subject_id : loose_id;
       U64 queued_before = uishell_workspace_lifecycle_queued(command, expected);
-      // Frames 0-1 hover the row (the affordance follows the previous frame's
-      // row rect), 2 presses and 3 releases on the button, 4 settles.
-      for(U32 frame = 0; frame < 5; frame++)
+      Vec2F32 more = {0}, item = {0};
+      B32 menu_open = 0, leads = 0;
+      for(U32 frame = 0; frame < 9; frame++)
       {
         UI_IconInfo icons = ws->ui->icon_info;
         UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
-        Vec2F32 at = frame < 2 || button.x == 0 ? hover_at : button;
-        if(frame == 2 || frame == 3)
+        Vec2F32 at = frame < 2 || more.x == 0 ? row_centers[target] : frame < 6 || item.x == 0 ? more : item;
+        if(frame == 2 || frame == 3 || frame == 6 || frame == 7)
         {
-          event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 2 ? UI_EventKind_Press : UI_EventKind_Release,
-                               .pos = at, .timestamp_us = 5000000+frame*50000};
+          event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame % 2 == 0 ? UI_EventKind_Press : UI_EventKind_Release,
+                               .pos = at, .timestamp_us = 5000000+(target*10+frame)*50000};
           events.first = events.last = &event; events.count = 1;
         }
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
@@ -386,131 +477,120 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
         {
           for(U64 r = target == 0 ? 1 : 0; r < (target == 0 ? row_key_count : 1); r++)
           {
-            if(!ui_box_is_nil(box->parent) && ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###close_%S", row_keys[r])))
-            { button = center_2f32(box->rect); }
+            if(str8_ends_with(box->string, push_str8f(scratch.arena, "###more_%S", row_keys[r]), 0))
+            { more = center_2f32(box->rect); }
           }
         }
+        if(frame == 5)
+        {
+          menu_open = ui_any_ctx_menu_is_open();
+          UI_Box *first = &ui_nil_box;
+          for(UI_Box *b = test->ctx_menu_root; !ui_box_is_nil(b) && ui_box_is_nil(first); b = ui_box_rec_df_pre(b, test->ctx_menu_root).next)
+          { if(b->flags & UI_BoxFlag_Clickable && ui_box_display_string(b).size && b != test->ctx_menu_root) { first = b; } }
+          leads = str8_match(ui_box_display_string(first), label, 0);
+          if(leads) { item = center_2f32(first->rect); }
+        }
       }
-      B32 queued = uishell_workspace_lifecycle_queued(command, expected) > queued_before;
-      LifecycleCheck(button.x > 0, target == 0 ? "detach button has a hit rect" : "close button has a hit rect");
-      LifecycleCheck(queued, target == 0 ? "clicking detach queues detach_workspace" : "clicking × queues close_workspace");
+      LifecycleCheck(more.x > 0, target == 0 ? "a subject row's ⋯ has a hit rect" : "a subjectless row's ⋯ has a hit rect");
+      LifecycleCheck(menu_open, "clicking ⋯ opens the row's menu");
+      LifecycleCheck(leads, target == 0 ? "a subject's menu leads with Detach workspace" : "a subjectless row's menu leads with Close workspace");
+      LifecycleCheck(uishell_workspace_lifecycle_queued(command, expected) > queued_before,
+                     target == 0 ? "choosing Detach queues detach_workspace" : "choosing Close queues close_workspace");
+      ui_ctx_menu_close();
     }
-    LifecycleCheck(row_centers[0].x > 0 && row_centers[1].x > 0, "subject and subjectless rows are rendered");
-    LifecycleCheck(!close_seen[0], "no close affordance without hover");
-    LifecycleCheck(close_seen[1] && detach_drawn[1], "hovering a subject row shows detach");
-    LifecycleCheck(close_seen[2] && x_drawn[2], "hovering a subjectless row shows ×");
-    LifecycleCheck(subjectless_close.x0 >= subjectless_row.x1 && subjectless_row.x1 > 0, "close sits in the margin beside the row");
-    LifecycleCheck(ws->chrome_section_header_frame == rd_state->frame_index+1, "Workspaces records the frame it hosted chrome");
-    LifecycleCheck(entry_row, "New workspace is the Workspaces group's footer, not a header button");
-    // It animates open: hover the group's last row (just above the footer,
-    // where it is now) a few frames.
-    for(U32 frame = 0; frame < 8; frame++)
-    {
-      Vec2F32 last_row = row_centers[1];
-      for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
-      {
-        if(str8_match(box->string, str8_lit("###make_section_.section:workspaces"), 0))
-        { last_row = v2f32(center_2f32(box->rect).x, box->rect.y0-6.f); }
-      }
-      UI_IconInfo icons = ws->ui->icon_info;
-      UI_AnimationInfo animation = {0}; UI_EventList events = {0};
-      ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-      ui_state->mouse = last_row;
-      UIShell_RegsScope(.window = window->id)
-      UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
-      { uishell_sidebar_ui(r2f32p(0, 0, 320, 900), &split); }
-      ui_end_build();
-    }
-    for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
-    { if(str8_match(box->string, str8_lit("###make_section_.section:workspaces"), 0) && dim_2f32(box->rect).y >= 1) { footer_open[2] = 1; } }
-    LifecycleCheck(!footer_open[0] && footer_open[2], "the footer opens when the pointer reaches the Workspaces group's last row");
-    LifecycleCheck(titled, "the local workspace section is titled Workspaces");
 
-    // Hovering the margin control shows its tooltip beside it, at its own
-    // size. Holding it past the threshold opens the row's menu, and the
-    // release that follows doesn't close the workspace.
-    // Frames: 0-1 hover the row, 2 hovers the button, 3 presses, 4 holds,
-    // 5 releases, 6 settles.
+    // The local Workspaces header's + offers New workspace and New group;
+    // New workspace opens a name field in the section's footer. Frames: 0-1
+    // hover the header, 2 presses +, 3 releases, 4-5 settle with the menu
+    // open, 6 presses its first item, 7 releases, 8-11 settle.
     {
-      Vec2F32 button = {0};
-      U64 queued_before = uishell_workspace_lifecycle_queued(str8_lit("close_workspace"), loose_id);
-      B32 menu_open = 0, tip_beside = 0, tip_sized = 0;
-      for(U32 frame = 0; frame < 7; frame++)
+      Vec2F32 header = {0}, add = {0}, item = {0};
+      B32 leads = 0, naming = 0, footer_shown = 0;
+      for(U32 frame = 0; frame < 12; frame++)
       {
         UI_IconInfo icons = ws->ui->icon_info;
         UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
-        Vec2F32 at = frame < 2 || button.x == 0 ? row_centers[1] : button;
-        if(frame == 3 || frame == 5)
+        Vec2F32 at = frame < 2 || add.x == 0 ? header : frame < 6 || item.x == 0 ? add : item;
+        if(frame == 2 || frame == 3 || frame == 6 || frame == 7)
         {
-          event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 3 ? UI_EventKind_Press : UI_EventKind_Release,
+          event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame % 2 == 0 ? UI_EventKind_Press : UI_EventKind_Release,
                                .pos = at, .timestamp_us = 6000000+frame*50000};
           events.first = events.last = &event; events.count = 1;
         }
-        if(frame == 4) { sleep_ms(UIShell_HoldUS/1000+50); }
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
         ui_state->mouse = at;
         UIShell_RegsScope(.window = window->id)
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
         { uishell_sidebar_ui(r2f32p(0, 0, 320, 900), &split); }
         ui_end_build();
-        if(frame == 2)
+        for(UI_Box *box = test->root; frame < 2 && !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
         {
-          UI_Box *label = &ui_nil_box;
-          for(UI_Box *b = ui_state->tooltip_root; !ui_box_is_nil(b) && ui_box_is_nil(label); b = ui_box_rec_df_pre(b, ui_state->tooltip_root).next)
-          { if(str8_match(ui_box_display_string(b), str8_lit("Close workspace"), 0)) { label = b; } }
-          F32 text = fnt_dim_from_tag_size_string(label->font, label->font_size, 0, 0, str8_lit("Close workspace")).x;
-          tip_sized = !ui_box_is_nil(label) && dim_2f32(label->rect).x >= text;
-          // Horizontal only: a window shorter than the sidebar clamps the
-          // tooltip vertically (headless CI), while the inherited floating
-          // position pushed it far to the right.
-          tip_beside = !ui_box_is_nil(label) && label->rect.x0 < button.x+50.f;
+          if(ui_box_is_nil(box->parent)) { continue; }
+          if(ui_key_match(box->key, ui_key_from_string(box->parent->key, str8_lit("###section_header_.section:workspaces"))))
+          { header = center_2f32(box->rect); }
+          if(str8_ends_with(box->string, str8_lit("###section_add_.section:workspaces"), 0)) { add = center_2f32(box->rect); }
         }
-        if(frame == 6) { menu_open = ui_any_ctx_menu_is_open(); }
-        for(UI_Box *box = test->root; frame == 1 && !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+        if(frame == 5)
         {
-          if(!ui_box_is_nil(box->parent) && ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###close_%S", row_keys[0])))
-          { button = center_2f32(box->rect); }
+          UI_Box *first = &ui_nil_box;
+          for(UI_Box *b = test->ctx_menu_root; !ui_box_is_nil(b) && ui_box_is_nil(first); b = ui_box_rec_df_pre(b, test->ctx_menu_root).next)
+          { if(b->flags & UI_BoxFlag_Clickable && ui_box_display_string(b).size && b != test->ctx_menu_root) { first = b; } }
+          leads = str8_match(ui_box_display_string(first), str8_lit("New workspace"), 0);
+          if(leads) { item = center_2f32(first->rect); }
+        }
+        if(frame == 11)
+        {
+          naming = state->make_key == u64_hash_from_str8(str8_lit("section_.section:workspaces"));
+          for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+          { if(str8_match(box->string, str8_lit("###make_section_.section:workspaces"), 0) && dim_2f32(box->rect).y >= 1) { footer_shown = 1; } }
         }
       }
-      LifecycleCheck(tip_sized, "margin control tooltip fits its label");
-      LifecycleCheck(tip_beside, "margin control tooltip sits beside the control");
-      LifecycleCheck(menu_open, "holding the margin control opens the row menu");
-      LifecycleCheck(uishell_workspace_lifecycle_queued(str8_lit("close_workspace"), loose_id) == queued_before,
-        "releasing after a hold doesn't close");
+      LifecycleCheck(add.x > 0, "hovering the Workspaces header shows +");
+      LifecycleCheck(leads, "the Workspaces header's + offers New workspace first");
+      LifecycleCheck(naming && footer_shown, "choosing it names a new workspace in the Workspaces footer");
+      state->make_key = 0;
       ui_ctx_menu_close();
     }
-    // A press released off the control ends the hold: once the pointer is
-    // away, the control is no longer drawn. Frames: 0-1 hover the row, 2
-    // presses on the control, 3 releases away, 4-5 stay away.
+
+    // With the dev toggle, the footer animates open when the pointer reaches
+    // the group's last row (just above the footer, where it is now).
     {
-      Vec2F32 button = {0};
-      B32 lingering = 0;
-      for(U32 frame = 0; frame < 6; frame++)
+      B32 saved_toggle = DEV_sidebar_footer_rows;
+      DEV_sidebar_footer_rows = 1;
+      B32 opened = 0;
+      for(U32 frame = 0; frame < 8; frame++)
       {
-        UI_IconInfo icons = ws->ui->icon_info;
-        UI_AnimationInfo animation = {0}; UI_EventList events = {0}; UI_EventNode event = {0};
-        Vec2F32 at = frame < 2 || button.x == 0 ? row_centers[1] : frame == 2 ? button : v2f32(-100, -100);
-        if(frame == 2 || frame == 3)
+        Vec2F32 last_row = row_centers[1];
+        for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
         {
-          event.v = (UI_Event){.key = WM_Key_LeftMouseButton, .kind = frame == 2 ? UI_EventKind_Press : UI_EventKind_Release,
-                               .pos = at, .timestamp_us = 7000000+frame*50000};
-          events.first = events.last = &event; events.count = 1;
+          if(str8_match(box->string, str8_lit("###make_section_.section:workspaces"), 0))
+          { last_row = v2f32(center_2f32(box->rect).x, box->rect.y0-6.f); }
         }
+        UI_IconInfo icons = ws->ui->icon_info;
+        UI_AnimationInfo animation = {0}; UI_EventList events = {0};
         ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
-        ui_state->mouse = at;
+        ui_state->mouse = last_row;
         UIShell_RegsScope(.window = window->id)
         UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
         { uishell_sidebar_ui(r2f32p(0, 0, 320, 900), &split); }
         ui_end_build();
-        for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
-        {
-          if(ui_box_is_nil(box->parent) || !ui_key_match(box->key, ui_key_from_stringf(box->parent->key, "###close_%S", row_keys[0]))) { continue; }
-          if(frame == 1) { button = center_2f32(box->rect); }
-          if(frame == 5) { lingering = 1; }
-        }
       }
-      LifecycleCheck(button.x > 0, "release-away control has a hit rect");
-      LifecycleCheck(!lingering, "a press released off the control doesn't keep it shown");
+      for(UI_Box *box = test->root; !ui_box_is_nil(box); box = ui_box_rec_df_pre(box, test->root).next)
+      { if(str8_match(box->string, str8_lit("###make_section_.section:workspaces"), 0) && dim_2f32(box->rect).y >= 1) { opened = 1; } }
+      LifecycleCheck(opened, "with the dev toggle, the footer opens when the pointer reaches the Workspaces group's last row");
+      DEV_sidebar_footer_rows = saved_toggle;
+      // Let the footer close again before the checks below.
+      for(U32 frame = 0; frame < 8; frame++)
+      {
+        UI_IconInfo icons = ws->ui->icon_info;
+        UI_AnimationInfo animation = {0}; UI_EventList events = {0};
+        ui_begin_build(ws->os, &events, &icons, ws->theme, &animation, 1.f/60, 1.f/60);
+        ui_state->mouse = v2f32(-100, -100);
+        UIShell_RegsScope(.window = window->id)
+        UI_Font(rd_font_from_slot(RD_FontSlot_Main)) UI_FontSize(11) UI_TextPadding(3)
+        { uishell_sidebar_ui(r2f32p(0, 0, 320, 900), &split); }
+        ui_end_build();
+      }
     }
 
     // Collapsed, the Workspaces group draws no entry row and doesn't claim
@@ -611,6 +691,20 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     ws->root_controlled_split_selected_workspace_id = subject_id;
     UIShell_RegsScope(.window = window->id) { uishell_dispatch_window_command(str8_lit("detach_workspace")); }
     LifecycleCheck(cfg_node_from_id(subject_id) == &cfg_nil_node, "detaching an ended subject's workspace destroys it");
+
+    //- An ended row no open workspace stands for offers Remove (sidebar-
+    //  headers.md, One row, one workspace; the core's lifecycle tests cover
+    //  what it destroys). With nothing keeping the row it is refused, and
+    //  nothing changes.
+    UIShell_SidebarNode removable = {.close = WHEELHOUSE_CLOSE_REMOVE};
+    LifecycleCheck(uishell_sidebar_close_kind(removable) == UIShell_SidebarCloseKind_Remove &&
+                   str8_match(uishell_sidebar_close_label(UIShell_SidebarCloseKind_Remove), str8_lit("Remove"), 0), "an ended row's close is Remove");
+    UIShell_SidebarNode gone = {0};
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    U64 before = split.inventory.count;
+    LifecycleCheck(uishell_workspace_lifecycle_find(state, str8_lit("multi"), 0, &gone) && !uishell_workspace_remove_ended(window, gone.entity) &&
+                   uishell_root_controlled_split_from_window(scratch.arena, window).inventory.count == before,
+                   "removing a row nothing keeps is refused, changing nothing");
   }
 
   //- Default names never repeat an open workspace's name, even after a close.
@@ -684,7 +778,7 @@ uishell_workspace_lifecycle_diagnostics(CFG_Node *window)
     uishell_sidebar_refresh(state);
   }
 
-  fprintf(stderr, "Workspace lifecycle diagnostics: %s (detach/reopen, palette target, margin close and hold menu, destroy, Workspaces entry row, reserved names, ended detach, unique names, last close, legacy last close, default group by mark)\n",
+  fprintf(stderr, "Workspace lifecycle diagnostics: %s (detach/reopen, palette target, project header opens its workspace, row ⋯ menu and section +, destroy, Workspaces entry row, reserved names, ended detach and Remove, unique names, last close, legacy last close, default group by mark)\n",
           ok ? "passed" : "FAILED");
   scratch_end(scratch);
   return ok;

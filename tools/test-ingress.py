@@ -739,14 +739,17 @@ class IngressTests(unittest.TestCase):
         # A value it doesn't know is taken as off.
         self.assertEqual(self.launch_nested('unknown', automation='of'), ('', 'unset'))
 
-    def start_automation(self, name, *args, user=''):
+    def start_automation(self, name, *args, user='', sidebar=None):
         """Wheelhouse with one workspace of a terminal and a View of a Cleat
-        session, listening at its own socket; returns the socket's path, the
-        Workspace ID and Wheelhouse's directory."""
+        session, listening at its own socket, with the live sidebar `sidebar`
+        configures when given; returns the socket's path, the Workspace ID and
+        Wheelhouse's directory."""
         path = self.endpoint(name)
+        if sidebar:
+            args = ('--andamento_config:' + str(sidebar), *args)
         session = {'content': {'Local': {'CleatSession': {'transport': 'local', 'host': 'nowhere', 'runtime_root': str(Path(self.dir.name, 'cleat')),
                                                            'daemon': 'none', 'session': 'agent-session'}}}, 'presentation': 'terminal'}
-        process, root, workspace, failure = self.launch(name, '--automation_socket:' + path, *args, user=user, label='Automated',
+        process, root, workspace, failure = self.launch(name, ('--andamento_socket:' if sidebar else '--automation_socket:') + path, *args, user=user, label='Automated',
                                                         specs=[workspace_seed.terminal(WAIT, ELSEWHERE), session])
         self.serve(path, process, failure)
         return path, workspace, root
@@ -865,11 +868,211 @@ class IngressTests(unittest.TestCase):
         # A value it doesn't know is off too.
         for value in ('off', 'disabled'):
             path, _, _ = self.start_automation(value, user='automation: "%s"\n' % value)
-            for target in ['/v1/observed/semantic', '/v1/observed/self?session=agent-session', '/v1/observed/events']:
+            for target in ['/v1/observed/semantic', '/v1/observed/self?session=agent-session', '/v1/observed/events', '/v1/commands']:
                 self.assertEqual(self.get(path, target)[0], 404, (value, target))
+            self.assertEqual(self.post(path, '/v1/commands/invoke', {'command': 'command/exit'})[0], 404, value)
+            self.assertEqual(self.intend(path, {'intent': 'toggle-display-variable', 'owner': 'window/x', 'name': 'x'})[0], 404, value)
             # The metadata routes are not affected.
             self.assertEqual(self.get(path, '/v1/observed/workdirs')[0], 200)
             publish(path, patch('project', 'p', {'display.label': 'still served'}))
+
+    def post(self, path, target, body):
+        """POSTs `body` as JSON: the status, and the JSON of a 200 or the
+        reason of anything else."""
+        connection = UnixHTTPConnection(path)
+        try:
+            connection.request('POST', target, json.dumps(body).encode(), {'Content-Type': 'application/json'})
+            response = connection.getresponse()
+            answer = response.read()
+            return response.status, json.loads(answer) if response.status == 200 else answer.decode()
+        finally:
+            connection.close()
+
+    def tree_at(self, path, cursor):
+        """The Semantic Tree at or after `cursor`, a command's answer."""
+        generation = int(cursor.rsplit(':', 1)[1])
+        deadline = time.monotonic() + 5
+        while True:
+            status, tree = self.get(path, '/v1/observed/semantic')
+            self.assertEqual(status, 200)
+            if tree['generation'] >= generation:
+                return tree
+            self.assertLess(time.monotonic(), deadline, 'the tree never reached %s' % cursor)
+            time.sleep(.05)
+
+    @staticmethod
+    def preorder(nodes):
+        for node in nodes:
+            yield node
+            yield from IngressTests.preorder(node.get('children', []))
+
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_commands_are_listed_from_the_tables(self):
+        path, _, _ = self.start_automation('commands')
+        status, listing = self.get(path, '/v1/commands')
+        self.assertEqual((status, listing['schema']), (200, 1))
+        commands = {command['id']: command for command in listing['commands']}
+        self.assertEqual(len(commands), len(listing['commands']), 'a command is listed twice')
+        self.assertEqual(commands['command/split_panel'], {
+            'id': 'command/split_panel', 'display_name': 'Split Panel', 'description': 'Splits the current panel.',
+            'tags': ['panel'], 'args': [], 'targets': 'panel'})
+        self.assertEqual(commands['command/open_url']['args'], [{'name': 'string', 'required': True}])
+        self.assertEqual(commands['command/goto_line']['args'], [{'name': 'cursor', 'required': True}])
+        self.assertEqual(commands['command/terminal']['targets'], 'panel')
+        self.assertEqual(commands['command/close_tab']['targets'], 'view')
+        self.assertEqual(commands['command/exit']['targets'], 'none')
+        # An internal command that opts in, and one that doesn't.
+        self.assertEqual(commands['command/select_workspace']['targets'], 'workspace')
+        self.assertNotIn('command/set_current_path', commands)
+        self.assertEqual(self.post(path, '/v1/commands/invoke', {'command': 'command/set_current_path'})[0], 403)
+        self.assertEqual(self.post(path, '/v1/commands/invoke', {'command': 'command/nonesuch'})[0], 404)
+        # The same in CBOR.
+        connection = UnixHTTPConnection(path)
+        connection.request('GET', '/v1/commands', headers={'Accept': 'application/cbor'})
+        response = connection.getresponse()
+        self.assertEqual((response.status, response.getheader('content-type')), (200, 'application/cbor'))
+        self.assertTrue(response.read())
+        connection.close()
+
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_invoking_a_command_on_a_panel_shows_what_it_did_at_its_cursor(self):
+        path, workspace, root = self.start_automation('invoke', '--ingress_record')
+        w = 'workspace/' + workspace
+        # A command about focus moves it: keys go to the panel's Selected View.
+        status, ran = self.post(path, '/v1/commands/invoke', {'command': 'command/focus_panel', 'target': w + '/panel/1'})
+        self.assertEqual(status, 200, ran)
+        before = self.tree_at(path, ran['cursor'])
+        panels = [node['id'] for node in self.preorder(before['nodes']) if node['kind'] == 'panel']
+        focused = [node['id'] for node in self.preorder(before['nodes']) if 'focused' in node.get('state', [])]
+        self.assertEqual((panels, focused), ([w + '/panel/1'], [w + '/view/u:1']))
+        def leaves(tree):
+            return [node for node in self.preorder(tree['nodes'])
+                    if node['kind'] == 'panel' and not any(child['kind'] == 'panel' for child in node.get('children', []))]
+        # A split the panel's commands make, empty, and focused unless an
+        # invocation makes it: none moves focus but one about focus.
+        status, ran = self.post(path, '/v1/commands/invoke', {'command': 'command/new_panel_right', 'target': w + '/panel/1'})
+        self.assertEqual(status, 200, ran)
+        self.assertRegex(ran['cursor'], r'^[0-9a-f-]{36}:\d+$')
+        after = self.tree_at(path, ran['cursor'])
+        self.assertEqual(len(leaves(after)), 2, after)
+        self.assertEqual([node['id'] for node in self.preorder(after['nodes']) if 'focused' in node.get('state', [])], focused)
+        # split_panel takes the panel's Selected View into the new panel.
+        status, ran = self.post(path, '/v1/commands/invoke', {'command': 'command/split_panel', 'target': w + '/panel/1'})
+        self.assertEqual(status, 200, ran)
+        after = self.tree_at(path, ran['cursor'])
+        self.assertEqual(len(leaves(after)), 3, after)
+        self.assertIn([w + '/view/u:1'], [[child['id'] for child in node.get('children', [])] for node in leaves(after) if node['id'] != w + '/panel/1'])
+        nodes = list(self.preorder(after['nodes']))
+        # Onto the new panel, which shows no View.
+        empty = next(node['id'] for node in leaves(after) if not node.get('children'))
+        status, ran = self.post(path, '/v1/commands/invoke', {'command': 'command/focus_panel', 'target': empty})
+        self.assertEqual(status, 200, ran)
+        nodes = list(self.preorder(self.tree_at(path, ran['cursor'])['nodes']))
+        self.assertEqual([node['id'] for node in nodes if 'focused' in node.get('state', [])], [])
+        # A missing required argument is refused before anything runs, and a
+        # command that would open a prompt refuses to.
+        status, reason = self.post(path, '/v1/commands/invoke', {'command': 'command/open_url', 'target': w + '/panel/1'})
+        self.assertEqual(status, 422)
+        self.assertIn('string', reason)
+        status, reason = self.post(path, '/v1/commands/invoke', {'command': 'command/open_palette'})
+        self.assertEqual(status, 403)
+        self.assertIn('prompt', reason)
+        # A user error the command logs refuses it, with its reason: the new
+        # panel shows no View for split_panel to take.
+        status, reason = self.post(path, '/v1/commands/invoke', {'command': 'command/split_panel', 'target': empty})
+        self.assertEqual(status, 422)
+        self.assertIn('Cannot split', reason)
+        # A target that isn't there.
+        self.assertEqual(self.post(path, '/v1/commands/invoke', {'command': 'command/close_panel', 'target': w + '/panel/99'})[0], 422)
+        # Recorded like the other routes, with its body.
+        capture = root / 'logs' / 'ingress.jsonl'
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            rows = [json.loads(line) for line in capture.read_text().splitlines()] if capture.exists() else []
+            if len([row for row in rows if row['path'] == '/v1/commands/invoke']) >= 8:
+                break
+            time.sleep(.05)
+        invoked = [row for row in rows if row['path'] == '/v1/commands/invoke']
+        self.assertEqual(invoked[2]['body'], {'command': 'command/split_panel', 'target': w + '/panel/1'})
+        self.assertEqual([row['status'] for row in invoked], [200, 200, 200, 200, 422, 403, 422, 422])
+
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_a_command_without_a_target_takes_the_caller_context(self):
+        path = self.endpoint('context')
+        def session(name):
+            return {'content': {'Local': {'CleatSession': {'transport': 'local', 'host': 'nowhere', 'runtime_root': str(Path(self.dir.name, 'cleat')),
+                                                           'daemon': 'none', 'session': name}}}, 'presentation': 'terminal'}
+        process, _, workspace, failure = self.launch('context', '--automation_socket:' + path, label='Context',
+                                                     specs=[session('shared'), session('shared'), session('alone'), workspace_seed.terminal(WAIT)])
+        self.serve(path, process, failure)
+        w = 'workspace/' + workspace
+        # Two views show one session: which is meant is unclear.
+        status, reason = self.post(path, '/v1/commands/invoke', {'command': 'command/close_tab', 'session': 'shared'})
+        self.assertEqual(status, 409, reason)
+        # None, and no target: there is nothing to act on.
+        self.assertEqual(self.post(path, '/v1/commands/invoke', {'command': 'command/close_tab', 'session': 'nobody'})[0], 400)
+        self.assertEqual(self.post(path, '/v1/commands/invoke', {'command': 'command/close_tab'})[0], 400)
+        # One: that View.
+        status, ran = self.post(path, '/v1/commands/invoke', {'command': 'command/close_tab', 'session': 'alone'})
+        self.assertEqual(status, 200, ran)
+        views = [node['id'] for node in self.preorder(self.tree_at(path, ran['cursor'])['nodes']) if node['kind'] == 'view']
+        self.assertEqual(views, [w + '/view/u:1', w + '/view/u:2', w + '/view/u:4'])
+
+    def intend(self, path, body):
+        """POSTs an intent: the status and the receipt."""
+        connection = UnixHTTPConnection(path)
+        try:
+            connection.request('POST', '/v1/intents/apply', json.dumps(body).encode(), {'Content-Type': 'application/json'})
+            response = connection.getresponse()
+            answer = response.read()
+            return response.status, json.loads(answer) if response.status in (200, 422) else answer.decode()
+        finally:
+            connection.close()
+
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_intents_apply_with_a_receipt(self):
+        path, workspace, _ = self.start_automation('intents', sidebar=ROOT / 'data/sidebar/fixture.kdl')
+        w = 'workspace/' + workspace
+        # An arrangement intent, by Automation IDs: the tab goes, as the tree
+        # at the receipt's cursor shows.
+        status, receipt = self.intend(path, {'intent': 'close-tab', 'owner': w, 'tab': w + '/view/u:2'})
+        self.assertEqual(status, 200, receipt)
+        self.assertTrue(receipt['accepted'])
+        self.assertIsInstance(receipt['request'], int)
+        views = [node['id'] for node in self.preorder(self.tree_at(path, receipt['cursor'])['nodes']) if node['kind'] == 'view']
+        self.assertEqual(views, [w + '/view/u:1'])
+        # One the arrangement refuses, with why: the root panel can't close.
+        status, receipt = self.intend(path, {'intent': 'close-panel', 'owner': w, 'panel': w + '/panel/1'})
+        self.assertEqual((status, receipt['accepted']), (422, False))
+        self.assertIn('close-panel', receipt['reason'])
+        # One whose IDs name nothing there.
+        status, receipt = self.intend(path, {'intent': 'split-panel', 'owner': w, 'panel': w + '/panel/7', 'dir': 'right'})
+        self.assertEqual((status, receipt['accepted']), (422, False))
+        self.assertIn('panel 7', receipt['reason'])
+        status, receipt = self.intend(path, {'intent': 'split-panel', 'owner': w, 'panel': w + '/panel/1', 'dir': 'right'})
+        self.assertEqual(status, 200, receipt)
+        panels = [node['id'] for node in self.preorder(self.tree_at(path, receipt['cursor'])['nodes']) if node['kind'] == 'panel']
+        self.assertEqual(len(panels), 3)
+        # A sidebar intent goes to the window's core: its receipt, or its refusal.
+        status, receipt = self.intend(path, {'intent': 'toggle-display-variable', 'owner': w, 'name': 'show-issues'})
+        self.assertEqual(status, 200, receipt)
+        self.assertTrue(receipt['accepted'])
+        status, receipt = self.intend(path, {'intent': 'toggle-display-variable', 'owner': w, 'name': 'nonesuch'})
+        self.assertEqual((status, receipt['accepted']), (422, False))
+        self.assertTrue(receipt['reason'])
+
+    @unittest.skipUnless(os.environ.get('WHEELHOUSE_TEST_BINARY'), 'native executable not selected')
+    def test_observe_refuses_commands_with_why(self):
+        path, workspace, _ = self.start_automation('observe', user='automation: "observe"\n')
+        status, reason = self.post(path, '/v1/commands/invoke', {'command': 'command/split_panel', 'target': 'workspace/%s/panel/1' % workspace})
+        self.assertEqual(status, 403)
+        self.assertIn('observe', reason)
+        self.assertEqual(self.get(path, '/v1/commands')[0], 403)
+        status, reason = self.intend(path, {'intent': 'close-panel', 'owner': 'workspace/' + workspace, 'panel': 'workspace/%s/panel/1' % workspace})
+        self.assertEqual(status, 403)
+        self.assertIn('observe', reason)
+        # The reads still answer.
+        self.assertEqual(self.get(path, '/v1/observed/semantic')[0], 200)
 
     # A stand-in for `flotilla pm connect` that ignores SIGTERM, as does the
     # child it starts; it appends "<its pid> <child pid>" to $WH_TEST_CONNECTOR.

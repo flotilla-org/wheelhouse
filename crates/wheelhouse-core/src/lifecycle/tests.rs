@@ -552,10 +552,11 @@ fn the_close_role_matches_the_close(tc: TestCase) {
     let (keep, ended) = (tc.draw(gs::booleans()), tc.draw(gs::booleans()));
     let kept = close_outcome(&record, keep, ended) == Closed::Kept;
     assert_eq!(kept, keep && subject && !ended);
-    let role = close_kind(&local(system::WORKSPACE, "w"), Some(LiveWorkspace { subject, subject_ended: ended }));
+    let role = close_kind(&local(system::WORKSPACE, "w"), Some(LiveWorkspace { subject, subject_ended: ended }), ended);
     assert_eq!(role == Some(CloseKind::Detach), close_outcome(&record, true, ended) == Closed::Kept);
-    assert_eq!(close_kind(&local(system::REF, "r"), None), Some(CloseKind::RemovePin));
-    assert_eq!(close_kind(&self::subject(0), None), None, "a row not bound to an open workspace offers nothing");
+    assert_eq!(close_kind(&local(system::REF, "r"), None, ended), Some(CloseKind::RemovePin));
+    assert_eq!(close_kind(&self::subject(0), None, false), None, "a live row not bound to an open workspace offers nothing");
+    assert_eq!(close_kind(&self::subject(0), None, true), Some(CloseKind::Remove), "an ended one removes what keeps it");
 }
 
 /// `Life` survives a record's encode and decode, and a record written before
@@ -607,4 +608,174 @@ fn a_drop_back_on_workspaces_returns_to_the_group() {
     home.edit(HomeEdit::Project(Some("p".into())));
     home.edit(HomeEdit::Group("tests".into()));
     assert_eq!(home, Home { group: Some("tests".into()), project: None });
+}
+
+/// Every row presenting `entity`, with its close role.
+fn rows_of(sidebar: &Sidebar, entity: &EntityRef) -> Vec<Option<CloseKind>> {
+    fn add(nodes: &[std::rc::Rc<PlacementNode>], entity: &EntityRef, out: &mut Vec<Option<CloseKind>>) {
+        for node in nodes {
+            if node.entity == *entity {
+                out.push(node.close);
+            }
+            add(&node.children, entity, out);
+        }
+    }
+    let mut out = vec![];
+    for section in &sidebar.snapshot_shared().surface.sections {
+        add(&section.nodes, entity, &mut out);
+    }
+    out
+}
+
+/// A local workspace living with a project shows under it, though the host
+/// publishes it and a subscription the project; another subscription's
+/// entity with the same project text stays out.
+#[test]
+fn a_workspace_living_with_a_project_shows_under_it() {
+    const CONFIG: &str = r#"
+region "tree" root-template="tree/title" form="compact" placement="tree"
+template "tree/title" slot="compact" node-kind="entity" {
+  field "label" source="literal" value="Projects"
+}
+placement "tree" {
+  for "project" kind="project" {
+    apply-template
+  }
+}
+template "project/line" {
+  field "label" key="display.label"
+  for "workspace" kind=".workspace" {
+    match "flotilla.project" of="project"
+    apply-template "entry"
+  }
+  for "convoy" kind="convoy" {
+    match "flotilla.project" of="project"
+    apply-template "entry"
+  }
+}
+template "entry" {
+  field "label" key="display.label"
+}
+"#;
+    let mut sidebar = Sidebar::new(CONFIG).unwrap();
+    let project = |label: &str| vec![("flotilla.project".into(), text("p")), ("display.label".into(), text(label))];
+    sidebar.apply(1, PROVIDER, vec![patch("project", "p", project("P"))]).unwrap();
+    sidebar.apply(1, "another", vec![patch("convoy", "c", project("Elsewhere"))]).unwrap();
+    sidebar.apply(1, "wheelhouse", vec![patch(system::WORKSPACE, "w", project("Notes"))]).unwrap();
+    let workspace = EntityRef::new("wheelhouse", system::WORKSPACE, "w");
+    assert_eq!(rows_of(&sidebar, &workspace).len(), 1, "the workspace shows under its project");
+    assert_eq!(rows_of(&sidebar, &EntityRef::new("another", "convoy", "c")), vec![], "another subscription's convoy doesn't");
+}
+
+/// A convoy over its vessels, as the daily driver nests them.
+const CONVOY_CONFIG: &str = r#"
+region "tree" root-template="tree/title" form="compact" placement="tree"
+template "tree/title" slot="compact" node-kind="entity" {
+  field "label" source="literal" value="Projects"
+}
+placement "tree" {
+  for "project" kind="project" {
+    apply-template
+  }
+}
+template "project/line" {
+  field "label" key="display.label"
+  for "convoy" kind="convoy" {
+    match "flotilla.project" of="project"
+    apply-template
+  }
+}
+template "convoy/line" {
+  field "label" key="display.label"
+  for "vessel" kind="vessel" {
+    match "flotilla.convoy" of="convoy"
+    apply-template
+  }
+}
+template "vessel/line" {
+  field "label" key="display.label"
+}
+"#;
+
+/// An ended convoy that no open workspace stands for, but whose vessel's
+/// workspace is open (a vessel was a workspace once), offers Remove, which
+/// destroys that workspace so nothing keeps the convoy. Before it ends, and
+/// once removed, there is nothing to remove.
+#[test]
+fn an_ended_convoy_removes_its_vessels_open_workspace() {
+    let mut sidebar = Sidebar::new(CONVOY_CONFIG).unwrap();
+    let convoy = EntityRef::new(PROVIDER, "convoy", "c");
+    let vessel = EntityRef::new(PROVIDER, "vessel", "v");
+    let state = |state: &str| ("status.state".to_owned(), text(state));
+    sidebar
+        .apply(
+            1,
+            PROVIDER,
+            vec![
+                patch("project", "p", vec![("flotilla.project".into(), text("p")), ("display.label".into(), text("P"))]),
+                patch(
+                    "convoy",
+                    "c",
+                    vec![
+                        ("flotilla.project".into(), text("p")),
+                        ("flotilla.convoy".into(), text("c")),
+                        ("display.label".into(), text("C")),
+                        state("running"),
+                    ],
+                ),
+                patch(
+                    "vessel",
+                    "v",
+                    vec![
+                        ("flotilla.project".into(), text("p")),
+                        ("flotilla.convoy".into(), text("c")),
+                        ("display.label".into(), text("V")),
+                        ("action.primary.recipe".into(), text("true")),
+                        state("running"),
+                    ],
+                ),
+            ],
+        )
+        .unwrap();
+    sidebar.observe(vec![], vec![]);
+    let effects = sidebar.dispatch(Intent::Activate { entity: vessel.clone() }).unwrap();
+    let [HostEffect::Materialize { request_id, .. }] = &effects[..] else { panic!("activating the vessel gave {effects:?}") };
+    let mut bytes = [0; 16];
+    bytes[15] = 7;
+    let id = WorkspaceId::from_bytes(bytes);
+    sidebar.complete(*request_id, Ok(Some(id)));
+    let open = |sidebar: &mut Sidebar, open: bool| {
+        let workspaces = open.then(|| Workspace { id, position: 0, name: "V".into(), selected: true }).into_iter().collect();
+        sidebar.observe(workspaces, vec![]);
+    };
+    open(&mut sidebar, true);
+    assert_eq!(rows_of(&sidebar, &convoy), vec![None], "a live convoy offers nothing");
+    assert!(matches!(sidebar.apply_intent(Intent::RemoveEnded { entity: convoy.clone() }), IntentReceipt::Refused { .. }));
+    sidebar.apply(2, PROVIDER, vec![patch("convoy", "c", vec![state("ended")]), patch("vessel", "v", vec![state("ended")])]).unwrap();
+    open(&mut sidebar, true);
+    assert_eq!(rows_of(&sidebar, &convoy), vec![Some(CloseKind::Remove)], "the ended convoy offers Remove");
+    let IntentReceipt::Accepted { effects, .. } = sidebar.apply_intent(Intent::RemoveEnded { entity: convoy.clone() }) else {
+        panic!("Remove was refused")
+    };
+    assert_eq!(effects, vec![HostEffect::CloseWorkspace { workspace: id, kept: false }], "the vessel's workspace is destroyed");
+    assert!(!sidebar.registered_workspaces().contains(&id));
+    open(&mut sidebar, false);
+    assert_eq!(rows_of(&sidebar, &convoy), vec![None], "and nothing keeps the convoy");
+    assert!(matches!(sidebar.apply_intent(Intent::RemoveEnded { entity: convoy }), IntentReceipt::Refused { .. }));
+}
+
+/// An ended row whose workspace is open closes it as its own close would
+/// (destroyed, the next shown), and Remove does the same.
+#[test]
+fn removing_an_ended_row_closes_its_open_workspace() {
+    let mut world = World::new(false);
+    world.activate(1);
+    let id = world.shown.unwrap();
+    world.end(1);
+    world.observe();
+    assert_eq!(rows_of(&world.sidebar, &subject(1)), vec![Some(CloseKind::Destroy)], "an open ended workspace closes");
+    let effects = world.intend(Intent::RemoveEnded { entity: subject(1) }).unwrap();
+    assert!(matches!(effects.first(), Some(HostEffect::CloseWorkspace { workspace, kept: false }) if *workspace == id), "{effects:?}");
+    assert!(world.node(id).is_none(), "the open workspace is destroyed");
+    assert_eq!(rows_of(&world.sidebar, &subject(1)), vec![None], "and nothing keeps the row");
 }

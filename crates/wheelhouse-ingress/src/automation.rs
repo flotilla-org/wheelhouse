@@ -1,14 +1,15 @@
-//! The Automation Endpoint's read routes (#554; docs/protocol/automation-endpoint.md):
-//! `GET /v1/observed/semantic`, `/v1/observed/self` and `/v1/observed/events`.
-//! The UI thread builds the Semantic Tree at a frame's end while a client
-//! wants it, and publishes `(generation, tree)` on a watch channel; handlers
-//! read and follow that.
+//! The Automation Endpoint (docs/protocol/automation-endpoint.md). Its read
+//! routes (#554), `GET /v1/observed/semantic`, `/v1/observed/self` and
+//! `/v1/observed/events`, are here: the UI thread builds the Semantic Tree at
+//! a frame's end while a client wants it, and publishes `(generation, tree)`
+//! on a watch channel; handlers read and follow that. Commands are in
+//! [`commands`], and intents in [`intents`].
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering::SeqCst},
-        Arc,
+        Arc, Mutex, OnceLock,
     },
     time::Duration,
 };
@@ -18,7 +19,7 @@ use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use flotilla_cbor::{Framing, Limits};
@@ -31,6 +32,9 @@ use wheelhouse_core::{
 };
 
 use crate::{address::instance_uuid, Wake, AUTOMATION_FULL, AUTOMATION_OFF};
+
+pub mod commands;
+pub mod intents;
 
 /// The schema every response carries.
 pub const SCHEMA: u32 = 1;
@@ -143,6 +147,10 @@ pub struct Automation {
     /// the tree has changed.
     pub screen_streams: AtomicUsize,
     pub published: watch::Sender<Arc<Published>>,
+    /// The command tables, as the UI gave them once.
+    pub commands: OnceLock<Vec<commands::Command>>,
+    /// Commands and intents waiting for a frame's end.
+    pub queued: Mutex<Vec<commands::Queued>>,
 }
 
 impl Automation {
@@ -155,6 +163,8 @@ impl Automation {
             screens: AtomicUsize::new(0),
             screen_streams: AtomicUsize::new(0),
             published: watch::channel(Arc::default()).0,
+            commands: OnceLock::new(),
+            queued: Mutex::new(Vec::new()),
         }
     }
 
@@ -185,6 +195,9 @@ pub fn router(automation: Arc<Automation>) -> Router {
         .route("/v1/observed/semantic", get(semantic))
         .route("/v1/observed/self", get(caller))
         .route("/v1/observed/events", get(events))
+        .route("/v1/commands", get(commands::commands))
+        .route("/v1/commands/invoke", post(commands::invoke))
+        .route("/v1/intents/apply", post(intents::apply))
         .with_state(automation)
 }
 
@@ -411,13 +424,16 @@ fn caller_views(workspaces: &[Node], session: &str, root: Option<&str>) -> Optio
 }
 
 /// The tree as the UI gives it at a frame's end: each core's workspaces,
-/// which workspaces windows show, and what it knows of terminals.
+/// which workspaces windows show, which View has focus, and what it knows
+/// of terminals.
 #[derive(Default)]
 pub struct Build {
     pub workspaces: Vec<Node>,
     pub selected: Vec<WorkspaceId>,
     /// By the View's Automation ID.
     pub terminals: Vec<(String, Terminal)>,
+    /// The Automation IDs of the Views keys go to, one per window at most.
+    pub focused: Vec<String>,
     pub valid: bool,
 }
 
@@ -444,6 +460,9 @@ impl Build {
                 workspace.state.push(Flag::Selected);
             }
             workspace.visit_mut(&mut |node| {
+                if self.focused.contains(&node.id) {
+                    node.state.push(Flag::Focused);
+                }
                 if let Some(known) = terminals.get(&node.id) {
                     let terminal = node.props.terminal.get_or_insert_with(Terminal::default);
                     terminal.session = known.session.clone().or(terminal.session.take());
@@ -503,13 +522,20 @@ impl Generation {
 /// publish it if a read waits or it changed. `build` is told whether to give
 /// screens: when a waiting read asked, or when the tree changed and a stream
 /// asked. It gives `None` when the tree isn't available now; reads then time
-/// out. A setting it doesn't know is taken as off.
-pub fn frame_end(automation: &Automation, generation: &mut Generation, mode: u32, mut build: impl FnMut(bool) -> Option<Build>) {
+/// out. A setting it doesn't know is taken as off. `settling` is that this
+/// frame did commands or intents, whose cursor must follow what they did.
+pub fn frame_end(
+    automation: &Automation,
+    generation: &mut Generation,
+    mode: u32,
+    settling: bool,
+    mut build: impl FnMut(bool) -> Option<Build>,
+) {
     let mode = if mode > AUTOMATION_FULL { AUTOMATION_OFF } else { mode };
     automation.mode.store(mode, SeqCst);
     let requested = automation.requested.load(SeqCst);
     let current = automation.published.borrow().clone();
-    let waiting = requested > current.served;
+    let waiting = requested > current.served || settling;
     if !waiting && automation.streams.load(SeqCst) == 0 {
         return;
     }

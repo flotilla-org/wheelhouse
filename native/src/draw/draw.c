@@ -631,6 +631,77 @@ dr_sub_bucket(DR_Bucket *bucket)
   }
 }
 
+//- re-emitting a retained bucket's instances
+
+// Copies a retained bucket's UI instances into the top bucket, moved by
+// offset, as though its draws were made here: each of its batch groups joins
+// the top bucket's last group when their state matches and their textures
+// can share it, the rule dr_rect and dr_img follow, so appending many small
+// buckets costs no more draw calls than drawing their contents directly.
+// Build the source under the default draw state: its groups keep their own
+// texture, sample kind, transparency and clip (moved by offset, within the
+// current clip) and take the current transform.
+internal void
+dr_append_bucket(DR_Bucket *src, Vec2F32 offset)
+{
+  DR_Bucket *dst = dr_top_bucket();
+  Arena *arena = (dst->arena != 0 ? dst->arena : dr_thread_ctx->arena);
+  Rng2F32 dst_clip = dst->top_clip->v;
+  B32 dst_clip_is_set = !(dst_clip.x0 == 0 && dst_clip.x1 == 0 && dst_clip.y0 == 0 && dst_clip.y1 == 0);
+  B32 moved = (offset.x != 0 || offset.y != 0);
+  for(R_PassNode *pass_n = src->passes.first; pass_n != 0; pass_n = pass_n->next)
+  {
+    if(pass_n->v.kind != R_PassKind_UI) { continue; }
+    R_PassParams_UI *src_ui = pass_n->v.params_ui;
+    for(R_BatchGroup2DNode *src_group = src_ui->rects.first; src_group != 0; src_group = src_group->next)
+    {
+      if(src_group->batches.byte_count == 0) { continue; }
+      R_BatchGroup2DParams params = src_group->params;
+      params.xform = dst->top_xform2d->v;
+      params.content_version = dst->content_version;
+      B32 clip_is_set = !(params.clip.x0 == 0 && params.clip.x1 == 0 && params.clip.y0 == 0 && params.clip.y1 == 0);
+      if(clip_is_set && moved) { params.clip = shift_2f32(params.clip, offset); }
+      if(dst_clip_is_set) { params.clip = clip_is_set ? intersect_2f32(dst_clip, params.clip) : dst_clip; }
+      R_PassParams_UI *dst_ui = dr_ui_pass(dst, arena)->params_ui;
+      R_BatchGroup2DNode *node = dst_ui->rects.last;
+      B32 joins = (node != 0 &&
+                   dst->stack_gen == dst->last_cmd_stack_gen &&
+                   node->params.tex_sample_kind == params.tex_sample_kind &&
+                   MemoryMatchStruct(&node->params.xform, &params.xform) &&
+                   MemoryMatchStruct(&node->params.clip, &params.clip) &&
+                   node->params.transparency == params.transparency &&
+                   node->params.content_version == params.content_version &&
+                   (r_handle_match(params.tex, r_handle_zero()) ||
+                    r_handle_match(node->params.tex, r_handle_zero()) ||
+                    r_handle_match(node->params.tex, params.tex)));
+      if(joins)
+      {
+        if(r_handle_match(node->params.tex, r_handle_zero())) { node->params.tex = params.tex; }
+      }
+      else
+      {
+        node = push_array(arena, R_BatchGroup2DNode, 1);
+        SLLQueuePush(dst_ui->rects.first, dst_ui->rects.last, node);
+        dst_ui->rects.count += 1;
+        node->batches = r_batch_list_make(sizeof(R_Rect2DInst));
+        node->params = params;
+      }
+      for(R_BatchNode *batch_n = src_group->batches.first; batch_n != 0; batch_n = batch_n->next)
+      {
+        R_Rect2DInst *src_insts = (R_Rect2DInst *)batch_n->v.v;
+        U64 count = batch_n->v.byte_count/sizeof(R_Rect2DInst);
+        for(U64 idx = 0; idx < count; idx += 1)
+        {
+          R_Rect2DInst *inst = (R_Rect2DInst *)r_batch_list_push_inst(arena, &node->batches, 256);
+          *inst = src_insts[idx];
+          if(moved) { inst->dst = shift_2f32(inst->dst, offset); }
+        }
+      }
+      dst->last_cmd_stack_gen = dst->stack_gen;
+    }
+  }
+}
+
 //- surfaces (redirecting draws into a render-target texture, then compositing it back)
 
 internal void

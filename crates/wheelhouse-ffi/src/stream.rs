@@ -50,14 +50,17 @@ pub const WHEELHOUSE_INTENT_TOGGLE_DISPLAY_VARIABLE: u32 = 5;
 pub const WHEELHOUSE_INTENT_NEW_WORKSPACE: u32 = 6;
 pub const WHEELHOUSE_INTENT_CLOSE_WORKSPACE: u32 = 7;
 pub const WHEELHOUSE_INTENT_SET_WORKSPACE_HOME: u32 = 8;
+pub const WHEELHOUSE_INTENT_REMOVE_ENDED: u32 = 9;
 
 /// What a node's close control offers: nothing; close its workspace and
 /// keep it (CLOSE_WORKSPACE with keep); close and destroy it (without
-/// keep); or, for a pin, remove the pin.
+/// keep); for a pin, remove the pin; or, for an ended row no open
+/// workspace stands for, remove the workspaces that keep it (REMOVE_ENDED).
 pub const WHEELHOUSE_CLOSE_NONE: u32 = 0;
 pub const WHEELHOUSE_CLOSE_DETACH: u32 = 1;
 pub const WHEELHOUSE_CLOSE_DESTROY: u32 = 2;
 pub const WHEELHOUSE_CLOSE_REMOVE_PIN: u32 = 3;
+pub const WHEELHOUSE_CLOSE_REMOVE: u32 = 4;
 
 /// wheelhouse_apply_intent's result: the intent was malformed, or the
 /// sidebar unusable (error_out says why), and nothing changed.
@@ -589,8 +592,8 @@ pub unsafe extern "C" fn wheelhouse_delta_release(d: *mut WheelhouseDelta) {
 }
 
 /// An intent (WHEELHOUSE_INTENT_*). Each kind reads some fields:
-/// ACTIVATE_PLACEMENT and TOGGLE_PLACEMENT a node's `key`; COPY_SUBJECT_URL
-/// and ACTIVATE an `entity`; SET_VARIABLE `key`, the variable's `name`, and
+/// ACTIVATE_PLACEMENT and TOGGLE_PLACEMENT a node's `key`; COPY_SUBJECT_URL,
+/// ACTIVATE and REMOVE_ENDED an `entity`; SET_VARIABLE `key`, the variable's `name`, and
 /// `value` when `has_value` (none resets it); TOGGLE_DISPLAY_VARIABLE `name`.
 /// A key is one a delta gave. NEW_WORKSPACE reads `workspace_id` (the
 /// host makes it), `name` (empty: the default name), `group` and
@@ -638,6 +641,7 @@ impl IntentView {
                     _ => HomeEdit::Group(self.group.read()?),
                 },
             },
+            WHEELHOUSE_INTENT_REMOVE_ENDED => Intent::RemoveEnded { entity: self.entity.read()? },
             other => return Err(format!("unknown intent kind {other}")),
         })
     }
@@ -684,5 +688,6 @@ fn close_code(close: Option<CloseKind>) -> u32 {
         Some(CloseKind::Detach) => WHEELHOUSE_CLOSE_DETACH,
         Some(CloseKind::Destroy) => WHEELHOUSE_CLOSE_DESTROY,
         Some(CloseKind::RemovePin) => WHEELHOUSE_CLOSE_REMOVE_PIN,
+        Some(CloseKind::Remove) => WHEELHOUSE_CLOSE_REMOVE,
     }
 }

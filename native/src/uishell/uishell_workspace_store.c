@@ -3190,15 +3190,19 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
   U64 revision = UIShell_StoreCall(state, wheelhouse_workspace_content_revision(state->core, &error));
   wheelhouse_string_free(error);
   B32 revision_moved = state->store_synced && revision != state->store_content_revision;
-  // A core change can mean a workspace the core didn't know has registered
-  // (a subject's, once it opened), which then commits. An arrangement set,
-  // or a View's config edited, can be a change to commit.
-  if(state->store_synced && cfg_change_gen() == state->store_cfg_gen && state->revision_count == state->store_revision_count &&
+  // What overlays read moved: a workspace the core didn't know has
+  // registered (a subject's, once it opened), which then commits, or a
+  // subject's label a workspace is named by. Facts no overlay reads, which a
+  // connector posts all day, don't move it (#475). An arrangement set, or a
+  // View's config edited, can be a change to commit.
+  U64 overlay = UIShell_StoreCall(state, wheelhouse_workspace_overlay_revision(state->core, 0));
+  if(state->store_synced && cfg_change_gen() == state->store_cfg_gen && overlay == state->store_overlay_revision &&
      !revision_moved && rd_state->arrangement_version == state->store_arrangement_version)
   {
     scratch_end(scratch);
     return;
   }
+  state->store_syncs += 1;
   CFG_NodePtrList owners = uishell_store_owners(scratch.arena, window);
   for(CFG_NodePtrNode *n = owners.first; n; n = n->next) { uishell_store_sync_owner(state, n->v, revision_moved); }
   uishell_store_read_overlay(state, window);
@@ -3218,7 +3222,7 @@ uishell_workspace_store_sync(UIShell_SidebarState *state, CFG_Node *window, B32 
   state->store_synced = 1;
   state->store_cfg_gen = cfg_change_gen();
   state->store_arrangement_version = rd_state->arrangement_version;
-  state->store_revision_count = state->revision_count;
+  state->store_overlay_revision = UIShell_StoreCall(state, wheelhouse_workspace_overlay_revision(state->core, 0));
   state->store_content_revision = UIShell_StoreCall(state, wheelhouse_workspace_content_revision(state->core, 0));
   scratch_end(scratch);
 }

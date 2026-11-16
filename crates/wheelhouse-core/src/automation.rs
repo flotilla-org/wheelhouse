@@ -45,6 +45,9 @@ pub enum State {
     Selected,
     /// A panel shown without space.
     Collapsed,
+    /// The View keys go to in its window: the Selected View of the focused
+    /// panel of the workspace the window shows.
+    Focused,
 }
 
 /// How a split lays out its children: a row left to right, a column top to
@@ -155,6 +158,40 @@ impl ViewOwner {
             ViewOwner::Window(id) => format!("window/{id}"),
         }
     }
+
+    /// The owner an Automation ID names, if it names only an owner.
+    pub fn from_automation_id(id: &str) -> Option<Self> {
+        let (owner, uuid) = id.split_once('/')?;
+        let uuid: WorkspaceId = uuid.parse().ok()?;
+        match owner {
+            "workspace" => Some(ViewOwner::Workspace(uuid)),
+            "window" => Some(ViewOwner::Window(uuid)),
+            _ => None,
+        }
+    }
+}
+
+/// A panel, by its arrangement's owner (a workspace, or a window for its
+/// sidebar's dock) and its ID there: a number, or the word a provider's
+/// document named it by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PanelAddress {
+    pub owner: ViewOwner,
+    pub id: String,
+}
+
+impl PanelAddress {
+    /// `<owner>/panel/<id>`.
+    pub fn automation_id(&self) -> String {
+        format!("{}/panel/{}", self.owner.automation_id(), self.id)
+    }
+
+    /// The address an Automation ID names, if it names a panel.
+    pub fn from_automation_id(id: &str) -> Option<Self> {
+        let (owner, panel) = id.split_once("/panel/")?;
+        let owner = ViewOwner::from_automation_id(owner)?;
+        (!panel.is_empty() && !panel.contains('/')).then(|| PanelAddress { owner, id: panel.to_owned() })
+    }
 }
 
 /// A View Address: its owner, key, and whether it is the previous instance
@@ -239,7 +276,8 @@ fn view_node(workspace: WorkspaceId, slot: &SlotInfo, selected: bool) -> Node {
 }
 
 fn panel_node(workspace: WorkspaceId, panel: &Panel, slots: &[SlotInfo], placed: &mut Vec<String>) -> Node {
-    let mut node = Node::new(format!("workspace/{workspace}/panel/{}", panel.id), Kind::Panel);
+    let address = PanelAddress { owner: ViewOwner::Workspace(workspace), id: panel.id.clone() };
+    let mut node = Node::new(address.automation_id(), Kind::Panel);
     // The arrangement as shown: a collapsed panel takes no space.
     if panel.weight == 0.0 {
         node.state.push(State::Collapsed);

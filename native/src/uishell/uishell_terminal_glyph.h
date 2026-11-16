@@ -86,6 +86,7 @@ struct UIShell_TerminalCellFeed
   U16 rows;
   cleat_cell const *cells;
   UIShell_TerminalRowWrap const *row_wraps; // nullable: legacy feeds have hard boundaries
+  U64 const *row_generations; // nullable: names each row's cells (see UIShell_TerminalCellCache)
   U64 cell_count;
   cleat_cursor cursor;
 };
@@ -99,6 +100,10 @@ struct UIShell_TerminalCellCache
   cleat_cell *cells;
   UIShell_TerminalRowWrap *row_wraps; // arena-owned, follows row operations
   String8 *hyperlinks; // arena-owned, follows the same cell operations
+  // Arena-owned, one per row: names the row's cells. A row whose cells are
+  // replaced gets a new generation; a scrolled row keeps its own, so its
+  // drawing can be reused at the row it moved to. Never reused once retired.
+  U64 *row_generations;
   U64 cell_count;
   cleat_cursor cursor;
   cleat_terminal_scrollbar_state scrollbar;
@@ -110,6 +115,41 @@ struct UIShell_TerminalCursorArray
 {
   cleat_cursor *v;
   U64 count;
+};
+
+// One row's retained drawing: its backgrounds and its text, kept apart so the
+// rows can be laid down as the full draw lays them (every background, then
+// every row's text). Valid while the row's cells, the cursor on it and the
+// style are what it was built from, and its atlases haven't been evicted.
+typedef struct UIShell_TerminalRowCacheEntry UIShell_TerminalRowCacheEntry;
+struct UIShell_TerminalRowCacheEntry
+{
+  Arena *arena;
+  DR_Bucket *backgrounds;
+  DR_Bucket *text;
+  FNT_AtlasUse atlases;
+  U64 row_generation; // 0: nothing built
+  U64 cursor_key;
+  U64 style_key;
+  F32 built_y; // its row's top when built; drawn at another row, it moves by the difference
+  B32 visible; // its row was inside the canvas, so it drew anything at all
+};
+
+// Per terminal: the retained rows of the last draw, by row, and how much the
+// last draw built. A draw rebuilds only rows whose cells, cursor or style
+// changed; a row a scroll moved is reused where it now is.
+typedef struct UIShell_TerminalRowCache UIShell_TerminalRowCache;
+struct UIShell_TerminalRowCache
+{
+  Arena *arena; // holds entries
+  UIShell_TerminalRowCacheEntry *entries;
+  U64 count;
+  // The last draw's work: rows built, rows taken from another row (a scroll)
+  // and rows kept in place, and the cells the built rows hold.
+  U64 rows_built;
+  U64 rows_moved;
+  U64 rows_reused;
+  U64 cells_built;
 };
 
 //- terminal image cache (Kitty image placements + uploaded resources)
@@ -180,6 +220,8 @@ internal B32 uishell_terminal_write_fixture_ppm(String8 path, FNT_Tag primary_fo
 internal B32 uishell_terminal_glyph_diagnostics(FNT_Tag primary_font, FNT_Tag main_fallback_font, F32 font_size, FNT_RasterFlags raster_flags, String8 **embedded_color_emoji_data, U64 embedded_color_emoji_count, String8 **embedded_fallback_data, U64 embedded_fallback_count);
 internal void uishell_terminal_glyph_renderer_draw_cell_feed_with_cursors(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, UIShell_TerminalCellFeed const *feed, UIShell_TerminalCursorArray cursors);
 internal void uishell_terminal_glyph_renderer_draw_cell_feed(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, UIShell_TerminalCellFeed const *feed);
+internal void uishell_terminal_glyph_renderer_draw_cell_feed_rows(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, UIShell_TerminalCellFeed const *feed, UIShell_TerminalCursorArray cursors, UIShell_TerminalRowCache *row_cache, U64 style_key);
+internal void uishell_terminal_row_cache_release(UIShell_TerminalRowCache *row_cache);
 internal void uishell_terminal_glyph_renderer_draw_snapshot_with_cursors(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, cleat_snapshot const *snapshot, UIShell_TerminalCursorArray cursors);
 internal void uishell_terminal_glyph_renderer_draw_snapshot(Arena *arena, UIShell_TerminalGlyphRenderer *renderer, UIShell_TerminalDrawParams *params, cleat_snapshot const *snapshot);
 

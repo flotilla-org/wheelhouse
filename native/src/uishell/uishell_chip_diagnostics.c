@@ -198,7 +198,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
   UIShell_SidebarState *saved_sidebar = ws->sidebar, fixture = {0};
   UI_State *saved_ui = ui_state, *test = ui_state_alloc();
   fixture.initialized = 1;
-  String8 config = str8_cstring((char *)uishell_sidebar_daily_config);
+  String8 config = uishell_sidebar_subject_fixture_config(scratch.arena);
   fixture.core = wheelhouse_create(config.str, config.size, 0);
   if(!fixture.core)
   {
@@ -383,6 +383,7 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     }
   }
   F32 widths[] = {90, 140, 240, 320, 600};
+  B32 faded = 0, whole = 0;
   for(U64 w = 0; w < ArrayCount(widths); w++)
   {
     F32 status_x = 0;
@@ -444,6 +445,27 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
         fprintf(stderr, "FAIL chip status geometry: width %g phase %llu status [%g,%g], original %g row end %g\n",
           widths[w], (unsigned long long)phase, status->rect.x0, status->rect.x1, status_x, row->rect.x1);
         ok = 0;
+      }
+      // A name fades out only when it is wider than its room
+      // (sidebar-headers.md, One row, one workspace).
+      if(phase == 0)
+      {
+        UI_Box *entry = &ui_nil_box;
+        for(UI_Box *box = row->first; !ui_box_is_nil(box) && ui_box_is_nil(entry); box = ui_box_rec_df_pre(box, row).next)
+        { if(ui_key_match(box->key, ui_key_from_stringf(row->key, "###entry_%S", convoy_key))) { entry = box; } }
+        if(ui_box_is_nil(entry)) { ok = 0; fprintf(stderr, "FAIL chip fade: missing convoy label at width %g\n", widths[w]); }
+        else
+        {
+          F32 text = fnt_dim_from_tag_size_string(entry->font, entry->font_size, 0, 0, ui_box_display_string(entry)).x+2*entry->text_padding;
+          B32 overflows = dim_2f32(entry->rect).x > 0 && text > dim_2f32(entry->rect).x+0.5f;
+          B32 fades = entry->custom_draw == uishell_sidebar_fade_draw && !(entry->flags & UI_BoxFlag_DrawText);
+          if(fades != overflows)
+          {
+            ok = 0;
+            fprintf(stderr, "FAIL chip fade: width %g text %g room %g fades %d\n", widths[w], text, dim_2f32(entry->rect).x, fades);
+          }
+          faded |= fades; whole |= !overflows;
+        }
       }
       if(phase == 0)
       {
@@ -635,10 +657,11 @@ uishell_sidebar_chip_diagnostics(RD_WindowState *ws, UIShell_ControlledSplit *sp
     if(!toggled || !ended_chip) { fprintf(stderr, "FAIL retained chip setup: materialized %d toggled %d ended %d\n", materialized, toggled, ended_chip); }
   }
   else { ok = 0; }
+  if(!faded || !whole) { ok = 0; fprintf(stderr, "FAIL chip fade: across widths, faded %d whole %d\n", faded, whole); }
   ws->sidebar = saved_sidebar;
   ui_select_state(saved_ui); ui_state_release(test);
   uishell_sidebar_release(&fixture);
   scratch_end(scratch);
-  fprintf(stderr, "Chip sidebar diagnostics: %s (tool strip as chips, convoy expansion, 90/140/240/320/600px, Tab reveal, precise horizontal scroll, latent/pending/removed, fixed status, ended precedence)\n", ok ? "passed" : "FAILED");
+  fprintf(stderr, "Chip sidebar diagnostics: %s (tool strip as chips, convoy expansion, 90/140/240/320/600px, name fade, Tab reveal, precise horizontal scroll, latent/pending/removed, fixed status, ended precedence)\n", ok ? "passed" : "FAILED");
   return ok;
 }

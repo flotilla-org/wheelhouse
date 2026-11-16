@@ -97,6 +97,12 @@ pub enum Intent {
         workspace: WorkspaceId,
         edit: HomeEdit,
     },
+    /// Remove an ended row (lifecycle::CloseKind::Remove): destroy every
+    /// workspace on its path, open or kept, so nothing keeps it. Refused
+    /// for a subject that hasn't ended, or one no workspace keeps.
+    RemoveEnded {
+        entity: EntityRef,
+    },
 }
 
 /// The name [`Sidebar::dispatch`]'s callers use; it goes with `dispatch`.
@@ -115,6 +121,7 @@ impl Intent {
             Self::NewWorkspace { .. } => "new-workspace",
             Self::CloseWorkspace { .. } => "close-workspace",
             Self::SetWorkspaceHome { .. } => "set-workspace-home",
+            Self::RemoveEnded { .. } => "remove-ended",
         }
     }
 }
@@ -301,6 +308,9 @@ pub struct Sidebar {
     content_changed: u64,
     /// When a workspace was last forgotten, for [`life_generation`](Self::life_generation).
     lives_changed: u64,
+    /// When a registered workspace's subject's label last changed, for
+    /// [`overlay_revision`](Self::overlay_revision).
+    names_changed: u64,
     /// The Dashboard's sidebar arrangement, and what its last
     /// reconciliation did.
     sidebar_arrangement: Versioned<SidebarArrangement>,
@@ -325,6 +335,8 @@ struct WorkspaceEntry {
     record: WorkspaceRecord,
     /// Retained subjects a producer published at the last refresh.
     observed: BTreeSet<EntityRef>,
+    /// Its subject's label at the last refresh that saw the subject change.
+    subject_name: Option<String>,
 }
 
 /// The kinds of local entities: sections, groups and refs people make, which
@@ -563,8 +575,9 @@ impl Sidebar {
             .retain(|id, subjects_on_path| subjects.contains_key(id) && !retained_workspace_expired(&self.state, subjects_on_path));
         let saved = self.saved_subjects();
         let mut retained: BTreeSet<EntityRef> = self.retained_paths.values().flatten().cloned().collect();
+        let workspaces = self.state.set_workspace_retained(retained.clone());
         retained.extend(self.ref_targets());
-        self.state.retain_workspace_paths(retained, &saved)
+        self.state.retain_workspace_paths(retained, &saved) | workspaces
     }
 
     /// The entities local refs (pins) present. They are retained like the
@@ -768,6 +781,40 @@ impl Sidebar {
         }
         let mut effects = vec![HostEffect::CloseWorkspace { workspace: id, kept: closed == Closed::Kept }];
         effects.extend(next.map(|workspace| HostEffect::ShowWorkspace { workspace }));
+        Ok(effects)
+    }
+
+    fn remove_ended(&mut self, entity: &EntityRef) -> Result<Vec<HostEffect>, String> {
+        if !self.state.subject_ended(entity) {
+            return Err(format!("{} has not ended", entity.id));
+        }
+        let keeping: Vec<WorkspaceId> = self.retained_paths.iter().filter(|(_, path)| path.contains(entity)).map(|(id, _)| *id).collect();
+        if keeping.is_empty() {
+            return Err(format!("no workspace keeps {}", entity.id));
+        }
+        // Each is closable before any is closed, so a refusal changes nothing.
+        let (order, _) = self.observed_order();
+        for id in &keeping {
+            let kept = self.workspace(*id)?.life.get().kept == Some(true);
+            if !kept && !order.contains(id) {
+                return Err(format!("workspace {id} is not open"));
+            }
+        }
+        let mut effects = Vec::new();
+        for id in keeping {
+            let kept = self.workspaces.get(&id).is_some_and(|entry| entry.record.life.get().kept == Some(true));
+            if kept {
+                // Not open: its layout goes, and nothing is shown instead.
+                self.forget_workspace(id);
+                effects.push(HostEffect::CloseWorkspace { workspace: id, kept: false });
+            } else {
+                // Open: closed as its row's close would, ended so destroyed.
+                effects.extend(self.close_workspace(id, false)?);
+            }
+            // Neither close drops its path; the next observe would, so the
+            // row goes now rather than after it.
+            self.retained_paths.remove(&id);
+        }
         Ok(effects)
     }
 
@@ -1061,7 +1108,7 @@ impl Sidebar {
                 self.state.bind_workspace_subject(id, record.subject());
                 // A path from this session is no longer the recorded one.
                 self.retained_paths.remove(&id);
-                self.workspaces.insert(id, WorkspaceEntry { record, observed: BTreeSet::new() });
+                self.workspaces.insert(id, WorkspaceEntry { record, observed: BTreeSet::new(), subject_name: None });
                 self.maintain(true);
             }
         }
@@ -1101,6 +1148,22 @@ impl Sidebar {
         if published {
             self.content_changed = self.clock.tick();
         }
+        // A workspace's overlay names it by its subject's label, open or not.
+        let mut renamed = false;
+        for entry in self.workspaces.values_mut() {
+            let Some(subject) = entry.record.subject() else { continue };
+            if !entities.contains(subject) {
+                continue;
+            }
+            let name = self.state.subject_label(subject);
+            if entry.subject_name != name {
+                entry.subject_name = name;
+                renamed = true;
+            }
+        }
+        if renamed {
+            self.names_changed = self.clock.tick();
+        }
         let open: BTreeSet<WorkspaceId> = self.state.workspaces().iter().map(|tab| tab.tab_id).collect();
         for (id, entry) in self.workspaces.iter_mut() {
             let record = &mut entry.record;
@@ -1130,6 +1193,15 @@ impl Sidebar {
     /// sidebar's [`revision`](Self::revision) does not change with them.
     pub fn content_revision(&self) -> u64 {
         self.workspaces.values().map(|entry| entry.record.content_generation()).fold(self.content_changed, u64::max)
+    }
+
+    /// Revision of what a workspace's [`overlay`](Self::overlay) reads beyond
+    /// its content: which workspaces are registered, their subjects, and their
+    /// subjects' labels. With [`content_revision`](Self::content_revision) it
+    /// moves whenever an overlay may read differently, and not for facts no
+    /// workspace's overlay reads. Cheap enough to read every frame.
+    pub fn overlay_revision(&self) -> u64 {
+        self.workspaces.values().map(|entry| entry.record.subject.generation()).fold(self.names_changed.max(self.lives_changed), u64::max)
     }
 
     fn workspace(&self, id: WorkspaceId) -> Result<&WorkspaceRecord, String> {
@@ -1786,6 +1858,7 @@ impl Sidebar {
             Intent::NewWorkspace { workspace, name, home } => self.new_workspace(workspace, name, home),
             Intent::CloseWorkspace { workspace, keep } => self.close_workspace(workspace, keep),
             Intent::SetWorkspaceHome { workspace, edit } => self.set_workspace_home(workspace, edit),
+            Intent::RemoveEnded { entity } => self.remove_ended(&entity),
         }
     }
 
