@@ -3698,7 +3698,9 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
     else if(r->entry) { r->entry_sig = uishell_sidebar_button(push_str8f(arena, "%S###entry_%S", r->text, r->key)); label = r->entry_sig.box; }
     else { label = ui_label(r->text).box; }
     // A name longer than its room (last frame's) fades out: the label draws
-    // its text itself, under its own clip, then the fade.
+    // its text itself, under its own clip, then the fade. A new label has no
+    // room yet, so it asks for the frame that decides.
+    if(!ui_box_is_nil(label) && label->first_touched_build_index == ui_state->build_index) { rd_request_frame(); }
     if(!ui_box_is_nil(label) && dim_2f32(label->rect).x > 0 && text_width > dim_2f32(label->rect).x+0.5f)
     {
       label->flags = (label->flags & ~UI_BoxFlag_DrawText)|UI_BoxFlag_Clip|UI_BoxFlag_ClipToRect|UI_BoxFlag_DisableTruncatedHover;
@@ -3728,29 +3730,35 @@ uishell_sidebar_row_end(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   // its menu is open; its status otherwise (as the Claude app's sessions do).
   B32 more = r->menu && r->present && !r->project &&
     (r->menu_open || (contains_2f32(r->row->rect, ui_mouse()) && !rd_drag_is_active()));
+  // A change request's status is a badge, not a mark.
+  String8 status = r->status, badge = str8_lit("~ pending");
+  Vec4F32 color = ui_color_from_name(str8_lit("text"));
+  if(str8_match(status, str8_lit("ready_to_merge"), 0)) { badge = str8_lit("+ ready to merge"); color = v4f32(0.4f, 0.85f, 0.55f, 1.f); }
+  else if(str8_match(status, str8_lit("ci_failing"), 0)) { badge = str8_lit("! CI failing"); color = v4f32(1.f, 0.4f, 0.35f, 1.f); }
+  else if(str8_match(status, str8_lit("conflicting"), 0)) { badge = str8_lit("! conflicting"); color = v4f32(1.f, 0.7f, 0.3f, 1.f); }
+  else if(str8_match(status, str8_lit("awaiting_review_response"), 0)) { badge = str8_lit("~ review response"); color = v4f32(0.9f, 0.75f, 0.4f, 1.f); }
+  else if(str8_match(status, str8_lit("draft"), 0)) { badge = str8_lit("o draft"); color.w = 0.65f; }
+  else if(str8_match(status, str8_lit("merged_not_landed"), 0)) { badge = str8_lit("+ merged"); color = v4f32(0.65f, 0.6f, 0.95f, 1.f); }
+  else if(str8_match(status, str8_lit("closed"), 0)) { badge = str8_lit("x closed"); color.w = 0.65f; }
   UI_PrefWidth(ui_px(slot_width, 1)) UI_TextPadding(0) UI_TextAlignment(UI_TextAlign_Center)
   {
-    String8 status = r->status;
     if(!r->present) { ui_label(str8_lit("?")); }
     else if(more)
     {
+      // ⋯ takes the slot's end; a badge keeps the rest, so hovering a
+      // change request still shows its state.
       F32 button = floor_f32(ui_top_font_size()*1.2f);
-      if(slot_width > button) { ui_spacer(ui_px(slot_width-button, 1)); }
+      if(slot_width > button)
+      {
+        if(change_request) UI_PrefWidth(ui_px(slot_width-button, 1)) UI_TextColor(color) UI_TextAlignment(UI_TextAlign_Left) { ui_label(badge); }
+        else { ui_spacer(ui_px(slot_width-button, 1)); }
+      }
       UI_PrefWidth(ui_px(button, 1)) UI_CornerRadius(3.f)
       { r->more = uishell_sidebar_button(push_str8f(ui_build_arena(), "⋯###more_%S", r->key)); }
       r->more.box->flags |= UI_BoxFlag_DisableTextTrunc|UI_BoxFlag_DisableTruncatedHover;
     }
     else if(change_request)
     {
-      String8 badge = str8_lit("~ pending");
-      Vec4F32 color = ui_color_from_name(str8_lit("text"));
-      if(str8_match(status, str8_lit("ready_to_merge"), 0)) { badge = str8_lit("+ ready to merge"); color = v4f32(0.4f, 0.85f, 0.55f, 1.f); }
-      else if(str8_match(status, str8_lit("ci_failing"), 0)) { badge = str8_lit("! CI failing"); color = v4f32(1.f, 0.4f, 0.35f, 1.f); }
-      else if(str8_match(status, str8_lit("conflicting"), 0)) { badge = str8_lit("! conflicting"); color = v4f32(1.f, 0.7f, 0.3f, 1.f); }
-      else if(str8_match(status, str8_lit("awaiting_review_response"), 0)) { badge = str8_lit("~ review response"); color = v4f32(0.9f, 0.75f, 0.4f, 1.f); }
-      else if(str8_match(status, str8_lit("draft"), 0)) { badge = str8_lit("o draft"); color.w = 0.65f; }
-      else if(str8_match(status, str8_lit("merged_not_landed"), 0)) { badge = str8_lit("+ merged"); color = v4f32(0.65f, 0.6f, 0.95f, 1.f); }
-      else if(str8_match(status, str8_lit("closed"), 0)) { badge = str8_lit("x closed"); color.w = 0.65f; }
       UI_TextColor(color) UI_TextAlignment(UI_TextAlign_Left) { ui_label(badge); }
     }
     else if(r->project) { ui_spacer(ui_em(1.2f, 1)); }
@@ -5114,7 +5122,10 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
             UIShell_SidebarCloseKind close = uishell_sidebar_close_kind(node);
             UI_Key menu_key = ui_key_from_stringf(r.row->key, uishell_sidebar_is_subject(node) ? "subject_menu" : "workspace_menu");
             r.menu = !project && (close != UIShell_SidebarCloseKind_None || uishell_sidebar_is_subject(node));
-            r.menu_open = r.menu && ui_ctx_menu_is_open(menu_key);
+            // ⋯ stays while either of the row's menus is open: the row's
+            // own (⋯, a right-click on the row) or its label's.
+            r.menu_open = r.menu && (ui_ctx_menu_is_open(menu_key) || (!ui_box_is_nil(r.entry_sig.box) &&
+              ui_ctx_menu_is_open(ui_key_from_stringf(r.entry_sig.box->key, uishell_sidebar_is_subject(node) ? "subject_menu" : "workspace_menu"))));
             uishell_sidebar_row_end(state, &r);
             if(ui_clicked(r.toggle))
             {
