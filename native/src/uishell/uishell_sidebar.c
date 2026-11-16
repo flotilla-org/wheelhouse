@@ -406,6 +406,11 @@ struct UIShell_SidebarState
   U8 *roles;
   String8 *role_keys;
   B32 roles_default_section;      // the default local section is placed
+  // The nodes as the renderer shows them (uishell_sidebar_shown_nodes),
+  // cached per view count: every section panel's render reads them.
+  U64 shown_view, shown_count;
+  Arena *shown_arena;
+  UIShell_SidebarNode *shown;
   // Local workspaces as last published as host entities (.workspace), and a
   // hash of what that read (uishell_sidebar_publish_workspaces).
   Arena *workspaces_arena;
@@ -704,6 +709,8 @@ uishell_sidebar_release(UIShell_SidebarState *state)
     if(state->groups_claim_arena) { arena_release(state->groups_claim_arena); state->groups_claim_arena = 0; }
     if(state->roles_arena) { arena_release(state->roles_arena); state->roles_arena = 0; }
     state->roles_view = 0;
+    if(state->shown_arena) { arena_release(state->shown_arena); state->shown_arena = 0; }
+    state->shown_view = state->shown_count = 0; state->shown = 0;
     if(state->titles_arena) { arena_release(state->titles_arena); state->titles_arena = 0; }
     state->titles_view = 0;
     state->titles = 0;
@@ -1181,6 +1188,44 @@ uishell_sidebar_node_at(UIShell_SidebarState *state, U64 i, UIShell_SidebarNode 
   UIShell_SidebarRole role = (UIShell_SidebarRole)state->roles[i];
   if(role == UIShell_SidebarRole_LocalSection) { out->is_section = 1; out->key = uishell_sidebar_text(state->role_keys[i]); }
   return role;
+}
+
+// The `count` nodes as the sidebar shows them (uishell_sidebar_node_at), with
+// one navigation handle per workspace: of a workspace's selected
+// appearances, the deepest stays selected, stable section order resolving
+// equal-depth duplicates (nodes follow the view's section order, then each
+// section's traversal order). All of it follows the model alone, so it is
+// read once per view count, not by each section panel every frame (#475).
+// The renderer reads it; nothing writes it.
+internal UIShell_SidebarNode *
+uishell_sidebar_shown_nodes(UIShell_SidebarState *state, U64 count)
+{
+  // The render reads the roles beside them.
+  uishell_sidebar_roles(state);
+  if(state->shown_view == state->view_count && state->shown_view && state->shown_count == count) { return state->shown; }
+  if(!state->shown_arena) { state->shown_arena = arena_alloc(); }
+  arena_clear(state->shown_arena);
+  state->shown_view = state->view_count;
+  state->shown_count = count;
+  state->shown = push_array(state->shown_arena, UIShell_SidebarNode, count);
+  Temp scratch = scratch_begin(0, 0);
+  U64 *depth = push_array(scratch.arena, U64, count);
+  U64 selected_entry = WHEELHOUSE_NONE;
+  for(U64 i = 0; i < count; i++)
+  {
+    UIShell_SidebarNode *node = &state->shown[i];
+    uishell_sidebar_node_at(state, i, node);
+    U64 parent = node->parent;
+    if(parent != WHEELHOUSE_NONE)
+    {
+      B32 parent_passed = state->roles[parent] == UIShell_SidebarRole_PassThrough;
+      depth[i] = depth[parent] + !(state->shown[parent].is_section || parent_passed);
+    }
+    if(node->selected && (selected_entry == WHEELHOUSE_NONE || depth[i] > depth[selected_entry])) { selected_entry = i; }
+  }
+  for(U64 i = 0; i < count; i++) { state->shown[i].selected = i == selected_entry; }
+  scratch_end(scratch);
+  return state->shown;
 }
 
 //- Sections and groups people make (drag-model.md, "Sections and groups as
@@ -4217,7 +4262,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   UI_Box *nav_hot = ui_box_from_key(root->default_nav_focus_hot_key);
   U64 analysis_start = uishell_sidebar_benchmark_active ? now_time_us() : 0;
   U64 count = uishell_sidebar_viewing(state) ? uishell_sidebar_node_count(state) : 0;
-  UIShell_SidebarNode *nodes = push_array(scratch.arena, UIShell_SidebarNode, count);
+  UIShell_SidebarNode *nodes = uishell_sidebar_shown_nodes(state, count);
   B32 *hidden = push_array(scratch.arena, B32, count);
   U64 *depth = push_array(scratch.arena, U64, count);
   U64 *sections = push_array(scratch.arena, U64, count);
@@ -4257,7 +4302,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
   U64 section_count = 0;
   for(U64 i = 0; i < count; i++)
   {
-    UIShell_SidebarRole role = uishell_sidebar_node_at(state, i, &nodes[i]);
+    UIShell_SidebarRole role = (UIShell_SidebarRole)state->roles[i];
     passed[i] = role == UIShell_SidebarRole_PassThrough;
     // The leftover section shows only while something is left over.
     B32 empty_leftover = uishell_sidebar_leftover_hidden(state, i, nodes[i]);
@@ -4307,16 +4352,8 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
     }
     else if(parent != WHEELHOUSE_NONE) { row_children[parent] = 1; }
   }
-  // One navigation handle per workspace: prefer the deepest selected subject
-  // appearance, with stable section order resolving equal-depth duplicates.
-  // nodes follows the view's section order, then each section's traversal order.
-  U64 selected_entry = WHEELHOUSE_NONE;
-  for(U64 i = 0; i < count; i++)
-  {
-    if(nodes[i].selected && (selected_entry == WHEELHOUSE_NONE || depth[i] > depth[selected_entry]))
-    { selected_entry = i; }
-  }
-  for(U64 i = 0; i < count; i++) { nodes[i].selected = i == selected_entry; }
+  // One navigation handle per workspace: uishell_sidebar_shown_nodes keeps
+  // one appearance selected.
   // Propagate selection only for collapsed ancestors. Their
   // own action and selected state still belong to their exact workspace binding.
   B32 *contains_selected = push_array(scratch.arena, B32, count);
@@ -5556,9 +5593,8 @@ uishell_sidebar_panel_absent(RD_PanelNode *panel)
 }
 
 internal B32
-uishell_sidebar_panel_collapsed(RD_PanelNode *panel, F32 header, F32 *height)
+uishell_sidebar_panel_collapsed_inset(RD_PanelNode *panel, F32 header, F32 inset, F32 *height)
 {
-  F32 inset = 2*rd_panel_inset_px(ui_top_font_size());
   if(panel->first == &rd_nil_panel_node)
   {
     // An empty leaf has nothing to show: it gives all its space away, as
@@ -5574,11 +5610,19 @@ uishell_sidebar_panel_collapsed(RD_PanelNode *panel, F32 header, F32 *height)
   for(RD_PanelNode *child = panel->first; child != &rd_nil_panel_node; child = child->next)
   {
     F32 h = 0;
-    if(!uishell_sidebar_panel_collapsed(child, header, &h)) { return 0; }
+    if(!uishell_sidebar_panel_collapsed_inset(child, header, inset, &h)) { return 0; }
     most = Max(most, h); sum += h;
   }
   *height = panel->split_axis == Axis2_Y ? sum : most;
   return 1;
+}
+
+// The inset is a setting looked up by name, the same for every panel in
+// the tree, so it is read once rather than at each node.
+internal B32
+uishell_sidebar_panel_collapsed(RD_PanelNode *panel, F32 header, F32 *height)
+{
+  return uishell_sidebar_panel_collapsed_inset(panel, header, 2*rd_panel_inset_px(ui_top_font_size()), height);
 }
 
 // Collapsed sections give their space back (sidebar-headers.md): along a
