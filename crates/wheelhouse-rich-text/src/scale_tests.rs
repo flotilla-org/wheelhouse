@@ -207,8 +207,12 @@ fn stream_arguments(pieces: &[String], input_prefix: &str) {
         })
         .collect();
     let mut rich = RichText::open_conversation(&[line(r#"{"type":"Hello","contract":2}"#.into()), line(start.into())].concat());
-    let (half, mut first, mut last) = (deltas.len() / 2, Duration::ZERO, Duration::ZERO);
-    for (i, delta) in deltas.iter().enumerate() {
+    // The closing delta parses and folds the whole input once, a cost of its
+    // size that would swamp the halves on a slow allocator (Windows CI), so
+    // it is timed apart.
+    let (closing, streaming) = deltas.split_last().unwrap();
+    let (half, mut first, mut last) = (streaming.len() / 2, Duration::ZERO, Duration::ZERO);
+    for (i, delta) in streaming.iter().enumerate() {
         let started = Instant::now();
         rich.append(delta);
         if i < half {
@@ -217,7 +221,10 @@ fn stream_arguments(pieces: &[String], input_prefix: &str) {
             last += started.elapsed();
         }
     }
-    eprintln!("{} deltas of {} bytes: first half {first:?}, second half {last:?}", deltas.len(), args.len());
+    let started = Instant::now();
+    rich.append(closing);
+    let closed = started.elapsed();
+    eprintln!("{} deltas of {} bytes: first half {first:?}, second half {last:?}, closing {closed:?}", deltas.len(), args.len());
     // A quadratic cost puts three times the first half's in the second.
     assert!(last < first * 2, "late deltas took {last:?}, early ones {first:?}");
     let call = rich.doc().get(Key::named(&["t", "tool", "c"])).unwrap();
