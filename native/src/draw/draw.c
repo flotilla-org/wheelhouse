@@ -644,6 +644,22 @@ dr_sub_bucket(DR_Bucket *bucket)
 internal void
 dr_append_bucket(DR_Bucket *src, Vec2F32 offset)
 {
+  dr_append_bucket_(src, offset, 0);
+}
+
+// As dr_append_bucket, unmoved, but the top bucket's batches point at src's
+// instances rather than copying them. src's instances must stay as they are
+// for as long as the top bucket is drawn: a bucket retained alongside the
+// one it is appended to, and rebuilt only when that one is.
+internal void
+dr_append_bucket_retained(DR_Bucket *src)
+{
+  dr_append_bucket_(src, v2f32(0, 0), 1);
+}
+
+internal void
+dr_append_bucket_(DR_Bucket *src, Vec2F32 offset, B32 by_reference)
+{
   DR_Bucket *dst = dr_top_bucket();
   Arena *arena = (dst->arena != 0 ? dst->arena : dr_thread_ctx->arena);
   Rng2F32 dst_clip = dst->top_clip->v;
@@ -686,7 +702,18 @@ dr_append_bucket(DR_Bucket *src, Vec2F32 offset)
         node->batches = r_batch_list_make(sizeof(R_Rect2DInst));
         node->params = params;
       }
-      for(R_BatchNode *batch_n = src_group->batches.first; batch_n != 0; batch_n = batch_n->next)
+      for(R_BatchNode *batch_n = src_group->batches.first; batch_n != 0 && by_reference; batch_n = batch_n->next)
+      {
+        if(batch_n->v.byte_count == 0) { continue; }
+        // Full, so nothing pushed after it can write into src's memory.
+        R_BatchNode *ref = push_array(arena, R_BatchNode, 1);
+        ref->v = batch_n->v;
+        ref->v.byte_cap = ref->v.byte_count;
+        SLLQueuePush(node->batches.first, node->batches.last, ref);
+        node->batches.batch_count += 1;
+        node->batches.byte_count += ref->v.byte_count;
+      }
+      for(R_BatchNode *batch_n = src_group->batches.first; batch_n != 0 && !by_reference; batch_n = batch_n->next)
       {
         R_Rect2DInst *src_insts = (R_Rect2DInst *)batch_n->v.v;
         U64 count = batch_n->v.byte_count/sizeof(R_Rect2DInst);
