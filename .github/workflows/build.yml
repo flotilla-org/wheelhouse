@@ -42,6 +42,15 @@ jobs:
         if: runner.os != 'Windows'
       - run: python3 tools/test-embed-sidebar-fixture.py
         if: runner.os != 'Windows'
+      - run: python3 tools/test-claude-to-events.py
+        if: runner.os != 'Windows'
+      # The Codex bridge uses Node's own WebSocket client, so it needs Node 22 or later.
+      - uses: actions/setup-node@v4
+        if: runner.os != 'Windows'
+        with:
+          node-version: 24
+      - run: node tools/test-codex-agent-host.mjs
+        if: runner.os != 'Windows'
       - run: python3 ci/test_pins.py
         if: runner.os != 'Windows'
       - run: python3 ci/test_run_ui_diagnostics.py
