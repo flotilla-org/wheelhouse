@@ -314,6 +314,31 @@ typedef struct BinnacleGrid BinnacleGrid;
 // A View Dock's: the panels a View shows inside its own content.
 #define WHEELHOUSE_OWNER_DOCK 2
 
+#define WHEELHOUSE_COMPOSER_KEY_UP 0
+
+#define WHEELHOUSE_COMPOSER_KEY_DOWN 1
+
+// Tab or Enter.
+#define WHEELHOUSE_COMPOSER_KEY_ACCEPT 2
+
+#define WHEELHOUSE_COMPOSER_KEY_ESCAPE 3
+
+#define WHEELHOUSE_COMPOSER_POPUP_NONE 0
+
+// `/` as the field's first character: the thread's Agent Commands.
+#define WHEELHOUSE_COMPOSER_POPUP_COMMAND 1
+
+// An `@` token: its `@` Agent Commands, then the root's files.
+#define WHEELHOUSE_COMPOSER_POPUP_MENTION 2
+
+#define WHEELHOUSE_COMPOSER_ROW_COMMAND 0
+
+#define WHEELHOUSE_COMPOSER_ROW_FILE 1
+
+#define WHEELHOUSE_COMPOSER_ROW_DIR 2
+
+#define WHEELHOUSE_COMPOSER_VISIBLE_ROWS VISIBLE_ROWS
+
 // The sidebar's dock: it accepts sections.
 #define WHEELHOUSE_DOCK_HOST_SIDEBAR 0
 
@@ -1016,6 +1041,8 @@ typedef struct WheelhouseAgentWatch WheelhouseAgentWatch;
 
 typedef struct WheelhouseCard WheelhouseCard;
 
+typedef struct WheelhouseComposer WheelhouseComposer;
+
 // A sidebar: one presentation client's core. Calls on one are serialised
 // by the host.
 typedef struct WheelhouseCore WheelhouseCore;
@@ -1468,6 +1495,43 @@ typedef struct {
   WheelhouseEntity entity;
   WheelhouseText display_text;
 } WheelhouseCardRelation;
+
+// Replace bytes [start, end) of the field's text with text, and put the
+// cursor after it. text is borrowed from the composer until the next call
+// on it.
+typedef struct {
+  size_t start;
+  size_t end;
+  WheelhouseText text;
+} WheelhouseComposerEdit;
+
+// A popup row: a command's name, dimmed description and right-aligned
+// group (empty for none), or a file's path.
+typedef struct {
+  // WHEELHOUSE_COMPOSER_ROW_*.
+  uint32_t kind;
+  WheelhouseText name;
+  WheelhouseText description;
+  WheelhouseText group;
+} WheelhouseComposerRow;
+
+// What the Composer shows: the popup's rows from first (at most
+// WHEELHOUSE_COMPOSER_VISIBLE_ROWS of total), the selected row's index
+// among them (WHEELHOUSE_NONE when it isn't shown), and ghost text after
+// an inserted command (hint, at byte hint_at of the field) until the user
+// types. Every string is borrowed from it until wheelhouse_composer_popup_free.
+typedef struct {
+  // WHEELHOUSE_COMPOSER_POPUP_*.
+  uint32_t kind;
+  const WheelhouseComposerRow *rows;
+  size_t row_count;
+  size_t first;
+  size_t total;
+  size_t selected;
+  uint32_t has_hint;
+  WheelhouseText hint;
+  size_t hint_at;
+} WheelhouseComposerPopup;
 
 // A fact of a local entity: WHEELHOUSE_FACT_TEXT, _BOOL, _INTEGER or
 // _ENTITY (one entity reference, such as .section, .group or .target).
@@ -3056,6 +3120,42 @@ uint32_t wheelhouse_card_relation(const WheelhouseCard *c,
                                   WheelhouseCardRelation *out);
 
 void wheelhouse_card_release(WheelhouseCard *c);
+
+// A Composer's completion for a thread whose producer is at endpoint,
+// reached as wheelhouse_agent_watch_open reaches it (an empty endpoint: no
+// root is searched). wake (if not NULL) is called from another thread when
+// file results wait: call wheelhouse_composer_update again. Free it with
+// wheelhouse_composer_free.
+WheelhouseComposer *wheelhouse_composer_new(WheelhouseText transport,
+                                            WheelhouseText host,
+                                            WheelhouseText endpoint,
+                                            void (*wake)(void),
+                                            char **error_out);
+
+void wheelhouse_composer_free(WheelhouseComposer *c);
+
+// The field now: its text and cursor (a byte offset into text), read
+// against doc's `commands` document and roots (doc may be NULL: no data,
+// no popups). Call it whenever the field changes and when woken. Returns 1
+// when the popup or hint changed: read wheelhouse_composer_popup again.
+uint32_t wheelhouse_composer_update(WheelhouseComposer *c,
+                                    WheelhouseRichText *doc,
+                                    WheelhouseText text,
+                                    size_t cursor,
+                                    char **error_out);
+
+// A WHEELHOUSE_COMPOSER_KEY_*: 1 if the popup took it, else 0 and the key
+// is the field's own (Enter sends). Accepting a row writes its edit to
+// edit_out and returns 2; apply it, then call wheelhouse_composer_update.
+uint32_t wheelhouse_composer_key(WheelhouseComposer *c,
+                                 uint32_t key,
+                                 WheelhouseComposerEdit *edit_out,
+                                 char **error_out);
+
+// Free it with wheelhouse_composer_popup_free.
+WheelhouseComposerPopup *wheelhouse_composer_popup(WheelhouseComposer *c, char **error_out);
+
+void wheelhouse_composer_popup_free(WheelhouseComposerPopup *popup);
 
 // The names of the records the core holds, one per line (no trailing
 // newline): "dashboard", then "workspace/<id>" for each registered
