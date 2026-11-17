@@ -31,8 +31,8 @@ pub use search::{Search, SearchAnswer, SEARCH_DEBOUNCE};
 /// Called from the endpoint's thread when something arrives.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
-/// How long a post waits on the producer.
-const POST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a post or a GET waits on the producer.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_FIRST: Duration = Duration::from_millis(250);
 const RETRY_MOST: Duration = Duration::from_secs(5);
 
@@ -429,7 +429,7 @@ async fn decoded<T: DeserializeOwned>(link: &Link, url: Url) -> Result<T, String
 async fn get(link: &Link, url: Url, accept: &'static str) -> Result<Body, (Option<StatusCode>, String)> {
     let mut request = Request::new(Method::GET, url);
     request.headers_mut().insert(ACCEPT, accept.parse().unwrap());
-    *request.timeout_mut() = Some(POST_TIMEOUT);
+    *request.timeout_mut() = Some(REQUEST_TIMEOUT);
     let label = http_channel_label("GET", request.url().as_str());
     let heard = link.ready().await.map_err(|why| (None, why))?;
     let response = match link.client.execute(request, &label).await {
@@ -451,7 +451,7 @@ struct Body {
 async fn post(link: &Link, url: Url, body: Vec<u8>) -> Result<(), String> {
     let mut request = Request::new(Method::POST, url);
     request.headers_mut().insert(CONTENT_TYPE, "application/json".parse().unwrap());
-    *request.timeout_mut() = Some(POST_TIMEOUT);
+    *request.timeout_mut() = Some(REQUEST_TIMEOUT);
     *request.body_mut() = Some(body.into());
     let label = http_channel_label("POST", request.url().as_str());
     let heard = link.ready().await?;
