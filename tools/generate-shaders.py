@@ -10,6 +10,11 @@ Core shaders: native/src/shaders/*.slang (common.slang is imported, not
 Effects: native/src/effects/*.slang (each includes effect_prelude.slang) ->
   native/src/effects/generated/<effect>.<stage>.<ext>, plus effects_embed.h,
   which gives only the build's own backend real sources.
+Layouts: slangc's reflection of every shader for HLSL, Metal and SPIR-V is
+  checked by tools/check-shader-reflection.py against what the backends bind,
+  and becomes native/src/shaders/generated/shader_layouts.h, the StaticAsserts
+  that hold the C uniform structs to it in every build. The reflection itself
+  is not kept.
 
   SLANGC=...       slangc
   SPIRV_CROSS=...  spirv-cross
@@ -30,6 +35,7 @@ textures are stored bottom-up, and flipping the fullscreen triangle keeps
 effect output in the convention the composite's surface sampling expects
 (effect-space v is mirrored on GL as a result).
 """
+import importlib.util
 import os
 import re
 import shutil
@@ -79,16 +85,20 @@ def check_tools():
     return slang, spirv_cross
 
 
-def generate(src_dir, name, dst, tmp, flip_vert_y=False):
+def generate(src_dir, name, dst, tmp, reflect, flip_vert_y=False):
     # slangc runs inside the source directory with relative paths, so the
-    # #line directives in its output name rect.slang, not this checkout's path
+    # #line directives in its output name rect.slang, not this checkout's path.
+    # Each compile also writes its reflection to reflect/ as
+    # <shader>.<target>[.<stage>].json, for check-shader-reflection.py.
     spv = tmp / (name + '.spv')
     source = name + '.slang'
-    run([SLANGC, source, '-I', '.', '-target', 'spirv', '-fvk-use-entrypoint-name', '-o', spv], cwd=src_dir)
+    run([SLANGC, source, '-I', '.', '-target', 'spirv', '-fvk-use-entrypoint-name', '-o', spv,
+         '-reflection-json', reflect / ('%s.spirv.json' % name)], cwd=src_dir)
     for target, slang_target in (('hlsl', 'hlsl'), ('msl', 'metal')):
         for stage, entry, slang_stage in (('vs', 'vs_main', 'vertex'), ('fs', 'fs_main', 'fragment')):
             run([SLANGC, source, '-I', '.', '-target', slang_target, '-entry', entry, '-stage', slang_stage,
-                 '-o', dst / (TARGETS[target][stage] % name)], cwd=src_dir)
+                 '-o', dst / (TARGETS[target][stage] % name),
+                 '-reflection-json', reflect / ('%s.%s.%s.json' % (name, slang_target, stage))], cwd=src_dir)
     for stage, entry, gl_stage, direction in (('vs', 'vs_main', 'vert', 'out'), ('fs', 'fs_main', 'frag', 'in')):
         args = [SPIRV_CROSS, '--version', '330', '--no-420pack-extension', spv, '--entry', entry, '--stage', gl_stage]
         if stage == 'vs' and flip_vert_y:
@@ -134,6 +144,18 @@ def write_effects_header(dst, names, stamp):
     (dst / 'effects_embed.h').write_text(''.join(lines), newline='\n')
 
 
+def check_layouts(reflect_dirs, header, slang, spirv_cross):
+    # Fails, before anything is moved into place, if the shaders' interfaces
+    # don't match what the backends bind; otherwise writes shader_layouts.h.
+    path = Path(__file__).resolve().parent / 'check-shader-reflection.py'
+    spec = importlib.util.spec_from_file_location('check_shader_reflection', path)
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    args = ['--header', str(header), '--stamp', 'slangc %s, spirv-cross %s' % (slang, spirv_cross)]
+    if checker.main(args + [str(d) for d in reflect_dirs]) != 0:
+        sys.exit('shader interfaces do not match the backends; generated files left unchanged')
+
+
 def replace_dir(new, old):
     # The new files replace the old ones before stale ones are deleted, so an
     # interrupted run leaves a mix of old and new files, never an empty
@@ -158,14 +180,16 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         core, effects = tmp / 'core', tmp / 'effects'
-        core.mkdir()
-        effects.mkdir()
+        reflect_core, reflect_effects = tmp / 'reflect-core', tmp / 'reflect-effects'
+        for d in (core, effects, reflect_core, reflect_effects):
+            d.mkdir()
         for name in core_names:
-            generate(CORE_SRC, name, core, tmp)
+            generate(CORE_SRC, name, core, tmp, reflect_core)
         for name in effect_names:
-            generate(EFFECTS_SRC, name, effects, tmp, flip_vert_y=True)
+            generate(EFFECTS_SRC, name, effects, tmp, reflect_effects, flip_vert_y=True)
         write_core_headers(core, core_names, stamp)
         write_effects_header(effects, effect_names, stamp)
+        check_layouts((reflect_core, reflect_effects), core / 'shader_layouts.h', slang, spirv_cross)
         replace_dir(core, CORE_SRC / 'generated')
         replace_dir(effects, EFFECTS_SRC / 'generated')
     print('generated: %s' % ' '.join(core_names))
