@@ -124,6 +124,11 @@ fn a_task_stops_through_its_producer() {
     assert_eq!(settled(&endpoint.stop_task("t/1", "k1")), PostStatus::Accepted);
     assert_eq!(*producer.stopped.lock().unwrap(), [("t/1".to_owned(), "k1".to_owned())], "the ids travel whole");
     assert_eq!(settled(&endpoint.stop_task("t/1", "k2")), PostStatus::Failed("no task".into()));
+    // A URL would drop these segments and stop something else.
+    for id in ["..", ".", ""] {
+        assert!(matches!(settled(&endpoint.stop_task("t1", id)), PostStatus::Failed(_)), "{id:?}");
+    }
+    assert_eq!(producer.stopped.lock().unwrap().len(), 1);
 }
 
 // A task's output from its url follows what the producer appends while it
@@ -147,6 +152,7 @@ fn output_from_a_url_follows_the_task_until_it_ends() {
     output.finish();
     read_until(&output, &mut seen, |r| r.end.is_some());
     assert_eq!((seen.text.as_str(), seen.end.clone()), ("trimmed and done", Some(Ok(()))));
+    assert_eq!(output.take().end, Some(Ok(())), "an end is reported to every later look");
 
     // A 404 may mean nothing is served yet while the task runs; once it
     // has ended, it is the answer.

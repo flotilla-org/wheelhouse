@@ -162,6 +162,11 @@ impl Endpoint {
     /// Asks the producer to stop one of `thread`'s Agent Tasks; the post
     /// settles as the producer answers.
     pub fn stop_task(&self, thread: &str, task: &str) -> Post {
+        // A URL drops a `.` or `..` segment rather than encoding it.
+        if let Some(id) = [thread, task].into_iter().find(|id| matches!(*id, "" | "." | "..")) {
+            let status = Arc::new(Mutex::new(PostStatus::Failed(format!("{id:?} can't name a thread or task in a path"))));
+            return Post { _endpoint: self.clone(), status };
+        }
         let mut url = base();
         url.path_segments_mut().expect("the base URL has a path").extend(["threads", thread, "tasks", task, "stop"]);
         self.post_to(url, b"{}".to_vec())

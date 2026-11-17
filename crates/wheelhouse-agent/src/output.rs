@@ -11,7 +11,7 @@ use reqwest::{StatusCode, Url};
 use tokio::sync::Notify;
 use tokio::time::sleep;
 
-use crate::{get, on_endpoint, Endpoint, Link, Wake};
+use crate::{get, on_endpoint, retry_after, Endpoint, Link, Wake};
 
 /// How often a running task's output is read again.
 pub const TAIL_EVERY: Duration = Duration::from_millis(200);
@@ -164,8 +164,11 @@ impl Output {
     /// What came since the last look.
     pub fn take(&self) -> OutputRead {
         let mut pending = self.shared.read.lock().unwrap();
+        // The end stays, for every later look.
         let end = pending.read.end.clone();
-        OutputRead { end, ..std::mem::take(&mut pending.read) }
+        let read = std::mem::take(&mut pending.read);
+        pending.read.end = end;
+        read
     }
 }
 
@@ -193,6 +196,7 @@ fn tail(path: &PathBuf, shared: &Shared) {
         match opened {
             Ok(mut file) => {
                 let length = file.metadata().map_or(offset, |m| m.len());
+                // A file replaced by a longer one reads as appended.
                 let reset = length < offset;
                 if reset {
                     offset = 0;
@@ -219,11 +223,14 @@ async fn fetch(link: &Link, url: Url, shared: &Shared) {
     // The producer answers with all of the output so far, which its own
     // buffer bounds; reading only what is new is #780.
     let mut seen = 0;
+    let mut failures = 0;
     loop {
         let finished = shared.finished.load(Ordering::Acquire);
         if shared.gone() {
             return;
         }
+        // A copy replaced by a longer one reads as appended; #780 asks the
+        // producer for what is new instead.
         match get(link, url.clone(), "*/*").await {
             Ok(body) => {
                 let reset = body.bytes.len() < seen;
@@ -232,18 +239,21 @@ async fn fetch(link: &Link, url: Url, shared: &Shared) {
                 }
                 shared.push(&body.bytes[seen..], reset);
                 seen = body.bytes.len();
+                failures = 0;
             }
             // A running task's output may not be served until it has some.
             Err((Some(StatusCode::NOT_FOUND), _)) if !finished => {}
             Err((Some(status), why)) if status.is_client_error() => return shared.end(Err(why)),
             Err((_, why)) if finished => return shared.end(Err(why)),
-            Err(_) => {}
+            // A producer that is down, or an ssh forward that dropped, is
+            // asked again less and less often.
+            Err(_) => failures += 1,
         }
         if finished {
             return shared.end(Ok(()));
         }
         tokio::select! {
-            _ = sleep(TAIL_EVERY) => {}
+            _ = sleep(retry_after(failures).max(TAIL_EVERY)) => {}
             _ = shared.finish.notified() => {}
         }
     }
