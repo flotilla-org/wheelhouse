@@ -649,6 +649,8 @@ cfg_node_alloc(CFG_State *state)
 internal void
 cfg_node_release(CFG_State *state, CFG_Node *node)
 {
+  // Releasing a child that isn't there changes nothing.
+  if(node == &cfg_nil_node) { return; }
   state->ctx.change_gen += 1;
   state->ctx.tree_gen += 1;
   
@@ -783,6 +785,10 @@ cfg_node_deep_copy(CFG_State *state, CFG_Node *src_root)
 internal void
 cfg_node_equip_string(CFG_State *state, CFG_Node *node, String8 string)
 {
+  // The same string again is no change: views store their parameters each
+  // frame, and what keys on the change generation (autosave, the workspace
+  // store, managed content) would otherwise run every frame.
+  if(node != &cfg_nil_node && str8_match(node->string, string, 0)) { return; }
   cfg_string_release(state, node->string);
   node->string = cfg_string_alloc(state, string);
   state->ctx.change_gen += 1;

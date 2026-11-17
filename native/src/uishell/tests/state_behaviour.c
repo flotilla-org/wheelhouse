@@ -2372,6 +2372,29 @@ entry_point(CmdLine *cmdline)
     StateCheck(state->store_syncs == syncs);
   }
 
+  //- Writing what config already holds is no change. Views store their
+  // parameters each frame and a window not fullscreen releases its absent
+  // `fullscreen` child each frame; the change generation moving for those
+  // ran the workspace store and autosave every frame (#475).
+  {
+    state = ws->sidebar;
+    CFG_Node *label = cfg_node_child_from_string(reviewer, str8_lit("label"));
+    String8 held = push_str8_copy(scratch.arena, label->first->string);
+    U64 gen = cfg_change_gen();
+    cfg_node_new_replace(rd_state->cfg, label, held);
+    cfg_node_release(rd_state->cfg, cfg_node_child_from_string(reviewer, str8_lit("no_such_setting")));
+    StateCheck(cfg_change_gen() == gen);
+    U64 syncs = state->store_syncs;
+    state_frame(ws);
+    state_frame(ws);
+    StateCheck(state->store_syncs == syncs);
+    cfg_node_new_replace(rd_state->cfg, label, str8_lit("changed"));
+    StateCheck(cfg_change_gen() != gen);
+    cfg_node_new_replace(rd_state->cfg, label, held);
+    state_frame(ws);
+    state_frame(ws);
+  }
+
   //- Renaming a workspace and giving it a mood are overlay edits: they are
   // in its record, not this device's file, and survive a restart.
   {
