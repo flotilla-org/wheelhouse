@@ -246,7 +246,7 @@ uishell_overview_benchmark_end(void)
       RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, entry->box_key);
       if(entry->defer_render || node == 0 || node->rendered_hash == 0 ||
          node->workspace_content_version != entry->content_version_accum)
-      { fprintf(stderr, "selected workspace missed render admission\n"); abort_self(2); }
+      { fprintf(stderr, "selected workspace missed render admission at frame %u\n", b->frame); abort_self(2); }
     }
   }
   for(U32 i = 0; i < b->count; i += 1)
@@ -303,11 +303,15 @@ uishell_overview_benchmark_end(void)
   { pixels += (U64)n->size.x*n->size.y; }
   Vec2F32 dim=dim_2f32(wm_client_rect_from_window(ws->os));
   U32 phase=b->live ? (b->live_transitions ? b->live_phase : 0) : b->frame/b->phase_frames;
+  // How far open the overview is. The cover flow eases workspace_zoom_t; the
+  // camera overview leaves it alone and writes its open state back into
+  // workspace_zoom_open each frame.
+  F32 zoom_t=DEV_coverflow_overview ? ws->workspace_zoom_t : (F32)!!ws->workspace_zoom_open;
   fprintf(b->metrics, "%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.6f,%.0f,%.0f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
     b->frame,phase,(unsigned long long)elapsed,(unsigned long long)b->shell_metrics.build_us,(unsigned long long)b->terminal_metrics.deferred,(unsigned long long)b->terminal_metrics.rebuilds,
     (unsigned long long)b->terminal_metrics.cells_built,(unsigned long long)b->terminal_metrics.terminal_visits,
     (unsigned long long)b->terminal_metrics.updates,(unsigned long long)b->shell_metrics.surface_allocations,
-    (unsigned long long)pixels,ws->workspace_zoom_t,dim.x,dim.y,
+    (unsigned long long)pixels,zoom_t,dim.x,dim.y,
     (unsigned long long)b->shell_metrics.surface_us,(unsigned long long)b->terminal_metrics.glyph_us,(unsigned long long)b->shell_metrics.window_us,
     (unsigned long long)b->shell_metrics.surface_admissions,(unsigned long long)b->shell_metrics.surface_deferred,(unsigned long long)instances,
     (unsigned long long)b->terminal_metrics.provider_starts,(unsigned long long)b->terminal_metrics.provider_start_us,
