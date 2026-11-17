@@ -297,6 +297,7 @@ _Avoid_: Title bar tabs (the outcome, not the element), tab bar widget
 
 **Local Endpoint**:
 A logical local IPC address — scope, name and transport kind — that each platform renders directly: a Unix socket under the runtime directory, or a named pipe on Windows. Runtime-directory metadata may accompany it, but never determines the address. Accepting a connection reports the peer's identity. See ADR 0011.
+A Tender **Binding** gives a service on another machine a Local Endpoint here (Flotilla's CONTEXT.md, flotilla-org/flotilla#3995). A service published through Tender sees the Tender that connects as its peer, not the remote client.
 _Avoid_: Socket path (one platform's rendering), pipe name, marker file
 
 **Dashboard**:
