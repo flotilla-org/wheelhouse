@@ -179,7 +179,51 @@ All nine native diagnostics and the policy-disabled preview control pass
 (`local/layout-control`). These establish bounded preview work, not universal
 latency or large-installation memory bounds.
 
+### Damage-granular terminal caching (#750)
+
+Measured on 2026-11-17 for #103 on an Apple M4. The replay uses 48
+workspaces, release builds and all three budgets. Before is `caa283d1`, the
+parent of #750, and after is `ccdeef84`, #750 itself. The two share pins.
+Both binaries carry the harness fix below, without which the replay
+fails on the camera overview. Work counts and pixels come from one run with
+screenshots (two repetitions each). Timings come from three further
+interleaved rounds without screenshots: six samples per phase per binary,
+reported as medians.
+
+| Phase | Cells built | Glyph time per phase (ms) | Build p95 (ms) |
+| --- | --- | --- | --- |
+| warmup | 5,460 → 5,460 | 3.8 → 3.9 | 120.0 → 101.2 |
+| open | 65,520 → 33,852 | 4.5 → 4.1 | 17.4 → 17.1 |
+| select | 455,910 → 355,628 | 26.2 → 36.5 | 19.6 → 20.8 |
+| expand | 40,950 → 1,365 | 3.3 → 1.1 | 17.6 → 17.3 |
+| return | 466,830 → 387,660 | 23.4 → 28.0 | 18.9 → 20.9 |
+| resize_small | 36,608 → 12,416 | 2.6 → 3.5 | 17.8 → 18.9 |
+| resize_large | 70,980 → 23,478 | 5.1 → 4.8 | 18.2 → 18.2 |
+| drain | 8,190 → 273 | 0.5 → 0.2 | 17.5 → 17.4 |
+
+- All eight phase checkpoints match before and after byte for byte, in both
+  repetitions.
+- Where terminals are already on screen and only their cursor or rows
+  change, cells built fall to the damaged rows: expand ×30, drain ×30,
+  resizes ×3. Glyph time there falls about threefold.
+- Phases that show many terminals for the first time (select, return) build
+  fewer cells, but their glyph time rises: select by 40%, with the two
+  ranges not overlapping (21.3–34.5 ms before, 33.8–54.0 ms after). A row
+  cache's first draw costs more than the old full draw. That is the next
+  cost to look at for this path.
+- Build p95 doesn't separate the two. At 60 Hz it sits on frame pacing
+  (about 17 ms), so the glyph totals are the CPU measure here.
+- Without screenshots, repeats of the same binary sometimes differ in
+  `rect_instances` or `surface_allocations` in the select or expand phases.
+  This happens before and after alike.
+
+Harness fix: the replay checked that the overview opened through
+`workspace_zoom_t`. Only the cover flow (`DEV_coverflow_overview`) eases
+that value. The camera overview writes its open state into
+`workspace_zoom_open`, so the frame CSV now reports that unless the cover
+flow is on.
+
 Next work: isolate the startup event cost, apply demand-aware consumption to
-Jackstay, and measure damage-granular terminal caching before adopting it.
+Jackstay, and reduce the row cache's first-draw cost.
 Multiple simultaneous overview windows and large-image streams need separate
 workloads. The captures do not justify changing the Ghostty fork or font renderer.
