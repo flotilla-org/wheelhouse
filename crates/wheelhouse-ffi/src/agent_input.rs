@@ -35,11 +35,16 @@ pub unsafe extern "C" fn wheelhouse_agent_input_post(
         // The thread is in the path; the route needs none.
         let route = route(&transport.read()?, host.read()?, endpoint.read()?, "-")?;
         let post = Endpoint::shared(&route).map_err(|error| error.to_string())?.post(&path.read()?, body.read()?.into_bytes());
-        let ticket = NEXT_TICKET.fetch_add(1, Ordering::Relaxed);
-        TICKETS.lock().unwrap().get_or_insert_default().insert(ticket, post);
-        Ok(ticket)
+        Ok(ticket(post))
     })
     .unwrap_or(0)
+}
+
+/// Keeps `post` until its ticket is forgotten.
+pub(crate) fn ticket(post: Post) -> u64 {
+    let ticket = NEXT_TICKET.fetch_add(1, Ordering::Relaxed);
+    TICKETS.lock().unwrap().get_or_insert_default().insert(ticket, post);
+    ticket
 }
 
 /// A ticket's WHEELHOUSE_AGENT_INPUT_* status; a failure's reason goes to

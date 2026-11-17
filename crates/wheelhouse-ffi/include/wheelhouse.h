@@ -170,6 +170,22 @@ typedef struct BinnacleGrid BinnacleGrid;
 
 #define WHEELHOUSE_AGENT_INPUT_FAILED 2
 
+// Still following the output.
+#define WHEELHOUSE_AGENT_OUTPUT_FOLLOWING 0
+
+// All of it has been read.
+#define WHEELHOUSE_AGENT_OUTPUT_ENDED 1
+
+// It can't be read; why goes to why_out.
+#define WHEELHOUSE_AGENT_OUTPUT_FAILED 2
+
+#define WHEELHOUSE_FILE 0
+
+#define WHEELHOUSE_DIR 1
+
+// A kind this version doesn't know.
+#define WHEELHOUSE_FILE_UNKNOWN 2
+
 // wheelhouse_agent_watch_pump's flags: the conversation changed.
 #define WHEELHOUSE_AGENT_CHANGED 1
 
@@ -992,6 +1008,10 @@ typedef struct BinnacleGrid BinnacleGrid;
 // Safe to use from several threads at once.
 typedef struct WhText WhText;
 
+typedef struct WheelhouseAgentOutput WheelhouseAgentOutput;
+
+typedef struct WheelhouseAgentSearch WheelhouseAgentSearch;
+
 typedef struct WheelhouseAgentWatch WheelhouseAgentWatch;
 
 typedef struct WheelhouseCard WheelhouseCard;
@@ -1254,6 +1274,23 @@ typedef struct {
   size_t task_count;
   uint64_t revision;
 } WheelhouseAgentTasks;
+
+// A file a root's search found: its path relative to the root.
+typedef struct {
+  WheelhouseText path;
+  // WHEELHOUSE_FILE, _DIR or _FILE_UNKNOWN.
+  uint32_t kind;
+} WheelhouseFileMatch;
+
+// The answer to the latest query. failed 1 says why the search failed.
+// Every string is borrowed from it until wheelhouse_file_matches_free.
+typedef struct {
+  WheelhouseText query;
+  const WheelhouseFileMatch *matches;
+  size_t match_count;
+  uint32_t failed;
+  WheelhouseText why;
+} WheelhouseFileMatches;
 
 // A tab: bytes the core compares, never reads.
 typedef struct {
@@ -2836,6 +2873,73 @@ uint64_t wheelhouse_agent_input_post(WheelhouseText transport,
 uint32_t wheelhouse_agent_input_status(uint64_t ticket, WheelhouseBytes *why_out, char **error_out);
 
 void wheelhouse_agent_input_forget(uint64_t ticket);
+
+// Asks the producer at the Local Endpoint endpoint, reached as
+// wheelhouse_agent_watch_open reaches it, to stop task of thread. Returns a
+// ticket to ask after with wheelhouse_agent_input_status and let go of with
+// wheelhouse_agent_input_forget; 0 for an endpoint it can't reach.
+uint64_t wheelhouse_agent_task_stop(WheelhouseText transport,
+                                    WheelhouseText host,
+                                    WheelhouseText endpoint_path,
+                                    WheelhouseText thread,
+                                    WheelhouseText task,
+                                    char **error_out);
+
+// Reads a task's output, as its tasks entry names it, while it runs
+// (running 1) or after: the file output_path directly when output_local is
+// 1, else output_url on the endpoint (transport, host and endpoint as for
+// wheelhouse_agent_watch_open; empty endpoint when there is none). wake
+// (if not NULL) is called from another thread when text waits. Free it
+// with wheelhouse_agent_output_free.
+WheelhouseAgentOutput *wheelhouse_agent_output_open(WheelhouseText transport,
+                                                    WheelhouseText host,
+                                                    WheelhouseText endpoint_path,
+                                                    WheelhouseText output_path,
+                                                    uint32_t output_local,
+                                                    WheelhouseText output_url,
+                                                    uint32_t running,
+                                                    void (*wake)(void),
+                                                    char **error_out);
+
+// The task has ended: what is left is read, and then the output ends.
+uint32_t wheelhouse_agent_output_finish(WheelhouseAgentOutput *o, char **error_out);
+
+// Takes the text appended since the last pump into text_out (UTF-8, empty
+// when none) and returns WHEELHOUSE_AGENT_OUTPUT_*. reset_out is set to 1
+// when the output started over: drop what was shown before appending.
+uint32_t wheelhouse_agent_output_pump(WheelhouseAgentOutput *o,
+                                      WheelhouseBytes *text_out,
+                                      uint32_t *reset_out,
+                                      WheelhouseBytes *why_out,
+                                      char **error_out);
+
+void wheelhouse_agent_output_free(WheelhouseAgentOutput *o);
+
+// Searches a root through its search path (a root's `search`) on the
+// endpoint, reached as wheelhouse_agent_watch_open reaches it. wake (if not
+// NULL) is called from another thread when an answer waits. Free it with
+// wheelhouse_agent_search_free.
+WheelhouseAgentSearch *wheelhouse_agent_search_open(WheelhouseText transport,
+                                                    WheelhouseText host,
+                                                    WheelhouseText endpoint_path,
+                                                    WheelhouseText search,
+                                                    void (*wake)(void),
+                                                    char **error_out);
+
+// Asks for up to limit files matching query once it has stood for about
+// 150 ms with no later query; an earlier query's answer is dropped.
+uint32_t wheelhouse_agent_search_query(WheelhouseAgentSearch *s,
+                                       WheelhouseText query,
+                                       uint32_t limit,
+                                       char **error_out);
+
+// The latest query's answer, once it has come; NULL until then, or after
+// it was taken. Free it with wheelhouse_file_matches_free.
+WheelhouseFileMatches *wheelhouse_agent_search_take(WheelhouseAgentSearch *s, char **error_out);
+
+void wheelhouse_file_matches_free(WheelhouseFileMatches *matches);
+
+void wheelhouse_agent_search_free(WheelhouseAgentSearch *s);
 
 // Watches `thread` at the Local Endpoint whose socket is `endpoint`, on
 // this machine (`transport` "local" or empty) or over "ssh" on `host`,
