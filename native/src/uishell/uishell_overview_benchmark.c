@@ -246,7 +246,7 @@ uishell_overview_benchmark_end(void)
       RD_SurfaceCacheNode *node = rd_window_surface_node_lookup(ws, entry->box_key);
       if(entry->defer_render || node == 0 || node->rendered_hash == 0 ||
          node->workspace_content_version != entry->content_version_accum)
-      { fprintf(stderr, "selected workspace missed render admission\n"); abort_self(2); }
+      { fprintf(stderr, "selected workspace missed render admission at frame %u\n", b->frame); abort_self(2); }
     }
   }
   for(U32 i = 0; i < b->count; i += 1)

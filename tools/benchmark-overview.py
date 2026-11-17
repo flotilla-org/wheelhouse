@@ -105,6 +105,10 @@ def main():
     parser.add_argument('--preview-render-budget', action='store_true')
     parser.add_argument('--interrupt', action='store_true')
     parser.add_argument('--busy', action='store_true', help='scroll every fixture terminal')
+    parser.add_argument('--overview-view-mode', choices=['rows', 'grid'], default='rows',
+                        help='rows shows a few tiles at a time; grid lays out every workspace')
+    parser.add_argument('--overview-readable-width', type=float,
+                        help='grid tile width in points that must stay readable; 0 fits the whole grid')
     parser.add_argument('--max-frame-ms', type=float, help='fail any non-warmup frame exceeding this end-to-end budget')
     parser.add_argument('--max-build-p95-ms', type=float, help='fail any non-warmup phase exceeding this budget')
     parser.add_argument('--baseline', type=Path, help='previous summary.json; compare matching counts/repetitions')
@@ -126,7 +130,8 @@ def main():
     report = {'schema': 1, 'binary': str(binary), 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
               'platform': platform.platform(), 'virtual_hz': 60, 'frames': 240,
               'screenshots': not args.no_screenshots, 'preview_refresh_budget': args.preview_refresh_budget, 'preview_surface_budget': args.preview_surface_budget,
-              'preview_render_budget': args.preview_render_budget, 'interrupt': args.interrupt, 'busy': args.busy, 'runs': {}, 'failures': []}
+              'preview_render_budget': args.preview_render_budget, 'interrupt': args.interrupt, 'busy': args.busy,
+              'overview_view_mode': args.overview_view_mode, 'overview_readable_width': args.overview_readable_width, 'runs': {}, 'failures': []}
     for count in args.counts:
         for repeat in range(args.repeats):
             key = f'{count}-{repeat}'
@@ -138,6 +143,13 @@ def main():
             (run / 'presentation').mkdir()
             (run / 'presentation/benchmark.wheelhouse').write_text('window:\n{\n size: 1200 800\n}\n')
             (run / 'project').write_text('')
+            settings = ''
+            if args.overview_view_mode != 'rows':
+                settings += f'overview_view_mode: {args.overview_view_mode}\n'
+            if args.overview_readable_width is not None:
+                settings += f'overview_readable_tile_width: {args.overview_readable_width:g}\n'
+            if settings:
+                (run / 'user').write_text(settings)
             command = [str(binary), f'--user:{run.resolve()}/user', f'--project:{run.resolve()}/project',
                        f'--dashboard:{run.resolve()}/dashboard',
                        f'--overview_benchmark:{run.resolve()}', f'--overview_benchmark_count:{count}']
