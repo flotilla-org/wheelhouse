@@ -1,6 +1,6 @@
 //! Rich Text for markdown (#558) and conversations (#614); decided on #538,
 //! #540, #541, #546 and #548.
-use conversation_events::{Event, Page};
+use conversation_events::{Capabilities, Event, Page};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -8,6 +8,7 @@ pub use wheelhouse_stream::{ListOp, SubscriptionId, UnknownSubscription};
 pub use wheelhouse_surface::{Input, Item as SurfaceItem, ItemKind as SurfaceKind, Variant as SurfaceVariant};
 
 mod conversation;
+mod documents;
 mod find;
 #[cfg(any(test, feature = "test-support"))]
 pub mod generate;
@@ -31,6 +32,7 @@ mod scale_tests;
 mod tests;
 
 pub use conversation::{CopyAction, SURFACE_MEDIA_TYPE, TAIL_BYTES, TAIL_ITEMS};
+pub use documents::{Document, Typed};
 pub use find::{Find, FindOptions, FindStatus, Match, FIND_BUDGET, MATCH_LIMIT};
 pub use log::{CHUNK_BYTES, CHUNK_LINES, LINE_CAP};
 pub use pages::PAGE;
@@ -152,6 +154,21 @@ impl RichText {
     /// The watched thread's `status` document, if it publishes one.
     pub fn conversation_status(&self) -> Option<&str> {
         self.conversation.as_ref()?.status()
+    }
+
+    /// The state documents of the thread shown, by key; none for markdown.
+    pub fn conversation_documents(&self) -> Vec<&Document> {
+        self.conversation.as_ref().map(|c| c.documents()).unwrap_or_default()
+    }
+
+    /// Moves when a state document is added or changes, and only then.
+    pub fn conversation_documents_revision(&self) -> u64 {
+        self.conversation.as_ref().map_or(0, |c| c.documents_revision())
+    }
+
+    /// What the watched thread's hello says it offers.
+    pub fn conversation_capabilities(&self) -> Option<&Capabilities> {
+        self.conversation.as_ref()?.capabilities()
     }
 
     /// The first open Interrupt of a watched thread: the item it shows in,
