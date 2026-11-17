@@ -181,49 +181,66 @@ latency or large-installation memory bounds.
 
 ### Damage-granular terminal caching (#750)
 
-Measured on 2026-11-17 for #103 on an Apple M4. The replay uses 48
-workspaces, release builds and all three budgets. Before is `caa283d1`, the
-parent of #750, and after is `ccdeef84`, #750 itself. The two share pins.
-Both binaries carry the harness fix below, without which the replay
-fails on the camera overview. Work counts and pixels come from one run with
-screenshots (two repetitions each). Timings come from three further
-interleaved rounds without screenshots: six samples per phase per binary,
-reported as medians.
+Measured on 2026-11-17 for #103 on an Apple M4: release builds, 48
+workspaces, all three budgets. Before is `caa283d1`, the parent of #750, and
+after is `ccdeef84`, #750 itself. The two share pins. Both binaries carry the
+harness and overview fixes from the same change, without which neither replay
+runs on the camera overview.
 
-| Phase | Cells built | Glyph time per phase (ms) | Build p95 (ms) |
+The default overview, rows, slides each group sideways, so a settled replay
+draws only one to five of the 48 terminals and dilutes per-terminal costs.
+These numbers use the grid with the whole of it fitted:
+
+```sh
+python3 tools/benchmark-overview.py --output local/overview-grid --counts 48 \
+  --overview-view-mode grid --overview-readable-width 0 \
+  --preview-refresh-budget --preview-surface-budget --preview-render-budget
+```
+
+Settled phases then draw all 48 terminals. Work counts and pixels come from
+one run with screenshots (two repetitions). Timings come from three further
+interleaved rounds without screenshots: six samples per phase per binary,
+reported as medians, with glyph time as the range.
+
+| Phase | Cells built | Glyph time per phase, median (range), ms | Build p95 (ms) |
 | --- | --- | --- | --- |
-| warmup | 5,460 → 5,460 | 3.8 → 3.9 | 120.0 → 101.2 |
-| open | 65,520 → 33,852 | 4.5 → 4.1 | 17.4 → 17.1 |
-| select | 455,910 → 355,628 | 26.2 → 36.5 | 19.6 → 20.8 |
-| expand | 40,950 → 1,365 | 3.3 → 1.1 | 17.6 → 17.3 |
-| return | 466,830 → 387,660 | 23.4 → 28.0 | 18.9 → 20.9 |
-| resize_small | 36,608 → 12,416 | 2.6 → 3.5 | 17.8 → 18.9 |
-| resize_large | 70,980 → 23,478 | 5.1 → 4.8 | 18.2 → 18.2 |
-| drain | 8,190 → 273 | 0.5 → 0.2 | 17.5 → 17.4 |
+| open | 477,750 → 389,753 | 27.4 (22.8–45.7) → 40.7 (33.5–54.9) | 19.6 → 20.5 |
+| select | 188,370 → 9,919 | 11.5 (9.2–23.6) → 7.0 (4.4–8.0) | 21.3 → 19.8 |
+| expand | 40,950 → 1,365 | 3.6 (3.3–4.8) → 1.7 (1.2–3.7) | 18.6 → 17.9 |
+| return | 611,520 → 399,490 | 31.9 (20.7–40.7) → 32.3 (28.2–59.4) | 20.0 → 19.7 |
+| resize_small | 302,720 → 124,416 | 18.6 (13.4–25.2) → 31.0 (25.4–38.6) | 19.6 → 18.7 |
+| resize_large | 573,300 → 229,138 | 32.0 (28.2–41.5) → 40.4 (30.6–51.3) | 20.7 → 22.9 |
+| drain | 98,280 → 4,004 | 5.4 (4.4–7.2) → 2.7 (1.8–3.7) | 16.9 → 17.8 |
 
 - All eight phase checkpoints match before and after byte for byte, in both
   repetitions.
-- Where terminals are already on screen and only their cursor or rows
-  change, cells built fall to the damaged rows: expand ×30, drain ×30,
-  resizes ×3. Glyph time there falls about threefold.
-- Phases that show many terminals for the first time (select, return) build
-  fewer cells, but their glyph time rises: select by 40%, with the two
-  ranges not overlapping (21.3–34.5 ms before, 33.8–54.0 ms after). A row
-  cache's first draw costs more than the old full draw. That is the next
-  cost to look at for this path.
-- Build p95 doesn't separate the two. At 60 Hz it sits on frame pacing
-  (about 17 ms), so the glyph totals are the CPU measure here.
-- Without screenshots, repeats of the same binary sometimes differ in
-  `rect_instances` or `surface_allocations` in the select or expand phases.
-  This happens before and after alike.
+- Where terminals are on screen and only their cursor or rows change, cells
+  built fall to the damaged rows: drain ×24, select ×19, expand ×30. Glyph
+  time there roughly halves.
+- Where every row of many terminals is rebuilt (open, the resizes), glyph
+  time rises 25–65% although fewer cells are built; resize_small's ranges
+  don't overlap. Rebuilding through the row cache costs more per row than the
+  old full draw did. That is the next cost to take out of this path: a full
+  rebuild should cost no more than it did before.
+- Build p95 doesn't separate the builds. At the replay's 60 Hz it sits on
+  frame pacing, so glyph time is the CPU measure here.
+- In the rows overview (the default, a few terminals settled) the pattern is
+  the same and smaller: select glyph time 26.2 → 36.5 ms, drain 0.5 → 0.2 ms.
+- Repeats of one binary sometimes differ in `rect_instances`,
+  `surface_allocations` or, once on the after build, cells built. This
+  happens before and after alike, so the replay is not fully deterministic
+  under timing.
 
-Harness fix: the replay checked that the overview opened through
-`workspace_zoom_t`. Only the cover flow (`DEV_coverflow_overview`) eases
-that value. The camera overview writes its open state into
-`workspace_zoom_open`, so the frame CSV now reports that unless the cover
-flow is on.
+Harness fixes: the replay checked that the overview opened through
+`workspace_zoom_t`, which only the cover flow (`DEV_coverflow_overview`)
+eases. The frame CSV now reports the camera overview's open state, which it
+writes into `workspace_zoom_open`. The grid replay also found that a grid
+setting flew the camera on the first frame while the overview was closed,
+drawing the workspace through the scene before its surface existed. A new
+layout while at rest on the workspace is now a cut.
 
 Next work: isolate the startup event cost, apply demand-aware consumption to
-Jackstay, and reduce the row cache's first-draw cost.
+Jackstay, and bring the row cache's full rebuild back to the old full draw's
+cost.
 Multiple simultaneous overview windows and large-image streams need separate
 workloads. The captures do not justify changing the Ghostty fork or font renderer.
