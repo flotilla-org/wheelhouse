@@ -645,6 +645,10 @@ fn function() -> String {
     "function".into()
 }
 
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 /// The record form: a completed item, or an open one with its content so
 /// far, shaped like a MessagesSnapshot entry. Which fields apply follows the
 /// role, as in AG-UI's message union.
@@ -742,6 +746,161 @@ pub const STATUS: &str = "status";
 pub const STATUS_IDLE: &str = "idle";
 pub const STATUS_RUNNING: &str = "running";
 pub const STATUS_REQUIRES_ACTION: &str = "requires_action";
+
+/// The `checklist` document: [`ChecklistItem`]s, always the whole list
+/// (wheelhouse#692). A subagent's is its own thread's.
+pub const CHECKLIST: &str = "checklist";
+pub const CHECKLIST_MEDIA_TYPE: &str = "application/vnd.flotilla.checklist+json";
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChecklistItem {
+    pub id: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub status: ChecklistStatus,
+    /// The step as it reads while in progress, such as "Running the tests".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_form: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChecklistStatus {
+    #[default]
+    Pending,
+    InProgress,
+    Completed,
+    /// A status this version doesn't know.
+    #[serde(other)]
+    Unknown,
+}
+
+/// The `tasks` document: every [`AgentTask`] the thread started, finished
+/// ones kept with their final status (wheelhouse#692).
+pub const TASKS: &str = "tasks";
+pub const TASKS_MEDIA_TYPE: &str = "application/vnd.flotilla.tasks+json";
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTask {
+    pub id: String,
+    #[serde(default)]
+    pub kind: TaskKind,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub status: TaskStatus,
+    /// In milliseconds since the Unix epoch, as AG-UI's `timestamp`.
+    #[serde(default)]
+    pub started_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<u64>,
+    /// The call that started it, in this thread.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tool_call_id: String,
+    /// A subagent's own thread, whose runs name this task's call as `parent`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_thread_id: Option<String>,
+    /// Whether the turn that started it waits for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub awaited: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<TaskOutput>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskKind {
+    Subagent,
+    Shell,
+    Monitor,
+    #[default]
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskStatus {
+    #[default]
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+    /// A status this version doesn't know.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Where a task's output is read. A watcher on another machine can't open
+/// the producer's file, so a producer that can serves `url` as well; one that
+/// can only name a file sets `path` alone, read as a [`Root`]'s is.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskOutput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Whether `path` is on the watcher's machine; unset when the producer
+    /// can't tell, as a replay of a log can't.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub local: bool,
+    /// `GET {url}` returns the output so far, on the producer's endpoint as
+    /// a [`Root`]'s `search` is; the producer's `/threads/{id}/tasks/{taskId}/output`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Such as [`ANSI`] for a shell's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+}
+
+/// The `commands` document: the [`AgentCommand`]s the Composer may insert
+/// (wheelhouse#694), sent whole and then patched.
+pub const COMMANDS: &str = "commands";
+pub const COMMANDS_MEDIA_TYPE: &str = "application/vnd.flotilla.commands+json";
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCommand {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// Present only when the text after the command is its argument.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    /// Exactly what the Composer inserts, harness sigil and all (`/review `,
+    /// `$skill `, `@agent-x `).
+    #[serde(default)]
+    pub insert: String,
+    /// A display label only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+}
+
+/// One result of a [`Root`]'s search: `GET {search}?q=…&limit=…` returns
+/// an array of them.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMatch {
+    /// Relative to the root.
+    pub path: String,
+    #[serde(default)]
+    pub kind: FileKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileKind {
+    #[default]
+    File,
+    Dir,
+    /// A kind this version doesn't know.
+    #[serde(other)]
+    Unknown,
+}
 
 /// Plans and to-dos.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

@@ -9,12 +9,13 @@
 //     [--permission-mode default|acceptEdits|plan|...] [--settings user,project,local] [--model M]
 //     [--buffer N] [--page BYTES] [--trace FILE]
 //
-// Routes as the Codex bridge, plus POST /threads/{id}/tasks/{taskId}/stop.
+// Routes as the Codex bridge, plus POST /threads/{id}/tasks/{taskId}/stop and
+// GET /threads/{id}/tasks/{taskId}/output.
 // stdin: a line is a prompt; /interrupt stops the turn; y or n answers an approval.
 import { getSessionInfo, listSessions, query } from '@anthropic-ai/claude-agent-sdk';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -177,7 +178,10 @@ function taskMessage(m) {
     const task = tasks.get(m.task_id);
     const ended = ENDED[m.subtype === 'task_updated' ? m.patch?.status : m.status];
     if (!task || !ended || task.endedAt) return;
-    Object.assign(task, { status: ended, endedAt: Date.now() }, m.output_file ? { output: { path: m.output_file } } : {});
+    // The file for a watcher on this machine; the route for one elsewhere.
+    const output = { path: m.output_file, local: true, url: `/threads/${encodeURIComponent(threadId)}/tasks/${encodeURIComponent(m.task_id)}/output`,
+      ...(task.kind === 'shell' ? { mediaType: 'text/x-ansi' } : {}) };
+    Object.assign(task, { status: ended, endedAt: Date.now() }, m.output_file ? { output } : {});
   }
   publishTasks();
 }
@@ -499,7 +503,15 @@ function serve() {
           if (!Number.isFinite(Number(searchParams.get('before')))) return reply(400, { error: 'before takes a seq' });
           return reply(200, page(searchParams));
         }
-        if (req.method !== 'POST') return reply(405, { error: 'GET events, or POST run or stop' });
+        if (req.method === 'GET' && verb === 'tasks' && taskVerb === 'output') {
+          const output = tasks.get(taskId)?.output;
+          let body;
+          try { body = output && readFileSync(output.path); } catch {}
+          if (!body) return reply(404, { error: `no output for task ${taskId}` });
+          res.writeHead(200, { 'Content-Type': `${output.mediaType ?? 'text/plain'}; charset=utf-8` });
+          return res.end(body);
+        }
+        if (req.method !== 'POST') return reply(405, { error: 'GET events or a task\'s output, or POST run or stop' });
         if (verb === 'stop') return reply(200, { stopped: await stop() });
         if (verb === 'tasks' && taskVerb === 'stop') {
           if (!tasks.has(taskId)) return reply(404, { error: `no task ${taskId}` });

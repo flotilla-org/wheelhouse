@@ -6,6 +6,7 @@ replaces it. The wire format is the one fixed on #615 and decided on #548.
 """
 import argparse
 import collections
+from datetime import datetime
 import json
 from pathlib import Path
 import re
@@ -40,6 +41,11 @@ NOTICE_TAGS = {'system-reminder', 'ci-monitor-event', 'side-sessions-event', 'lo
 SKILL_BASE = 'Base directory for this skill:'
 # The classes that start a turn when they arrive on their own (no tool results).
 OPENERS = {'prompt', 'sdk', 'notification', 'peer', 'command', 'image'}
+CHECKLIST_TYPE = 'application/vnd.flotilla.checklist+json'
+TASKS_TYPE = 'application/vnd.flotilla.tasks+json'
+BACKGROUND_ID = re.compile(r'running in background with ID: (\w+)')
+# A task notification's status, as the tasks document's.
+ENDED = {'completed': 'completed', 'failed': 'failed', 'killed': 'cancelled', 'stopped': 'cancelled'}
 
 
 def kind_of(name):
@@ -148,6 +154,13 @@ def classify(text, record, origin, brief=False):
     return 'brief' if brief else 'prompt'
 
 
+def millis(record):
+    try:
+        return int(datetime.fromisoformat(record['timestamp'].replace('Z', '+00:00')).timestamp() * 1000)
+    except (KeyError, AttributeError, ValueError):
+        return 0
+
+
 def attribution(origin, **extra):
     # The peer origin repeats the message as `body`; the message carries it once.
     fields = {k: v for k, v in origin.items() if k != 'body' and isinstance(v, (str, int, float, bool))}
@@ -163,6 +176,11 @@ class Thread:
         self.run = None
         self.run_cancelled = False
         self.calls = {}  # open toolCallId -> name
+        self.inputs = {}  # open toolCallId -> input, for the calls whose result changes the checklist
+        self.checklist = []
+        self.tasks = {}  # toolCallId -> tasks entry, in the order they started
+        self.task_ids = {}  # the harness's task id -> toolCallId
+        self.time = 0  # the latest record's, in milliseconds since the Unix epoch
         self.blocks = {}  # (message.id, kind) -> blocks of that kind seen so far
         self.line = 0
         self.at = {'log': str(source)}  # the source back-reference of the record being read
@@ -205,6 +223,7 @@ class Thread:
             self.flush_compaction()
         uuid = {'record': record['uuid']} if isinstance(record.get('uuid'), str) else {}
         self.at = {'log': str(self.source), **uuid, 'line': self.line}
+        self.time = millis(record) or self.time
         if kind == 'user':
             self.user(record)
         elif kind == 'assistant':
@@ -282,6 +301,7 @@ class Thread:
             elif kind == 'notification':
                 note = origin if origin.get('kind') == 'task-notification' else {'kind': 'task-notification'}
                 self.message('system', message_id, text, attribution(note, toolCallId=tag_value(text, 'tool-use-id')))
+                self.notified(text)
             elif kind == 'peer':
                 self.message('system', message_id, text, attribution(origin))
             elif kind in ('notice', 'interrupt'):
@@ -342,6 +362,18 @@ class Thread:
         self.emit('ToolCallArgs', toolCallId=call_id,
                   delta=json.dumps(args, ensure_ascii=False, separators=(',', ':')))
         self.emit('ToolCallEnd', toolCallId=call_id)
+        if name == 'TodoWrite' and isinstance(args.get('todos'), list):
+            self.checklist = [{'id': str(i + 1), 'content': t.get('content', ''), 'status': t.get('status', 'pending'),
+                               **({'activeForm': t['activeForm']} if t.get('activeForm') else {})}
+                              for i, t in enumerate(args['todos']) if isinstance(t, dict)]
+            self.publish_checklist()
+        elif name in ('TaskCreate', 'TaskUpdate'):
+            self.inputs[call_id] = args
+        elif name in ('Agent', 'Task') or (name == 'Bash' and args.get('run_in_background') is True):
+            self.tasks[call_id] = {'id': call_id, 'kind': 'shell' if name == 'Bash' else 'subagent',
+                                   'title': title_of(name, args), 'status': 'running', 'startedAt': self.time,
+                                   'toolCallId': call_id, 'awaited': args.get('run_in_background') is not True}
+            self.publish_tasks()
 
     def result(self, record, block):
         call_id = block.get('tool_use_id')
@@ -378,6 +410,70 @@ class Thread:
             data, truncated = image_cap(data, ref)
             self.emit('Custom', name='image', value={'toolCallId': call_id, 'mediaType': media_type, 'data': data,
                                                      'truncated': truncated})
+        self.checklist_result(name, self.inputs.pop(call_id, {}), side if status == 'ok' else {})
+        self.task_result(call_id, status, side, text)
+
+    def publish_checklist(self):
+        self.emit('StateSnapshot', key='checklist', mediaType=CHECKLIST_TYPE, snapshot=self.checklist)
+
+    def publish_tasks(self):
+        self.emit('StateSnapshot', key='tasks', mediaType=TASKS_TYPE, snapshot=list(self.tasks.values()))
+
+    def checklist_result(self, name, args, side):
+        # TaskCreate and TaskUpdate change one entry each, and only once they succeed.
+        task = side.get('task') if isinstance(side.get('task'), dict) else {}
+        if name == 'TaskCreate' and task.get('id'):
+            self.checklist.append({'id': str(task['id']), 'content': task.get('subject', args.get('subject', '')),
+                                   'status': 'pending', **({'activeForm': args['activeForm']} if args.get('activeForm') else {})})
+        elif name == 'TaskUpdate' and side.get('success'):
+            entry = next((t for t in self.checklist if t['id'] == str(args.get('taskId'))), None)
+            if entry is None:
+                return
+            if args.get('status') == 'deleted':
+                self.checklist.remove(entry)
+            else:
+                entry.update({key: args[field] for key, field in (('status', 'status'), ('content', 'subject'),
+                                                                   ('activeForm', 'activeForm')) if args.get(field)})
+        else:
+            return
+        self.publish_checklist()
+
+    def task_result(self, call_id, status, side, text):
+        task = self.tasks.get(call_id)
+        if task is None:
+            return
+        before = dict(task)
+        if side.get('agentId'):
+            # Claude names a subagent's transcript, and so its thread, after its id.
+            task['childThreadId'] = f"agent-{side['agentId']}"
+        started = BACKGROUND_ID.search(text) if task['kind'] == 'shell' else None
+        harness_id = side.get('backgroundTaskId') or side.get('agentId') or (started and started.group(1))
+        if harness_id:
+            self.task_ids[str(harness_id)] = call_id
+        if isinstance(side.get('outputFile'), str):
+            task['output'] = {'path': side['outputFile']}
+        if side.get('isAsync') is True:
+            task['awaited'] = False
+        # A background task's result says only that it started; its notification ends it.
+        if status != 'ok' or task['awaited']:
+            self.end_task(task, 'completed' if status == 'ok' else status)
+        if task != before:
+            self.publish_tasks()
+
+    def notified(self, text):
+        call_id = tag_value(text, 'tool-use-id') or self.task_ids.get(tag_value(text, 'task-id') or '')
+        task = self.tasks.get(call_id)
+        ended = ENDED.get(tag_value(text, 'status') or '')
+        if task is None or ended is None or 'endedAt' in task:
+            return
+        output = tag_value(text, 'output-file')
+        if output:
+            task['output'] = {'path': output}
+        self.end_task(task, ended)
+        self.publish_tasks()
+
+    def end_task(self, task, status):
+        task['status'], task['endedAt'] = status, self.time
 
     def spilled(self, text):
         match = PERSISTED.search(text)
@@ -401,6 +497,9 @@ class Thread:
             self.run_cancelled = True
             self.emit('ToolCallResult', toolCallId=call_id, messageId=f'{call_id}-result', status='cancelled',
                       mediaType='text/plain', content='', truncated=None)
+            if call_id in self.tasks:
+                self.end_task(self.tasks[call_id], 'cancelled')
+                self.publish_tasks()
         self.finish_run()
 
 
