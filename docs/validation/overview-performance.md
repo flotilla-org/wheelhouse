@@ -239,8 +239,41 @@ setting flew the camera on the first frame while the overview was closed,
 drawing the workspace through the scene before its surface existed. A new
 layout while at rest on the workspace is now a cut.
 
+### Row cache rebuild cost
+
+A profile of the fitted-grid replay on main put the row cache's own work
+above the drawing it caches. Of 136 samples under the row-cache draw:
+- `dr_append_bucket` took 64, copying instances one push at a time;
+- releasing and reserving an arena per rebuilt row took about 39;
+- building the rows took 53.
+
+The fix copies appended batches with one `memcpy` each, and hands the
+arenas of dropped rows to the rows being built. Measured against #750's
+parent, which carries #750's arena fix so it doesn't crash on macOS: three
+interleaved rounds, six samples per phase per binary, each binary pinned to
+its own Rust libraries.
+
+| Phase | Glyph time before #750, median (range), ms | With the fix, median (range), ms |
+| --- | --- | --- |
+| open | 24.4 (23.5–26.6) | 36.2 (33.3–45.5) |
+| select | 8.9 (8.6–10.3) | 4.6 (3.3–5.5) |
+| expand | 3.3 (1.9–5.8) | 1.2 (1.0–1.3) |
+| return | 27.6 (21.1–34.2) | 25.2 (19.1–27.5) |
+| resize_small | 17.6 (14.0–21.0) | 14.6 (14.0–17.9) |
+| resize_large | 30.5 (26.0–46.6) | 23.4 (18.7–26.3) |
+| drain | 4.6 (4.3–5.5) | 2.3 (1.7–2.9) |
+
+- Every phase but open now costs no more than before #750, and most cost
+  less.
+- Open draws 48 terminals for the first time. It still pays for building
+  each row in its own bucket and copying it into the frame: in the profile,
+  `memmove` is 19 of 99 row-cache samples. The old full draw wrote straight
+  into the frame. Appending a row's batches by reference rather than by copy
+  would remove that.
+- `powf`, which converts each cell's text colour, shows up at about 8% of
+  the row-cache samples. It was there before #750 too.
+
 Next work: isolate the startup event cost, apply demand-aware consumption to
-Jackstay, and bring the row cache's full rebuild back to the old full draw's
-cost.
+Jackstay, and take the copy out of the row cache's first draw.
 Multiple simultaneous overview windows and large-image streams need separate
 workloads. The captures do not justify changing the Ghostty fork or font renderer.
