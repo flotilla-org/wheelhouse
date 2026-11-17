@@ -367,6 +367,14 @@ _Avoid_: Input box, prompt field
 An entry in a **Producer**'s list of what the **Composer** may offer, such as a slash command, skill or subagent, with the text it inserts.
 _Avoid_: Slash command (one kind), action (Wheelhouse's own actions stay off it)
 
+**Checklist**:
+The agent's own list of steps for a thread, with each step's status. A subagent's is its own thread's.
+_Avoid_: Todo, plan (a plan is a proposed plan, which is content in the conversation)
+
+**Agent Task**:
+Work an agent started that runs apart from its turn: a subagent, a shell or a monitor. A finished one is kept with its final status.
+_Avoid_: Job, process, background shell
+
 **Embedded View**:
 A **View** laid out inline inside another View's content, such as a table **Block** in **Rich Text** or a text View in a table cell. It resolves through the same **Handlers** by media type, and its state is part of its parent's, never a separate **Slot**.
 _Avoid_: Child view, widget, inline pane

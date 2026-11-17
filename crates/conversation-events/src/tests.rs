@@ -1,7 +1,9 @@
+use std::fmt::Debug;
 use std::fs;
 
 use hegel::generators as gs;
 use hegel::TestCase;
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use super::*;
@@ -301,6 +303,8 @@ fn unknown_events_are_not_written() {
 fn the_claude_translators_goldens_read_as_version_two() {
     let goldens = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/claude-code");
     let mut origins = vec![];
+    let mut checklists = vec![];
+    let mut tasks = vec![];
     for entry in fs::read_dir(goldens).unwrap() {
         let path = entry.unwrap().path();
         if !path.to_string_lossy().ends_with(".events.jsonl") {
@@ -308,11 +312,28 @@ fn the_claude_translators_goldens_read_as_version_two() {
         }
         let events = events(&fs::read(&path).unwrap());
         assert_eq!(events[0], Event::Hello(Hello { contract: CONTRACT, ..Hello::default() }), "{path:?}");
-        origins.extend(events.into_iter().filter_map(|e| match e {
-            Event::TextMessageStart(start) => start.origin,
-            _ => None,
-        }));
+        for event in events {
+            match event {
+                Event::TextMessageStart(start) => origins.extend(start.origin),
+                Event::StateSnapshot(document) if document.key.as_deref() == Some(CHECKLIST) => {
+                    assert_eq!(document.media_type.as_deref(), Some(CHECKLIST_MEDIA_TYPE));
+                    checklists.push(serde_json::from_value::<Vec<ChecklistItem>>(document.snapshot).unwrap());
+                }
+                Event::StateSnapshot(document) if document.key.as_deref() == Some(TASKS) => {
+                    assert_eq!(document.media_type.as_deref(), Some(TASKS_MEDIA_TYPE));
+                    tasks.push(serde_json::from_value::<Vec<AgentTask>>(document.snapshot).unwrap());
+                }
+                _ => {}
+            }
+        }
     }
+    let steps: Vec<ChecklistStatus> = checklists.iter().flatten().map(|item| item.status).collect();
+    assert!(!steps.contains(&ChecklistStatus::Unknown));
+    let ended: Vec<(TaskKind, TaskStatus)> = tasks.iter().flatten().filter(|t| t.ended_at.is_some()).map(|t| (t.kind, t.status)).collect();
+    for status in [TaskStatus::Completed, TaskStatus::Failed, TaskStatus::Cancelled] {
+        assert!(ended.contains(&(TaskKind::Shell, status)), "{status:?}");
+    }
+    assert!(tasks.iter().flatten().any(|t| t.kind == TaskKind::Subagent && t.child_thread_id.is_some()));
     let peer = origins.iter().find(|o| o.kind == OriginKind::Peer).expect("a peer message");
     assert_eq!(peer.fields["name"], json!("reviewer"));
     assert!(origins.iter().any(|o| o.kind == OriginKind::TaskNotification));
@@ -324,4 +345,130 @@ fn an_interrupt_outcome_without_its_list_still_reads() {
     let line = br#"{"type":"RunFinished","runId":"r","outcome":{"type":"interrupt"}}"#;
     let Ok(Some(Event::RunFinished(e))) = parse_line(line) else { panic!() };
     assert_eq!(e.outcome, Some(Outcome::Interrupt { interrupts: vec![] }));
+}
+
+fn text(tc: &TestCase) -> String {
+    tc.draw(gs::text().max_size(12))
+}
+
+fn maybe_text(tc: &TestCase) -> Option<String> {
+    tc.draw(gs::booleans()).then(|| text(tc))
+}
+
+fn has_null(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Array(items) => items.iter().any(has_null),
+        Value::Object(fields) => fields.values().any(has_null),
+        _ => false,
+    }
+}
+
+fn round_trips<T: Serialize + DeserializeOwned + PartialEq + Debug>(value: T) {
+    let wire = serde_json::to_value(&value).unwrap();
+    // Absent options stay absent.
+    assert!(!has_null(&wire), "{wire}");
+    assert_eq!(serde_json::from_value::<T>(wire).unwrap(), value);
+}
+
+#[hegel::test(test_cases = 200)]
+fn agent_state_documents_read_back_as_written(tc: TestCase) {
+    round_trips(ChecklistItem {
+        id: text(&tc),
+        content: text(&tc),
+        status: tc.draw(gs::sampled_from(vec![ChecklistStatus::Pending, ChecklistStatus::InProgress, ChecklistStatus::Completed])),
+        active_form: maybe_text(&tc),
+    });
+    let started_at = tc.draw(gs::integers::<u64>());
+    round_trips(AgentTask {
+        id: text(&tc),
+        kind: tc.draw(gs::sampled_from(vec![TaskKind::Subagent, TaskKind::Shell, TaskKind::Monitor, TaskKind::Other])),
+        title: text(&tc),
+        status: tc.draw(gs::sampled_from(vec![TaskStatus::Running, TaskStatus::Completed, TaskStatus::Failed, TaskStatus::Cancelled])),
+        started_at,
+        ended_at: tc.draw(gs::booleans()).then(|| tc.draw(gs::integers::<u64>().min_value(started_at))),
+        tool_call_id: text(&tc),
+        child_thread_id: maybe_text(&tc),
+        awaited: tc.draw(gs::booleans()).then(|| tc.draw(gs::booleans())),
+        output: tc.draw(gs::booleans()).then(|| TaskOutput {
+            path: maybe_text(&tc),
+            local: tc.draw(gs::booleans()),
+            url: maybe_text(&tc),
+            media_type: maybe_text(&tc),
+        }),
+    });
+    round_trips(AgentCommand {
+        name: text(&tc),
+        description: text(&tc),
+        hint: maybe_text(&tc),
+        aliases: tc.draw(gs::vecs(gs::text().max_size(6)).max_size(3)),
+        insert: text(&tc),
+        group: maybe_text(&tc),
+    });
+    round_trips(FileMatch { path: text(&tc), kind: tc.draw(gs::sampled_from(vec![FileKind::File, FileKind::Dir])) });
+}
+
+#[test]
+fn agent_state_documents_read_as_producers_write_them() {
+    let checklist: Vec<ChecklistItem> = serde_json::from_value(json!([
+        {"id": "1", "content": "Run the tests", "status": "in_progress", "activeForm": "Running the tests", "priority": "high"},
+        {"id": "2", "content": "Ship", "status": "blocked"},
+    ]))
+    .unwrap();
+    assert_eq!(
+        checklist,
+        [
+            ChecklistItem {
+                id: "1".into(),
+                content: "Run the tests".into(),
+                status: ChecklistStatus::InProgress,
+                active_form: Some("Running the tests".into()),
+            },
+            ChecklistItem { id: "2".into(), content: "Ship".into(), status: ChecklistStatus::Unknown, active_form: None },
+        ]
+    );
+    let tasks: Vec<AgentTask> = serde_json::from_value(json!([
+        {"id": "b1", "kind": "shell", "title": "cargo build", "status": "completed", "startedAt": 1, "endedAt": 2,
+         "toolCallId": "c1", "awaited": false, "pid": 7,
+         "output": {"path": "/tmp/b1.out", "local": true, "url": "/threads/t/tasks/b1/output", "mediaType": ANSI, "size": 3}},
+        {"id": "a1", "kind": "cron", "title": "Explore", "status": "paused", "startedAt": 3, "childThreadId": "t2"},
+    ]))
+    .unwrap();
+    let output = tasks[0].output.as_ref().unwrap();
+    assert_eq!(
+        (output.path.as_deref(), output.local, output.url.as_deref()),
+        (Some("/tmp/b1.out"), true, Some("/threads/t/tasks/b1/output"))
+    );
+    assert_eq!(
+        (tasks[0].kind, tasks[0].status, tasks[0].ended_at, tasks[0].awaited),
+        (TaskKind::Shell, TaskStatus::Completed, Some(2), Some(false))
+    );
+    assert_eq!((tasks[1].kind, tasks[1].status, tasks[1].child_thread_id.as_deref()), (TaskKind::Other, TaskStatus::Unknown, Some("t2")));
+    // A producer that omits the call writes none back.
+    assert_eq!(serde_json::to_value(&tasks[1]).unwrap()["toolCallId"], Value::Null);
+    let commands: Vec<AgentCommand> = serde_json::from_value(json!([
+        {"name": "review", "description": "Review changes", "hint": "[base]", "insert": "/review ", "source": "builtin"},
+        {"name": "lint", "description": "Lint", "aliases": ["l"], "insert": "$lint ", "group": "Skills"},
+    ]))
+    .unwrap();
+    assert_eq!((commands[0].hint.as_deref(), commands[0].insert.as_str()), (Some("[base]"), "/review "));
+    assert_eq!((&commands[1].aliases[..], commands[1].group.as_deref()), (&["l".to_string()][..], Some("Skills")));
+    let matches: Vec<FileMatch> = serde_json::from_value(
+        json!([{"path": "src/lib.rs", "kind": "file", "score": 9}, {"path": "src", "kind": "dir"}, {"path": "x", "kind": "link"}]),
+    )
+    .unwrap();
+    assert_eq!(matches.iter().map(|m| m.kind).collect::<Vec<_>>(), [FileKind::File, FileKind::Dir, FileKind::Unknown]);
+}
+
+#[test]
+fn a_state_document_is_typed_by_its_key_and_media_type() {
+    let line = br#"{"type":"StateSnapshot","threadId":"t","seq":4,"key":"checklist","mediaType":"application/vnd.flotilla.checklist+json","snapshot":[{"id":"1","content":"a","status":"pending"}]}"#;
+    let Ok(Some(Event::StateSnapshot(document))) = parse_line(line) else { panic!() };
+    assert_eq!((document.key.as_deref(), document.media_type.as_deref()), (Some(CHECKLIST), Some(CHECKLIST_MEDIA_TYPE)));
+    let checklist: Vec<ChecklistItem> = serde_json::from_value(document.snapshot).unwrap();
+    assert_eq!(checklist[0].status, ChecklistStatus::Pending);
+    assert_eq!(
+        (TASKS, TASKS_MEDIA_TYPE, COMMANDS, COMMANDS_MEDIA_TYPE),
+        ("tasks", "application/vnd.flotilla.tasks+json", "commands", "application/vnd.flotilla.commands+json")
+    );
 }

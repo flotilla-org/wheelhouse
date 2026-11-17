@@ -104,7 +104,7 @@ def wait_for(predicate, timeout=10):
 
 class GoldenTests(unittest.TestCase):
     def test_each_fixture_matches_its_golden(self):
-        self.assertEqual(len(cases()), 16)
+        self.assertEqual(len(cases()), 19)
         for case in cases():
             with self.subTest(case.name):
                 golden = FIXTURES / f'{case.name}.events.jsonl'
