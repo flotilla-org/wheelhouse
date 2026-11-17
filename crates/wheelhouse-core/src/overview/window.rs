@@ -232,9 +232,20 @@ impl OverviewWindow {
     /// to its new place and the camera flies to the same place in the new
     /// scene, since the old and new layouts frame the overview differently.
     fn relayout(&mut self, now_ms: f64) {
+        // At rest on its workspace the window shows none of the scene, so
+        // there is nothing to move: the new layout is a cut. Flying here
+        // would draw the workspace through the scene, before its surface
+        // exists, as when a grid setting is read at startup.
+        let at_rest = self.settled(now_ms);
         self.hold(now_ms);
         self.pan = None;
         self.zoom = None;
+        if at_rest {
+            self.morph = None;
+            self.rebuild();
+            self.cut();
+            return;
+        }
         if matches!(self.mode, OverviewMode::Group(_)) {
             self.mode = OverviewMode::Overview;
         }

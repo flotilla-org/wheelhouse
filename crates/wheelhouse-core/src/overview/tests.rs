@@ -808,7 +808,8 @@ fn switching_flies_between_tiles_unless_motion_is_off() {
 /// - every flight ends within the longest flight's time, and every change
 ///   of layout within its own;
 /// - panning the overview cuts, even mid-flight; changing the view mode or
-///   the grid's packing flies, and cuts without motion;
+///   the grid's packing flies, and cuts without motion or while the window
+///   rests on its workspace;
 /// - going back from the overview opens the current workspace, and back
 ///   from an open workspace does nothing;
 /// - a drag stretches only one way, past one end, and never in an open
@@ -885,6 +886,7 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
             }
             11 => {
                 let packing = if tc.draw(gs::booleans()) { GridPacking::Shelves } else { GridPacking::Treemap };
+                let at_rest = window.settled(now);
                 let changes = window.scene().options.packing != packing && window.target().is_some();
                 window.set_grid(
                     packing,
@@ -893,18 +895,21 @@ fn a_windows_camera_follows_its_mode(tc: TestCase) {
                     now,
                 );
                 assert_eq!(window.scene().options.packing, packing);
-                // Without motion a new packing is a cut, even mid-flight.
-                assert!(motion || !changes || !window.flying(now));
-                changes
+                // Without motion a new packing is a cut, even mid-flight, and
+                // at rest on the workspace, which shows none of the scene.
+                assert!((motion && !at_rest) || !changes || !window.flying(now));
+                changes && !at_rest
             }
             10 => {
                 let mode = if tc.draw(gs::booleans()) { ViewMode::Rows } else { ViewMode::Grid };
+                let at_rest = window.settled(now);
                 let changes = window.scene().options.mode != mode && window.target().is_some();
                 window.set_view_mode(mode, now);
                 assert_eq!(window.scene().options.mode, mode);
-                // Without motion a new view mode is a cut, even mid-flight.
-                assert!(motion || !changes || !window.flying(now));
-                changes
+                // Without motion a new view mode is a cut, even mid-flight, and
+                // at rest on the workspace, which shows none of the scene.
+                assert!((motion && !at_rest) || !changes || !window.flying(now));
+                changes && !at_rest
             }
             8 if !window.layout().groups.is_empty() => {
                 let group = tc.draw(gs::integers::<usize>().max_value(window.layout().groups.len() - 1));
@@ -1151,6 +1156,28 @@ fn a_new_view_mode_moves_the_tiles_and_flies() {
         }
         assert!(near(window.camera(20000.0).unwrap(), window.target().unwrap()));
     }
+}
+
+/// A window at rest on its workspace, the overview closed, takes a new view
+/// mode or packing without moving: it shows none of the scene, and flying
+/// would draw the workspace through it.
+#[test]
+fn a_new_layout_while_on_the_workspace_cuts() {
+    let project = |p: u64| segment("project", entity("project", p));
+    let entries: Vec<_> = (1..8u64).map(|i| entry("tree", vec![project(i % 3), segment("convoy", entity("convoy", i))], i)).collect();
+    let mut window = OverviewWindow::default();
+    window.update(entries, Some(tab_workspace_id(1)), 1.6, 0.0);
+    assert!(window.settled(5000.0));
+    window.set_view_mode(ViewMode::Grid, 5000.0);
+    assert!(!window.flying(5000.0) && !window.morphing(5000.0));
+    assert!(window.settled(5000.0));
+    assert!(near(window.camera(5000.0).unwrap(), window.target().unwrap()));
+    window.set_grid(GridPacking::Treemap, 0.0, 1.0, 6000.0);
+    assert!(!window.flying(6000.0) && !window.morphing(6000.0));
+    assert!(window.settled(6000.0));
+    // Opened afterwards, the overview flies from the workspace as usual.
+    window.open(7000.0);
+    assert!(window.flying(7000.0));
 }
 
 /// A scrolled grid stays scrolled when the region changes width, within the
