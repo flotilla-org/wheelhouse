@@ -787,17 +787,22 @@ impl Conversation {
 
     /// The `status` document: `idle`, `running` or `requires_action`.
     pub fn status(&self) -> Option<&str> {
-        self.documents().into_iter().find(|d| d.key == STATUS).and_then(|d| d.value.as_str())
+        self.documents.get(STATUS, |thread| self.shown(thread)).and_then(|d| d.value.as_str())
     }
 
-    /// The state documents of the thread shown: the root's, the watched
-    /// thread's, or else those of every thread no call started.
-    pub fn documents(&self) -> Vec<&Document> {
-        self.documents.of(|thread| match (&self.root, self.thread.as_str()) {
+    /// Whether `thread` is the thread shown: the root, the watched thread,
+    /// or else any thread no call started.
+    fn shown(&self, thread: &str) -> bool {
+        match (&self.root, self.thread.as_str()) {
             (Some(root), _) => thread == root,
             (None, "") => self.threads.get(thread).is_none_or(|t| t.parent.is_none()),
             (None, watched) => thread == watched,
-        })
+        }
+    }
+
+    /// The state documents of the thread shown, by key.
+    pub fn documents(&self) -> Vec<&Document> {
+        self.documents.of(|thread| self.shown(thread))
     }
 
     pub fn documents_revision(&self) -> u64 {

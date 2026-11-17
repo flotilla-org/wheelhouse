@@ -89,6 +89,12 @@ impl Documents {
         self.revision
     }
 
+    /// Document `key` of the threads `own` takes: the one changed last.
+    pub fn get(&self, key: &str, own: impl Fn(&str) -> bool) -> Option<&Document> {
+        let documents = self.threads.iter().filter(|(thread, _)| own(thread));
+        documents.filter_map(|(_, documents)| documents.get(key)).max_by_key(|document| document.at)
+    }
+
     /// The documents of the threads `own` takes, by key; where two have one
     /// key, the one changed last.
     pub fn of(&self, own: impl Fn(&str) -> bool) -> Vec<&Document> {
