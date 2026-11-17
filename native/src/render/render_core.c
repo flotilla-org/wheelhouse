@@ -123,6 +123,31 @@ r_batch_list_push_inst(Arena *arena, R_BatchList *list, U64 batch_inst_cap)
   return inst;
 }
 
+// Up to `count` instances in one contiguous run, for copying many at once:
+// the room left in the last batch, or a new batch large enough for all of
+// them. *pushed says how many the run holds; push again for the rest.
+internal void *
+r_batch_list_push_insts(Arena *arena, R_BatchList *list, U64 batch_inst_cap, U64 count, U64 *pushed)
+{
+  R_BatchNode *n = list->last;
+  U64 room = (n == 0 ? 0 : (n->v.byte_cap - n->v.byte_count)/list->bytes_per_inst);
+  if(room == 0)
+  {
+    room = Max(batch_inst_cap, count);
+    n = push_array(arena, R_BatchNode, 1);
+    n->v.byte_cap = room*list->bytes_per_inst;
+    n->v.v = push_array_no_zero(arena, U8, n->v.byte_cap);
+    SLLQueuePush(list->first, list->last, n);
+    list->batch_count += 1;
+  }
+  U64 take = Min(room, count);
+  void *insts = n->v.v + n->v.byte_count;
+  n->v.byte_count += take*list->bytes_per_inst;
+  list->byte_count += take*list->bytes_per_inst;
+  *pushed = take;
+  return insts;
+}
+
 ////////////////////////////////
 //~ rjf: Pass Type Functions
 

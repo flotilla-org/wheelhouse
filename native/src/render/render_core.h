@@ -387,6 +387,7 @@ internal B32 r_handle_match(R_Handle a, R_Handle b);
 
 internal R_BatchList r_batch_list_make(U64 instance_size);
 internal void *r_batch_list_push_inst(Arena *arena, R_BatchList *list, U64 batch_inst_cap);
+internal void *r_batch_list_push_insts(Arena *arena, R_BatchList *list, U64 batch_inst_cap, U64 count, U64 *pushed);
 
 ////////////////////////////////
 //~ rjf: Pass Type Functions

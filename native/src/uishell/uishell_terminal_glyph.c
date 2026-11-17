@@ -9881,10 +9881,14 @@ uishell_terminal_glyph_renderer_draw_cell_feed_rows(Arena *arena, UIShell_Termin
       delta_hint = found - (S64)row_idx;
     }
   }
-  // Rows nothing took are gone.
+  // Rows nothing took are gone. Their arenas build this draw's new rows: a
+  // resize or a full redraw replaces every row, and releasing and reserving
+  // an arena per row cost more than building the rows.
+  Arena **spares = push_array(scratch.arena, Arena *, row_cache->count + 1);
+  U64 spare_count = 0;
   for(U64 old_idx = 0; old_idx < row_cache->count; old_idx += 1)
   {
-    if(row_cache->entries[old_idx].arena != 0) { arena_release(row_cache->entries[old_idx].arena); }
+    if(row_cache->entries[old_idx].arena != 0) { spares[spare_count++] = row_cache->entries[old_idx].arena; }
   }
   if(row_cache->arena == 0) { row_cache->arena = arena_alloc(.reserve_size = KB(64), .commit_size = KB(4), .name = "terminal row cache"); }
   if(row_cache->count != count)
@@ -9918,8 +9922,9 @@ uishell_terminal_glyph_renderer_draw_cell_feed_rows(Arena *arena, UIShell_Termin
       else               { row_cache->rows_reused += 1; }
       continue;
     }
-    if(entry->arena == 0) { entry->arena = arena_alloc(.reserve_size = KB(256), .commit_size = KB(4), .name = "terminal row draw"); }
-    else                  { arena_clear(entry->arena); }
+    if(entry->arena == 0 && spare_count > 0) { entry->arena = spares[--spare_count]; arena_clear(entry->arena); }
+    else if(entry->arena == 0) { entry->arena = arena_alloc(.reserve_size = KB(256), .commit_size = KB(4), .name = "terminal row draw"); }
+    else                       { arena_clear(entry->arena); }
     entry->backgrounds = dr_bucket_make_on(entry->arena);
     entry->text = dr_bucket_make_on(entry->arena);
     U64 outer_atlas_use = fnt_atlas_use_begin();
@@ -9935,6 +9940,7 @@ uishell_terminal_glyph_renderer_draw_cell_feed_rows(Arena *arena, UIShell_Termin
     row_cache->rows_built += 1;
     row_cache->cells_built += feed->cols;
   }
+  for(U64 idx = 0; idx < spare_count; idx += 1) { arena_release(spares[idx]); }
 
   // Lay the rows down as the full draw does.
   dr_rect(canvas_rect, params->background_color, 0, 0, 0);
