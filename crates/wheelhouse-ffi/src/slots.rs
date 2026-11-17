@@ -3,7 +3,7 @@
 use super::*;
 use wheelhouse_core::managed::SlotPlan;
 use wheelhouse_core::slots::SlotInfo;
-use wheelhouse_core::suggested_layout::{CleatTransport, CommandLine, Content, LocalRecipe, RebindPolicy, ViewSpec};
+use wheelhouse_core::suggested_layout::{CleatTransport, CommandLine, Content, Facet, LocalRecipe, RebindPolicy, ViewSpec};
 use wheelhouse_core::target_resolution::SavedResolution;
 
 /// A View Spec's content: a local command (argv when argc is nonzero, else
@@ -43,6 +43,9 @@ pub const WHEELHOUSE_SLOT_FLAG_CHANGED: u32 = 2;
 pub const WHEELHOUSE_SLOT_FLAG_REMOVED: u32 = 4;
 /// The user changed the slot's rebind policy.
 pub const WHEELHOUSE_SLOT_FLAG_REBIND: u32 = 8;
+/// The slot shows another Facet of its entity than the provider's; it still
+/// follows the provider.
+pub const WHEELHOUSE_SLOT_FLAG_FACET: u32 = 16;
 
 const _: () = {
     use wheelhouse_core::slots::flag;
@@ -50,6 +53,7 @@ const _: () = {
     assert!(WHEELHOUSE_SLOT_FLAG_CHANGED == flag::CHANGED);
     assert!(WHEELHOUSE_SLOT_FLAG_REMOVED == flag::REMOVED);
     assert!(WHEELHOUSE_SLOT_FLAG_REBIND == flag::REBIND);
+    assert!(WHEELHOUSE_SLOT_FLAG_FACET == flag::FACET);
 };
 
 /// A View Spec, or a resolution's recipe (whose presentation and role are
@@ -386,6 +390,72 @@ pub unsafe extern "C" fn wheelhouse_slot_reattach(
         Ok(())
     })
     .is_some() as u32
+}
+
+/// Show another Facet of the entity a slot shows (a key from
+/// wheelhouse_slot_facets). A baseline slot keeps following its provider,
+/// and choosing the provider's own Facet drops the edit.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_slot_set_facet(
+    h: *mut WheelhouseCore,
+    workspace: WorkspaceIdView,
+    key: Text,
+    facet: Text,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        h.sidebar.set_slot_facet(workspace.into(), &key.read()?, &facet.read()?)?;
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+#[repr(C)]
+pub struct FacetView {
+    pub name: Text,
+    /// The provider publishes a recipe for it now.
+    pub ready: u32,
+    /// The slot shows it.
+    pub current: u32,
+}
+
+/// The Facets of the entity a slot shows, in its provider's order: the slots
+/// of that entity's own Suggested Layout. Empty for a local slot.
+#[repr(C)]
+pub struct FacetListView {
+    pub facets: *const FacetView,
+    pub facet_count: usize,
+    /// The entity's name (its display.label); empty when it has none.
+    pub label: Text,
+}
+
+type FacetsKeep = (Vec<Facet>, Vec<FacetView>, String);
+
+/// A slot's Facets. Free them with wheelhouse_slot_facets_free.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_slot_facets(
+    h: *mut WheelhouseCore,
+    workspace: WorkspaceIdView,
+    key: Text,
+    error_out: *mut *mut c_char,
+) -> *mut FacetListView {
+    run(h, error_out, |h| {
+        let (workspace, key) = (workspace.into(), key.read()?);
+        let facets = h.sidebar.slot_facets(workspace, &key)?;
+        let label = h.sidebar.slot_label(workspace, &key)?.unwrap_or_default();
+        let views: Vec<FacetView> = facets
+            .iter()
+            .map(|facet| FacetView { name: Text::borrowed(&facet.name), ready: facet.ready as u32, current: facet.current as u32 })
+            .collect();
+        let value = FacetListView { facets: views.as_ptr(), facet_count: views.len(), label: Text::borrowed(&label) };
+        Ok(give::<_, FacetsKeep>(value, (facets, views, label)))
+    })
+    .unwrap_or(ptr::null_mut())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_slot_facets_free(facets: *mut FacetListView) {
+    take::<_, FacetsKeep>(facets)
 }
 
 /// Content is unavailable: missing or expired facts suspend updates; they

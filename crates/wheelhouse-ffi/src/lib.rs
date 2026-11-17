@@ -109,7 +109,10 @@ unsafe fn write_bytes(out: *mut Bytes, bytes: Vec<u8>) -> Result<(), String> {
 }
 
 /// A struct returned to the host and what it points into, in one
-/// allocation the host frees with the struct's `_free` call.
+/// allocation the host frees with the struct's `_free` call. `value` may
+/// borrow from `keep`'s heap buffers (a String's, a Vec's): moving them into
+/// `keep` moves their handles, not the buffers, so keep only heap-owning
+/// types there, never inline data `value` points at.
 #[repr(C)]
 struct Owned<T, K> {
     value: T,

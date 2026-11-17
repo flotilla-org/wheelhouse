@@ -112,6 +112,8 @@ struct WH_ViewContext
   U64 state_size;
   WH_ViewSettings settings;
   Rng2F32 rect;
+  // The Slot Host gave the View its View Dock: `rect` is what is left of it.
+  B32 docked;
   // The evaluator escape hatch until it is retired (#313): the View's
   // expression, evaluated, for Renderers with RD_ViewTrait_LegacyEval.
   E_Eval legacy_eval;
@@ -1179,6 +1181,8 @@ struct RD_State
   U64 view_state_slots_count;
   RD_ViewStateSlot *view_state_slots;
   RD_ViewState *free_view_state;
+  // Released this frame: freed once it is submitted (rd_view_state_release).
+  RD_ViewState *released_view_state;
   RD_ViewState *view_state_last_accessed;
   // View Address -> node (rd_cfg_from_view), checked on each hit, and ->
   // its Presentation State (rd_view_presentation_from_view).

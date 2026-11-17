@@ -229,6 +229,8 @@ state_frame(RD_WindowState *ws)
   scratch_end(scratch);
   rd_dock_restore_layouts();
   rd_view_states_release_unowned();
+  // As rd_frame does once it has submitted.
+  rd_view_states_free_released();
 }
 
 // Set: a window's first frame draws its sidebar before anything else

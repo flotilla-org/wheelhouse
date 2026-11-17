@@ -198,9 +198,16 @@ read_only global String8 uishell_store_runtime_keys[] =
   // ("unavailable", "held" or "failed"); absent while it resolves. The Slot
   // Host reads it (uishell_store_view_slot).
   str8_lit_comp("content_state"),
+  // The Facet of its entity it shows, and all of them, space-separated, when
+  // that entity lists Facets (CONTEXT.md, "Facet"); its View Dock offers them.
+  str8_lit_comp("facet"),
+  str8_lit_comp("facets"),
+  // That entity's name, for its tab's title.
+  str8_lit_comp("entity_label"),
 };
 
 internal U64 uishell_store_view_spec_hash(CFG_Node *view);
+internal UIShell_SidebarState *uishell_store_state_from_view(CFG_Node *view, CFG_Node **owner_out);
 
 #define UIShell_StoreCall(state, call) ((state)->store_calls += 1, (call))
 
@@ -1829,13 +1836,58 @@ uishell_store_tab_before(RD_Arrangement *a, RD_ViewAddress view)
   return prev;
 }
 
+// The Facets of the entity Slot `key` shows, if it lists any: the one it
+// shows, and all of them, space-separated; and the entity's name.
+internal void
+uishell_store_facets(Arena *arena, UIShell_SidebarState *state, WheelhouseWorkspaceId workspace, String8 key,
+                     String8 *facet, String8 *facets, String8 *label)
+{
+  WheelhouseFacets *list = UIShell_StoreCall(state, wheelhouse_slot_facets(state->core, workspace, uishell_sidebar_text(key), 0));
+  if(!list) { return; }
+  *label = push_str8_copy(arena, uishell_sidebar_string(list->label));
+  String8List names = {0};
+  for(U64 i = 0; i < list->facet_count; i++)
+  {
+    String8 name = push_str8_copy(arena, uishell_sidebar_string(list->facets[i].name));
+    str8_list_push(arena, &names, name);
+    if(list->facets[i].current) { *facet = name; }
+  }
+  *facets = str8_list_join(arena, &names, &(StringJoin){.sep = str8_lit(" ")});
+  wheelhouse_slot_facets_free(list);
+}
+
+// Shows Facet `facet` of the entity Slot `key` of `owner` shows. Its next
+// plan swaps the View's Renderer in place.
+internal void
+uishell_store_set_facet(UIShell_SidebarState *state, CFG_Node *owner, String8 key, String8 facet)
+{
+  char *error = 0;
+  B32 ok = UIShell_StoreCall(state, wheelhouse_slot_set_facet(state->core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(owner)),
+                                                              uishell_sidebar_text(key), uishell_sidebar_text(facet), &error));
+  uishell_sidebar_result(state, ok, error);
+}
+
+internal void
+uishell_store_switch_facet(CFG_Node *view, String8 facet)
+{
+  CFG_Node *owner = &cfg_nil_node;
+  UIShell_SidebarState *state = uishell_store_state_from_view(view, &owner);
+  String8 key = uishell_store_setting(view, str8_lit("slot"));
+  if(!state || !key.size) { return; }
+  uishell_store_set_facet(state, owner, key, facet);
+  rd_request_frame();
+}
+
 // Applies an Updating plan's recipe to `view`, the View of Slot `key` in
 // `owner`, if its token is still valid. Returns the View that shows it now (a
 // new node when the old one couldn't take it in place), or nil when the
 // update failed or its token went stale.
+// A Facet switch (`switching`) shows another way of the same entity: the
+// View keeps its address and Presentation State, and keeps no previous
+// instance.
 internal CFG_Node *
 uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view, String8 key,
-                    WheelhouseSlotContent *content, B32 keep_previous)
+                    WheelhouseSlotContent *content, B32 keep_previous, B32 switching)
 {
   Temp scratch = scratch_begin(0, 0);
   Arena *arena = scratch.arena;
@@ -1846,7 +1898,7 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
   B32 shows = uishell_store_view_shows(arena, view, key, &recipe);
   B32 terminal = str8_match(view->string, str8_lit("terminal"), 0);
   if(!shows && terminal && uishell_managed_daemon_backed(view)) { keep_previous = 1; }
-  if(str8_match(view->string, str8_lit("placeholder"), 0)) { keep_previous = 0; }
+  if(str8_match(view->string, str8_lit("placeholder"), 0) || switching) { keep_previous = 0; }
   // A Cleat session is attached to, not started: its View is a new one.
   B32 in_place = !shows && terminal && str8_match(kind, view->string, 0) && !keep_previous &&
                  recipe.content != WHEELHOUSE_SLOT_CLEAT_SESSION;
@@ -1916,10 +1968,12 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
     }
     else
     {
-      // The instance it replaced loses them with its node.
+      // The instance it replaced loses them with its node; a Facet switch
+      // keeps the Presentation State, which the new View has at the same
+      // address.
       rd_arrangement_detach_tab(a, replaced);
       rd_view_states_release_view(replaced);
-      rd_view_presentation_release(replaced);
+      if(!switching) { rd_view_presentation_release(replaced); }
       cfg_node_release(rd_state->cfg, view);
     }
     // The new View takes the Slot's address, where the replaced one was.
@@ -2000,6 +2054,10 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
     String8 key = push_str8_copy(arena, doc.keys[i]);
     if(!uishell_store_key_valid(key) || cfg_node_from_id(view->id) != view) { continue; }
     String8 applied = push_str8_copy(arena, uishell_store_setting(view, str8_lit("applied")));
+    String8 facet = str8_zero(), facets = str8_zero(), label = str8_zero();
+    uishell_store_facets(arena, state, workspace, key, &facet, &facets, &label);
+    String8 shown_facet = uishell_store_setting(view, str8_lit("facet"));
+    B32 switching = shown_facet.size && facet.size && !str8_match(shown_facet, facet, 0);
     char *error = 0;
     WheelhouseSlotContent *plan = UIShell_StoreCall(state, wheelhouse_slot_plan(state->core, workspace, uishell_sidebar_text(key),
                                                                               uishell_sidebar_text(applied), &error));
@@ -2021,7 +2079,7 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
       { asks = uishell_store_recipe_text(arena, &recipe); }
       else
       {
-        CFG_Node *shown = uishell_store_apply(state, owner, view, key, &content, applied.size && content.rebind == WHEELHOUSE_REBIND_KEEP_PREVIOUS);
+        CFG_Node *shown = uishell_store_apply(state, owner, view, key, &content, applied.size && content.rebind == WHEELHOUSE_REBIND_KEEP_PREVIOUS, switching);
         // Only a View starting without an instance tries a saved resolution.
         uishell_store_complete(state, owner, key, view, shown, &content, applied.size ? 0 : saved);
         if(shown != &cfg_nil_node) { view = shown; }
@@ -2040,6 +2098,10 @@ uishell_store_plan_owner(UIShell_SidebarState *state, CFG_Node *owner)
       else { uishell_store_drop_setting(view, str8_lit("asks")); }
       if(content_state.size) { uishell_store_set_setting(view, str8_lit("content_state"), content_state); }
       else { uishell_store_drop_setting(view, str8_lit("content_state")); }
+      if(facets.size) { uishell_store_set_setting(view, str8_lit("facet"), facet); uishell_store_set_setting(view, str8_lit("facets"), facets); }
+      else { uishell_store_drop_setting(view, str8_lit("facet")); uishell_store_drop_setting(view, str8_lit("facets")); }
+      if(label.size) { uishell_store_set_setting(view, str8_lit("entity_label"), label); }
+      else { uishell_store_drop_setting(view, str8_lit("entity_label")); }
     }
     // A previous instance the user closed, or none kept (content that
     // couldn't keep one), is released.
@@ -2119,7 +2181,7 @@ uishell_store_answer(CFG_Node *view, B32 accept)
   {
     if(accept)
     {
-      CFG_Node *shown = uishell_store_apply(state, owner, view, key, &content, 0);
+      CFG_Node *shown = uishell_store_apply(state, owner, view, key, &content, 0, 0);
       uishell_store_complete(state, owner, key, view, shown, &content, 0);
     }
     else

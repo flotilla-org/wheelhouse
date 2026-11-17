@@ -402,6 +402,78 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     cfg_node_release(rd_state->cfg, direct_workspace);
     uishell_sidebar_release(&opened);
   }
+  // A subject whose layout lists another slot has that slot as a Facet
+  // (CONTEXT.md, "Facet"): switching its primary to it swaps the View's
+  // Renderer in place, keeping its address, its Presentation State and no
+  // previous instance; switching back drops the edit.
+  {
+    String8 config = str8_lit(
+      "region \"git\" root-template=\"worktree/title\" form=\"compact\" placement=\"git\"\n"
+      "template \"worktree/title\" slot=\"compact\" node-kind=\"entity\" { field \"label\" source=\"literal\" value=\"Git\"; }\n"
+      "placement \"git\" { for \"worktree\" kind=\"worktree\" { field \"label\" key=\"entity.id\"; }; }\n");
+    UIShell_SidebarState opened = {0};
+    opened.core = wheelhouse_create(config.str, config.size, 0);
+    String8 patch = str8_lit(
+      "{\"type\":\"metadata-patch\",\"target\":{\"kind\":\"entity\",\"value\":{\"kind\":\"worktree\",\"id\":\"facet-worktree\"}},"
+      "\"source_id\":\"fixture\",\"unset\":[],\"set\":{"
+      "\"display.label\":{\"value\":{\"type\":\"text\",\"value\":\"Facet agent\"}},"
+      "\"workspace.primary.state\":{\"value\":{\"type\":\"text\",\"value\":\"ready\"}},"
+      "\"workspace.primary.target\":{\"value\":{\"type\":\"text\",\"value\":\"facet@1\"}},"
+      "\"action.primary.recipe\":{\"value\":{\"type\":\"text\",\"value\":\"printf F; read answer\"}},"
+      "\"layout.version\":{\"value\":{\"type\":\"text\",\"value\":\"1\"}},"
+      "\"layout.slots\":{\"value\":{\"type\":\"string-list\",\"value\":[\"primary\",\"conversation\"]}},"
+      "\"layout.slot.conversation.state\":{\"value\":{\"type\":\"text\",\"value\":\"ready\"}},"
+      "\"layout.slot.conversation.target\":{\"value\":{\"type\":\"text\",\"value\":\"facet@1\"}},"
+      "\"layout.slot.conversation.kind\":{\"value\":{\"type\":\"text\",\"value\":\"agent-session\"}},"
+      "\"layout.slot.conversation.endpoint\":{\"value\":{\"type\":\"text\",\"value\":\"/nonexistent/producer.sock\"}},"
+      "\"layout.slot.conversation.thread\":{\"value\":{\"type\":\"text\",\"value\":\"t1\"}}}}");
+    ManagedCheck(wheelhouse_apply_patch_json(opened.core, 0, uishell_sidebar_text(uishell_sidebar_host_provider), uishell_sidebar_text(patch), 0),
+                 "facet facts accepted");
+    uishell_sidebar_refresh(&opened);
+    UIShell_SidebarIntent activate = {0};
+    for(U64 i = 0; i < uishell_sidebar_node_count(&opened); i++)
+    {
+      UIShell_SidebarNode node = {0}; uishell_sidebar_node(&opened, i, &node);
+      if(str8_match(uishell_sidebar_string(node.entity.id), str8_lit("facet-worktree"), 0)) { activate = uishell_sidebar_activate_intent(node); }
+    }
+    ManagedCheck(activate.some && uishell_sidebar_intend(&opened, activate, 0), "facet worktree activation dispatches");
+    UIShell_ControlledSplit split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_effects(&opened, &split);
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(&opened, &split);
+    CFG_Node *facet_workspace = cfg_node_from_id(ws->root_controlled_split_selected_workspace_id);
+    RD_PanelTree tree = uishell_workspace_mount_from_owner_cfg(scratch.arena, window, facet_workspace).panel_tree;
+    CFG_Node *facet_view = tree.root->tabs.first ? rd_cfg_from_view(tree.root->tabs.first->v) : &cfg_nil_node;
+    rd_view_rekey(facet_view, str8_lit("primary"));
+    uishell_sidebar_reconcile_workspace(&opened, facet_workspace);
+    RD_ViewAddress address = uishell_store_slot_view(facet_workspace, str8_lit("primary"), RD_ViewInstance_Current);
+    facet_view = rd_cfg_from_view(address);
+    ManagedCheck(str8_match(facet_view->string, str8_lit("terminal"), 0) &&
+                 str8_match(rd_cfg_setting_child(facet_view, str8_lit("facets"))->first->string, str8_lit("primary conversation"), 0) &&
+                 str8_match(rd_cfg_setting_child(facet_view, str8_lit("facet"))->first->string, str8_lit("primary"), 0) &&
+                 str8_match(rd_cfg_setting_child(facet_view, str8_lit("entity_label"))->first->string, str8_lit("Facet agent"), 0),
+                 "the primary lists its entity's Facets and name");
+    rd_view_setting_set(address, str8_lit("dock_width"), str8_lit("0.4"));
+    uishell_store_set_facet(&opened, facet_workspace, str8_lit("primary"), str8_lit("conversation"));
+    uishell_sidebar_reconcile_workspace(&opened, facet_workspace);
+    facet_view = rd_cfg_from_view(uishell_store_slot_view(facet_workspace, str8_lit("primary"), RD_ViewInstance_Current));
+    RD_ViewAddress previous = uishell_store_slot_view(facet_workspace, str8_lit("primary"), RD_ViewInstance_Previous);
+    ManagedCheck(str8_match(facet_view->string, str8_lit("rich_text"), 0) &&
+                 str8_match(rd_cfg_setting_child(facet_view, str8_lit("agent_thread"))->first->string, str8_lit("t1"), 0) &&
+                 str8_match(rd_cfg_setting_child(facet_view, str8_lit("facet"))->first->string, str8_lit("conversation"), 0),
+                 "switching to the conversation Facet shows it in the same Slot");
+    ManagedCheck(str8_match(rd_view_setting_from_view(address, str8_lit("dock_width")), str8_lit("0.4"), 0) && rd_cfg_from_view(previous) == &cfg_nil_node,
+                 "a Facet switch keeps the View's Presentation State and no previous instance");
+    uishell_store_set_facet(&opened, facet_workspace, str8_lit("primary"), str8_lit("primary"));
+    uishell_sidebar_reconcile_workspace(&opened, facet_workspace);
+    facet_view = rd_cfg_from_view(uishell_store_slot_view(facet_workspace, str8_lit("primary"), RD_ViewInstance_Current));
+    ManagedCheck(str8_match(facet_view->string, str8_lit("terminal"), 0) && str8_match(rd_view_setting_from_view(address, str8_lit("dock_width")), str8_lit("0.4"), 0),
+                 "switching back shows the terminal again");
+    split = uishell_root_controlled_split_from_window(scratch.arena, window);
+    uishell_sidebar_observe(&opened, &split);
+    cfg_node_release(rd_state->cfg, facet_workspace);
+    uishell_sidebar_release(&opened);
+  }
   ui_select_state(saved);
   ui_state_release(test);
   scratch_end(scratch);

@@ -30,14 +30,15 @@ control of the saved records.
 | Override a slot's content | provider slot key | The user's View Spec, and the baseline content it was made against. The slot is **detached**: it no longer follows the provider. |
 | Remove a slot (tombstone) | provider slot key | The baseline content it was removed against. |
 | Change the rebind policy | provider slot key | The policy. It doesn't detach the slot. |
+| Show another Facet | provider slot key | The Facet of the slot's entity it shows. It doesn't detach the slot; choosing the provider's Facet drops the edit. |
 | Rename, change mood | the workspace | The user's name or mood over the provider's. |
 | Split weight, selected tab | panel ID | A **soft override**. |
 | The whole arrangement | the workspace | Once a **structural** edit has taken ownership. |
 
 `WorkspaceSlots` is the Rust shape: the cached baseline, `edits` by slot key
 (`SlotEdit`: an override or tombstone with the content it was made against,
-and a rebind policy), the user's own slots, name and mood, and the departed
-slots below. It is part of the `workspace/<id>` record, beside the
+a rebind policy and a Facet), the user's own slots, name and mood, and the
+departed slots below. It is part of the `workspace/<id>` record, beside the
 arrangement, which holds the soft overrides and whether it is owned.
 
 A workspace with no Suggested Layout uses the same model with an empty
@@ -59,6 +60,7 @@ relates to the baseline:
 - `REMOVED`: the provider removed this overridden slot. It is kept as the
   user's own, with its policy frozen, until the host removes it.
 - `REBIND`: the user changed its rebind policy.
+- `FACET`: it shows another Facet of its entity than the provider's.
 
 `remove_slot` on a provider slot tombstones it: the slot is hidden and its
 live instance forgotten, and the overlay lists it as `tombstoned`
