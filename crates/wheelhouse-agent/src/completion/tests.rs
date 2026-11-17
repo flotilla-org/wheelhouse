@@ -179,8 +179,9 @@ fn accepting_inserts_the_row_and_its_hint_lasts_until_typing(tc: TestCase) {
     assert!(taken);
     assert_eq!(edit.text, row.insert);
     let replaced = &text[edit.range.clone()];
+    assert!(text[edit.range.end..].is_empty() || text[edit.range.end..].starts_with(' '), "the whole token, past the cursor");
     assert!(edit.range.contains(&(cursor - 1)) && !replaced.contains(' ') && replaced.starts_with(['/', '@']), "{replaced:?}");
-    let after = edit.apply(&text);
+    let after = edit.apply(&text).unwrap();
     assert_eq!(format!("{}{}{}", &text[..edit.range.start], row.insert, &text[edit.range.end..]), after);
     let at = edit.range.start + edit.text.len();
     completion.update(commands.as_deref(), false, &after, at);
@@ -219,7 +220,8 @@ fn only_a_searchable_root_is_asked_and_once_per_query(tc: TestCase) {
 
 // C8 and D5: `@` lists its Agent Commands, then the latest query's files;
 // an answer to an earlier query is dropped. Choosing a folder keeps the
-// popup open on its contents, and a file inserts plain `@path`.
+// popup open on its contents, and a file inserts plain `@path` and closes it
+// for that token.
 #[test]
 fn an_at_token_lists_its_commands_then_the_latest_files() {
     let mut completion = Completion::default();
@@ -243,7 +245,7 @@ fn an_at_token_lists_its_commands_then_the_latest_files() {
     completion.key(Key::Down);
     completion.key(Key::Down);
     let (_, edit) = completion.key(Key::Accept);
-    let text = edit.unwrap().apply("see @ag");
+    let text = edit.unwrap().apply("see @ag").unwrap();
     assert_eq!(text, "see @agents");
     assert_eq!(completion.update(Some(&commands), true, &text, text.len()), Some("agents".into()), "into the folder");
     completion.answer("agents", vec![FileMatch { path: "agents/main.rs".into(), kind: FileKind::File }]);
@@ -251,10 +253,15 @@ fn an_at_token_lists_its_commands_then_the_latest_files() {
     assert_eq!(completion.rows().last().unwrap().kind, RowKind::File);
     completion.key(Key::Up);
     let (_, edit) = completion.key(Key::Accept);
-    let text = edit.unwrap().apply(&text);
+    let text = edit.unwrap().apply(&text).unwrap();
     assert_eq!(text, "see @agents/main.rs");
     completion.update(Some(&commands), true, &text, text.len());
     assert_eq!(completion.popup(), None, "a file closes it");
+    // Typing on in that token keeps it closed; a new token opens one.
+    completion.update(Some(&commands), true, "see @agents/main.rsx", 20);
+    assert_eq!(completion.popup(), None);
+    completion.update(Some(&commands), true, "see @agents/main.rsx @ag", 24);
+    assert_eq!(completion.popup(), Some(Popup::Mention));
 }
 
 // Esc closes the popup and keeps the draft: it stays closed while the cursor

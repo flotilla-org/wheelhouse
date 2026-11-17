@@ -45,7 +45,8 @@ pub enum Key {
 }
 
 /// Replace `range` of the field's text (byte offsets) with `text`; the
-/// cursor goes after it.
+/// cursor goes after it. It is made for the text last passed to
+/// [`Completion::update`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Edit {
     pub range: Range<usize>,
@@ -53,8 +54,9 @@ pub struct Edit {
 }
 
 impl Edit {
-    pub fn apply(&self, text: &str) -> String {
-        format!("{}{}{}", &text[..self.range.start], self.text, &text[self.range.end..])
+    /// None for a text the range doesn't fit, as one changed since.
+    pub fn apply(&self, text: &str) -> Option<String> {
+        Some(format!("{}{}{}", text.get(..self.range.start)?, self.text, text.get(self.range.end..)?))
     }
 }
 
@@ -256,7 +258,7 @@ impl Completion {
             Key::Accept => {
                 let row = self.shown.rows[self.shown.selected].clone();
                 let made = Edit { range: token.range.clone(), text: row.insert.clone() };
-                let text = made.apply(&self.text);
+                let text = made.apply(&self.text).expect("made for this text");
                 // A folder is gone into: its files are what comes next.
                 if row.kind != RowKind::Dir {
                     self.close(popup, &token);
