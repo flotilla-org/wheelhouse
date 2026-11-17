@@ -2887,10 +2887,12 @@ uint64_t wheelhouse_agent_task_stop(WheelhouseText transport,
 
 // Reads a task's output, as its tasks entry names it, while it runs
 // (running 1) or after: the file output_path directly when output_local is
-// 1, else output_url on the endpoint (transport, host and endpoint as for
-// wheelhouse_agent_watch_open; empty endpoint when there is none). wake
-// (if not NULL) is called from another thread when text waits. Free it
-// with wheelhouse_agent_output_free.
+// 1 and the producer is on this machine (transport "local" or empty), else
+// output_url on the endpoint (transport, host and endpoint as for
+// wheelhouse_agent_watch_open). Over ssh a producer's "local" is its own
+// machine's, so its file is never opened here. wake (if not NULL) is
+// called from another thread when text waits. Free it with
+// wheelhouse_agent_output_free.
 WheelhouseAgentOutput *wheelhouse_agent_output_open(WheelhouseText transport,
                                                     WheelhouseText host,
                                                     WheelhouseText endpoint_path,

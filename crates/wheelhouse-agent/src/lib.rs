@@ -163,7 +163,7 @@ impl Endpoint {
     /// settles as the producer answers.
     pub fn stop_task(&self, thread: &str, task: &str) -> Post {
         let mut url = base();
-        url.path_segments_mut().unwrap().extend(["threads", thread, "tasks", task, "stop"]);
+        url.path_segments_mut().expect("the base URL has a path").extend(["threads", thread, "tasks", task, "stop"]);
         self.post_to(url, b"{}".to_vec())
     }
 
@@ -497,6 +497,17 @@ fn failure(status: StatusCode, body: &[u8]) -> String {
 /// the path and query.
 fn base() -> Url {
     Url::parse("http://agent/").unwrap()
+}
+
+/// A path the producer named, such as a root's `search`, on its own
+/// endpoint: an absolute URL or a `//host` reference that would leave it is
+/// refused.
+fn on_endpoint(reference: &str) -> Result<Url, String> {
+    let url = base().join(reference).map_err(|error| error.to_string())?;
+    if url.origin() != base().origin() {
+        return Err(format!("{reference:?} is not on the producer's endpoint"));
+    }
+    Ok(url)
 }
 
 fn thread_url(thread: &str, query: &str) -> Url {

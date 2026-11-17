@@ -1,5 +1,5 @@
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::fs::{metadata, File};
+use std::io::{Error, ErrorKind, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -7,11 +7,11 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use conversation_events::TaskOutput;
-use reqwest::Url;
+use reqwest::{StatusCode, Url};
 use tokio::sync::Notify;
 use tokio::time::sleep;
 
-use crate::{base, get, Endpoint, Link, Wake};
+use crate::{get, on_endpoint, Endpoint, Link, Wake};
 
 /// How often a running task's output is read again.
 pub const TAIL_EVERY: Duration = Duration::from_millis(200);
@@ -116,7 +116,7 @@ impl Output {
             (Some(path), _) if output.local => Ok(Output::file(PathBuf::from(path), running, wake)),
             (_, Some(url)) => {
                 let endpoint = endpoint.ok_or("the task's output is on its producer's endpoint, which isn't reachable")?;
-                Ok(Output::fetch(endpoint, base().join(url).map_err(|error| error.to_string())?, running, wake))
+                Ok(Output::fetch(endpoint, on_endpoint(url)?, running, wake))
             }
             _ => Err("the task's output can't be read from this machine".into()),
         }
@@ -184,7 +184,13 @@ fn tail(path: &PathBuf, shared: &Shared) {
         if shared.gone() {
             return;
         }
-        match File::open(path) {
+        // Only a regular file: opening a FIFO or a device would block, or
+        // never end.
+        let opened = metadata(path).and_then(|meta| match meta.is_file() {
+            true => File::open(path),
+            false => Err(Error::other(format!("{} is not a regular file", path.display()))),
+        });
+        match opened {
             Ok(mut file) => {
                 let length = file.metadata().map_or(offset, |m| m.len());
                 let reset = length < offset;
@@ -199,7 +205,7 @@ fn tail(path: &PathBuf, shared: &Shared) {
                 shared.push(&bytes, reset);
             }
             // A running task may not have written it yet.
-            Err(error) if finished => return shared.end(Err(error.to_string())),
+            Err(error) if finished || error.kind() != ErrorKind::NotFound => return shared.end(Err(error.to_string())),
             Err(_) => {}
         }
         if finished {
@@ -210,7 +216,8 @@ fn tail(path: &PathBuf, shared: &Shared) {
 }
 
 async fn fetch(link: &Link, url: Url, shared: &Shared) {
-    // The producer answers with all of the output so far.
+    // The producer answers with all of the output so far, which its own
+    // buffer bounds; reading only what is new is #780.
     let mut seen = 0;
     loop {
         let finished = shared.finished.load(Ordering::Acquire);
@@ -226,6 +233,8 @@ async fn fetch(link: &Link, url: Url, shared: &Shared) {
                 shared.push(&body.bytes[seen..], reset);
                 seen = body.bytes.len();
             }
+            // A running task's output may not be served until it has some.
+            Err((Some(StatusCode::NOT_FOUND), _)) if !finished => {}
             Err((Some(status), why)) if status.is_client_error() => return shared.end(Err(why)),
             Err((_, why)) if finished => return shared.end(Err(why)),
             Err(_) => {}

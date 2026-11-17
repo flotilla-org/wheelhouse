@@ -16,7 +16,7 @@ use axum::{Json, Router};
 use conversation_events::{FileKind, FileMatch, TaskOutput};
 use serde::Deserialize;
 use tokio::net::UnixListener;
-use wheelhouse_agent::{Endpoint, Output, OutputRead, PostStatus, Route, Search, SEARCH_DEBOUNCE};
+use wheelhouse_agent::{Endpoint, Output, OutputRead, PostStatus, Route, Search, SEARCH_DEBOUNCE, TAIL_EVERY};
 
 #[derive(Default)]
 struct Producer {
@@ -148,10 +148,21 @@ fn output_from_a_url_follows_the_task_until_it_ends() {
     read_until(&output, &mut seen, |r| r.end.is_some());
     assert_eq!((seen.text.as_str(), seen.end.clone()), ("trimmed and done", Some(Ok(()))));
 
+    // A 404 may mean nothing is served yet while the task runs; once it
+    // has ended, it is the answer.
     let refused = Output::open(Some(&endpoint), &at("k2"), true, no_wake()).unwrap();
+    thread::sleep(TAIL_EVERY * 3);
+    assert_eq!(refused.take().end, None, "still waiting");
+    refused.finish();
     let mut seen = OutputRead::default();
     read_until(&refused, &mut seen, |r| r.end.is_some());
     assert_eq!(seen.end, Some(Err("task k2 serves no output".into())));
+    // A url the producer names never leaves its endpoint.
+    for elsewhere in ["http://elsewhere.test/x", "//elsewhere.test/x"] {
+        let away = TaskOutput { url: Some(elsewhere.into()), ..TaskOutput::default() };
+        assert!(Output::open(Some(&endpoint), &away, true, no_wake()).is_err(), "{elsewhere}");
+        assert!(endpoint.search(elsewhere, no_wake()).is_err(), "{elsewhere}");
+    }
     assert!(Output::open(None, &at("k1"), true, no_wake()).is_err(), "a url needs the endpoint");
 }
 
@@ -183,6 +194,13 @@ fn local_output_tails_its_file_directly() {
     let ended = Output::open(None, &missing, false, no_wake()).unwrap();
     let mut seen = OutputRead::default();
     read_until(&ended, &mut seen, |r| r.end.is_some());
+    assert!(matches!(seen.end, Some(Err(_))));
+    // Only a regular file is read: a directory, as a FIFO or a device, fails
+    // rather than blocking.
+    let folder = TaskOutput { path: Some(dir.to_str().unwrap().into()), local: true, ..TaskOutput::default() };
+    let not_a_file = Output::open(None, &folder, true, no_wake()).unwrap();
+    let mut seen = OutputRead::default();
+    read_until(&not_a_file, &mut seen, |r| r.end.is_some());
     assert!(matches!(seen.end, Some(Err(_))));
     let elsewhere = TaskOutput { path: Some("/far/away.log".into()), ..TaskOutput::default() };
     assert!(Output::open(None, &elsewhere, true, no_wake()).is_err(), "a path on another machine, with no url");

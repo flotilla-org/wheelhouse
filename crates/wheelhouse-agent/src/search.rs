@@ -6,7 +6,7 @@ use conversation_events::FileMatch;
 use reqwest::Url;
 use tokio::time::sleep;
 
-use crate::{base, decoded, Endpoint, Wake};
+use crate::{decoded, on_endpoint, Endpoint, Wake};
 
 /// How long a query waits for the next keystroke before it is asked.
 pub const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
@@ -37,7 +37,7 @@ impl Endpoint {
     /// Searches the root whose `search` is `search`, a path on this
     /// endpoint. `wake` is called from another thread when an answer waits.
     pub fn search(&self, search: &str, wake: Wake) -> Result<Search, String> {
-        let url = base().join(search).map_err(|error| error.to_string())?;
+        let url = on_endpoint(search)?;
         let shared = Arc::new(Shared { asked: AtomicU64::new(0), answer: Mutex::new(None), wake });
         Ok(Search { endpoint: self.clone(), url, shared })
     }

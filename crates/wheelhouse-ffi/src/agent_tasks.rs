@@ -7,7 +7,10 @@ use conversation_events::{FileKind, FileMatch, TaskOutput};
 use wheelhouse_agent::{Endpoint, Output, Search, Wake};
 
 use crate::agent_input::ticket;
+use wheelhouse_core::suggested_layout::CleatTransport;
+
 use crate::agent_watch::route;
+use crate::slots::agent_transport;
 
 fn waker(wake: Option<extern "C" fn()>) -> Wake {
     Arc::new(move || wake.map_or((), |wake| wake()))
@@ -49,10 +52,12 @@ impl Handle for WheelhouseAgentOutput {
 
 /// Reads a task's output, as its tasks entry names it, while it runs
 /// (running 1) or after: the file output_path directly when output_local is
-/// 1, else output_url on the endpoint (transport, host and endpoint as for
-/// wheelhouse_agent_watch_open; empty endpoint when there is none). wake
-/// (if not NULL) is called from another thread when text waits. Free it
-/// with wheelhouse_agent_output_free.
+/// 1 and the producer is on this machine (transport "local" or empty), else
+/// output_url on the endpoint (transport, host and endpoint as for
+/// wheelhouse_agent_watch_open). Over ssh a producer's "local" is its own
+/// machine's, so its file is never opened here. wake (if not NULL) is
+/// called from another thread when text waits. Free it with
+/// wheelhouse_agent_output_free.
 #[allow(clippy::too_many_arguments)]
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_agent_output_open(
@@ -68,8 +73,10 @@ pub unsafe extern "C" fn wheelhouse_agent_output_open(
 ) -> *mut WheelhouseAgentOutput {
     pure(error_out, || {
         let text = |t: Text| -> Result<Option<String>, String> { Ok(Some(t.read()?).filter(|s| !s.is_empty())) };
-        let output = TaskOutput { path: text(output_path)?, local: output_local != 0, url: text(output_url)?, media_type: None };
-        let endpoint = match endpoint_path.read()?.is_empty() {
+        let here = agent_transport(&transport.read()?)? == CleatTransport::Local;
+        let output = TaskOutput { path: text(output_path)?, local: here && output_local != 0, url: text(output_url)?, media_type: None };
+        let read_here = output.local && output.path.is_some();
+        let endpoint = match read_here || endpoint_path.read()?.is_empty() {
             true => None,
             false => Some(endpoint(transport, host, endpoint_path)?),
         };
@@ -108,9 +115,12 @@ pub unsafe extern "C" fn wheelhouse_agent_output_pump(
     error_out: *mut *mut c_char,
 ) -> u32 {
     run(o, error_out, |o| {
+        // Checked before taking, so a bad call loses no text.
+        let (text_out, reset_out, why_out) =
+            (text_out.as_mut().ok_or("null text")?, reset_out.as_mut().ok_or("null reset")?, why_out.as_mut().ok_or("null why")?);
         let read = o.output.take();
         write_bytes(text_out, read.text.into_bytes())?;
-        *reset_out.as_mut().ok_or("null reset")? = read.reset as u32;
+        *reset_out = read.reset as u32;
         Ok(match read.end {
             None => WHEELHOUSE_AGENT_OUTPUT_FOLLOWING,
             Some(Ok(())) => WHEELHOUSE_AGENT_OUTPUT_ENDED,
@@ -299,6 +309,10 @@ mod tests {
             assert_eq!(wheelhouse_agent_output_finish(o, ptr::null_mut()), 1);
             until(|| (pump(&mut text) == WHEELHOUSE_AGENT_OUTPUT_ENDED).then_some(()));
             wheelhouse_agent_output_free(o);
+            // Over ssh the producer's file is on its machine: with no url
+            // there is nothing to read here.
+            let [ssh, feta, far] = ["ssh", "feta", "/run/p.sock"].map(Text::borrowed);
+            assert!(wheelhouse_agent_output_open(ssh, feta, far, path, 1, none, 1, None, ptr::null_mut()).is_null());
 
             let socket = dir.join("nobody.sock");
             let dead = Text::borrowed(socket.to_str().unwrap());
