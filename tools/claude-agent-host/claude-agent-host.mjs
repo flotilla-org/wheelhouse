@@ -505,9 +505,11 @@ function serve() {
         }
         if (req.method === 'GET' && verb === 'tasks' && taskVerb === 'output') {
           const output = tasks.get(taskId)?.output;
-          if (!output) return reply(404, { error: `no output for task ${taskId}` });
+          let body;
+          try { body = output && readFileSync(output.path); } catch {}
+          if (!body) return reply(404, { error: `no output for task ${taskId}` });
           res.writeHead(200, { 'Content-Type': `${output.mediaType ?? 'text/plain'}; charset=utf-8` });
-          return res.end(readFileSync(output.path));
+          return res.end(body);
         }
         if (req.method !== 'POST') return reply(405, { error: 'GET events or a task\'s output, or POST run or stop' });
         if (verb === 'stop') return reply(200, { stopped: await stop() });

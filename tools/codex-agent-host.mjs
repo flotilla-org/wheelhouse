@@ -174,6 +174,8 @@ const STEPS = { pending: 'pending', inProgress: 'in_progress', completed: 'compl
 const publishChecklist = (thread, plan) => publish(thread, 'checklist', 'application/vnd.flotilla.checklist+json',
   plan.map((p, i) => ({ id: String(i + 1), content: p.step, status: STEPS[p.status] ?? 'pending' })));
 
+const OUTPUT_KEPT = 1 << 20;
+
 // ---- tasks: subagents, and terminals left running in the background. A task
 // keeps its final status once it ends.
 const publishTasks = (thread) => publish(thread, 'tasks', 'application/vnd.flotilla.tasks+json',
@@ -349,7 +351,11 @@ function onNotification(m, p) {
       thread.runOpen = false;
       thread.turnId = null;
       // Its terminals still running were left for later.
-      for (const id of thread.terminals.keys()) backgrounded(thread, id);
+      // The rest are forgotten: a call cut short may never complete.
+      for (const id of thread.terminals.keys()) {
+        backgrounded(thread, id);
+        if (!thread.tasks.has(id)) thread.terminals.delete(id);
+      }
       if (!quiet) say('\n[turn done]\n> ');
       if (thread.parent) {
         // A subagent's turn ending ends its task, unless it is asked again.
@@ -376,7 +382,8 @@ function onNotification(m, p) {
       // The result's aggregated output replaces what streamed.
       const command = thread.terminals.get(p.itemId);
       const first = !command?.output;
-      if (command) command.output += p.delta;
+      // A task keeps only its output's tail.
+      if (command) command.output = (command.output + p.delta).slice(-OUTPUT_KEPT);
       emit(thread, 'ToolCallOutput', { toolCallId: p.itemId, delta: p.delta, ...(first ? { mediaType: 'text/x-ansi' } : {}) });
       break;
     }
@@ -622,7 +629,8 @@ function serve() {
         if (req.method === 'GET' && verb === 'files') return reply(200, await search(searchParams));
         const task = verb === 'tasks' ? thread.tasks.get(taskId) : undefined;
         if (verb === 'tasks' && !task) return reply(404, { error: `no task ${taskId}` });
-        if (req.method === 'GET' && taskVerb === 'output' && task.output?.url) {
+        if (req.method === 'GET' && task && taskVerb === 'output') {
+          if (!task.output?.url) return reply(404, { error: `task ${taskId} serves no output` });
           res.writeHead(200, { 'Content-Type': 'text/x-ansi; charset=utf-8' });
           return res.end(thread.terminals.get(taskId)?.output ?? '');
         }

@@ -43,8 +43,8 @@ SKILL_BASE = 'Base directory for this skill:'
 OPENERS = {'prompt', 'sdk', 'notification', 'peer', 'command', 'image'}
 CHECKLIST_TYPE = 'application/vnd.flotilla.checklist+json'
 TASKS_TYPE = 'application/vnd.flotilla.tasks+json'
-# A task notification's status, as the tasks document's.
 BACKGROUND_ID = re.compile(r'running in background with ID: (\w+)')
+# A task notification's status, as the tasks document's.
 ENDED = {'completed': 'completed', 'failed': 'failed', 'killed': 'cancelled', 'stopped': 'cancelled'}
 
 

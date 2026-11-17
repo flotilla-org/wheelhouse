@@ -842,7 +842,8 @@ pub enum TaskStatus {
 pub struct TaskOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    /// Whether `path` is on the watcher's machine.
+    /// Whether `path` is on the watcher's machine; unset when the producer
+    /// can't tell, as a replay of a log can't.
     #[serde(default, skip_serializing_if = "is_false")]
     pub local: bool,
     /// `GET {url}` returns the output so far, on the producer's endpoint as

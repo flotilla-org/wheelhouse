@@ -221,6 +221,8 @@ test('a subagent is a task and a child thread, and stops', async () => {
   assert.equal(stopped.status, 'cancelled');
   assert.equal(typeof stopped.endedAt, 'number');
   assert.equal((await call('POST', `/threads/${MAIN}/tasks/nothing/stop`)).status, 404);
+  assert.equal((await call('GET', `/threads/${MAIN}/tasks/${CHILD}/output`)).status, 404);
+  assert.equal((await call('GET', `/threads/${MAIN}/foo/x/output`)).status, 405);
 });
 
 test('a terminal left running is a task until it ends', async () => {
