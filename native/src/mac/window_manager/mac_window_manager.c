@@ -1357,11 +1357,21 @@ wm_dpi_from_monitor(WM_Monitor monitor)
 // Separate presentation wakes from content/input wakes. Otherwise windows on
 // different display clocks continually dirty one another, even while idle.
 #define MAC_WM_FRAME_READY_SUBTYPE 1
+
+// AppKit's resize tracking loop owns the run loop: frames are driven from the
+// live resize tick, and the window's size moves between any two of them.
+internal B32
+mac_wm_window_in_live_resize(WM_Window handle)
+{
+  MAC_WM_Window *window = mac_wm_window_from_handle(handle);
+  return window != 0 && window->delegate != 0 && window->delegate->live_resize_display_link != 0;
+}
+
 internal void
 mac_wm_send_frame_ready_event(WM_Window handle)
 {
   MAC_WM_Window *window = mac_wm_window_from_handle(handle);
-  if(window != 0 && window->delegate != 0 && window->delegate->live_resize_display_link != 0)
+  if(mac_wm_window_in_live_resize(handle))
   {
     [window->delegate macLiveResizeTick:0];
     return;

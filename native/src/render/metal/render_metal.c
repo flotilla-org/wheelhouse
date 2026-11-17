@@ -1255,12 +1255,19 @@ r_window_request_frame(WM_Window window, R_Handle window_equip, B32 requested)
     MAC_WM_Window *native = mac_wm_window_from_handle(window);
     // Apply geometry before acquiring the next drawable. Input/resize can have
     // arrived after an earlier opportunity; discard that obsolete drawable.
+    // Not during live resize: the size moves between any delivery and the
+    // build, so every drawable would be obsolete and the window would freeze
+    // until mouse-up. The final pass scales the stage into whatever drawable
+    // it is given, so presenting one a few pixels off is a frame scaled once.
     F32 scale = r_mtl_contents_scale_from_window(window);
     Vec2S32 size = r_mtl_drawable_size_from_window(window);
     if(scale != mtl_window->contents_scale || size.x != mtl_window->drawable_size.x || size.y != mtl_window->drawable_size.y)
     {
-      [mtl_window->ready_drawable release];
-      mtl_window->ready_drawable = 0;
+      if(!mac_wm_window_in_live_resize(window))
+      {
+        [mtl_window->ready_drawable release];
+        mtl_window->ready_drawable = 0;
+      }
       r_window_begin_frame(window, window_equip);
     }
     S32 hz = (S32)[[native->ns_window screen] maximumFramesPerSecond];
