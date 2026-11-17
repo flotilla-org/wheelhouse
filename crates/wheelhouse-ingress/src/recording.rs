@@ -422,8 +422,13 @@ mod tests {
         // even when the configured output is an existing endpoint directory.
         use std::os::unix::fs::PermissionsExt;
         let dir = directory();
-        let original = fs::metadata(&dir).unwrap().permissions().mode();
-        let recorder = Recorder::start(dir.clone(), 4 * 1024 * 1024, 4);
+        // The endpoint sits in this test's own directory. Startup scans the
+        // output's parent for earlier captures, and the shared temporary
+        // directory can hold enough entries to outlast the wait below.
+        let endpoint = dir.join("endpoint");
+        fs::create_dir(&endpoint).unwrap();
+        let original = fs::metadata(&endpoint).unwrap().permissions().mode();
+        let recorder = Recorder::start(endpoint.clone(), 4 * 1024 * 1024, 4);
         for _ in 0..100 {
             if recorder.disabled.load(Ordering::Relaxed) {
                 break;
@@ -431,7 +436,7 @@ mod tests {
             thread::sleep(std::time::Duration::from_millis(1));
         }
         assert!(recorder.disabled.load(Ordering::Relaxed));
-        assert_eq!(fs::metadata(&dir).unwrap().permissions().mode(), original);
+        assert_eq!(fs::metadata(&endpoint).unwrap().permissions().mode(), original);
         drop(recorder);
         fs::remove_dir_all(dir).unwrap();
     }
