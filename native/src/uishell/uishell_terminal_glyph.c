@@ -9942,18 +9942,25 @@ uishell_terminal_glyph_renderer_draw_cell_feed_rows(Arena *arena, UIShell_Termin
   }
   for(U64 idx = 0; idx < spare_count; idx += 1) { arena_release(spares[idx]); }
 
-  // Lay the rows down as the full draw does.
+  // Lay the rows down as the full draw does. A row where it was built is
+  // drawn from its own instances: its arena is cleared only by a draw like
+  // this one, which also replaces the bucket that points at it. A row a
+  // scroll moved is copied, moved.
   dr_rect(canvas_rect, params->background_color, 0, 0, 0);
   for(U64 row_idx = 0; row_idx < count; row_idx += 1)
   {
     F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
-    dr_append_bucket(entries[row_idx].backgrounds, v2f32(0, row_y0 - entries[row_idx].built_y));
+    F32 by = row_y0 - entries[row_idx].built_y;
+    if(by == 0) { dr_append_bucket_retained(entries[row_idx].backgrounds); }
+    else        { dr_append_bucket(entries[row_idx].backgrounds, v2f32(0, by)); }
   }
   uishell_terminal_draw_image_plane(arena, params, 1);
   for(U64 row_idx = 0; row_idx < count; row_idx += 1)
   {
     F32 row_y0 = floor_f32(canvas_rect.y0 + (F32)row_idx*cell_height_px);
-    dr_append_bucket(entries[row_idx].text, v2f32(0, row_y0 - entries[row_idx].built_y));
+    F32 by = row_y0 - entries[row_idx].built_y;
+    if(by == 0) { dr_append_bucket_retained(entries[row_idx].text); }
+    else        { dr_append_bucket(entries[row_idx].text, v2f32(0, by)); }
   }
   uishell_terminal_draw_image_plane(arena, params, 0);
   uishell_terminal_draw_cursor_overlay(feed, cell_count, cursors, canvas_rect, params->cell_width_px, cell_height_px);

@@ -273,7 +273,31 @@ its own Rust libraries.
 - `powf`, which converts each cell's text colour, shows up at about 8% of
   the row-cache samples. It was there before #750 too.
 
+Rows a draw leaves where they were built are now appended by reference
+(`dr_append_bucket_retained`): the composed bucket's batches point at the
+row's own instances. Only rows a scroll moved are copied, moved. A row's
+arena is cleared only by the draw that also replaces the bucket pointing at
+it, and every renderer copies instances out when it submits. Three
+interleaved rounds, glyph time median (range), ms:
+
+| Phase | Before #750 | Copying (#775) | By reference |
+| --- | --- | --- | --- |
+| open | 29.6 (23.7–46.0) | 45.4 (33.9–52.1) | 35.5 (30.6–67.4) |
+| select | 10.5 (8.8–15.4) | 4.2 (3.8–5.8) | 3.3 (2.6–6.0) |
+| expand | 3.1 (2.0–4.1) | 0.9 (0.7–1.0) | 1.0 (0.7–1.3) |
+| return | 25.1 (21.9–33.0) | 23.1 (18.9–30.8) | 23.0 (18.4–60.9) |
+| resize_small | 15.4 (14.1–18.4) | 15.4 (13.4–17.8) | 14.6 (12.0–20.2) |
+| resize_large | 27.7 (25.1–43.3) | 25.0 (21.6–32.2) | 23.5 (19.9–26.1) |
+| drain | 4.8 (4.2–7.1) | 2.3 (1.9–3.1) | 1.1 (0.9–1.3) |
+
+Checkpoints match #775 byte for byte. Row-cache samples in the same profile
+fall from 99 to 75; the copy left is moved rows'. Open is about a fifth
+cheaper than with copying but still above before #750: building each row as
+its own bucket (its passes, groups and arena) costs more than drawing into
+one.
+
 Next work: isolate the startup event cost, apply demand-aware consumption to
-Jackstay, and take the copy out of the row cache's first draw.
+Jackstay, and decide whether a terminal's first draw should skip the row
+cache's per-row buckets.
 Multiple simultaneous overview windows and large-image streams need separate
 workloads. The captures do not justify changing the Ghostty fork or font renderer.

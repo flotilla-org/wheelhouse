@@ -211,6 +211,8 @@ internal R_Mesh3DInst *dr_mesh(R_Handle mesh_vertices, R_Handle mesh_indices, R_
 //- rjf: collating one pre-prepped bucket into parent bucket
 internal void dr_sub_bucket(DR_Bucket *bucket);
 internal void dr_append_bucket(DR_Bucket *src, Vec2F32 offset);
+internal void dr_append_bucket_retained(DR_Bucket *src);
+internal void dr_append_bucket_(DR_Bucket *src, Vec2F32 offset, B32 by_reference);
 
 //- surfaces (redirecting draws into a render-target texture, then compositing it back)
 internal void dr_surface_begin(R_Handle target, Rng2F32 target_rect);
