@@ -149,6 +149,7 @@ internal WM_Window mac_wm_handle_from_window(MAC_WM_Window *window);
 internal MAC_WM_Window *mac_wm_window_from_handle(WM_Window handle);
 internal MAC_WM_Window *mac_wm_window_from_ns_window(NSWindow *ns_window);
 internal B32 mac_wm_window_is_live(MAC_WM_Window *window);
+internal B32 mac_wm_window_in_live_resize(WM_Window handle);
 internal void mac_wm_set_focused_window(MAC_WM_Window *window);
 internal MAC_WM_Window *mac_wm_menu_command_target_window(void);
 internal B32 mac_wm_event_type_should_activate_window(NSEventType type);
