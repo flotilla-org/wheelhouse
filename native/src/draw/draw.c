@@ -690,11 +690,14 @@ dr_append_bucket(DR_Bucket *src, Vec2F32 offset)
       {
         R_Rect2DInst *src_insts = (R_Rect2DInst *)batch_n->v.v;
         U64 count = batch_n->v.byte_count/sizeof(R_Rect2DInst);
-        for(U64 idx = 0; idx < count; idx += 1)
+        for(U64 done = 0, pushed = 0; done < count; done += pushed)
         {
-          R_Rect2DInst *inst = (R_Rect2DInst *)r_batch_list_push_inst(arena, &node->batches, 256);
-          *inst = src_insts[idx];
-          if(moved) { inst->dst = shift_2f32(inst->dst, offset); }
+          R_Rect2DInst *insts = (R_Rect2DInst *)r_batch_list_push_insts(arena, &node->batches, 256, count - done, &pushed);
+          MemoryCopy(insts, src_insts + done, pushed*sizeof(R_Rect2DInst));
+          if(moved)
+          {
+            for(U64 idx = 0; idx < pushed; idx += 1) { insts[idx].dst = shift_2f32(insts[idx].dst, offset); }
+          }
         }
       }
       dst->last_cmd_stack_gen = dst->stack_gen;
