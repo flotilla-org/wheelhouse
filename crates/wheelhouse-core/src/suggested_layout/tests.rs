@@ -599,3 +599,74 @@ fn agent_session_fields_are_accepted_only_when_ssh_takes_them_whole(tc: hegel::T
     let parsed = agent_content(&agent_slot(&extra));
     assert_eq!(parsed.is_ok(), usable, "ssh {ssh}, host {host:?}, endpoint {endpoint:?}: {parsed:?}");
 }
+
+/// A document View Spec in either form (#706, #777): drawn hosts and keys,
+/// and both transports, so each form's facts and its serde shape are
+/// crossed with every field.
+fn document_spec(tc: &hegel::TestCase) -> Content {
+    use hegel::generators as gs;
+    let key = tc.draw(gs::sampled_from(&["checklist", "tasks", "x-notes"][..])).to_owned();
+    if tc.draw(gs::booleans()) {
+        let relative_to = tc.draw(gs::sampled_from(&["primary", "chat", "a-1"][..])).to_owned();
+        return Content::HostDocument { relative_to, key };
+    }
+    let session = match tc.draw(gs::booleans()) {
+        true => LocalRecipe::AgentSession {
+            transport: CleatTransport::Ssh,
+            host: "feta".into(),
+            endpoint: "/p.sock".into(),
+            thread: "t1".into(),
+        },
+        false => LocalRecipe::AgentSession {
+            transport: CleatTransport::Local,
+            host: String::new(),
+            endpoint: "/p.sock".into(),
+            thread: "t2".into(),
+        },
+    };
+    Content::Local(session.document(&key).unwrap())
+}
+
+fn document_facts(content: &Content) -> FactMap {
+    let mut out = facts([("layout.version", text("1")), ("layout.slots", list(&["side"]))]);
+    let fields: Vec<(&str, String)> = match content {
+        Content::HostDocument { relative_to, key } => vec![("relative_to", relative_to.clone()), ("key", key.clone())],
+        Content::Local(LocalRecipe::AgentDocument { transport, host, endpoint, thread, key }) => {
+            let mut fields =
+                vec![("kind", "agent-document".into()), ("endpoint", endpoint.clone()), ("thread", thread.clone()), ("key", key.clone())];
+            if *transport == CleatTransport::Ssh {
+                fields.extend([("transport", "ssh".into()), ("host", host.clone())]);
+            }
+            fields
+        }
+        other => panic!("{other:?}"),
+    };
+    out.extend(fields.into_iter().map(|(field, value)| (format!("layout.slot.side.{field}").into(), text(&value))));
+    out
+}
+
+// Relative and absolute document specs round-trip through a Suggested
+// Layout's facts and through serde, as saved workspaces keep them.
+#[hegel::test(test_cases = 100)]
+fn document_specs_round_trip_through_layouts_and_serde(tc: hegel::TestCase) {
+    let content = document_spec(&tc);
+    let layout = parse_ok(&document_facts(&content));
+    let slot = layout.slot("side").unwrap();
+    assert_eq!(slot.spec.content, content);
+    let json = serde_json::to_string(&slot.spec).unwrap();
+    assert_eq!(serde_json::from_str::<ViewSpec>(&json).unwrap(), slot.spec);
+}
+
+// A relative spec names a slot key as layouts check them, never its own
+// slot, and always a document.
+#[test]
+fn a_relative_spec_needs_another_valid_slot_and_a_key() {
+    let relative = |pairs: &[(&'static str, &str)]| {
+        let base = facts([("layout.version", text("1")), ("layout.slots", list(&["side"]))]);
+        parse_err(&with(base, pairs.iter().map(|(k, v)| (*k, text(v)))))
+    };
+    let to = "layout.slot.side.relative_to";
+    assert!(matches!(relative(&[(to, "Chat"), ("layout.slot.side.key", "tasks")]), LayoutError::InvalidId { .. }));
+    assert!(matches!(relative(&[(to, "side"), ("layout.slot.side.key", "tasks")]), LayoutError::InvalidValue { .. }));
+    assert!(matches!(relative(&[(to, "chat")]), LayoutError::MissingFact { .. }));
+}

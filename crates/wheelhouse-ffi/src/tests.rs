@@ -1800,3 +1800,74 @@ fn the_lifecycle_crosses_the_abi() {
         wheelhouse_destroy(h);
     }
 }
+
+// #777 through C: a docked document slot added for an agent session host
+// plans to that session's document, round-trips its relative spec, and
+// pins to the absolute one.
+#[test]
+fn host_documents_reach_c_and_pin() {
+    unsafe {
+        let config = format!("{}\nworkspace kind=\"vessel\"\n", include_str!("../../wheelhouse-core/tests/fixtures/abbreviation.kdl"));
+        let mut error = ptr::null_mut();
+        let h = create(&config);
+        let patch = r#"{"type":"metadata-patch","target":{"kind":"entity","value":{"kind":"vessel","id":"worker"}},"source_id":"test","set":{"flotilla.vessel":{"value":{"type":"text","value":"worker"}},"display.label":{"value":{"type":"text","value":"worker"}},"action.primary.recipe":{"value":{"type":"text","value":"zsh"}}},"unset":[]}"#;
+        assert_eq!(wheelhouse_apply_patch_json(h, 0, text(PROVIDER), text(patch), &mut error), 1);
+        let snapshot = wheelhouse_snapshot_acquire(h, &mut error);
+        assert_eq!(wheelhouse_dispatch(h, snapshot, node(snapshot, 1).activate, &mut error), 1);
+        wheelhouse_snapshot_release(snapshot);
+        let effects = wheelhouse_effects_take(h, &mut error);
+        let mut effect = MaybeUninit::<EffectView>::uninit();
+        assert_eq!(wheelhouse_effects_get(effects, 0, effect.as_mut_ptr()), 1);
+        let request = effect.assume_init().request_id;
+        wheelhouse_effects_release(effects);
+        let id = WorkspaceId::from_bytes([5; 16]);
+        assert_eq!(wheelhouse_complete(h, request, WHEELHOUSE_COMPLETE_MATERIALIZE, id.into(), text(""), &mut error), 1);
+        let workspace = WorkspaceInput { id: id.into(), position: 0, name: text("worker"), selected: 1 };
+        assert_eq!(wheelhouse_observe(h, &workspace, 1, ptr::null(), 0, &mut error), 1);
+
+        let mut chat: ViewSpecView = std::mem::zeroed();
+        chat.content = WHEELHOUSE_SLOT_AGENT_SESSION;
+        chat.endpoint = text("/run/a.sock");
+        chat.agent_thread = text("t1");
+        assert_eq!(wheelhouse_slot_set(h, id.into(), text("u:chat"), &chat, WHEELHOUSE_REBIND_REPLACE, &mut error), 1);
+        let mut key = Bytes { data: ptr::null_mut(), len: 0 };
+        assert_eq!(wheelhouse_slot_add_host_document(h, id.into(), text("u:chat"), text("checklist"), 4, &mut key, &mut error), 1);
+        let docked = String::from_utf8(slice(key.data, key.len).unwrap().to_vec()).unwrap();
+        wheelhouse_bytes_free(key);
+        assert_eq!(docked, "u:4");
+
+        let spec_of = |key: &str| {
+            let slots = wheelhouse_slots_get(h, id.into(), ptr::null_mut());
+            let slot = slice((*slots).slots, (*slots).slot_count).unwrap().iter().find(|slot| slot.key.read().unwrap() == key).unwrap();
+            let spec = &slot.spec;
+            let read =
+                (spec.content, spec.relative_to.read().unwrap(), spec.agent_thread.read().unwrap(), spec.document_key.read().unwrap());
+            wheelhouse_slots_free(slots);
+            read
+        };
+        assert_eq!(spec_of(&docked), (WHEELHOUSE_SLOT_HOST_DOCUMENT, "u:chat".into(), String::new(), "checklist".into()));
+        let plan = wheelhouse_slot_plan(h, id.into(), text(&docked), text(""), &mut error);
+        let recipe = &(*plan).recipe;
+        assert_eq!(((*plan).state, recipe.content), (WHEELHOUSE_CONTENT_UPDATING, WHEELHOUSE_SLOT_AGENT_DOCUMENT));
+        assert_eq!(
+            [&recipe.endpoint, &recipe.agent_thread, &recipe.document_key, &recipe.agent_transport].map(|t| t.read().unwrap()),
+            ["/run/a.sock", "t1", "checklist", "local"]
+        );
+        wheelhouse_slot_plan_free(plan);
+
+        // A relative spec set from C reads back as set.
+        let mut relative: ViewSpecView = std::mem::zeroed();
+        relative.content = WHEELHOUSE_SLOT_HOST_DOCUMENT;
+        relative.relative_to = text("u:chat");
+        relative.document_key = text("tasks");
+        assert_eq!(wheelhouse_slot_set(h, id.into(), text("u:9"), &relative, WHEELHOUSE_REBIND_REPLACE, &mut error), 1);
+        assert_eq!(spec_of("u:9"), (WHEELHOUSE_SLOT_HOST_DOCUMENT, "u:chat".into(), String::new(), "tasks".into()));
+
+        assert_eq!(wheelhouse_slot_pin(h, id.into(), text(&docked), &mut error), 1);
+        assert_eq!(spec_of(&docked), (WHEELHOUSE_SLOT_AGENT_DOCUMENT, String::new(), "t1".into(), "checklist".into()));
+        assert!(error.is_null());
+        assert_eq!(wheelhouse_slot_pin(h, id.into(), text(&docked), &mut error), 0, "pinned already");
+        wheelhouse_string_free(error);
+        wheelhouse_destroy(h);
+    }
+}

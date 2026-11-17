@@ -3615,7 +3615,7 @@ impl ControllerState {
         let fields = slots.iter().map(|slot| {
             let (facet, entity) = match &slot.spec.content {
                 Content::ProviderFacet { entity, facet } => (Some(facet.as_str()), Some(entity)),
-                Content::Local(_) => (None, None),
+                Content::Local(_) | Content::HostDocument { .. } => (None, None),
             };
             crate::workspace_layout::SlotFields {
                 key: &slot.key,

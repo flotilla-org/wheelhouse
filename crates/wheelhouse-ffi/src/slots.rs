@@ -23,6 +23,13 @@ pub const WHEELHOUSE_SLOT_CLEAT_SESSION: u32 = 5;
 /// An agent thread watched over the Agent View protocol (endpoint, a Local
 /// Endpoint's socket, agent_thread, and agent_transport and agent_host).
 pub const WHEELHOUSE_SLOT_AGENT_SESSION: u32 = 6;
+/// State document document_key of the agent session the host slot
+/// relative_to shows now (#706): it follows the host, and is HELD while the
+/// host has none. A plan resolves it to WHEELHOUSE_SLOT_AGENT_DOCUMENT.
+pub const WHEELHOUSE_SLOT_HOST_DOCUMENT: u32 = 7;
+/// State document document_key of an agent thread, reached as
+/// WHEELHOUSE_SLOT_AGENT_SESSION's is: a subagent's, or a pinned View's.
+pub const WHEELHOUSE_SLOT_AGENT_DOCUMENT: u32 = 8;
 
 /// A rebind closes the instance it replaces.
 pub const WHEELHOUSE_REBIND_REPLACE: u32 = 0;
@@ -94,6 +101,11 @@ pub struct ViewSpecView {
     /// ssh destination, empty when local.
     pub agent_transport: Text,
     pub agent_host: Text,
+    /// WHEELHOUSE_SLOT_HOST_DOCUMENT: the host slot's key.
+    pub relative_to: Text,
+    /// WHEELHOUSE_SLOT_HOST_DOCUMENT and _AGENT_DOCUMENT: the state
+    /// document's key, such as "checklist".
+    pub document_key: Text,
 }
 
 impl ViewSpecView {
@@ -123,6 +135,8 @@ impl ViewSpecView {
             agent_thread: Text::borrowed(""),
             agent_transport: Text::borrowed(""),
             agent_host: Text::borrowed(""),
+            relative_to: Text::borrowed(""),
+            document_key: Text::borrowed(""),
         }
     }
 
@@ -156,6 +170,16 @@ impl ViewSpecView {
                 host: self.agent_host.read()?,
                 endpoint: self.endpoint.read()?,
                 thread: self.agent_thread.read()?,
+            }),
+            WHEELHOUSE_SLOT_HOST_DOCUMENT => {
+                Content::HostDocument { relative_to: self.relative_to.read()?, key: self.document_key.read()? }
+            }
+            WHEELHOUSE_SLOT_AGENT_DOCUMENT => Content::Local(LocalRecipe::AgentDocument {
+                transport: agent_transport(&self.agent_transport.read()?)?,
+                host: self.agent_host.read()?,
+                endpoint: self.endpoint.read()?,
+                thread: self.agent_thread.read()?,
+                key: self.document_key.read()?,
             }),
             other => return Err(format!("unknown slot content kind {other}")),
         };
@@ -214,6 +238,14 @@ fn recipe_view(recipe: &LocalRecipe, out: &mut ViewSpecView) -> SpecStorage {
             out.endpoint = Text::borrowed(endpoint);
             out.agent_thread = Text::borrowed(thread);
         }
+        LocalRecipe::AgentDocument { transport, host, endpoint, thread, key } => {
+            out.content = WHEELHOUSE_SLOT_AGENT_DOCUMENT;
+            out.agent_transport = Text::borrowed(transport.as_str());
+            out.agent_host = Text::borrowed(host);
+            out.endpoint = Text::borrowed(endpoint);
+            out.agent_thread = Text::borrowed(thread);
+            out.document_key = Text::borrowed(key);
+        }
     }
     storage
 }
@@ -237,6 +269,12 @@ fn spec_view(spec: &ViewSpec) -> (ViewSpecView, SpecStorage) {
             SpecStorage { argv: Vec::new() }
         }
         Content::Local(recipe) => recipe_view(recipe, &mut out),
+        Content::HostDocument { relative_to, key } => {
+            out.content = WHEELHOUSE_SLOT_HOST_DOCUMENT;
+            out.relative_to = Text::borrowed(relative_to);
+            out.document_key = Text::borrowed(key);
+            SpecStorage { argv: Vec::new() }
+        }
     };
     out.has_presentation = spec.presentation.is_some() as u32;
     out.presentation = Text::borrowed(spec.presentation.as_deref().unwrap_or_default());
@@ -355,6 +393,45 @@ pub unsafe extern "C" fn wheelhouse_slot_set(
     run(h, error_out, |h| {
         let spec = spec.as_ref().ok_or("a slot needs a view spec")?.read()?;
         h.sidebar.set_slot(workspace.into(), &key.read()?, spec, rebind_policy(rebind)?)?;
+        Ok(())
+    })
+    .is_some() as u32
+}
+
+/// Add the user's own slot showing state document document_key of the
+/// agent session the slot host shows, following it (WHEELHOUSE_SLOT_HOST_DOCUMENT),
+/// for the host to place in host's View Dock. Its key is "u:<n>", past every
+/// numbered user slot and no lower than at_least; it goes to key_out.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_slot_add_host_document(
+    h: *mut WheelhouseCore,
+    workspace: WorkspaceIdView,
+    host: Text,
+    document_key: Text,
+    at_least: u64,
+    key_out: *mut Bytes,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        let key = h.sidebar.add_host_document_slot(workspace.into(), &host.read()?, &document_key.read()?, at_least)?;
+        write_bytes(key_out, key.into_bytes())
+    })
+    .is_some() as u32
+}
+
+/// Pin a WHEELHOUSE_SLOT_HOST_DOCUMENT slot to the agent session its host
+/// shows now, as when it is dragged out of the dock: it becomes
+/// WHEELHOUSE_SLOT_AGENT_DOCUMENT and stops following the host. Fails while
+/// the host shows no agent session.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_slot_pin(
+    h: *mut WheelhouseCore,
+    workspace: WorkspaceIdView,
+    key: Text,
+    error_out: *mut *mut c_char,
+) -> u32 {
+    run(h, error_out, |h| {
+        h.sidebar.pin_slot(workspace.into(), &key.read()?)?;
         Ok(())
     })
     .is_some() as u32
