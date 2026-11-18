@@ -1,6 +1,7 @@
 //! A client of the Agent View protocol, decided on wheelhouse#691: HTTP on a
 //! Local Endpoint, one watch stream per thread, older pages on request.
 //! A producer on another host is reached over an ssh forward (#737).
+mod completion;
 mod forward;
 mod output;
 mod search;
@@ -24,6 +25,7 @@ use tokio::runtime::{Builder, Handle};
 use tokio::sync::{oneshot, Notify};
 use tokio::time::{sleep, timeout};
 
+pub use completion::{Completion, Edit, Key, Popup, Row, RowKind, FILE_LIMIT, VISIBLE_ROWS};
 use forward::Forward;
 pub use output::{Output, OutputRead, TAIL_EVERY};
 pub use search::{Search, SearchAnswer, SEARCH_DEBOUNCE};

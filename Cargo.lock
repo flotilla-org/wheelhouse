@@ -2451,6 +2451,7 @@ dependencies = [
  "conversation-events",
  "flotilla-cbor",
  "futures-util",
+ "hegeltest",
  "reqwest",
  "rigging-http-client",
  "rigging-http-wire",
