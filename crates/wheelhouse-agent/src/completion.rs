@@ -134,7 +134,8 @@ pub struct Completion {
     /// A popup closed by Esc or an insert stays closed while the cursor is
     /// in that token.
     dismissed: Option<(Popup, usize)>,
-    /// The query the root's search was last asked.
+    /// The root searched, and the query its search was last asked.
+    root: Option<String>,
     asked: Option<String>,
     files: Option<(String, Vec<FileMatch>)>,
     /// A command's argument hint, after its insert, until the text changes:
@@ -145,10 +146,14 @@ pub struct Completion {
 
 impl Completion {
     /// The field now: its text and cursor (a byte offset), the thread's
-    /// `commands` document if it has one, and whether a root can be
-    /// searched. Returns a query to ask the root's search for, when one is
-    /// newly wanted.
-    pub fn update(&mut self, commands: Option<&[AgentCommand]>, searchable: bool, text: &str, cursor: usize) -> Option<String> {
+    /// `commands` document if it has one, and the root searched, if any.
+    /// Returns a query to ask the root's search for, when one is newly
+    /// wanted: another root is asked again.
+    pub fn update(&mut self, commands: Option<&[AgentCommand]>, root: Option<&str>, text: &str, cursor: usize) -> Option<String> {
+        if self.root.as_deref() != root {
+            self.root = root.map(str::to_owned);
+            (self.asked, self.files) = (None, None);
+        }
         if self.hint.as_ref().is_some_and(|(made_for, ..)| made_for != text) {
             self.hint = None;
         }
@@ -164,7 +169,7 @@ impl Completion {
         self.token = token;
         let mut search = None;
         match &self.token {
-            Some(Token { popup: Popup::Mention, query, .. }) if searchable && !query.is_empty() => {
+            Some(Token { popup: Popup::Mention, query, .. }) if self.root.is_some() && !query.is_empty() => {
                 if self.asked.as_ref() != Some(query) {
                     self.asked = Some(query.clone());
                     search = Some(query.clone());
@@ -172,10 +177,9 @@ impl Completion {
             }
             _ => self.asked = None,
         }
-        if !searchable {
-            self.files = None;
+        if self.commands.as_deref() != commands {
+            self.commands = commands.map(<[AgentCommand]>::to_vec);
         }
-        self.commands = commands.map(<[AgentCommand]>::to_vec);
         self.show(query_changed);
         search
     }
@@ -190,7 +194,6 @@ impl Completion {
     }
 
     fn show(&mut self, reset: bool) {
-        let before = self.shown.clone();
         let open = self.token.as_ref().filter(|t| self.dismissed != Some((t.popup, t.range.start)));
         let rows = open.map(|token| self.matching(token)).unwrap_or_default();
         let popup = open.map(|t| t.popup).filter(|_| !rows.is_empty());
@@ -201,10 +204,11 @@ impl Completion {
         selected = selected.min(rows.len().saturating_sub(1));
         first = first.min(selected).max((selected + 1).saturating_sub(VISIBLE_ROWS));
         let hint = self.hint.as_ref().map(|(_, at, hint)| (*at, hint.clone()));
-        self.shown = Shown { popup, rows, selected, first, hint };
-        if self.shown != before {
+        let shown = Shown { popup, rows, selected, first, hint };
+        if shown != self.shown {
             self.revision += 1;
         }
+        self.shown = shown;
     }
 
     fn matching(&self, token: &Token) -> Vec<Row> {
@@ -248,7 +252,10 @@ impl Completion {
         let (Some(popup), Some(token)) = (self.shown.popup, self.token.clone()) else {
             return (false, None);
         };
-        let before = self.shown.clone();
+        // Keys move the selection, close the popup or set a hint; the rows
+        // go only with the popup.
+        let look = |shown: &Shown| (shown.popup, shown.selected, shown.first, shown.hint.clone());
+        let before = look(&self.shown);
         let count = self.shown.rows.len();
         let mut edit = None;
         match key {
@@ -270,7 +277,7 @@ impl Completion {
         }
         let selected = self.shown.selected;
         self.shown.first = self.shown.first.min(selected).max((selected + 1).saturating_sub(VISIBLE_ROWS));
-        if self.shown != before {
+        if look(&self.shown) != before {
             self.revision += 1;
         }
         (true, edit)

@@ -76,7 +76,7 @@ pub unsafe extern "C" fn wheelhouse_composer_update(
         let rich = doc.map(|doc| &doc.rich);
         let commands = rich.and_then(|rich| {
             rich.conversation_documents().into_iter().find_map(|d| match d.typed() {
-                Typed::Commands(commands) => Some(commands.clone()),
+                Typed::Commands(commands) => Some(commands.as_slice()),
                 _ => None,
             })
         });
@@ -95,7 +95,8 @@ pub unsafe extern "C" fn wheelhouse_composer_update(
             c.completion.answer(&answer.query, answer.matches.unwrap_or_default());
         }
         let text = text.read()?;
-        if let Some(query) = c.completion.update(commands.as_deref(), c.search.is_some(), &text, cursor) {
+        let searched = c.search.as_ref().map(|(root, _)| root.as_str());
+        if let Some(query) = c.completion.update(commands, searched, &text, cursor) {
             if let Some((_, search)) = &c.search {
                 search.query(&query, FILE_LIMIT);
             }

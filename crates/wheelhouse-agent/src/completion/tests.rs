@@ -96,13 +96,15 @@ fn names(c: &AgentCommand) -> impl Iterator<Item = &String> {
 // cursor is in that first token, an `@` popup on an `@` token. Its rows are
 // exactly the entries of its kind whose name or an alias matches the query
 // (`@` inserts for `@`, the rest for `/`), ranked prefix before substring
-// before scattered letters. No commands document means no `/` popup.
+// before scattered letters. No commands document means no `/` popup. The
+// document read is the latest one passed, after any other before it.
 #[hegel::test(test_cases = 300)]
 fn rows_are_exactly_the_matching_commands_ranked(tc: TestCase) {
-    let commands = commands(&tc);
+    let (earlier, commands) = (commands(&tc), commands(&tc));
     let (text, cursor) = field(&tc);
     let mut completion = Completion::default();
-    completion.update(commands.as_deref(), false, &text, cursor);
+    completion.update(earlier.as_deref(), None, &text, cursor);
+    completion.update(commands.as_deref(), None, &text, cursor);
     let word_start = text[..cursor].rfind(' ').map_or(0, |at| at + 1);
     let word = &text[word_start..cursor];
     let expected = match word.chars().next() {
@@ -135,7 +137,8 @@ fn rows_are_exactly_the_matching_commands_ranked(tc: TestCase) {
 }
 
 // Up and Down move the selection through every row, wrapping, and the at
-// most eight rows shown always include it.
+// most eight rows shown always include it. The revision moves when the
+// selection does, and only then.
 #[hegel::test(test_cases = 200)]
 fn the_selection_moves_through_the_rows_and_stays_shown(tc: TestCase) {
     let mut many: Vec<AgentCommand> = (0..tc.draw(gs::integers::<usize>().min_value(1).max_value(20)))
@@ -143,15 +146,18 @@ fn the_selection_moves_through_the_rows_and_stays_shown(tc: TestCase) {
         .collect();
     many.extend(pool());
     let mut completion = Completion::default();
-    completion.update(Some(&many), false, "/", 1);
+    completion.update(Some(&many), None, "/", 1);
     let count = completion.rows().len();
     let mut expected = 0;
     for _ in 0..tc.draw(gs::integers::<usize>().max_value(40)) {
         let down = tc.draw(gs::booleans());
+        let revision = completion.revision();
         assert_eq!(completion.key(if down { Key::Down } else { Key::Up }), (true, None));
+        let was = expected;
         expected = if down { (expected + 1) % count } else { (expected + count - 1) % count };
         let selected = completion.selected().unwrap();
         assert_eq!(selected, expected);
+        assert_eq!(completion.revision() != revision, selected != was);
         let (first, shown) = completion.visible();
         assert!(shown.len() <= VISIBLE_ROWS && first <= selected && selected < first + shown.len(), "{first} {selected}");
     }
@@ -165,7 +171,7 @@ fn accepting_inserts_the_row_and_its_hint_lasts_until_typing(tc: TestCase) {
     let commands = Some(pool());
     let (text, cursor) = field(&tc);
     let mut completion = Completion::default();
-    completion.update(commands.as_deref(), false, &text, cursor);
+    completion.update(commands.as_deref(), None, &text, cursor);
     if completion.popup().is_none() {
         assert_eq!(completion.key(Key::Accept), (false, None), "a closed popup leaves Enter to the field");
         return;
@@ -184,11 +190,11 @@ fn accepting_inserts_the_row_and_its_hint_lasts_until_typing(tc: TestCase) {
     let after = edit.apply(&text).unwrap();
     assert_eq!(format!("{}{}{}", &text[..edit.range.start], row.insert, &text[edit.range.end..]), after);
     let at = edit.range.start + edit.text.len();
-    completion.update(commands.as_deref(), false, &after, at);
+    completion.update(commands.as_deref(), None, &after, at);
     let hint = pool().into_iter().find(|c| c.insert == row.insert).and_then(|c| c.hint);
     assert_eq!(completion.hint(), hint.as_deref().map(|h| (at, h)));
     assert_eq!(completion.popup(), None);
-    completion.update(commands.as_deref(), false, &format!("{after}x"), at + 1);
+    completion.update(commands.as_deref(), None, &format!("{after}x"), at + 1);
     assert_eq!(completion.hint(), None, "typing ends the hint");
 }
 
@@ -197,12 +203,13 @@ fn accepting_inserts_the_row_and_its_hint_lasts_until_typing(tc: TestCase) {
 #[hegel::test(test_cases = 200)]
 fn only_a_searchable_root_is_asked_and_once_per_query(tc: TestCase) {
     let searchable = tc.draw(gs::booleans());
+    let root = searchable.then_some("root");
     let mut completion = Completion::default();
     let mut asked = vec![];
     for _ in 0..tc.draw(gs::integers::<usize>().min_value(1).max_value(6)) {
         let (text, cursor) = field(&tc);
-        if let Some(query) = completion.update(Some(&pool()), searchable, &text, cursor) {
-            assert_eq!(completion.update(Some(&pool()), searchable, &text, cursor), None, "asked once");
+        if let Some(query) = completion.update(Some(&pool()), root, &text, cursor) {
+            assert_eq!(completion.update(Some(&pool()), root, &text, cursor), None, "asked once");
             asked.push(query.clone());
             completion.answer(&query, vec![FileMatch { path: format!("src/{query}"), kind: FileKind::File }]);
         }
@@ -226,8 +233,8 @@ fn only_a_searchable_root_is_asked_and_once_per_query(tc: TestCase) {
 fn an_at_token_lists_its_commands_then_the_latest_files() {
     let mut completion = Completion::default();
     let commands = pool();
-    assert_eq!(completion.update(Some(&commands), true, "see @a", 6), Some("a".into()));
-    assert_eq!(completion.update(Some(&commands), true, "see @ag", 7), Some("ag".into()));
+    assert_eq!(completion.update(Some(&commands), Some("root"), "see @a", 6), Some("a".into()));
+    assert_eq!(completion.update(Some(&commands), Some("root"), "see @ag", 7), Some("ag".into()));
     completion.answer("a", vec![FileMatch { path: "stale.rs".into(), kind: FileKind::File }]);
     assert!(completion.rows().iter().all(|r| r.kind == RowKind::Command), "a stale answer");
     completion.answer(
@@ -247,7 +254,7 @@ fn an_at_token_lists_its_commands_then_the_latest_files() {
     let (_, edit) = completion.key(Key::Accept);
     let text = edit.unwrap().apply("see @ag").unwrap();
     assert_eq!(text, "see @agents");
-    assert_eq!(completion.update(Some(&commands), true, &text, text.len()), Some("agents".into()), "into the folder");
+    assert_eq!(completion.update(Some(&commands), Some("root"), &text, text.len()), Some("agents".into()), "into the folder");
     completion.answer("agents", vec![FileMatch { path: "agents/main.rs".into(), kind: FileKind::File }]);
     // "agent-docs" matches too, scattered, and comes first.
     assert_eq!(completion.rows().last().unwrap().kind, RowKind::File);
@@ -255,13 +262,29 @@ fn an_at_token_lists_its_commands_then_the_latest_files() {
     let (_, edit) = completion.key(Key::Accept);
     let text = edit.unwrap().apply(&text).unwrap();
     assert_eq!(text, "see @agents/main.rs");
-    completion.update(Some(&commands), true, &text, text.len());
+    completion.update(Some(&commands), Some("root"), &text, text.len());
     assert_eq!(completion.popup(), None, "a file closes it");
     // Typing on in that token keeps it closed; a new token opens one.
-    completion.update(Some(&commands), true, "see @agents/main.rsx", 20);
+    completion.update(Some(&commands), Some("root"), "see @agents/main.rsx", 20);
     assert_eq!(completion.popup(), None);
-    completion.update(Some(&commands), true, "see @agents/main.rsx @ag", 24);
+    completion.update(Some(&commands), Some("root"), "see @agents/main.rsx @ag", 24);
     assert_eq!(completion.popup(), Some(Popup::Mention));
+}
+
+// The files shown are the root searched now: when another root is searched,
+// the same `@` query asks it again and the old root's files go.
+#[test]
+fn another_root_is_asked_again_and_the_old_roots_files_go() {
+    let mut completion = Completion::default();
+    assert_eq!(completion.update(None, Some("a"), "see @main", 9), Some("main".into()));
+    completion.answer("main", vec![FileMatch { path: "a/main.rs".into(), kind: FileKind::File }]);
+    assert_eq!(completion.rows().len(), 1);
+    assert_eq!(completion.update(None, Some("b"), "see @main", 9), Some("main".into()));
+    assert_eq!(completion.rows().len(), 0, "a's files");
+    completion.answer("main", vec![FileMatch { path: "b/main.rs".into(), kind: FileKind::File }]);
+    assert_eq!(completion.rows()[0].insert, "@b/main.rs");
+    assert_eq!(completion.update(None, None, "see @main", 9), None);
+    assert_eq!(completion.rows().len(), 0, "no root, no files");
 }
 
 // Esc closes the popup and keeps the draft: it stays closed while the cursor
@@ -270,19 +293,19 @@ fn an_at_token_lists_its_commands_then_the_latest_files() {
 fn escape_closes_and_keeps_the_draft() {
     let mut completion = Completion::default();
     let commands = pool();
-    completion.update(Some(&commands), false, "/re", 3);
+    completion.update(Some(&commands), None, "/re", 3);
     assert_eq!(completion.popup(), Some(Popup::Command));
     assert_eq!(completion.key(Key::Escape), (true, None));
     assert_eq!(completion.popup(), None);
-    completion.update(Some(&commands), false, "/rev", 4);
+    completion.update(Some(&commands), None, "/rev", 4);
     assert_eq!(completion.popup(), None, "the same token");
     assert_eq!(completion.key(Key::Escape), (false, None));
-    completion.update(Some(&commands), false, "/rev @a", 7);
+    completion.update(Some(&commands), None, "/rev @a", 7);
     assert_eq!(completion.popup(), Some(Popup::Mention));
     // Back in the first token after leaving it, its popup opens again.
-    completion.update(Some(&commands), false, "/rev", 4);
+    completion.update(Some(&commands), None, "/rev", 4);
     assert_eq!(completion.popup(), Some(Popup::Command));
     // Unknown text stays as typed: no popup is no edit.
-    completion.update(Some(&commands), false, "/nothing-like-it", 16);
+    completion.update(Some(&commands), None, "/nothing-like-it", 16);
     assert_eq!((completion.popup(), completion.key(Key::Accept)), (None, (false, None)));
 }
