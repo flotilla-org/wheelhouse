@@ -132,8 +132,10 @@ fn a_task_stops_through_its_producer() {
 }
 
 // A task's output from its url follows what the producer appends while it
-// runs, starts over when the producer's copy shrinks, and ends once the
-// task has and the rest is read. One the producer refuses ends failed.
+// runs, starts over when the producer's copy no longer starts with what was
+// shown (its buffer rolled over at the same length, or shrank), and ends
+// once the task has and the rest is read. One the producer refuses ends
+// failed.
 #[test]
 fn output_from_a_url_follows_the_task_until_it_ends() {
     let producer = Arc::new(Producer::default());
@@ -145,6 +147,8 @@ fn output_from_a_url_follows_the_task_until_it_ends() {
     read_until(&output, &mut seen, |r| r.text == "one\n");
     producer.output.lock().unwrap().push_str("two\n");
     read_until(&output, &mut seen, |r| r.text == "one\ntwo\n");
+    *producer.output.lock().unwrap() = "e\ntwo\n3\n".into();
+    read_until(&output, &mut seen, |r| r.reset && r.text == "e\ntwo\n3\n");
     *producer.output.lock().unwrap() = "trimmed".into();
     read_until(&output, &mut seen, |r| r.reset && r.text == "trimmed");
     assert_eq!(seen.end, None, "still running");

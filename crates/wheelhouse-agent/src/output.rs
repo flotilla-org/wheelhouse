@@ -220,25 +220,23 @@ fn tail(path: &PathBuf, shared: &Shared) {
 }
 
 async fn fetch(link: &Link, url: Url, shared: &Shared) {
-    // The producer answers with all of the output so far, which its own
+    // The producer answers with all of the output it keeps, which its own
     // buffer bounds; reading only what is new is #780.
-    let mut seen = 0;
+    let mut shown: Vec<u8> = vec![];
     let mut failures = 0;
     loop {
         let finished = shared.finished.load(Ordering::Acquire);
         if shared.gone() {
             return;
         }
-        // A copy replaced by a longer one reads as appended; #780 asks the
-        // producer for what is new instead.
         match get(link, url.clone(), "*/*").await {
             Ok(body) => {
-                let reset = body.bytes.len() < seen;
-                if reset {
-                    seen = 0;
-                }
-                shared.push(&body.bytes[seen..], reset);
-                seen = body.bytes.len();
+                // A body that doesn't start with what was shown, as when the
+                // producer's buffer rolls over, starts again.
+                let reset = !body.bytes.starts_with(&shown);
+                let from = if reset { 0 } else { shown.len() };
+                shared.push(&body.bytes[from..], reset);
+                shown = body.bytes.to_vec();
                 failures = 0;
             }
             // A running task's output may not be served until it has some.
