@@ -374,6 +374,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_watch_replaced_sends_none_of_its_events_still_queued() {
+        let (events, outgoing) = mpsc::channel();
+        let watcher = Watcher {
+            requests: None,
+            events: outgoing,
+            opened: std::cell::Cell::new(2),
+            woken: Arc::new(AtomicBool::new(false)),
+            thread: None,
+        };
+        events.send((1, Event::Ended)).unwrap();
+        events.send((2, Event::Ended)).unwrap();
+        assert_eq!(watcher.take().count(), 1, "only the latest watch's end");
+    }
+
+    #[test]
     fn a_described_table_is_loading_until_its_first_rows_or_synced() {
         let mut status = Status::default();
         status.described = true;
