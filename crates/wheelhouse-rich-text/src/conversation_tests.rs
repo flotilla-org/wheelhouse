@@ -1301,15 +1301,47 @@ fn a_subagents_documents_stay_its_own() {
     assert_eq!(listed(&whole(&log)), [("checklist".into(), Some(conversation_events::CHECKLIST_MEDIA_TYPE.into()))]);
 }
 
-// Backfill reads older lines after newer ones: an older snapshot of a
-// document doesn't undo a newer one.
-#[test]
-fn backfill_leaves_each_document_to_its_newest_line() {
+// Backfill reads older lines after newer ones, so a delta can be read
+// before the snapshot it patches: each document still ends as its lines
+// fold in order. Generated: snapshots and whole or nested patches over two
+// keys, spaced by message lines so backfill's steps split them, read from
+// tails and steps of several sizes.
+#[hegel::test(test_cases = 200)]
+fn backfill_folds_each_document_as_its_lines_read_in_order(tc: TestCase) {
+    use hegel::generators as gs;
+    use serde_json::json;
     let mut lines = vec![line(HELLO)];
-    for i in 0..200 {
-        lines.push(line(&format!(r#"{{"type":"StateSnapshot","threadId":"t","seq":{},"key":"note","snapshot":{i}}}"#, i + 1)));
+    let mut folded: std::collections::BTreeMap<&str, serde_json::Value> = Default::default();
+    let events = tc.draw(gs::integers::<u64>().min_value(1).max_value(12));
+    for seq in 1..=events {
+        for filler in 0..tc.draw(gs::integers::<u64>().max_value(40)) {
+            lines.push(start(&format!("m{seq}-{filler}"), "assistant"));
+        }
+        let key = tc.draw(gs::sampled_from(&["checklist", "note"][..]));
+        let (n, done) = (tc.draw(gs::integers::<u64>().max_value(3)), tc.draw(gs::booleans()));
+        let document = folded.entry(key).or_insert(json!(null));
+        let event = match tc.draw(gs::integers::<u8>().max_value(3)) {
+            0 => {
+                *document = json!({"n": n, "done": done});
+                json!({"type": "StateSnapshot", "threadId": "t", "seq": seq, "key": key, "snapshot": document})
+            }
+            kind => {
+                let op = match kind {
+                    1 => json!({"op": "replace", "path": "/done", "value": done}),
+                    2 => json!({"op": "replace", "path": "/n", "value": n}),
+                    _ => json!({"op": "replace", "path": "", "value": {"n": n}}),
+                };
+                conversation_events::patch(document, &op);
+                json!({"type": "StateDelta", "threadId": "t", "seq": seq, "key": key, "delta": [op]})
+            }
+        };
+        lines.push(line(&event.to_string()));
     }
-    let mut rich = RichText::tuned_conversation(&lines.concat(), RING_CAPACITY, Tuning { tail_items: 1, tail_bytes: 1, step: Some(64) });
+    let tail_items = tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
+    let step = tc.draw(gs::sampled_from(&[64, 512, 1 << 16][..]));
+    let tuning = Tuning { tail_items, tail_bytes: 1, step: Some(step) };
+    let mut rich = RichText::tuned_conversation(&lines.concat(), RING_CAPACITY, tuning);
     while rich.backfill(Duration::from_secs(1)) > 0 {}
-    assert_eq!(rich.conversation_documents()[0].value, serde_json::json!(199));
+    let read: Vec<_> = rich.conversation_documents().into_iter().map(|d| (d.key.clone(), d.value.clone())).collect();
+    assert_eq!(read, folded.into_iter().map(|(key, value)| (key.to_owned(), value)).collect::<Vec<_>>());
 }
