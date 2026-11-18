@@ -600,31 +600,25 @@ fn agent_session_fields_are_accepted_only_when_ssh_takes_them_whole(tc: hegel::T
     assert_eq!(parsed.is_ok(), usable, "ssh {ssh}, host {host:?}, endpoint {endpoint:?}: {parsed:?}");
 }
 
-/// A document View Spec in either form (#706, #777): drawn hosts and keys,
-/// and both transports, so each form's facts and its serde shape are
-/// crossed with every field.
-fn document_spec(tc: &hegel::TestCase) -> Content {
-    use hegel::generators as gs;
-    let key = tc.draw(gs::sampled_from(&["checklist", "tasks", "x-notes"][..])).to_owned();
-    if tc.draw(gs::booleans()) {
-        let relative_to = tc.draw(gs::sampled_from(&["primary", "chat", "a-1"][..])).to_owned();
-        return Content::HostDocument { relative_to, key };
-    }
-    let session = match tc.draw(gs::booleans()) {
-        true => LocalRecipe::AgentSession {
-            transport: CleatTransport::Ssh,
-            host: "feta".into(),
-            endpoint: "/p.sock".into(),
-            thread: "t1".into(),
-        },
-        false => LocalRecipe::AgentSession {
+/// Every document View Spec these tests read (#706, #777): each key in
+/// both forms, relative to each host and absolute over both transports.
+fn document_specs() -> Vec<Content> {
+    let sessions = [
+        LocalRecipe::AgentSession { transport: CleatTransport::Ssh, host: "feta".into(), endpoint: "/p.sock".into(), thread: "t1".into() },
+        LocalRecipe::AgentSession {
             transport: CleatTransport::Local,
             host: String::new(),
             endpoint: "/p.sock".into(),
             thread: "t2".into(),
         },
-    };
-    Content::Local(session.document(&key).unwrap())
+    ];
+    let mut out = vec![];
+    for key in ["checklist", "tasks", "x-notes"] {
+        let relative = ["primary", "chat", "a-1"].map(|host| Content::HostDocument { relative_to: host.into(), key: key.into() });
+        out.extend(relative);
+        out.extend(sessions.iter().map(|session| Content::Local(session.document(key).unwrap())));
+    }
+    out
 }
 
 fn document_facts(content: &Content) -> FactMap {
@@ -647,14 +641,15 @@ fn document_facts(content: &Content) -> FactMap {
 
 // Relative and absolute document specs round-trip through a Suggested
 // Layout's facts and through serde, as saved workspaces keep them.
-#[hegel::test(test_cases = 100)]
-fn document_specs_round_trip_through_layouts_and_serde(tc: hegel::TestCase) {
-    let content = document_spec(&tc);
-    let layout = parse_ok(&document_facts(&content));
-    let slot = layout.slot("side").unwrap();
-    assert_eq!(slot.spec.content, content);
-    let json = serde_json::to_string(&slot.spec).unwrap();
-    assert_eq!(serde_json::from_str::<ViewSpec>(&json).unwrap(), slot.spec);
+#[test]
+fn document_specs_round_trip_through_layouts_and_serde() {
+    for content in document_specs() {
+        let layout = parse_ok(&document_facts(&content));
+        let slot = layout.slot("side").unwrap();
+        assert_eq!(slot.spec.content, content);
+        let json = serde_json::to_string(&slot.spec).unwrap();
+        assert_eq!(serde_json::from_str::<ViewSpec>(&json).unwrap(), slot.spec);
+    }
 }
 
 // A relative spec names a slot key as layouts check them, never its own

@@ -973,6 +973,7 @@ impl Conversation {
         }
         if !self.pending() {
             self.orphans.clear();
+            self.documents.settle();
         }
         self.settle(sink);
     }

@@ -10,10 +10,14 @@ pub struct Document {
     pub key: String,
     pub media_type: Option<String>,
     pub value: Value,
-    /// Where its latest event was read: an older one, read later by backfill
-    /// or a page, is stale.
+    /// Where its latest event was read.
     at: u64,
     typed: Typed,
+    /// While earlier events may still arrive (backfill, a page): the latest
+    /// snapshot read and the deltas read after it, so one read late folds
+    /// in where it belongs.
+    base: Option<(u64, Value)>,
+    deltas: BTreeMap<u64, Vec<Value>>,
 }
 
 /// The documents with a known shape, read once per change.
@@ -30,6 +34,17 @@ impl Document {
     pub fn typed(&self) -> &Typed {
         &self.typed
     }
+
+    fn fold(&self) -> Value {
+        let mut value = self.base.as_ref().map_or(Value::Null, |(_, value)| value.clone());
+        self.deltas.values().flatten().for_each(|op| patch(&mut value, op));
+        value
+    }
+}
+
+enum Change<'a> {
+    Snapshot(Value),
+    Delta(&'a [Value]),
 }
 
 /// Entries this version can't read are left out, so one bad entry doesn't
@@ -53,35 +68,72 @@ fn typed(key: &str, value: &Value) -> Typed {
 pub(crate) struct Documents {
     threads: HashMap<String, BTreeMap<String, Document>>,
     revision: u64,
+    settled: bool,
 }
 
 impl Documents {
     pub fn snapshot(&mut self, at: u64, thread: &str, key: String, media_type: Option<String>, value: Value) {
-        self.change(at, thread, key, media_type, |document| *document = value);
+        self.change(at, thread, key, media_type, Change::Snapshot(value));
     }
 
     pub fn delta(&mut self, at: u64, thread: &str, key: String, media_type: Option<String>, ops: &[Value]) {
-        self.change(at, thread, key, media_type, |document| ops.iter().for_each(|op| patch(document, op)));
+        self.change(at, thread, key, media_type, Change::Delta(ops));
     }
 
-    fn change(&mut self, at: u64, thread: &str, key: String, media_type: Option<String>, f: impl FnOnce(&mut Value)) {
+    fn change(&mut self, at: u64, thread: &str, key: String, media_type: Option<String>, change: Change) {
         let documents = self.threads.entry(thread.to_owned()).or_default();
         let new = !documents.contains_key(&key);
-        let document =
-            documents.entry(key.clone()).or_insert_with(|| Document { key, media_type: None, value: Value::Null, at, typed: Typed::None });
-        if at < document.at {
+        let document = documents.entry(key.clone()).or_insert_with(|| Document {
+            key,
+            media_type: None,
+            value: Value::Null,
+            at,
+            typed: Typed::None,
+            base: None,
+            deltas: BTreeMap::new(),
+        });
+        let late = !new && at < document.at;
+        if document.base.as_ref().is_some_and(|(base, _)| at <= *base) || (late && self.settled) {
             return;
         }
-        document.at = at;
         let mut value = document.value.clone();
-        f(&mut value);
-        let media_type = media_type.or_else(|| document.media_type.clone());
+        match change {
+            Change::Snapshot(snapshot) => {
+                document.deltas = document.deltas.split_off(&at);
+                if !self.settled {
+                    document.base = Some((at, snapshot.clone()));
+                }
+                value = snapshot;
+            }
+            Change::Delta(ops) => {
+                if !self.settled {
+                    document.deltas.insert(at, ops.to_vec());
+                }
+                ops.iter().for_each(|op| patch(&mut value, op));
+            }
+        }
+        if late {
+            value = document.fold();
+        }
+        document.at = document.at.max(at);
+        let media_type = match late {
+            true => document.media_type.clone().or(media_type),
+            false => media_type.or_else(|| document.media_type.clone()),
+        };
         if !new && value == document.value && media_type == document.media_type {
             return;
         }
         document.typed = typed(&document.key, &value);
         (document.value, document.media_type) = (value, media_type);
         self.revision += 1;
+    }
+
+    /// No earlier event will arrive: what was kept to fold one in goes.
+    pub fn settle(&mut self) {
+        self.settled = true;
+        for document in self.threads.values_mut().flat_map(BTreeMap::values_mut) {
+            (document.base, document.deltas) = (None, BTreeMap::new());
+        }
     }
 
     /// Moves whenever any document is added or changes, and only then.
