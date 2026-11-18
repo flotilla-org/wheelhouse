@@ -2,6 +2,8 @@
 //! Local Endpoint, one watch stream per thread, older pages on request.
 //! A producer on another host is reached over an ssh forward (#737).
 mod forward;
+mod output;
+mod search;
 
 use std::collections::HashMap;
 use std::io;
@@ -16,18 +18,21 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use reqwest::{Method, Request, StatusCode, Url};
 use rigging_http_client::{http_channel_label, HttpClient, ReqwestHttpClient};
 use rigging_http_wire::{Encoding, Items, LIMITS};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::runtime::{Builder, Handle};
 use tokio::sync::{oneshot, Notify};
 use tokio::time::{sleep, timeout};
 
 use forward::Forward;
+pub use output::{Output, OutputRead, TAIL_EVERY};
+pub use search::{Search, SearchAnswer, SEARCH_DEBOUNCE};
 
 /// Called from the endpoint's thread when something arrives.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
-/// How long a post waits on the producer.
-const POST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a post or a GET waits on the producer.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_FIRST: Duration = Duration::from_millis(250);
 const RETRY_MOST: Duration = Duration::from_secs(5);
 
@@ -149,12 +154,30 @@ impl Endpoint {
 
     /// POSTs `body` (JSON) to `path`, answered in the background.
     pub fn post(&self, path: &str, body: Vec<u8>) -> Post {
+        let mut url = base();
+        url.set_path(path);
+        self.post_to(url, body)
+    }
+
+    /// Asks the producer to stop one of `thread`'s Agent Tasks; the post
+    /// settles as the producer answers.
+    pub fn stop_task(&self, thread: &str, task: &str) -> Post {
+        // A URL drops a `.` or `..` segment rather than encoding it.
+        if let Some(id) = [thread, task].into_iter().find(|id| matches!(*id, "" | "." | "..")) {
+            let status = Arc::new(Mutex::new(PostStatus::Failed(format!("{id:?} can't name a thread or task in a path"))));
+            return Post { _endpoint: self.clone(), status };
+        }
+        let mut url = base();
+        url.path_segments_mut().expect("the base URL has a path").extend(["threads", thread, "tasks", task, "stop"]);
+        self.post_to(url, b"{}".to_vec())
+    }
+
+    fn post_to(&self, url: Url, body: Vec<u8>) -> Post {
         let status = Arc::new(Mutex::new(PostStatus::Sending));
         let settled = status.clone();
         let link = self.0.link.clone();
-        let path = path.to_owned();
         self.0.runtime.spawn(async move {
-            let outcome = post(&link, &path, body).await;
+            let outcome = post(&link, url, body).await;
             *settled.lock().unwrap() = match outcome {
                 Ok(()) => PostStatus::Accepted,
                 Err(why) => PostStatus::Failed(why),
@@ -388,31 +411,47 @@ fn type_of(event: &Event) -> String {
 }
 
 async fn page(link: &Link, url: Url) -> Result<Page, String> {
-    let mut request = Request::new(Method::GET, url);
-    request.headers_mut().insert(ACCEPT, "application/cbor, application/json;q=0.5".parse().unwrap());
-    let label = http_channel_label("GET", request.url().as_str());
-    let heard = link.ready().await?;
-    let response = match link.client.execute(request, &label).await {
-        Ok(response) => response,
-        Err(error) => return Err(link.why(heard, error).await),
-    };
-    if !response.status().is_success() {
-        return Err(failure(response.status(), response.body()));
-    }
-    let cbor = response.headers().get(CONTENT_TYPE).is_some_and(|v| v.as_bytes().starts_with(b"application/cbor"));
-    if cbor {
-        flotilla_cbor::from_slice(response.body(), &LIMITS).map_err(|error| error.to_string())
+    decoded(link, url).await
+}
+
+/// GETs `url` and reads its CBOR or JSON body.
+async fn decoded<T: DeserializeOwned>(link: &Link, url: Url) -> Result<T, String> {
+    let body = get(link, url, "application/cbor, application/json;q=0.5").await.map_err(|(_, why)| why)?;
+    if body.cbor {
+        flotilla_cbor::from_slice(&body.bytes, &LIMITS).map_err(|error| error.to_string())
     } else {
-        serde_json::from_slice(response.body()).map_err(|error| error.to_string())
+        serde_json::from_slice(&body.bytes).map_err(|error| error.to_string())
     }
 }
 
-async fn post(link: &Link, path: &str, body: Vec<u8>) -> Result<(), String> {
-    let mut url = base();
-    url.set_path(path);
+/// GETs `url`; a failure says whether the producer refused it (Some
+/// status) or it never got an answer.
+async fn get(link: &Link, url: Url, accept: &'static str) -> Result<Body, (Option<StatusCode>, String)> {
+    let mut request = Request::new(Method::GET, url);
+    request.headers_mut().insert(ACCEPT, accept.parse().unwrap());
+    *request.timeout_mut() = Some(REQUEST_TIMEOUT);
+    let label = http_channel_label("GET", request.url().as_str());
+    let heard = link.ready().await.map_err(|why| (None, why))?;
+    let response = match link.client.execute(request, &label).await {
+        Ok(response) => response,
+        Err(error) => return Err((None, link.why(heard, error).await)),
+    };
+    if !response.status().is_success() {
+        return Err((Some(response.status()), failure(response.status(), response.body())));
+    }
+    let cbor = response.headers().get(CONTENT_TYPE).is_some_and(|v| v.as_bytes().starts_with(b"application/cbor"));
+    Ok(Body { cbor, bytes: response.into_body().to_vec() })
+}
+
+struct Body {
+    cbor: bool,
+    bytes: Vec<u8>,
+}
+
+async fn post(link: &Link, url: Url, body: Vec<u8>) -> Result<(), String> {
     let mut request = Request::new(Method::POST, url);
     request.headers_mut().insert(CONTENT_TYPE, "application/json".parse().unwrap());
-    *request.timeout_mut() = Some(POST_TIMEOUT);
+    *request.timeout_mut() = Some(REQUEST_TIMEOUT);
     *request.body_mut() = Some(body.into());
     let label = http_channel_label("POST", request.url().as_str());
     let heard = link.ready().await?;
@@ -463,6 +502,17 @@ fn failure(status: StatusCode, body: &[u8]) -> String {
 /// the path and query.
 fn base() -> Url {
     Url::parse("http://agent/").unwrap()
+}
+
+/// A path the producer named, such as a root's `search`, on its own
+/// endpoint: an absolute URL or a `//host` reference that would leave it is
+/// refused.
+fn on_endpoint(reference: &str) -> Result<Url, String> {
+    let url = base().join(reference).map_err(|error| error.to_string())?;
+    if url.origin() != base().origin() {
+        return Err(format!("{reference:?} is not on the producer's endpoint"));
+    }
+    Ok(url)
 }
 
 fn thread_url(thread: &str, query: &str) -> Url {

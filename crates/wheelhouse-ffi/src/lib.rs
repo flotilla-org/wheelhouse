@@ -23,6 +23,7 @@ use wheelhouse_core::{
 
 pub mod agent_documents;
 pub mod agent_input;
+pub mod agent_tasks;
 pub mod agent_watch;
 pub mod arrangement;
 pub mod card;
@@ -39,6 +40,7 @@ pub mod tables;
 pub mod text;
 pub use agent_documents::*;
 pub use agent_input::*;
+pub use agent_tasks::*;
 pub use agent_watch::*;
 pub use arrangement::*;
 pub use card::*;
