@@ -386,7 +386,8 @@ pub struct WheelhouseTableMenu {
 /// One of the checklist's values, as of the last wheelhouse_table_menu.
 #[repr(C)]
 pub struct WheelhouseTableMenuValue {
-    /// Its text, or "(Blanks)" for the blank (blank 1).
+    /// Its text, as binnacle names a value: "(null)" for the blank (blank
+    /// 1), "(empty)" for an empty string.
     pub label: Text,
     pub blank: u32,
     pub has_count: u32,

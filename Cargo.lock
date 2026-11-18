@@ -110,12 +110,12 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 [[package]]
 name = "binnacle-core"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle?branch=main#76e723604f5bb8a5858656cd9118b5855b3954ab"
+source = "git+https://github.com/flotilla-org/binnacle?branch=main#c1d8ebf975801e639af2b5c4f45126c8db78edb2"
 
 [[package]]
 name = "binnacle-described"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle?branch=main#76e723604f5bb8a5858656cd9118b5855b3954ab"
+source = "git+https://github.com/flotilla-org/binnacle?branch=main#c1d8ebf975801e639af2b5c4f45126c8db78edb2"
 dependencies = [
  "binnacle-core",
  "binnacle-format",
@@ -123,6 +123,7 @@ dependencies = [
  "binnacle-layout",
  "binnacle-memory",
  "ciborium",
+ "rigging-condition",
  "serde",
  "serde_json",
 ]
@@ -130,7 +131,7 @@ dependencies = [
 [[package]]
 name = "binnacle-described-http"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle?branch=main#76e723604f5bb8a5858656cd9118b5855b3954ab"
+source = "git+https://github.com/flotilla-org/binnacle?branch=main#c1d8ebf975801e639af2b5c4f45126c8db78edb2"
 dependencies = [
  "binnacle-described",
  "bytes",
@@ -143,7 +144,7 @@ dependencies = [
 [[package]]
 name = "binnacle-ffi"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle?branch=main#76e723604f5bb8a5858656cd9118b5855b3954ab"
+source = "git+https://github.com/flotilla-org/binnacle?branch=main#c1d8ebf975801e639af2b5c4f45126c8db78edb2"
 dependencies = [
  "binnacle-core",
  "binnacle-described",
@@ -157,7 +158,7 @@ dependencies = [
 [[package]]
 name = "binnacle-format"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle?branch=main#76e723604f5bb8a5858656cd9118b5855b3954ab"
+source = "git+https://github.com/flotilla-org/binnacle?branch=main#c1d8ebf975801e639af2b5c4f45126c8db78edb2"
 dependencies = [
  "serde_json",
  "unicode-segmentation",
@@ -166,7 +167,7 @@ dependencies = [
 [[package]]
 name = "binnacle-group"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle?branch=main#76e723604f5bb8a5858656cd9118b5855b3954ab"
+source = "git+https://github.com/flotilla-org/binnacle?branch=main#c1d8ebf975801e639af2b5c4f45126c8db78edb2"
 dependencies = [
  "binnacle-core",
  "binnacle-memory",
@@ -175,7 +176,7 @@ dependencies = [
 [[package]]
 name = "binnacle-layout"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle?branch=main#76e723604f5bb8a5858656cd9118b5855b3954ab"
+source = "git+https://github.com/flotilla-org/binnacle?branch=main#c1d8ebf975801e639af2b5c4f45126c8db78edb2"
 dependencies = [
  "binnacle-core",
  "ciborium",
@@ -187,7 +188,7 @@ dependencies = [
 [[package]]
 name = "binnacle-memory"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle?branch=main#76e723604f5bb8a5858656cd9118b5855b3954ab"
+source = "git+https://github.com/flotilla-org/binnacle?branch=main#c1d8ebf975801e639af2b5c4f45126c8db78edb2"
 dependencies = [
  "binnacle-core",
  "regex",
@@ -196,11 +197,12 @@ dependencies = [
 [[package]]
 name = "binnacle-testkit"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/binnacle?branch=main#76e723604f5bb8a5858656cd9118b5855b3954ab"
+source = "git+https://github.com/flotilla-org/binnacle?branch=main#c1d8ebf975801e639af2b5c4f45126c8db78edb2"
 dependencies = [
  "binnacle-core",
  "binnacle-described",
  "binnacle-memory",
+ "rigging-condition",
  "serde_json",
 ]
 
@@ -464,7 +466,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1537,6 +1539,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rigging-condition"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/rigging?branch=main#1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "rigging-http-client"
 version = "0.1.0"
 source = "git+https://github.com/flotilla-org/rigging?branch=main#1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd"
@@ -1622,7 +1633,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1635,7 +1646,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2010,7 +2021,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2779,15 +2790,6 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
-dependencies = [
- "windows-targets",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.59.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets",
 ]

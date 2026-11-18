@@ -2470,7 +2470,8 @@ typedef struct {
 
 // One of the checklist's values, as of the last wheelhouse_table_menu.
 typedef struct {
-  // Its text, or "(Blanks)" for the blank (blank 1).
+  // Its text, as binnacle names a value: "(null)" for the blank (blank
+  // 1), "(empty)" for an empty string.
   WheelhouseText label;
   uint32_t blank;
   uint32_t has_count;

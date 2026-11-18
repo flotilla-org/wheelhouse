@@ -951,7 +951,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
         TableCheck(state->menu_open && state->menu_key == 4 && ui_ctx_menu_is_open(uishell_table_menu_key(state)), "the caret opens its column's menu");
         WheelhouseTableMenu m = wheelhouse_table_menu(state->table);
         TableCheck(m.open && m.one_of && m.takes_text && m.listed && m.head_ticked && m.value_count > 2, "the menu lists the column's values, all ticked");
-        TableCheck(str8_match(uishell_table_text(wheelhouse_table_menu_value(state->table, 0).label), str8_lit("(Blanks)"), 0), "the blanks come first");
+        TableCheck(str8_match(uishell_table_text(wheelhouse_table_menu_value(state->table, 0).label), str8_lit("(null)"), 0), "the blanks come first");
         size_t bergen = 0;
         U64 bergens = 0;
         for(size_t i = 0; i < m.value_count; i += 1)

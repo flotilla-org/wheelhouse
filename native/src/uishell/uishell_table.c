@@ -1030,7 +1030,7 @@ read_only global char *uishell_table_compare_marks[WHEELHOUSE_TABLE_COMPARE_STEP
 // The column menu (#577), as binnacle's web menu has it: the column's Text
 // condition ("Contains" or "Does not contain", matching case, regexes where
 // the column takes them), its comparison where it compares numbers or dates,
-// and the checklist of its values with counts, "(Blanks)" first, searched
+// and the checklist of its values with counts, "(null)" first, searched
 // and narrowed by the other columns' filters; then Clear and Close. Each
 // change asks for its conditions at once, written by binnacle's rules.
 internal void
