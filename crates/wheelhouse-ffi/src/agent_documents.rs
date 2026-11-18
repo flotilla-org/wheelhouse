@@ -20,7 +20,8 @@ pub struct WheelhouseAgentDocument {
 pub struct WheelhouseAgentDocuments {
     pub documents: *const WheelhouseAgentDocument,
     pub document_count: usize,
-    /// As wheelhouse_rich_text_conversation_documents_revision.
+    /// As wheelhouse_rich_text_conversation_documents_revision when read:
+    /// reads with the same revision saw the same documents.
     pub revision: u64,
 }
 
@@ -88,6 +89,7 @@ pub struct WheelhouseChecklistItem {
 pub struct WheelhouseChecklist {
     pub items: *const WheelhouseChecklistItem,
     pub item_count: usize,
+    /// As in WheelhouseAgentDocuments.
     pub revision: u64,
 }
 
@@ -181,6 +183,7 @@ pub struct WheelhouseAgentTask {
 pub struct WheelhouseAgentTasks {
     pub tasks: *const WheelhouseAgentTask,
     pub task_count: usize,
+    /// As in WheelhouseAgentDocuments.
     pub revision: u64,
 }
 
