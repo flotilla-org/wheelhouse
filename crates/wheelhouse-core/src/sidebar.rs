@@ -15,13 +15,13 @@ use crate::{
     detail::DetailCard,
     host::PaneObservation,
     lifecycle::{self, Closed, EffectiveHome, Groups, Home, HomeEdit, Life},
-    managed::{ManagedContent, SlotPlan},
+    managed::{ManagedContent, SlotPlan, SlotSource},
     metadata::EntityId,
     presentation::{system, PlacementNode, PresentationState, SurfaceSnapshot, UNPLACED_WORKSPACES_SECTION},
     profile,
     records::{recordable, DashboardRecord, DashboardState, RecordName, SubjectRecord},
     sidebar_arrangement::{self, Declared, LocalSection, Report, SidebarArrangement, SidebarDoc, SidebarView},
-    slots::{ArrangementCommit, ArrangementDoc, ArrangementView, Baseline, OverlayView, Resolve, SlotInfo},
+    slots::{ArrangementCommit, ArrangementDoc, ArrangementView, Baseline, OverlayView, Resolve, SlotInfo, USER_PREFIX},
     state::{ControllerState, ControllerTab, EntityActivation, RevisionEvaluation},
     stream::{self, SidebarDelta, SubscriptionId, UnknownSubscription},
     suggested_layout::{Content, Facet, PrimarySlot, RebindPolicy, SlotResolution, ViewSpec},
@@ -1291,6 +1291,39 @@ impl Sidebar {
         self.with_workspace(workspace, |record, clock, _, planner| record.set_slot(clock, key, spec, rebind, planner))
     }
 
+    /// Add the user's own slot showing state document `key` of the agent
+    /// session host slot `host` shows, following the host (#706); the host
+    /// places it in the host's View Dock. Its key is `u:<n>`, past every
+    /// numbered user slot and no lower than `at_least`, so the host can keep
+    /// it clear of keys it holds elsewhere. Returns the key.
+    pub fn add_host_document_slot(&mut self, workspace: WorkspaceId, host: &str, key: &str, at_least: u64) -> Result<String, String> {
+        let record = self.workspace(workspace)?;
+        record.slot(host)?;
+        let taken = record.slots.get().keys().iter().filter_map(|k| k.strip_prefix(USER_PREFIX)?.parse::<u64>().ok()).max();
+        let slot = format!("{USER_PREFIX}{}", taken.map_or(0, |n| n.saturating_add(1)).max(at_least));
+        let content = Content::HostDocument { relative_to: host.to_owned(), key: key.to_owned() };
+        self.set_slot(workspace, &slot, ViewSpec { content, presentation: None, role: None }, RebindPolicy::Replace)?;
+        Ok(slot)
+    }
+
+    /// Pin a host-relative document slot to the agent session its host shows
+    /// now, as when it is dragged out of the dock (#700 D2): it stops
+    /// following the host. Fails while the host has no session. Returns the
+    /// slot's new spec.
+    pub fn pin_slot(&mut self, workspace: WorkspaceId, key: &str) -> Result<ViewSpec, String> {
+        let record = self.workspace(workspace)?;
+        let slot = record.slot(key)?;
+        if !matches!(slot.spec.content, Content::HostDocument { .. }) {
+            return Err(format!("slot {key:?} shows no host's document"));
+        }
+        let SlotSource::Local(document) = record.slot_source(&slot, &self.managed) else {
+            return Err(format!("slot {key:?}'s host shows no agent session to pin it to"));
+        };
+        let spec = ViewSpec { content: Content::Local(document), ..slot.spec };
+        self.set_slot(workspace, key, spec.clone(), slot.rebind)?;
+        Ok(spec)
+    }
+
     /// Show another Facet of the entity a slot shows, one its layout lists
     /// (see [`WorkspaceSlots::set_facet`](crate::slots::WorkspaceSlots::set_facet)):
     /// a baseline slot keeps following its provider.
@@ -1327,7 +1360,7 @@ impl Sidebar {
     pub fn slot_label(&self, workspace: WorkspaceId, key: &str) -> Result<Option<String>, String> {
         Ok(match self.workspace(workspace)?.slot(key)?.spec.content {
             Content::ProviderFacet { entity, .. } => self.state.subject_label(&entity),
-            Content::Local(_) => None,
+            Content::Local(_) | Content::HostDocument { .. } => None,
         })
     }
 
@@ -1386,7 +1419,7 @@ impl Sidebar {
     pub fn plan_slot(&mut self, workspace: WorkspaceId, key: &str, applied: &str) -> Result<SlotPlan, String> {
         let record = self.workspace(workspace)?;
         let slot = record.slot(key)?;
-        let source = record.slot_source(&slot);
+        let source = record.slot_source(&slot, &self.managed);
         let saved = record.resolutions.get().get(key).cloned();
         let mut plan = self.managed.plan_slot(workspace, key, source, slot.rebind, applied);
         plan.saved = saved;

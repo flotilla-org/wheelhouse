@@ -139,12 +139,26 @@ impl WorkspaceRecord {
     /// subject's layout; any other slot from its spec, as a local recipe or
     /// a provider facet (`facet` of the entity's own layout, `primary` for
     /// the `workspace.primary.*` facts).
-    pub fn slot_source(&self, slot: &SlotInfo) -> SlotSource {
+    /// A host-relative document resolves through its host's agent session
+    /// now; it is held while the host has none, or is itself relative.
+    pub fn slot_source(&self, slot: &SlotInfo, managed: &ManagedContent) -> SlotSource {
+        let Content::HostDocument { relative_to, key } = &slot.spec.content else {
+            return self.own_source(slot);
+        };
+        let host = self.slot(relative_to).ok().filter(|host| !matches!(host.spec.content, Content::HostDocument { .. }));
+        match host.and_then(|host| managed.agent_session(&self.own_source(&host))).and_then(|session| session.document(key)) {
+            Some(document) => SlotSource::Local(document),
+            None => SlotSource::Held,
+        }
+    }
+
+    fn own_source(&self, slot: &SlotInfo) -> SlotSource {
         let follows = slot.in_baseline && !slot.detached && slot.flags & flag::FACET == 0;
         match (self.subject(), follows, &slot.spec.content) {
             (Some(subject), true, _) => SlotSource::Provider { entity: subject.clone(), slot: slot.key.clone() },
             (_, _, Content::ProviderFacet { entity, facet }) => SlotSource::Provider { entity: entity.clone(), slot: facet.clone() },
             (_, _, Content::Local(recipe)) => SlotSource::Local(recipe.clone()),
+            (_, _, Content::HostDocument { .. }) => SlotSource::Held,
         }
     }
 
@@ -359,7 +373,7 @@ impl WorkspaceRecord {
         expected: u64,
     ) -> Result<u64, CommitError> {
         let slot = self.slot(key)?;
-        if let Some(DesiredContent::Ready(desired)) = managed.desired(&self.slot_source(&slot)) {
+        if let Some(DesiredContent::Ready(desired)) = managed.desired(&self.slot_source(&slot, managed)) {
             if desired.id() != applied {
                 return Err(format!("slot {key:?} no longer resolves to what was applied: plan it again").into());
             }
@@ -385,7 +399,7 @@ impl WorkspaceRecord {
             return false;
         }
         let sources: BTreeMap<String, SlotSource> =
-            self.slots.get().slots().iter().map(|slot| (slot.key.clone(), self.slot_source(slot))).collect();
+            self.slots.get().slots().iter().map(|slot| (slot.key.clone(), self.slot_source(slot, managed))).collect();
         self.resolutions.follow(clock, |saved| {
             saved.retain(|key, saved| {
                 let Some(source) = sources.get(key) else {

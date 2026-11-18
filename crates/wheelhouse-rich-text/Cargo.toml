@@ -12,6 +12,7 @@ test-support = []
 wheelhouse-stream.workspace = true
 wheelhouse-surface.workspace = true
 conversation-events.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 # Markdown ingest, and its HTML copy.
 pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }

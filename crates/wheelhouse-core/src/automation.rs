@@ -240,6 +240,7 @@ pub fn content_kind(spec: &ViewSpec) -> String {
         Content::Local(LocalRecipe::Jackstay { .. }) => "jackstay".into(),
         Content::Local(LocalRecipe::File { .. }) => "text".into(),
         Content::Local(LocalRecipe::AgentSession { .. }) => "conversation".into(),
+        Content::HostDocument { .. } | Content::Local(LocalRecipe::AgentDocument { .. }) => "document".into(),
         Content::Local(LocalRecipe::Url { url }) => match url.strip_prefix("wheelhouse:") {
             Some(page) => page.split(['?', '/']).next().unwrap_or(page).to_owned(),
             None => "web".into(),

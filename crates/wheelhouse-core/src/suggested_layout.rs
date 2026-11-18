@@ -91,6 +91,10 @@ pub enum Content {
     ProviderFacet { entity: EntityRef, facet: String },
     /// Belongs to the `local` provider and is resolved by the frontend.
     Local(LocalRecipe),
+    /// State document `key` of the agent session the host Slot
+    /// `relative_to` shows now, so it follows the host as it rebinds or
+    /// switches Facet (#706); pinning makes it a [`LocalRecipe::AgentDocument`].
+    HostDocument { relative_to: String, key: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -132,6 +136,33 @@ pub enum LocalRecipe {
         endpoint: String,
         thread: String,
     },
+    /// State document `key` of an agent thread, reached as
+    /// [`LocalRecipe::AgentSession`] is: a subagent's, or a pinned View's.
+    AgentDocument {
+        #[serde(default)]
+        transport: CleatTransport,
+        #[serde(default)]
+        host: String,
+        endpoint: String,
+        thread: String,
+        key: String,
+    },
+}
+
+impl LocalRecipe {
+    /// Document `key` of this agent session; None for any other recipe.
+    pub fn document(&self, key: &str) -> Option<LocalRecipe> {
+        match self {
+            LocalRecipe::AgentSession { transport, host, endpoint, thread } => Some(LocalRecipe::AgentDocument {
+                transport: *transport,
+                host: host.clone(),
+                endpoint: endpoint.clone(),
+                thread: thread.clone(),
+                key: key.to_owned(),
+            }),
+            _ => None,
+        }
+    }
 }
 
 /// How a frontend reaches a Cleat session's daemon, or an agent's producer.
@@ -490,6 +521,16 @@ fn provider_slot(f: &Facts, key: &str) -> Result<Slot, LayoutError> {
         Some(_) => return Err(wrong(&at("entity"), "exactly one entity ref")),
     };
     let facet = f.text(&at("facet"))?.filter(|s| !s.is_empty());
+    if let Some(relative_to) = f.text(&at("relative_to"))? {
+        check_id(&at("relative_to"), relative_to)?;
+        if relative_to == key {
+            return Err(invalid(&at("relative_to"), relative_to));
+        }
+        let document = f.text(&at("key"))?.filter(|k| !k.is_empty()).ok_or_else(|| missing(&at("key")))?;
+        let content = Content::HostDocument { relative_to: relative_to.to_owned(), key: document.to_owned() };
+        // Its host's session resolves it, never the provider.
+        return Ok(Slot { key: key.to_owned(), spec: ViewSpec { content, presentation, role }, rebind, resolution: SlotResolution::Held });
+    }
     let state = f.text(&at("state"));
     let (content, resolution) = match (entity, facet) {
         (Some(entity), Some(facet)) => {
@@ -556,7 +597,7 @@ fn recipe(f: &Facts, key: &str) -> Result<LocalRecipe, LayoutError> {
             }
             LocalRecipe::CleatSession { transport, host, runtime_root, daemon, session }
         }
-        "agent-session" => {
+        kind @ ("agent-session" | "agent-document") => {
             let transport = match f.text(&at("transport"))? {
                 None => CleatTransport::Local,
                 Some(text) => CleatTransport::parse(text).ok_or_else(|| invalid(&at("transport"), text))?,
@@ -571,7 +612,11 @@ fn recipe(f: &Facts, key: &str) -> Result<LocalRecipe, LayoutError> {
                 };
                 return Err(invalid(&at(field), value));
             }
-            LocalRecipe::AgentSession { transport, host, endpoint, thread }
+            let session = LocalRecipe::AgentSession { transport, host, endpoint, thread };
+            match kind {
+                "agent-document" => session.document(&required("key")?).expect("a session"),
+                _ => session,
+            }
         }
         other => return Err(invalid(&at("kind"), other)),
     })

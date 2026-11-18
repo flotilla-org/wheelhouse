@@ -844,3 +844,76 @@ fn the_overlay_revision_moves_only_for_what_overlays_read() {
     assert!(sidebar.register_workspace(other));
     assert!(sidebar.overlay_revision() > relabelled);
 }
+
+fn document_of(plan: &SlotPlan) -> (String, String) {
+    match plan.update.as_ref().map(|u| &u.resolution.recipe) {
+        Some(LocalRecipe::AgentDocument { thread, key, .. }) => (thread.clone(), key.clone()),
+        other => panic!("not a document: {other:?}"),
+    }
+}
+
+/// Plan `key` and apply what it updates to; returns the thread and key.
+fn follow(sidebar: &mut Sidebar, key: &str, applied: &mut String) -> (String, String) {
+    let plan = sidebar.plan_slot(worker(), key, applied).unwrap();
+    assert_eq!(plan.state, ContentState::Updating);
+    let document = document_of(&plan);
+    let update = plan.update.unwrap();
+    assert!(sidebar.managed.complete_slot(worker(), key, update.token, true));
+    *applied = update.id;
+    document
+}
+
+// A docked View addressed relative to its host follows the host's agent
+// session (#706, #777): as the host rebinds, and while it shows its
+// terminal Facet, through the agent's conversation Facet (#734).
+#[test]
+fn a_host_relative_document_follows_its_host() {
+    let mut sidebar = session(agent_slot());
+    sidebar.feed(150, [agent_facets()]);
+    let docked = sidebar.add_host_document_slot(worker(), "a", "checklist", 3).unwrap();
+    assert_eq!(docked, "u:3", "no lower than the host asked");
+    let mut applied = String::new();
+    assert_eq!(follow(&mut sidebar, &docked, &mut applied), ("t1".into(), "checklist".into()));
+    assert_eq!(sidebar.plan_slot(worker(), &docked, &applied).unwrap().state, ContentState::Current);
+
+    // The host rebinds to another thread.
+    let mut rebound = agent_slot();
+    rebound.set.insert("layout.slot.a.thread".into(), update(text("t2")));
+    sidebar.feed(200, [rebound]);
+    assert_eq!(follow(&mut sidebar, &docked, &mut applied).0, "t2");
+
+    // The host shows its terminal: the agent's conversation Facet still
+    // names the session.
+    assert!(sidebar.set_slot_facet(worker(), "a", "terminal").unwrap());
+    assert_eq!(follow(&mut sidebar, &docked, &mut applied).0, "t1");
+
+    // Pinned, it names that session and no longer follows the host.
+    let pinned = sidebar.pin_slot(worker(), &docked).unwrap();
+    assert!(matches!(&pinned.content, Content::Local(LocalRecipe::AgentDocument { thread, .. }) if thread == "t1"));
+    assert_eq!(sidebar.slots(worker()).unwrap().iter().find(|s| s.key == docked).unwrap().spec, pinned);
+    assert_eq!(sidebar.plan_slot(worker(), &docked, &applied).unwrap().state, ContentState::Current, "pinning changes nothing shown");
+    assert!(sidebar.set_slot_facet(worker(), "a", "conversation").unwrap());
+    assert_eq!(sidebar.plan_slot(worker(), &docked, &applied).unwrap().state, ContentState::Current);
+    assert!(sidebar.pin_slot(worker(), &docked).is_err(), "pinned already");
+}
+
+// A host with no agent session holds its docked View rather than failing
+// it, and pinning it has nothing to pin to; the next number past every
+// numbered user slot keys the next one.
+#[test]
+fn a_host_without_an_agent_session_holds_its_documents() {
+    let mut sidebar = session(agent_slot());
+    let shell = ViewSpec { content: Content::Local(LocalRecipe::File { path: "/notes".into() }), presentation: None, role: None };
+    sidebar.set_slot(worker(), "u:7", shell, RebindPolicy::Replace).unwrap();
+    let docked = sidebar.add_host_document_slot(worker(), "u:7", "tasks", 0).unwrap();
+    assert_eq!(docked, "u:8");
+    assert_eq!(sidebar.plan_slot(worker(), &docked, "").unwrap().state, ContentState::Held);
+    assert!(sidebar.pin_slot(worker(), &docked).is_err());
+    assert!(sidebar.add_host_document_slot(worker(), "u:99", "tasks", 0).is_err(), "no such host");
+    // Its host gone, it waits too.
+    sidebar.remove_slot(worker(), "u:7").unwrap();
+    assert_eq!(sidebar.plan_slot(worker(), &docked, "").unwrap().state, ContentState::Held);
+    let own =
+        ViewSpec { content: Content::HostDocument { relative_to: docked.clone(), key: "tasks".into() }, presentation: None, role: None };
+    assert!(sidebar.set_slot(worker(), &docked, own, RebindPolicy::Replace).is_err(), "its own host");
+}

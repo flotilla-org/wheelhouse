@@ -64,7 +64,7 @@ fn subjects_sharing_a_target_resolve_their_own_workspace() {
 fn a_non_subject_finds_its_workspace_by_target() {
     let a = entity("vessel", "a");
     let other = entity("vessel", "other");
-    let mut sidebar = session(&[a.clone()]);
+    let mut sidebar = session(std::slice::from_ref(&a));
     sidebar.feed(200, [facts(&a, Some(SHARED)), facts(&other, Some(SHARED))]);
     assert_eq!(sidebar.detail_card(&other).unwrap().workspace_id, Some(ws(1)));
     assert_eq!(focus(&mut sidebar, &other), ws(1));
@@ -74,7 +74,7 @@ fn a_non_subject_finds_its_workspace_by_target() {
 fn a_subject_without_a_workspace_falls_back_to_target() {
     let a = entity("vessel", "a");
     let b = entity("vessel", "b");
-    let mut sidebar = session(&[a.clone()]);
+    let mut sidebar = session(std::slice::from_ref(&a));
     // b is a subject kind with no bound workspace.
     sidebar.feed(200, [facts(&a, Some(SHARED)), facts(&b, Some(SHARED))]);
     assert_eq!(sidebar.detail_card(&b).unwrap().workspace_id, Some(ws(1)));
@@ -84,7 +84,7 @@ fn a_subject_without_a_workspace_falls_back_to_target() {
 #[test]
 fn a_subject_open_in_two_workspaces_prefers_the_selected_one() {
     let a = entity("vessel", "a");
-    let mut sidebar = session(&[a.clone()]);
+    let mut sidebar = session(std::slice::from_ref(&a));
     let record = sidebar.export_record(&format!("workspace/{}", ws(1))).unwrap();
     sidebar.import_record(&format!("workspace/{}", ws(2)), &record).unwrap();
     for selected in [2, 1] {

@@ -92,6 +92,14 @@ impl Resolved {
                     field(host);
                 }
             }
+            LocalRecipe::AgentDocument { transport, host, endpoint, thread, key } => {
+                field("agent-document");
+                field(transport.as_str());
+                field(host);
+                field(endpoint);
+                field(thread);
+                field(key);
+            }
         }
         out
     }
@@ -126,6 +134,9 @@ pub enum SlotSource {
     Provider { entity: EntityRef, slot: String },
     /// A local recipe, which is its own resolution.
     Local(LocalRecipe),
+    /// A host-relative document whose host has no agent session now: it
+    /// waits, and doesn't fail.
+    Held,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -218,6 +229,26 @@ impl ManagedContent {
         match source {
             SlotSource::Provider { entity, slot } => self.desired.get(entity).and_then(|slots| slots.get(slot)).cloned(),
             SlotSource::Local(recipe) => Some(DesiredContent::Ready(Resolved { target: None, recipe: recipe.clone() })),
+            SlotSource::Held => Some(DesiredContent::Held),
+        }
+    }
+
+    /// The agent session a slot resolving from `source` shows now, as its
+    /// docked Views address it: a provider facet's own, or else (one showing
+    /// its terminal, say) the first other Facet of its entity that resolves
+    /// to one, since sources attach to the agent View, not a Facet (#734).
+    pub fn agent_session(&self, source: &SlotSource) -> Option<LocalRecipe> {
+        let session = |desired: Option<&DesiredContent>| match desired {
+            Some(DesiredContent::Ready(Resolved { recipe: recipe @ LocalRecipe::AgentSession { .. }, .. })) => Some(recipe.clone()),
+            _ => None,
+        };
+        match source {
+            SlotSource::Local(recipe @ LocalRecipe::AgentSession { .. }) => Some(recipe.clone()),
+            SlotSource::Provider { entity, slot } => {
+                let facets = self.desired.get(entity)?;
+                session(facets.get(slot)).or_else(|| facets.values().find_map(|desired| session(Some(desired))))
+            }
+            SlotSource::Local(_) | SlotSource::Held => None,
         }
     }
 

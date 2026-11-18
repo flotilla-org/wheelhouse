@@ -13,13 +13,14 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use conversation_events::{
-    parse_line, patch, Capabilities, Event, Interrupt, Lines, Message, Outcome, Page, Parent, ResumeEntry, ResumeStatus, Role as EventRole,
+    parse_line, Capabilities, Event, Interrupt, Lines, Message, Outcome, Page, Parent, ResumeEntry, ResumeStatus, Role as EventRole,
     ToolCallResult, ToolKind as EventToolKind, ToolStatus as EventToolStatus, Truncated, ANSI, COMPACTION, CONTRACT, DIFF, MARKDOWN,
     STATUS, STATUS_IDLE,
 };
 use serde_json::{json, Value};
 use wheelhouse_surface::{Form, Input, Item as SurfaceItem, ItemKind as SurfaceKind, Surface, Variant};
 
+use super::documents::{Document, Documents};
 use super::ingest::{parse_into, Staged};
 use super::log::Log;
 use super::ring::Ring;
@@ -704,8 +705,10 @@ pub(crate) struct Conversation {
     /// `seq` loaded: older pages are asked for before it.
     earlier: u64,
     oldest_seq: u64,
-    /// The thread's state documents, by key ("" for AG-UI's single one).
-    documents: HashMap<String, Value>,
+    /// The threads' state documents ("" for AG-UI's single one).
+    documents: Documents,
+    /// The thread a watch stream's hello names.
+    thread: String,
     activity: Activity,
     /// The ids of user messages, so a sent prompt knows it arrived.
     user_messages: HashSet<String>,
@@ -768,6 +771,10 @@ impl Conversation {
         conversation
     }
 
+    pub fn capabilities(&self) -> Option<&Capabilities> {
+        self.capabilities.as_ref()
+    }
+
     pub fn takes_input(&self) -> bool {
         self.capabilities.as_ref().is_some_and(|c| c.input)
     }
@@ -780,7 +787,26 @@ impl Conversation {
 
     /// The `status` document: `idle`, `running` or `requires_action`.
     pub fn status(&self) -> Option<&str> {
-        self.documents.get(STATUS).and_then(Value::as_str)
+        self.documents.get(STATUS, |thread| self.shown(thread)).and_then(|d| d.value.as_str())
+    }
+
+    /// Whether `thread` is the thread shown: the root, the watched thread,
+    /// or else any thread no call started.
+    fn shown(&self, thread: &str) -> bool {
+        match (&self.root, self.thread.as_str()) {
+            (Some(root), _) => thread == root,
+            (None, "") => self.threads.get(thread).is_none_or(|t| t.parent.is_none()),
+            (None, watched) => thread == watched,
+        }
+    }
+
+    /// The state documents of the thread shown, by key.
+    pub fn documents(&self) -> Vec<&Document> {
+        self.documents.of(|thread| self.shown(thread))
+    }
+
+    pub fn documents_revision(&self) -> u64 {
+        self.documents.revision()
     }
 
     /// Events from a watch stream, in its order: each `seq` is its place.
@@ -947,6 +973,7 @@ impl Conversation {
         }
         if !self.pending() {
             self.orphans.clear();
+            self.documents.settle();
         }
         self.settle(sink);
     }
@@ -1014,6 +1041,7 @@ impl Conversation {
         match event {
             Event::Hello(hello) => {
                 self.capabilities = hello.capabilities;
+                self.thread = hello.thread_id;
                 if let Some(snapshot) = hello.snapshot {
                     (self.earlier, self.oldest_seq) = (snapshot.earlier_items, snapshot.oldest_seq);
                 }
@@ -1148,15 +1176,8 @@ impl Conversation {
                 self.retitle(key, e.title, e.kind);
             }
             Event::MessagesSnapshot(e) => self.snapshot(at, &thread, e.messages),
-            Event::StateSnapshot(e) => {
-                self.documents.insert(e.key.unwrap_or_default(), e.snapshot);
-            }
-            Event::StateDelta(e) => {
-                let document = self.documents.entry(e.key.unwrap_or_default()).or_insert(Value::Null);
-                for op in &e.delta {
-                    patch(document, op);
-                }
-            }
+            Event::StateSnapshot(e) => self.documents.snapshot(at, &thread, e.key.unwrap_or_default(), e.media_type, e.snapshot),
+            Event::StateDelta(e) => self.documents.delta(at, &thread, e.key.unwrap_or_default(), e.media_type, &e.delta),
             Event::Custom(e) if e.name == COMPACTION => {
                 self.create(seq_key(&thread, e.seq, at), order, &thread, || Body::Divider { text: COMPACTION.into() });
             }

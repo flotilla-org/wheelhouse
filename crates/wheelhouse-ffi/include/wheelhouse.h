@@ -136,6 +136,34 @@ typedef struct BinnacleGrid BinnacleGrid;
 // Show workspace_id, after a close; needs no completion.
 #define WHEELHOUSE_EFFECT_SHOW_WORKSPACE 7
 
+#define WHEELHOUSE_CHECKLIST_PENDING 0
+
+#define WHEELHOUSE_CHECKLIST_IN_PROGRESS 1
+
+#define WHEELHOUSE_CHECKLIST_COMPLETED 2
+
+// A status this version doesn't know.
+#define WHEELHOUSE_CHECKLIST_UNKNOWN 3
+
+#define WHEELHOUSE_TASK_KIND_OTHER 0
+
+#define WHEELHOUSE_TASK_KIND_SUBAGENT 1
+
+#define WHEELHOUSE_TASK_KIND_SHELL 2
+
+#define WHEELHOUSE_TASK_KIND_MONITOR 3
+
+#define WHEELHOUSE_TASK_RUNNING 0
+
+#define WHEELHOUSE_TASK_COMPLETED 1
+
+#define WHEELHOUSE_TASK_FAILED 2
+
+#define WHEELHOUSE_TASK_CANCELLED 3
+
+// A status this version doesn't know.
+#define WHEELHOUSE_TASK_UNKNOWN 4
+
 #define WHEELHOUSE_AGENT_INPUT_SENDING 0
 
 #define WHEELHOUSE_AGENT_INPUT_ACCEPTED 1
@@ -740,6 +768,15 @@ typedef struct BinnacleGrid BinnacleGrid;
 // Endpoint's socket, agent_thread, and agent_transport and agent_host).
 #define WHEELHOUSE_SLOT_AGENT_SESSION 6
 
+// State document document_key of the agent session the host slot
+// relative_to shows now (#706): it follows the host, and is HELD while the
+// host has none. A plan resolves it to WHEELHOUSE_SLOT_AGENT_DOCUMENT.
+#define WHEELHOUSE_SLOT_HOST_DOCUMENT 7
+
+// State document document_key of an agent thread, reached as
+// WHEELHOUSE_SLOT_AGENT_SESSION's is: a subagent's, or a pinned View's.
+#define WHEELHOUSE_SLOT_AGENT_DOCUMENT 8
+
 // A rebind closes the instance it replaces.
 #define WHEELHOUSE_REBIND_REPLACE 0
 
@@ -1147,6 +1184,79 @@ typedef struct {
   uint32_t has_primary_target;
   WheelhouseText primary_target;
 } WheelhouseEffect;
+
+// One state document a thread has: its key, and its media type (empty when
+// its producer named none).
+typedef struct {
+  WheelhouseText key;
+  WheelhouseText media_type;
+} WheelhouseAgentDocument;
+
+// The state documents of the thread a conversation shows, by key. Every
+// string is borrowed from the list until wheelhouse_agent_documents_free.
+typedef struct {
+  const WheelhouseAgentDocument *documents;
+  size_t document_count;
+  // As wheelhouse_rich_text_conversation_documents_revision when read:
+  // reads with the same revision saw the same documents.
+  uint64_t revision;
+} WheelhouseAgentDocuments;
+
+// A Checklist step. active_form is how it reads while in progress, empty
+// when the producer gave none.
+typedef struct {
+  WheelhouseText id;
+  WheelhouseText content;
+  // WHEELHOUSE_CHECKLIST_*.
+  uint32_t status;
+  WheelhouseText active_form;
+} WheelhouseChecklistItem;
+
+// A thread's Checklist, in the agent's order; empty when it has none. Every
+// string is borrowed from it until wheelhouse_checklist_free.
+typedef struct {
+  const WheelhouseChecklistItem *items;
+  size_t item_count;
+  // As in WheelhouseAgentDocuments.
+  uint64_t revision;
+} WheelhouseChecklist;
+
+// An Agent Task. Times are milliseconds since the Unix epoch. Empty text is
+// a field the producer left out.
+typedef struct {
+  WheelhouseText id;
+  // WHEELHOUSE_TASK_KIND_*.
+  uint32_t kind;
+  WheelhouseText title;
+  // WHEELHOUSE_TASK_*.
+  uint32_t status;
+  uint64_t started_at;
+  uint32_t has_ended_at;
+  uint64_t ended_at;
+  // The call that started it, in this thread.
+  WheelhouseText tool_call_id;
+  // A subagent's own thread.
+  WheelhouseText child_thread_id;
+  // The turn that started it waits for it.
+  uint32_t awaited;
+  // Where its output is read (wheelhouse_agent_output_open): output_path
+  // is on this machine when output_local is 1, and output_url is on the
+  // producer's endpoint.
+  uint32_t has_output;
+  WheelhouseText output_path;
+  uint32_t output_local;
+  WheelhouseText output_url;
+  WheelhouseText output_media_type;
+} WheelhouseAgentTask;
+
+// A thread's Agent Tasks, finished ones included, in the producer's order.
+// Every string is borrowed from it until wheelhouse_agent_tasks_free.
+typedef struct {
+  const WheelhouseAgentTask *tasks;
+  size_t task_count;
+  // As in WheelhouseAgentDocuments.
+  uint64_t revision;
+} WheelhouseAgentTasks;
 
 // A tab: bytes the core compares, never reads.
 typedef struct {
@@ -1937,6 +2047,11 @@ typedef struct {
   // ssh destination, empty when local.
   WheelhouseText agent_transport;
   WheelhouseText agent_host;
+  // WHEELHOUSE_SLOT_HOST_DOCUMENT: the host slot's key.
+  WheelhouseText relative_to;
+  // WHEELHOUSE_SLOT_HOST_DOCUMENT and _AGENT_DOCUMENT: the state
+  // document's key, such as "checklist".
+  WheelhouseText document_key;
 } WheelhouseViewSpec;
 
 // One named field of a portable Target Resolution.
@@ -2682,6 +2797,30 @@ uint32_t wheelhouse_copy_subject_url(WheelhouseCore *h, WheelhouseEntity entity,
 void wheelhouse_snapshot_release(WheelhouseSnapshot *s);
 
 void wheelhouse_effects_release(WheelhouseEffects *e);
+
+// The thread's state documents, unknown keys included; none for markdown.
+// Free them with wheelhouse_agent_documents_free.
+WheelhouseAgentDocuments *wheelhouse_rich_text_conversation_documents(WheelhouseRichText *h,
+                                                                      char **error_out);
+
+void wheelhouse_agent_documents_free(WheelhouseAgentDocuments *documents);
+
+// Moves when one of the conversation's state documents is added or
+// changes, and only then: read the documents again when it does.
+uint64_t wheelhouse_rich_text_conversation_documents_revision(WheelhouseRichText *h,
+                                                              char **error_out);
+
+// The `checklist` document's steps. Free it with wheelhouse_checklist_free.
+WheelhouseChecklist *wheelhouse_rich_text_conversation_checklist(WheelhouseRichText *h,
+                                                                 char **error_out);
+
+void wheelhouse_checklist_free(WheelhouseChecklist *checklist);
+
+// The `tasks` document's entries. Free them with wheelhouse_agent_tasks_free.
+WheelhouseAgentTasks *wheelhouse_rich_text_conversation_tasks(WheelhouseRichText *h,
+                                                              char **error_out);
+
+void wheelhouse_agent_tasks_free(WheelhouseAgentTasks *tasks);
 
 // Posts `body` to `path` on the Local Endpoint whose socket is `endpoint`,
 // reached as wheelhouse_agent_watch_open reaches it, and returns its
@@ -3593,6 +3732,27 @@ uint32_t wheelhouse_slot_set(WheelhouseCore *h,
                              WheelhouseText key,
                              const WheelhouseViewSpec *spec,
                              uint32_t rebind,
+                             char **error_out);
+
+// Add the user's own slot showing state document document_key of the
+// agent session the slot host shows, following it (WHEELHOUSE_SLOT_HOST_DOCUMENT),
+// for the host to place in host's View Dock. Its key is "u:<n>", past every
+// numbered user slot and no lower than at_least; it goes to key_out.
+uint32_t wheelhouse_slot_add_host_document(WheelhouseCore *h,
+                                           WheelhouseWorkspaceId workspace,
+                                           WheelhouseText host,
+                                           WheelhouseText document_key,
+                                           uint64_t at_least,
+                                           WheelhouseBytes *key_out,
+                                           char **error_out);
+
+// Pin a WHEELHOUSE_SLOT_HOST_DOCUMENT slot to the agent session its host
+// shows now, as when it is dragged out of the dock: it becomes
+// WHEELHOUSE_SLOT_AGENT_DOCUMENT and stops following the host. Fails while
+// the host shows no agent session.
+uint32_t wheelhouse_slot_pin(WheelhouseCore *h,
+                             WheelhouseWorkspaceId workspace,
+                             WheelhouseText key,
                              char **error_out);
 
 // Remove the user's own slot or a detached slot the baseline dropped, or

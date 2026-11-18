@@ -8,7 +8,7 @@
 //! document the host commits whole, at an expected generation.
 use crate::suggested_layout::{self, Axis, BaselineVersion, Content, RebindPolicy, SuggestedLayout, ViewSpec};
 use crate::versioned::Versioned;
-use crate::workspace_layout::{LayoutDefinition, LayoutPlan, Route};
+use crate::workspace_layout::{LayoutDefinition, LayoutPlan, Route, TEMPLATE_PREFIX};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -266,6 +266,9 @@ impl WorkspaceSlots {
     /// anything changed.
     pub fn set(&mut self, key: &str, spec: ViewSpec, rebind: RebindPolicy) -> Result<bool, String> {
         check_spec(&spec)?;
+        if matches!(&spec.content, Content::HostDocument { relative_to, .. } if relative_to == key) {
+            return Err(format!("slot {key:?} can't be its own host"));
+        }
         if let Some(id) = key.strip_prefix(USER_PREFIX) {
             check_key(id).map_err(|_| format!("invalid user slot key {key:?}"))?;
             let slot = SlotDef { key: key.to_owned(), spec, rebind };
@@ -472,6 +475,21 @@ fn check_spec(spec: &ViewSpec) -> Result<(), String> {
             CommandLine::Argv(argv) if argv.is_empty() => return empty("a command"),
             _ => {}
         },
+        Content::HostDocument { relative_to, key } => {
+            let host = [USER_PREFIX, TEMPLATE_PREFIX].iter().find_map(|prefix| relative_to.strip_prefix(prefix)).unwrap_or(relative_to);
+            check_key(host).map_err(|_| format!("a view spec's host {relative_to:?} is no slot key"))?;
+            if key.is_empty() {
+                return empty("a document key");
+            }
+        }
+        Content::Local(LocalRecipe::AgentDocument { transport, host, endpoint, thread, key }) => {
+            if let Some(field) = suggested_layout::invalid_agent_field(*transport, host, endpoint, thread) {
+                return Err(format!("a view spec's agent {field} can't be reached over {}", transport.as_str()));
+            }
+            if key.is_empty() {
+                return empty("a document key");
+            }
+        }
         Content::Local(LocalRecipe::File { path }) if path.is_empty() => return empty("a path"),
         Content::Local(LocalRecipe::Url { url }) if url.is_empty() => return empty("a URL"),
         Content::Local(LocalRecipe::Jackstay { launcher, endpoint }) if launcher.is_empty() || endpoint.is_empty() => {
