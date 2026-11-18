@@ -532,7 +532,10 @@ impl Table {
             Kind::Cells(Cells { rows, source, .. }) => recording(&mut source.over(rows), grid, &mut seen),
             Kind::Huge(huge) => recording(huge, grid, &mut seen),
             Kind::Live(Live { rows, source, .. }) => recording(&mut source.over(rows), grid, &mut seen),
-            Kind::Described(d) => recording(&mut d.source, grid, &mut seen),
+            Kind::Described(d) => {
+                recording(&mut d.source, grid, &mut seen);
+                d.serve();
+            }
         }
         if let Some(step) = step.get() {
             self.find.step = Some(step);

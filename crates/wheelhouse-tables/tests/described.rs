@@ -204,7 +204,51 @@ fn a_stream_that_ends_is_read_again() {
     fake.push(Step::Delete { table: "crews".into(), key: vec![Wire::Int(3.into())] });
     host.until("the resync", |h| h.ids().len() == 9 && h.table.status().is_none());
     assert_eq!(host.ids(), ["0", "1", "2", "4", "5", "6", "7", "8", "9"]);
-    assert_eq!(fake.requests().len(), 2, "one watch, then one more");
+    // The watch, again for the columns' Distinct Values once they are
+    // described, then once more after the end.
+    let targets: Vec<String> = fake.requests().into_iter().map(|r| r.target).collect();
+    assert_eq!(targets.len(), 3, "{targets:?}");
+    assert!(!targets[0].contains("values=") && targets[1].contains("values=") && targets[2] == targets[1], "{targets:?}");
+}
+
+/// A filter set from the column menu goes to the server as a `where`
+/// clause, and the watch opened again for it replaces the one before:
+/// only one stays open, so the source never takes messages of two streams.
+#[test]
+fn a_menu_filter_reopens_the_watch_with_its_where_in_place_of_the_last() {
+    let fake = fake();
+    let mut host = Host::open(&link(&fake, "crews"));
+    host.until("the rows", |h| h.ids().len() == 10);
+    let kept: Vec<String> = (FakeTable::generated("crews", 10).rows.into_iter())
+        .filter(|r| r["phase"] != Wire::Text("Running".into()))
+        .map(|r| match &r["id"] {
+            Wire::Int(id) => id.to_string(),
+            id => panic!("{id:?}"),
+        })
+        .collect();
+    assert!(!kept.is_empty() && kept.len() < 10, "{kept:?}");
+    let phase = host.column("Phase");
+    assert!(host.table.open_menu(&host.grid, phase));
+    host.until("the checklist", |h| h.table.menu_view(&h.grid).is_some_and(|v| v.listed));
+    let view = host.table.menu_view(&host.grid).unwrap();
+    let running = view.values.iter().position(|v| v.label == "Running").expect("Running is listed");
+    host.table.menu_tick(&mut host.grid, running + 1);
+    host.until("the rows kept", |h| h.ids() == kept && h.table.status().is_none());
+    // The request reaches the fake on the watch's own thread.
+    let deadline = Instant::now() + WAIT;
+    while !fake.requests().last().is_some_and(|r| r.target.contains("&where=")) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let last = fake.requests().pop().unwrap().target;
+    assert!(last.ends_with("&where=%21has%28phase%29%20%7C%7C%20%21%28phase%20in%20%5B%22Running%22%5D%29"), "{last}");
+    host.until("the rows kept, from the server", |h| h.ids() == kept && h.table.status().is_none());
+    // A change makes the fake write to every watch, and drop those whose
+    // reader went.
+    while fake.watches() != 1 && Instant::now() < deadline {
+        fake.push(Step::Upsert { table: "crews".into(), row: row(42, "late") });
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(fake.watches(), 1, "the watches before were dropped");
 }
 
 /// A link written from its parts, each percent-encoded as a server would.

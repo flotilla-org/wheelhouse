@@ -52,7 +52,7 @@ fn the_checklist_lists_blanks_first_with_counts_and_unticking_writes_not_one_of(
     let view = table.menu_view(&grid).expect("open");
     assert!(view.one_of && view.text.is_some() && view.compared.is_none());
     assert!(view.listed && !view.partial && view.head_ticked);
-    assert_eq!(view.values[0].label, "(Blanks)");
+    assert_eq!(view.values[0].label, "(null)");
     assert!(view.values[0].blank);
     let counted: u64 = view.values.iter().map(|v| v.count.expect("counted")).sum();
     assert_eq!(counted, all);
@@ -85,7 +85,7 @@ fn the_text_row_writes_contains_or_not_and_leaves_the_checklist_its_one_of() {
     assert_eq!((view.query.text.as_str(), view.not), ("en", true));
     let bergen = view.values.iter().find(|v| v.label == "Bergen").unwrap();
     assert!(bergen.excluded && !bergen.ticked);
-    assert_eq!(table.chips(&grid).iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["port: not (Blanks)", "port: not en"]);
+    assert_eq!(table.chips(&grid).iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["port: not (null)", "port: not en"]);
     // No text asks for no Text condition.
     table.menu_set_text(&mut grid, TextQuery::new(""), false);
     answer(&mut table, &mut grid);

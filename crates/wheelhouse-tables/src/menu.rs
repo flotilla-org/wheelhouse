@@ -8,7 +8,7 @@
 use binnacle_core::{
     Axis, Blanks, Compared, Condition, ConditionKind, ConditionState, FilterSpec, Grid, Key, TextQuery, TextSupport, Value,
 };
-use binnacle_memory::column_filter::{chip_text, compare, Column, Shown};
+use binnacle_memory::column_filter::{chip_text, compare, value_label, Column, Shown};
 use binnacle_memory::PumpSource;
 
 use crate::{Kind, Table};
@@ -68,7 +68,8 @@ pub struct MenuView {
 /// One value in the checklist.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MenuValue {
-    /// Its text, or "(Blanks)" for the blank.
+    /// Its text, as binnacle names a value: "(null)" for the blank,
+    /// "(empty)" for an empty string.
     pub label: String,
     pub blank: bool,
     pub count: Option<u64>,
@@ -162,10 +163,7 @@ impl Table {
             let ticks = column.ticks(&listed.values);
             view.values = (listed.values.iter().zip(&listed.counts).zip(ticks))
                 .map(|((value, count), tick)| MenuValue {
-                    label: match value {
-                        Value::Blank => "(Blanks)".into(),
-                        Value::Text(t) => t.clone(),
-                    },
+                    label: value_label(value).to_owned(),
                     blank: *value == Value::Blank,
                     count: *count,
                     ticked: tick.ticked,

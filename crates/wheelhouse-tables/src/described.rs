@@ -102,10 +102,16 @@ fn decode(text: &str) -> Option<String> {
 
 /// The transport on a thread of its own: it serves the source's requests
 /// and sends back what comes, waking the host once for all the events that
-/// come before it next looks.
+/// come before it next looks. It serves one watch at a time: a request
+/// replaces the watch before (the source asks again when the `where`
+/// clauses its filter sends change), and that watch's events still queued
+/// are dropped, so the source never takes messages of two streams.
 struct Watcher {
-    requests: Option<tokio::sync::mpsc::UnboundedSender<HostRequest>>,
-    events: mpsc::Receiver<Event>,
+    requests: Option<tokio::sync::mpsc::UnboundedSender<(u64, HostRequest)>>,
+    /// Each event with the request it is for.
+    events: mpsc::Receiver<(u64, Event)>,
+    /// How many requests were opened: the latest's number.
+    opened: std::cell::Cell<u64>,
     /// A wake is on its way and the host has not looked since: a snapshot's
     /// thousands of rows wake it once, not once each.
     woken: Arc<AtomicBool>,
@@ -115,7 +121,7 @@ struct Watcher {
 impl Watcher {
     fn start(options: Options, wake: Wake) -> std::io::Result<Watcher> {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        let (requests, mut incoming) = tokio::sync::mpsc::unbounded_channel::<HostRequest>();
+        let (requests, mut incoming) = tokio::sync::mpsc::unbounded_channel::<(u64, HostRequest)>();
         let (events, outgoing) = mpsc::channel();
         let transport = Transport::new(options);
         let wake = Arc::new(wake);
@@ -124,17 +130,21 @@ impl Watcher {
         let thread = thread::Builder::new().name("wheelhouse-table".into()).spawn(move || {
             let local = tokio::task::LocalSet::new();
             local.block_on(&runtime, async move {
-                while let Some(request) = incoming.recv().await {
+                let mut serving: Option<tokio::task::JoinHandle<()>> = None;
+                while let Some((number, request)) = incoming.recv().await {
+                    if let Some(old) = serving.take() {
+                        old.abort();
+                    }
                     let (transport, events, wake, pending) = (transport.clone(), events.clone(), wake.clone(), pending.clone());
-                    tokio::task::spawn_local(async move {
+                    serving = Some(tokio::task::spawn_local(async move {
                         transport
                             .watch(&request, |event| {
-                                if events.send(event).is_ok() && !pending.swap(true, Ordering::AcqRel) {
+                                if events.send((number, event)).is_ok() && !pending.swap(true, Ordering::AcqRel) {
                                     wake();
                                 }
                             })
                             .await;
-                    });
+                    }));
                 }
             });
             // Not a plain drop, which waits out a name lookup still running
@@ -142,19 +152,22 @@ impl Watcher {
             // on this one.
             runtime.shutdown_background();
         })?;
-        Ok(Watcher { requests: Some(requests), events: outgoing, woken, thread: Some(thread) })
+        Ok(Watcher { requests: Some(requests), events: outgoing, opened: std::cell::Cell::new(0), woken, thread: Some(thread) })
     }
 
-    /// The events that came since the host last looked; any that come after
-    /// wake it again.
-    fn take(&self) -> mpsc::TryIter<'_, Event> {
+    /// The events of the latest watch that came since the host last looked;
+    /// any that come after wake it again.
+    fn take(&self) -> impl Iterator<Item = Event> + '_ {
         self.woken.store(false, Ordering::Release);
-        self.events.try_iter()
+        self.events.try_iter().filter_map(|(number, event)| (number == self.opened.get()).then_some(event))
     }
 
+    /// Serves `request` in place of the watch served before.
     fn open(&self, request: HostRequest) {
         if let Some(requests) = &self.requests {
-            let _ = requests.send(request);
+            let number = self.opened.get() + 1;
+            self.opened.set(number);
+            let _ = requests.send((number, request));
         }
     }
 }
@@ -181,7 +194,7 @@ enum Connection {
         body: String,
     },
     Failed {
-        status: u16,
+        status: Option<u16>,
         body: String,
     },
 }
@@ -228,6 +241,10 @@ impl Described {
                     self.connection = Connection::Failed { status, body: text(&body) };
                     continue;
                 }
+                Event::Unserved(why) => {
+                    self.connection = Connection::Failed { status: None, body: why.to_string() };
+                    continue;
+                }
                 // Bytes that are no message: the stream goes on.
                 _ => continue,
             };
@@ -251,12 +268,19 @@ impl Described {
                 }
             }
         }
-        while let Some(request) = self.source.poll_request() {
-            self.watcher.open(request);
-        }
+        self.serve();
         let options = FormatOptions::default();
         let relative = self.source.columns().iter().any(|c| options.relative_dates(c.role()));
         ((relative && self.source.row_count() != 0).then_some(RELATIVE_DATES), changed)
+    }
+
+    /// Opens the watches the source asks for: after what came (a stream
+    /// that ended, columns described), and after a View Spec that changes
+    /// the `where` clauses its filter sends.
+    pub fn serve(&mut self) {
+        while let Some(request) = self.source.poll_request() {
+            self.watcher.open(request);
+        }
     }
 
     /// How the columns start: binnacle's generic Layout (Nested columns
@@ -308,9 +332,9 @@ fn status_line(connection: &Connection, status: &Status, rows: usize) -> Option<
     match connection {
         Connection::Failed { status, body } => {
             return Some(match (status, body.is_empty()) {
-                (0, _) => format!("Couldn't read the table: {body}"),
-                (_, true) => format!("Couldn't read the table: HTTP {status}"),
-                (_, false) => format!("Couldn't read the table: HTTP {status}: {body}"),
+                (None, _) => format!("Couldn't read the table: {body}"),
+                (Some(status), true) => format!("Couldn't read the table: HTTP {status}"),
+                (Some(status), false) => format!("Couldn't read the table: HTTP {status}: {body}"),
             });
         }
         Connection::Retrying { attempt, status, body } => {
