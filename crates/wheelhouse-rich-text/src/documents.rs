@@ -128,7 +128,9 @@ impl Documents {
         self.revision += 1;
     }
 
-    /// No earlier event will arrive: what was kept to fold one in goes.
+    /// No earlier event will arrive: what was kept to fold one in goes. It
+    /// holds from then on; an event read late after it is dropped, as one
+    /// was before documents kept anything.
     pub fn settle(&mut self) {
         self.settled = true;
         for document in self.threads.values_mut().flat_map(BTreeMap::values_mut) {
