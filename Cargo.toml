@@ -28,20 +28,20 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-# binnacle draws the tables (#505). Pinned by revision: the repos move together.
-binnacle-core = { git = "https://github.com/flotilla-org/binnacle.git", rev = "76e723604f5bb8a5858656cd9118b5855b3954ab" }
-binnacle-ffi = { git = "https://github.com/flotilla-org/binnacle.git", rev = "76e723604f5bb8a5858656cd9118b5855b3954ab" }
-binnacle-memory = { git = "https://github.com/flotilla-org/binnacle.git", rev = "76e723604f5bb8a5858656cd9118b5855b3954ab" }
-binnacle-described = { git = "https://github.com/flotilla-org/binnacle.git", rev = "76e723604f5bb8a5858656cd9118b5855b3954ab" }
-binnacle-described-http = { git = "https://github.com/flotilla-org/binnacle.git", rev = "76e723604f5bb8a5858656cd9118b5855b3954ab" }
-binnacle-layout = { git = "https://github.com/flotilla-org/binnacle.git", rev = "76e723604f5bb8a5858656cd9118b5855b3954ab" }
-binnacle-format = { git = "https://github.com/flotilla-org/binnacle.git", rev = "76e723604f5bb8a5858656cd9118b5855b3954ab" }
-binnacle-testkit = { git = "https://github.com/flotilla-org/binnacle.git", rev = "76e723604f5bb8a5858656cd9118b5855b3954ab" }
-# Shared crates (flotilla ADR 0068), pinned once here.
-flotilla-cbor = { git = "https://github.com/flotilla-org/rigging", rev = "1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd" }
-rigging-http-serve = { git = "https://github.com/flotilla-org/rigging", rev = "1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd" }
-rigging-http-client = { git = "https://github.com/flotilla-org/rigging", rev = "1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd", default-features = false }
-rigging-http-wire = { git = "https://github.com/flotilla-org/rigging", rev = "1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd" }
+# binnacle draws the tables (#505).
+binnacle-core = { git = "https://github.com/flotilla-org/binnacle", branch = "main" }
+binnacle-ffi = { git = "https://github.com/flotilla-org/binnacle", branch = "main" }
+binnacle-memory = { git = "https://github.com/flotilla-org/binnacle", branch = "main" }
+binnacle-described = { git = "https://github.com/flotilla-org/binnacle", branch = "main" }
+binnacle-described-http = { git = "https://github.com/flotilla-org/binnacle", branch = "main" }
+binnacle-layout = { git = "https://github.com/flotilla-org/binnacle", branch = "main" }
+binnacle-format = { git = "https://github.com/flotilla-org/binnacle", branch = "main" }
+binnacle-testkit = { git = "https://github.com/flotilla-org/binnacle", branch = "main" }
+# Shared crates. Declared by branch, as rigging's README asks; Cargo.lock holds the commits.
+flotilla-cbor = { git = "https://github.com/flotilla-org/rigging", branch = "main" }
+rigging-http-serve = { git = "https://github.com/flotilla-org/rigging", branch = "main" }
+rigging-http-client = { git = "https://github.com/flotilla-org/rigging", branch = "main", default-features = false }
+rigging-http-wire = { git = "https://github.com/flotilla-org/rigging", branch = "main" }
 ansi_term = "0.12"
 crossterm = "0.28.1"
 insta = "1"
