@@ -1217,7 +1217,8 @@ typedef struct {
 typedef struct {
   const WheelhouseAgentDocument *documents;
   size_t document_count;
-  // As wheelhouse_rich_text_conversation_documents_revision.
+  // As wheelhouse_rich_text_conversation_documents_revision when read:
+  // reads with the same revision saw the same documents.
   uint64_t revision;
 } WheelhouseAgentDocuments;
 
@@ -1236,6 +1237,7 @@ typedef struct {
 typedef struct {
   const WheelhouseChecklistItem *items;
   size_t item_count;
+  // As in WheelhouseAgentDocuments.
   uint64_t revision;
 } WheelhouseChecklist;
 
@@ -1272,6 +1274,7 @@ typedef struct {
 typedef struct {
   const WheelhouseAgentTask *tasks;
   size_t task_count;
+  // As in WheelhouseAgentDocuments.
   uint64_t revision;
 } WheelhouseAgentTasks;
 
