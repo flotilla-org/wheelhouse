@@ -2496,12 +2496,12 @@ uishell_sidebar_disclosure(B32 expanded, String8 key)
 // How much further in than its group's title a group's rows' icons start.
 global F32 uishell_sidebar_group_row_inset = 0.6f;
 
-// The room before a group header's title, after its 3px accent: its text
-// starts where its rows' icons do, `indent` ems in.
+// The room before a group header's title: its text starts where its rows'
+// icons do, `indent` ems in.
 internal F32
 uishell_sidebar_group_title_lead(F32 indent)
 {
-  return Max(0.f, ui_top_font_size()*indent-3.f-ui_top_text_padding());
+  return Max(0.f, ui_top_font_size()*indent-ui_top_text_padding());
 }
 
 // A group header's title stands out from its rows by weight, or by size when
@@ -3699,14 +3699,8 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   ui_push_pref_height(ui_pct(1, 1));
   if(r->project)
   {
-    UI_BackgroundColor(uishell_sidebar_card_accent(r->node)) UI_PrefWidth(ui_px(3.f, 1))
-    { ui_build_box_from_stringf(UI_BoxFlag_DrawBackground, "###accent_%S", r->key); }
-  }
-  if(r->project)
-  {
     // A group's header (docs/design/sidebar-headers.md): no icon; the title
-    // starts where its rows' icons do (r->indent is theirs), just after the
-    // accent, and is semibold (or larger, for a Settings font). The collapse
+    // starts where its rows' icons do (r->indent is theirs), and is semibold (or larger, for a Settings font). The collapse
     // indicator follows the title, shown while hovered. Counts trail status
     // so collapsing a group cannot move its indicator. The row takes clicks.
     ui_spacer(ui_px(uishell_sidebar_group_title_lead(r->indent), 1));
@@ -4937,7 +4931,7 @@ uishell_sidebar_render(Rng2F32 rect, UIShell_ControlledSplit *split, UIShell_Sid
               if(shown) { lead += fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0, push_str8f(scratch.arena, "%I64u", shown)).x + 4.f + 2*ui_top_text_padding(); }
             }
           }
-          F32 available_width = Max(0.f, row_width-lead-status_width-(project ? 3.f : 0.f));
+          F32 available_width = Max(0.f, row_width-lead-status_width);
           F32 overflow_width = chip_count ? Max(em*2.5f,
             fnt_dim_from_tag_size_string(ui_top_font(), em, 0, 0,
               push_str8f(scratch.arena, "+%I64u", chip_count)).x+8.f) : 0;
