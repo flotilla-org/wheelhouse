@@ -170,6 +170,7 @@ fn an_untitled_field_starts_hidden() {
         ],
         primary_key: vec!["id".into()],
         foreign_keys: Vec::new(),
+        subject: None,
     };
     let rows = (0..3).map(|i| {
         let mut row = row(i, &format!("n{i}"));
@@ -315,4 +316,65 @@ fn what_is_no_table_link_parses_to_nothing() {
 fn a_plus_in_a_query_is_a_space_and_an_escaped_one_is_a_plus() {
     let link = Link::parse("http://host/tables/crews?where=a+%3E+1&where=b%2Bc").expect("parses");
     assert_eq!(link.wheres, ["a > 1", "b+c"]);
+}
+
+#[test]
+fn a_copy_takes_the_dates_and_units_as_drawn() {
+    use binnacle_core::{Action, FocusStep};
+    let fake = fake();
+    let mut host = Host::open(&link(&fake, "crews"));
+    host.until("the rows", |h| h.ids().len() == 10);
+    let (started, load) = (host.column("Started"), host.column("Load"));
+    let rows: Vec<Key> = host.grid.snapshot().strip(Axis::Rows).iter().filter_map(|r| r.key).collect();
+    host.grid.set_focus(rows[1], started);
+    host.frame();
+    host.grid.action(Action::MoveFocus { axis: Axis::Rows, by: FocusStep::Item, forward: true, extend: true });
+    host.grid.action(Action::MoveFocus { axis: Axis::Cols, by: FocusStep::Item, forward: true, extend: true });
+    host.frame();
+
+    host.grid.action(Action::Copy);
+    host.frame();
+    let copied = host.table.take_copy().expect("a copy");
+    let drawn = |h: &Host, r: Key| format!("{}\t{}", h.table.cell(r, started).text, h.table.cell(r, load).text);
+    assert_eq!(copied, format!("{}\n{}", drawn(&host, rows[1]), drawn(&host, rows[2])));
+    // Not the wire's values: an RFC 3339 time and a bare number.
+    let lines: Vec<(&str, &str)> = copied.lines().filter_map(|l| l.split_once('\t')).collect();
+    assert_eq!(lines.iter().map(|l| l.1).collect::<Vec<_>>(), ["3.7%", "7.4%"]);
+    assert!(lines.iter().all(|l| !l.0.is_empty() && !l.0.contains(':')), "{copied}");
+}
+
+#[test]
+fn grouped_rows_copy_led_by_their_labels() {
+    use binnacle_core::{Action, Grouping, Level, Placement};
+    let fake = fake();
+    let mut host = Host::open(&link(&fake, "crews"));
+    host.until("the rows", |h| h.ids().len() == 10);
+    let phase = host.column("Phase");
+    let mut grouping = Grouping::rows_by(phase);
+    grouping.row_levels = vec![Level::Field { field: phase, subtotal: Placement::After }];
+    grouping.rows.grand_total = Placement::After;
+    let spec = host.grid.applied_view().clone().with_grouping(Some(grouping));
+    host.grid.request_view(spec);
+    host.frame();
+    host.grid.action(Action::SelectAll);
+    host.grid.action(Action::Copy);
+    host.frame();
+    let copied = host.table.take_copy().expect("a copy");
+    // A Summary Item's row leads with its label, a Leaf's with its number,
+    // as the row header band draws them.
+    let lines: Vec<Vec<&str>> = copied.lines().map(|l| l.split('\t').collect()).collect();
+    let summaries: Vec<&str> = lines.iter().map(|l| l[0]).filter(|l| l.parse::<u64>().is_err()).collect();
+    let phases = ["(null)", "Done", "Pending", "Running", "Stalled"];
+    let want: Vec<String> = (phases.iter()).flat_map(|p| [p.to_string(), format!("{p} total")]).chain(["Grand total".to_owned()]).collect();
+    let mut sorted = summaries.clone();
+    sorted.sort_by_key(|l| want.iter().position(|w| w == l));
+    assert_eq!(sorted, want, "{copied}");
+    assert_eq!(lines.len(), want.len() + 10, "and the ten rows");
+    for (i, line) in lines.iter().enumerate() {
+        match phases.contains(&line[0]) {
+            // Its Subtotal draws the figures, so the Group Item copies none.
+            true => assert!(line[1..].iter().all(|c| c.is_empty()), "line {i} of {copied}"),
+            false => assert!(summaries.contains(&line[0]) || line[0] == (i + 1).to_string(), "line {i} of {copied}"),
+        }
+    }
 }

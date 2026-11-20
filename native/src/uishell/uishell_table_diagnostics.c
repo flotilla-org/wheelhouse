@@ -49,6 +49,24 @@ uishell_table_diag_no_text(void *user, UI_Box *box, Rng2F32 cell, Rng2F32 clip, 
   (void)user; (void)box; (void)cell; (void)clip; (void)text; (void)right; (void)color;
 }
 
+// The clipboard the copy checks write to, in place of the OS's.
+typedef struct UIShell_TableDiagClip UIShell_TableDiagClip;
+struct UIShell_TableDiagClip
+{
+  U8 bytes[4096];
+  U64 size;
+  U32 writes;
+};
+
+internal void
+uishell_table_diag_clip_write(void *user, String8 text)
+{
+  UIShell_TableDiagClip *clip = user;
+  clip->writes += 1;
+  clip->size = Min(sizeof(clip->bytes), text.size);
+  MemoryCopy(clip->bytes, text.str, clip->size);
+}
+
 internal String8
 uishell_table_diag_cell(Arena *arena, WheelhouseTable *table, U64 row, U64 col)
 {
@@ -792,6 +810,76 @@ uishell_table_diagnostics(RD_WindowState *ws)
           state->filter_size = 0;
         }
       }
+    }
+    // Copy (#787): a block selected and copied with the platform's copy
+    // command lands on the clipboard as its cells' text, tab-separated; on
+    // the huge table, every cell is too many, so nothing is copied and the
+    // status line says why.
+    {
+      UIShell_TableDiagClip clip = {0};
+      WM_ClipboardIO saved_clip = wm_clipboard_io;
+      wm_clipboard_io = (WM_ClipboardIO){&clip, uishell_table_diag_clip_write, 0, 0};
+      String8 names[] = {str8_lit("records"), str8_lit("huge")};
+      for EachElement(n, names)
+      {
+        B32 huge = n == 1;
+        CFG_Node *view = rd_fixture_view(panel, str8_lit("table"), names[n], 1);
+        RD_ViewAddress address = rd_view_address_from_cfg(view);
+        UIShell_RegsScope(.window = ws->cfg_id, .panel = panel, .tab = address, .view = address)
+        {
+          UI_Event none = {0};
+          Vec2F32 away = v2f32(450, 300);
+          UI_Box *part = &ui_nil_box, *grid_box = &ui_nil_box;
+          for(U32 frame = 0; frame < 3; frame += 1) { grid_box = uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part); }
+          UIShell_TableState *state = (UIShell_TableState *)rd_view_state_from_view(address, 0)->user_data;
+          BinnacleSnapshot *snap = ui_box_is_nil(grid_box) ? 0 : &((UIShell_TableDraw *)grid_box->custom_draw_user_data)->snap;
+          TableCheck(state && state->table && snap && snap->axes[BINNACLE_ROWS].strip_len > 2 && snap->axes[BINNACLE_COLS].strip_len > 2,
+                     "the copy checks' table shows a block to select");
+          if(state && state->table && snap && snap->axes[BINNACLE_ROWS].strip_len > 2 && snap->axes[BINNACLE_COLS].strip_len > 2)
+          {
+            BinnacleGrid *grid = wheelhouse_table_grid(state->table);
+            BinnacleStripItem *rows = snap->axes[BINNACLE_ROWS].strip, *cols = snap->axes[BINNACLE_COLS].strip;
+            U64 row_keys[2] = {rows[1].key, rows[2].key}, col_keys[2] = {cols[1].key, cols[2].key};
+            // A click through the View, so the Grid has the keys.
+            Vec2F32 cell = v2f32(grid_box->rect.x0 + cols[1].offset + cols[1].size/2, grid_box->rect.y0 + rows[1].offset + rows[1].size/2);
+            UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = cell, .timestamp_us = now_time_us()};
+            UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = cell};
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, press, cell, UIShell_TableDiagBar_Thumb, &part);
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, release, cell, UIShell_TableDiagBar_Thumb, &part);
+            BinnacleAction a = {sizeof(a), huge ? BINNACLE_ACTION_SELECT_ALL : BINNACLE_ACTION_MOVE_FOCUS};
+            for(U32 axis = 0; axis < (huge ? 1 : 2); axis += 1)
+            {
+              if(!huge) { a.args.move_focus = (BinnacleMoveFocus){axis, BINNACLE_FOCUS_ITEM, 1, 1}; }
+              binnacle_grid_action(grid, &a);
+            }
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part);
+            clip.writes = 0;
+            UI_Event copy = {.kind = UI_EventKind_Edit, .flags = UI_EventFlag_Copy|UI_EventFlag_KeepMark};
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, copy, away, UIShell_TableDiagBar_Thumb, &part);
+            uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, none, away, UIShell_TableDiagBar_Thumb, &part);
+            if(huge)
+            {
+              String8 status = uishell_table_text(wheelhouse_table_status(state->table));
+              TableCheck(clip.writes == 0, "copying every cell of the huge table puts nothing on the clipboard");
+              TableCheck(str8_match(str8_prefix(status, 24), str8_lit("Too many cells to copy ("), 0), "and its status line says why");
+            }
+            else
+            {
+              String8List lines = {0};
+              for EachElement(r, row_keys)
+              {
+                String8 left = uishell_table_diag_cell(scratch.arena, state->table, row_keys[r], col_keys[0]);
+                String8 right = uishell_table_diag_cell(scratch.arena, state->table, row_keys[r], col_keys[1]);
+                str8_list_pushf(scratch.arena, &lines, "%S\t%S", left, right);
+              }
+              String8 want = str8_list_join(scratch.arena, &lines, &(StringJoin){.sep = str8_lit("\n")});
+              TableCheck(clip.writes == 1 && str8_match(str8(clip.bytes, clip.size), want, 0),
+                         "a copied block lands on the clipboard once, as tab-separated lines of its cells");
+            }
+          }
+        }
+      }
+      wm_clipboard_io = saved_clip;
     }
     // Column sizes (#535): the records table starts with its columns fitted
     // to their first values; over a border the pointer shows a resize, a

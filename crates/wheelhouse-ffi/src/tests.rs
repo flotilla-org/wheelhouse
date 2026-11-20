@@ -1,7 +1,7 @@
 //! Marshalling the core can't see: what C reads from snapshots and effects.
 use super::*;
 use crate::tables::*;
-use binnacle_core::Axis;
+use binnacle_core::{Action as GridAction, Axis, Key};
 use std::ffi::CStr;
 use std::mem::MaybeUninit;
 use wheelhouse_core::tab_workspace_id;
@@ -1422,6 +1422,27 @@ fn a_table_of_given_cells_opens_from_its_cells_alone() {
         assert_eq!(wheelhouse_table_cell(table, 0, 1, &mut align).read().unwrap(), "4");
         assert_eq!(align, WHEELHOUSE_TABLE_ALIGN_RIGHT);
         assert_eq!(wheelhouse_table_header(table, 1, 0, 0).read().unwrap(), "name");
+        wheelhouse_table_free(table);
+    }
+}
+
+/// A copy through C is taken once after the frame that answers it; there
+/// is none before, after, or for a NULL table.
+#[test]
+fn a_tables_copy_is_taken_once_through_c() {
+    unsafe {
+        let cells = [text("name"), text("crew"), text("Kestrel"), text("4"), text("Tern"), text("2")];
+        let table = wheelhouse_table_open_cells(cells.as_ptr(), 2, 3, ptr::null(), 20.0, 8.0);
+        wheelhouse_table_frame(table, 800.0, 600.0, 0);
+        assert!(wheelhouse_table_take_copy(table).data.is_null(), "nothing copied yet");
+        let grid = (*wheelhouse_table_grid(table)).grid_mut();
+        grid.set_focus(Key(0), Key(0));
+        grid.action(GridAction::SelectAll);
+        grid.action(GridAction::Copy);
+        wheelhouse_table_frame(table, 800.0, 600.0, 0);
+        assert_eq!(wheelhouse_table_take_copy(table).read().unwrap(), "Kestrel\t4\nTern\t2");
+        assert!(wheelhouse_table_take_copy(table).data.is_null(), "taken once");
+        assert!(wheelhouse_table_take_copy(ptr::null_mut()).data.is_null());
         wheelhouse_table_free(table);
     }
 }

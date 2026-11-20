@@ -16,9 +16,11 @@ use std::ops::Range;
 use std::time::Duration;
 
 use binnacle_core::{
-    Axis, AxisConfig, Distinct, DistinctQuery, Effect, FindDirection, FindMatch, FindQuery, Grid, Key, Located, Position, Scalar, Stamped,
-    Support, TextQuery, TextSupport, ViewSpec, Viewport,
+    Axis, AxisConfig, Distinct, DistinctQuery, Effect, FindDirection, FindMatch, FindQuery, Grid, ItemKind, Key, Located, Outline,
+    Position, Scalar, Stamped, Support, TextQuery, TextSupport, ViewSpec, Viewport,
 };
+use binnacle_memory::column_filter::value_label;
+use binnacle_memory::copy::{gather, CopyText};
 use binnacle_memory::{pump, FindCount, FindStep, IdentitySource, MemorySource, Moved, PumpSource, Viewed};
 
 /// The tables, by the name a host opens them with.
@@ -238,6 +240,63 @@ pub struct Table {
     quick: Option<TextQuery>,
     /// The column menu, while open.
     menu: Option<menu::Menu>,
+    /// The text of the last copy, until the host takes it.
+    copied: Option<String>,
+    note: Option<Note>,
+}
+
+/// How long the status line says a copy failed.
+const NOTE: Duration = Duration::from_secs(4);
+
+/// What the status line says for a while: its `until` is set at the first
+/// tick after it, as only a tick knows the host's clock.
+struct Note {
+    text: String,
+    until: Option<Duration>,
+}
+
+/// What a `CopyRequested` Effect names.
+struct Copy {
+    rows: Vec<Range<Position>>,
+    cols: Vec<Range<Position>>,
+    row_labels: bool,
+}
+
+/// How many Positions `runs` hold.
+fn count(runs: &[Range<Position>]) -> u64 {
+    runs.iter().map(|r| r.end.saturating_sub(r.start)).sum()
+}
+
+/// `n` with its thousands apart: 1,000,000.
+fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i != 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+impl CopyText for Table {
+    fn cell(&self, row: Key, col: Key) -> String {
+        Table::cell(self, row, col).text
+    }
+
+    fn group_label(&self, _: Key, outline: &Outline) -> String {
+        let value = outline.group.as_ref().map_or("", |g| value_label(&g.value));
+        match outline.kind {
+            ItemKind::GrandTotal => "Grand total".into(),
+            ItemKind::Subtotal => format!("{value} total"),
+            _ => value.into(),
+        }
+    }
+
+    fn row_header(&self, row: Key, position: Position) -> String {
+        self.header(Axis::Rows, row, position)
+    }
 }
 
 /// What the host's find bar shows: the Find Query in force, the last
@@ -339,6 +398,10 @@ fn records_source(rows: &[Record]) -> MemorySource<Record> {
 }
 
 impl Table {
+    fn new(kind: Kind, metrics: Metrics) -> Table {
+        Table { kind, metrics, find: Find::default(), quick: None, menu: None, copied: None, note: None }
+    }
+
     /// The table named `name` (one of [`NAMES`]) and a Grid set up for it,
     /// sized in `metrics`.
     pub fn open(name: &str, metrics: Metrics) -> Option<(Table, Grid)> {
@@ -365,7 +428,7 @@ impl Table {
                 let id = source.support(Axis::Rows, Key(0)).with_text(None).with_one_of(false).with_compare(None);
                 grid.set_support(Axis::Rows, Key(0), id);
                 let kind = Kind::Records { rows, source: Box::new(source) };
-                Some((Table { kind, metrics, find: Find::default(), quick: None, menu: None }, grid))
+                Some((Table::new(kind, metrics), grid))
             }
             "huge" => {
                 let digits = HUGE_ROWS.to_string().len() as f32;
@@ -378,14 +441,14 @@ impl Table {
                     grid.set_support(Axis::Rows, Key(c), none);
                 }
                 let kind = Kind::Huge(Huge { rows: IdentitySource::new(HUGE_ROWS), cols: IdentitySource::new(HUGE_COLS) });
-                Some((Table { kind, metrics, find: Find::default(), quick: None, menu: None }, grid))
+                Some((Table::new(kind, metrics), grid))
             }
             "live" => {
                 let grid = new_grid(
                     AxisConfig::new(TICKERS as u64, line).header(line),
                     AxisConfig::new(TICKER_HEADERS.len() as u64, 12.0 * digit).header(5.0 * digit).gap(1.0),
                 );
-                Some((Table { kind: Kind::Live(Live::new()), metrics, find: Find::default(), quick: None, menu: None }, grid))
+                Some((Table::new(Kind::Live(Live::new()), metrics), grid))
             }
             _ => None,
         }
@@ -421,7 +484,7 @@ impl Table {
             grid.set_support(Axis::Rows, Key(c), source.support(Axis::Rows, Key(c)));
         }
         let kind = Kind::Cells(Cells { header, rows, right, source: Box::new(source) });
-        (Table { kind, metrics, find: Find::default(), quick: None, menu: None }, grid)
+        (Table::new(kind, metrics), grid)
     }
 
     /// The described table at `link` and an empty Grid for it, sized in
@@ -434,7 +497,7 @@ impl Table {
             AxisConfig::new(0, metrics.line).header(metrics.line),
             AxisConfig::new(0, 14.0 * metrics.digit).header(5.0 * metrics.digit).gap(1.0),
         );
-        Some((Table { kind: Kind::Described(Box::new(described)), metrics, find: Find::default(), quick: None, menu: None }, grid))
+        Some((Table::new(Kind::Described(Box::new(described)), metrics), grid))
     }
 
     /// Resizes `grid` for new `metrics`, as when the host's text size
@@ -462,12 +525,21 @@ impl Table {
 
     /// What the host shows about the table above it, if anything: a
     /// described table connecting, loading, retrying or failed, or partly
-    /// shown.
+    /// shown; first, for a few seconds, a copy that failed.
     pub fn status(&self) -> Option<String> {
+        if let Some(note) = &self.note {
+            return Some(note.text.clone());
+        }
         match &self.kind {
             Kind::Described(d) => d.status(),
             _ => None,
         }
+    }
+
+    /// The text of the last copy, to put on the clipboard: once, then `None`
+    /// until the next.
+    pub fn take_copy(&mut self) -> Option<String> {
+        self.copied.take()
     }
 
     /// Advances the table's own clock to `now` (the host's, from any fixed
@@ -475,6 +547,21 @@ impl Table {
     /// changes again by itself, or `None` if it never does.
     /// A described table takes in what came from its server.
     pub fn tick(&mut self, grid: &mut Grid, now: Duration) -> Option<Duration> {
+        let note = self.note.as_mut().and_then(|note| {
+            let until = *note.until.get_or_insert(now + NOTE);
+            until.checked_sub(now).filter(|left| !left.is_zero())
+        });
+        if note.is_none() {
+            self.note = None;
+        }
+        let wake = self.tick_kind(grid, now);
+        match (note, wake) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    fn tick_kind(&mut self, grid: &mut Grid, now: Duration) -> Option<Duration> {
         let live = match &mut self.kind {
             Kind::Live(live) => live,
             Kind::Described(d) => {
@@ -502,12 +589,15 @@ impl Table {
     }
 
     /// Answers the Effects the source answers (View Specs, Locates, moves,
-    /// find steps) and hands every other one to `pass_on`, in order.
-    /// A Find Query that changes is kept for [`Table::find_count`] and
-    /// [`Table::find_marks`], and passed on too.
+    /// find steps) and copies, and hands every other one to `pass_on`, in
+    /// order. A Find Query that changes is kept for [`Table::find_count`]
+    /// and [`Table::find_marks`], and passed on too. A copy's text waits
+    /// for [`Table::take_copy`]; past binnacle's `COPY_LIMIT` cells nothing
+    /// is copied, and the status line says so.
     pub fn pump(&mut self, grid: &mut Grid, mut pass_on: impl FnMut(Stamped)) {
         let find = &mut self.find;
         let quick = &mut self.quick;
+        let mut copy = None;
         // The last step answered, unless a new query came after it.
         let step = std::cell::Cell::new(None);
         let mut seen = |_: &mut Grid, stamped: Stamped| match &stamped.effect {
@@ -517,6 +607,9 @@ impl Table {
                 *quick = spec.rows.filter.quick.clone();
             }
             Effect::Locate { .. } | Effect::MoveRequested { .. } | Effect::FindStepRequested { .. } => {}
+            Effect::CopyRequested { rows, cols, row_labels, .. } => {
+                copy = Some(Copy { rows: rows.clone(), cols: cols.clone(), row_labels: *row_labels });
+            }
             Effect::FindRequested { query } => {
                 *find = Find { query: query.clone(), step: None, count: None };
                 step.set(None);
@@ -540,6 +633,20 @@ impl Table {
         if let Some(step) = step.get() {
             self.find.step = Some(step);
         }
+        if let Some(copy) = copy {
+            self.copy(grid, &copy);
+        }
+    }
+
+    fn copy(&mut self, grid: &Grid, copy: &Copy) {
+        let Some(copied) = gather(&copy.rows, &copy.cols, copy.row_labels, |axis, run| self.window(axis, run)) else {
+            let cells = count(&copy.rows).saturating_mul(count(&copy.cols));
+            self.copied = None;
+            self.note = Some(Note { text: format!("Too many cells to copy ({})", thousands(cells)), until: None });
+            return;
+        };
+        self.copied = Some(copied.text(self, grid.applied_view().grouping.as_ref()));
+        self.note = None;
     }
 
     /// Whether the rows' quick filter last asked for is the one `grid`
@@ -596,18 +703,22 @@ impl Table {
     /// Starts `grid`'s frame for `viewport` and fills the Windows it asks for.
     pub fn fill(&mut self, grid: &mut Grid, viewport: Viewport) {
         for (axis, range) in grid.begin_frame(viewport) {
-            let keys = self.window(axis, range.clone());
+            let (keys, _) = self.window(axis, range.clone());
             grid.set_window(axis, range.start, &keys);
         }
     }
 
-    fn window(&mut self, axis: Axis, range: Range<u64>) -> Vec<Key> {
+    /// The Keys at `range` on `axis`, and their outlines where it is grouped.
+    fn window(&mut self, axis: Axis, range: Range<u64>) -> (Vec<Key>, Option<Vec<Outline>>) {
         match &mut self.kind {
-            Kind::Records { source, .. } => source.window(axis, range),
-            Kind::Cells(cells) => cells.source.window(axis, range),
-            Kind::Huge(huge) => huge.axis(axis).window(range),
-            Kind::Live(live) => live.source.window(axis, range),
-            Kind::Described(d) => d.source.window(axis, range).keys,
+            Kind::Records { source, .. } => (source.window(axis, range), None),
+            Kind::Cells(cells) => (cells.source.window(axis, range), None),
+            Kind::Huge(huge) => (huge.axis(axis).window(range), None),
+            Kind::Live(live) => (live.source.window(axis, range), None),
+            Kind::Described(d) => {
+                let window = d.source.window(axis, range);
+                (window.keys, window.outlines)
+            }
         }
     }
 

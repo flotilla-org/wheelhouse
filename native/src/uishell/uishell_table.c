@@ -1537,6 +1537,8 @@ WH_VIEW_UI_FUNCTION_DEF(table)
   // The frame: the core answers and fills, then the Grid lays out.
   U64 now = now_time_us();
   U64 wake = wheelhouse_table_frame(state->table, grid_dim.x, grid_dim.y, now);
+  WheelhouseText copied = wheelhouse_table_take_copy(state->table);
+  if(copied.data != 0) { wm_set_clipboard_text(uishell_table_text(copied)); }
   // What came this frame can change the status line laid out above.
   if(!str8_match(status, uishell_table_text(wheelhouse_table_status(state->table)), 0)) { rd_request_frame(); }
   UIShell_TableDraw *draw = push_array(ui_build_arena(), UIShell_TableDraw, 1);
