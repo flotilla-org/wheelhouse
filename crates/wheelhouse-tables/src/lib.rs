@@ -774,3 +774,17 @@ impl Table {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::thousands;
+
+    #[test]
+    fn thousands_are_set_apart_by_commas() {
+        let cases = [(0, "0"), (999, "999"), (1000, "1,000"), (123_456, "123,456"), (1_000_000, "1,000,000")];
+        for (n, want) in cases {
+            assert_eq!(thousands(n), want);
+        }
+        assert_eq!(thousands(u64::MAX), "18,446,744,073,709,551,615");
+    }
+}
