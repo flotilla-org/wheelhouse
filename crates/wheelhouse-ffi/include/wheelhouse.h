@@ -4224,6 +4224,11 @@ uint64_t wheelhouse_table_frame(WheelhouseTable *table, float width, float heigh
 // empty when there is nothing to say.
 WheelhouseText wheelhouse_table_status(WheelhouseTable *table);
 
+// The text of the table's last copy, as tab-separated lines for the
+// clipboard, once: call it after wheelhouse_table_frame. Valid until the
+// next call on table; a NULL data when there is none to take.
+WheelhouseText wheelhouse_table_take_copy(WheelhouseTable *table);
+
 // The text of the cell at the row and column Keys, valid until the next
 // call on table, and its WHEELHOUSE_TABLE_ALIGN_* in align_out (if not NULL).
 WheelhouseText wheelhouse_table_cell(WheelhouseTable *table,
