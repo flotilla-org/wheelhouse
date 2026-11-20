@@ -1444,6 +1444,18 @@ fn a_tables_copy_is_taken_once_through_c() {
         assert!(wheelhouse_table_take_copy(table).data.is_null(), "taken once");
         assert!(wheelhouse_table_take_copy(ptr::null_mut()).data.is_null());
         wheelhouse_table_free(table);
+
+        // An empty cell's copy is empty text, not none.
+        let cells = [text("name"), text("")];
+        let table = wheelhouse_table_open_cells(cells.as_ptr(), 1, 2, ptr::null(), 20.0, 8.0);
+        wheelhouse_table_frame(table, 800.0, 600.0, 0);
+        let grid = (*wheelhouse_table_grid(table)).grid_mut();
+        grid.set_focus(Key(0), Key(0));
+        grid.action(GridAction::Copy);
+        wheelhouse_table_frame(table, 800.0, 600.0, 0);
+        let copied = wheelhouse_table_take_copy(table);
+        assert!(!copied.data.is_null() && copied.len == 0);
+        wheelhouse_table_free(table);
     }
 }
 
