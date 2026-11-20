@@ -55,6 +55,7 @@ struct UIShell_TableDiagClip
 {
   U8 bytes[4096];
   U64 size;
+  U64 written; // before truncation, so an overlong copy fails as one
   U32 writes;
 };
 
@@ -63,6 +64,7 @@ uishell_table_diag_clip_write(void *user, String8 text)
 {
   UIShell_TableDiagClip *clip = user;
   clip->writes += 1;
+  clip->written = text.size;
   clip->size = Min(sizeof(clip->bytes), text.size);
   MemoryCopy(clip->bytes, text.str, clip->size);
 }
@@ -873,7 +875,7 @@ uishell_table_diagnostics(RD_WindowState *ws)
                 str8_list_pushf(scratch.arena, &lines, "%S\t%S", left, right);
               }
               String8 want = str8_list_join(scratch.arena, &lines, &(StringJoin){.sep = str8_lit("\n")});
-              TableCheck(clip.writes == 1 && str8_match(str8(clip.bytes, clip.size), want, 0),
+              TableCheck(clip.writes == 1 && clip.written == want.size && str8_match(str8(clip.bytes, clip.size), want, 0),
                          "a copied block lands on the clipboard once, as tab-separated lines of its cells");
             }
           }

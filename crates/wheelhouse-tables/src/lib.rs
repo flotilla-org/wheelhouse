@@ -608,6 +608,7 @@ impl Table {
             }
             Effect::Locate { .. } | Effect::MoveRequested { .. } | Effect::FindStepRequested { .. } => {}
             Effect::CopyRequested { rows, cols, row_labels, .. } => {
+                // The last of a pump's copies stands, as the last the user asked for.
                 copy = Some(Copy { rows: rows.clone(), cols: cols.clone(), row_labels: *row_labels });
             }
             Effect::FindRequested { query } => {
