@@ -842,9 +842,11 @@ uishell_table_diagnostics(RD_WindowState *ws)
             BinnacleGrid *grid = wheelhouse_table_grid(state->table);
             BinnacleStripItem *rows = snap->axes[BINNACLE_ROWS].strip, *cols = snap->axes[BINNACLE_COLS].strip;
             U64 row_keys[2] = {rows[1].key, rows[2].key}, col_keys[2] = {cols[1].key, cols[2].key};
-            // A click through the View, so the Grid has the keys.
+            // A click through the View, so the Grid has the keys. Dated well
+            // back: the next check's first press on this box must not read as
+            // its second click.
             Vec2F32 cell = v2f32(grid_box->rect.x0 + cols[1].offset + cols[1].size/2, grid_box->rect.y0 + rows[1].offset + rows[1].size/2);
-            UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = cell, .timestamp_us = now_time_us()};
+            UI_Event press = {.kind = UI_EventKind_Press, .key = WM_Key_LeftMouseButton, .pos = cell, .timestamp_us = now_time_us() - 60*1000000ull};
             UI_Event release = {.kind = UI_EventKind_Release, .key = WM_Key_LeftMouseButton, .pos = cell};
             uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, press, cell, UIShell_TableDiagBar_Thumb, &part);
             uishell_table_diag_view_frame(ws, view, UI_ScrollBarStyle_Classic, release, cell, UIShell_TableDiagBar_Thumb, &part);
