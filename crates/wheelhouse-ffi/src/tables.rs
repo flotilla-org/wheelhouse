@@ -215,6 +215,24 @@ pub unsafe extern "C" fn wheelhouse_table_status(table: *mut WheelhouseTable) ->
     Text::borrowed(&t.text)
 }
 
+/// The text of the table's last copy, as tab-separated lines for the
+/// clipboard, once: call it after wheelhouse_table_frame. Valid until the
+/// next call on table; a NULL data when there is none to take.
+#[no_mangle]
+pub unsafe extern "C" fn wheelhouse_table_take_copy(table: *mut WheelhouseTable) -> Text {
+    // SAFETY: the caller's contract.
+    let Some(t) = (unsafe { table.as_mut() }) else {
+        return Text { data: ptr::null(), len: 0 };
+    };
+    match t.table.take_copy() {
+        Some(text) => {
+            t.text = text;
+            Text::borrowed(&t.text)
+        }
+        None => Text { data: ptr::null(), len: 0 },
+    }
+}
+
 /// The text of the cell at the row and column Keys, valid until the next
 /// call on table, and its WHEELHOUSE_TABLE_ALIGN_* in align_out (if not NULL).
 #[no_mangle]
