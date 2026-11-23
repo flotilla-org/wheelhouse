@@ -3700,9 +3700,10 @@ uishell_sidebar_row_begin(UIShell_SidebarState *state, UIShell_SidebarRow *r)
   if(r->project)
   {
     // A group's header (docs/design/sidebar-headers.md): no icon; the title
-    // starts where its rows' icons do (r->indent is theirs), and is semibold (or larger, for a Settings font). The collapse
-    // indicator follows the title, shown while hovered. Counts trail status
-    // so collapsing a group cannot move its indicator. The row takes clicks.
+    // starts where its rows' icons do (r->indent is theirs), and is semibold
+    // (or larger, for a Settings font). The collapse indicator follows the
+    // title, shown while hovered. Counts trail status so collapsing a group
+    // cannot move its indicator. The row takes clicks.
     ui_spacer(ui_px(uishell_sidebar_group_title_lead(r->indent), 1));
     UI_Font(uishell_sidebar_group_title_font()) UI_FontSize(uishell_sidebar_group_title_size())
     {
