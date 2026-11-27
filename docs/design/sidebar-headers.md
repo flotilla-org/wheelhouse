@@ -10,11 +10,11 @@ preset "Groups redesign"; the operator's knob values are at the end.
 - **One look for every group.** Project groups and local groups look the
   same: an inset card. Any difference comes later from an icon or badge, or
   from what the group opens (opening recipes).
-- **The card** is inset equally from the left and right. It keeps its side
-  accent: a project's colour, a neutral one for a local group. The horizontal
-  rule under the title goes.
-- **The header** has no icon. Its title is semibold and starts just after
-  the accent; the rows' icons line up with it. Collapse indicators follow the
+- **The card** is inset equally from the left and right, its background
+  faintly tinted with a project's colour (a neutral one for a local group).
+  It has no side accent strip, and no horizontal rule under the title.
+- **The header** has no icon. Its title is semibold and lines up with the
+  rows' icons. Collapse indicators follow the
   title at every level, before inline actions. A group's indicator shows on
   hover. A collapsed group shows its count, dimmed, after the status slot;
   changing the count does not move the indicator. A project keeps its chips.
