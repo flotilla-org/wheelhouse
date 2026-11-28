@@ -242,23 +242,22 @@ impl From<LocalRecipeRepr> for LocalRecipe {
 /// recipe reached it: `cleat attach` on this machine, or over ssh. It never
 /// creates the session. See [`LocalRecipeRepr`] for when this can go.
 pub fn legacy_cleat_command(transport: CleatTransport, host: &str, runtime_root: &str, daemon: &str, session: &str) -> LocalRecipe {
-    let mut argv: Vec<String> = Vec::new();
-    if transport == CleatTransport::Ssh {
-        argv.extend(["ssh", "-t", "--", host].map(str::to_owned));
-    }
-    argv.push("cleat".to_owned());
+    let mut cleat: Vec<String> = vec!["cleat".to_owned()];
     if !runtime_root.is_empty() {
-        argv.extend(["--runtime-root".to_owned(), runtime_root.to_owned()]);
+        cleat.extend(["--runtime-root".to_owned(), runtime_root.to_owned()]);
     }
     if !daemon.is_empty() {
-        argv.extend(["--server".to_owned(), daemon.to_owned()]);
+        cleat.extend(["--server".to_owned(), daemon.to_owned()]);
     }
-    argv.extend(["attach", "--no-create", "--", session].map(str::to_owned));
-    // Over ssh the remote shell re-parses the words after the host.
-    if transport == CleatTransport::Ssh {
-        let remote = argv.split_off(4).iter().map(|word| shell_word(word)).collect::<Vec<_>>().join(" ");
-        argv.push(remote);
-    }
+    cleat.extend(["attach", "--no-create", "--", session].map(str::to_owned));
+    let argv = match transport {
+        CleatTransport::Local => cleat,
+        // The remote shell re-parses the words after the host, so each is quoted.
+        CleatTransport::Ssh => {
+            let remote = cleat.iter().map(|word| shell_word(word)).collect::<Vec<_>>().join(" ");
+            ["ssh", "-t", "--"].map(str::to_owned).into_iter().chain([host.to_owned(), remote]).collect()
+        }
+    };
     LocalRecipe::Command { line: CommandLine::Argv(argv), cwd: None }
 }
 

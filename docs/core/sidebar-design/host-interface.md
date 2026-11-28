@@ -1,4 +1,4 @@
-# The host interface (ABI 21)
+# The host interface (ABI 22)
 
 What a host such as Wheelhouse uses to drive the core through its C ABI.
 `crates/wheelhouse-ffi/include/wheelhouse.h` is generated from the FFI crate
@@ -8,7 +8,7 @@ behind it is in [Slots and arrangements](slots-and-arrangements.md),
 [The sidebar arrangement](sidebar-arrangement.md) and the
 [Workspace Overlay](workspace-overlay.md).
 
-`wheelhouse_abi_version()` returns 21. Each call has one form: there is no
+`wheelhouse_abi_version()` returns 22. Each call has one form: there is no
 compatibility with earlier versions, and a host requires exactly the version
 it was built against.
 
@@ -217,6 +217,19 @@ Address).
   with dirty marks and the sidebar sections it moved
   (`wheelhouse_dock_restore_free`).
 
+## From ABI 21
+
+ABI 22 (wheelhouse#789) opens a direct Cleat session through the Tender
+Binding of its daemon's publication. `WHEELHOUSE_SLOT_CLEAT_SESSION` is now
+`WHEELHOUSE_SLOT_CLEAT_BINDING` (same value, 5), and `WheelhouseViewSpec`
+changes layout: the Cleat fields are `cleat_scope`, `cleat_name`,
+`cleat_socket` (output only: the Binding's socket on this machine) and
+`cleat_session`, then `cleat_transport`, `cleat_host`, `cleat_runtime_root`
+and `cleat_daemon`, which the core reads as input only, for views saved before
+Tender publications, and opens through a command (the shim can go once layouts
+saved before #789 have been rewritten). A host built against ABI 21 must be
+rebuilt.
+
 ## From ABI 20
 
 ABI 21 moves a workspace's lifecycle and home into the core
@@ -340,15 +353,11 @@ change layout, so a host built against ABI 9 must be rebuilt.
 
 ## From ABI 8
 
-ABI 9 adds a content kind, `WHEELHOUSE_SLOT_CLEAT_BINDING`: a direct Cleat
-packet view of a session (wheelhouse#104) through the Tender Binding of its
-daemon's publication (wheelhouse#789). A View Spec gains its fields at the
-end: `cleat_scope`, `cleat_name`, `cleat_socket` (output only: the Binding's
-socket on this machine) and `cleat_session`. A view saved before #789 carries
-`cleat_transport`, `cleat_host`, `cleat_runtime_root` and `cleat_daemon`
-instead, which the core reads as input only and opens through a command (the
-shim can go once layouts saved before #789 have been rewritten). A primary
-slot resolves to one when its provider publishes a direct publication
+ABI 9 adds a content kind, `WHEELHOUSE_SLOT_CLEAT_SESSION`: a direct Cleat
+packet view of a session (wheelhouse#104). A View Spec gains its fields at the
+end: `cleat_transport` (`local` or `ssh`), `cleat_host`,
+`cleat_runtime_root`, `cleat_daemon` and `cleat_session`. A primary slot
+resolves to one when its provider publishes a direct endpoint
 ([Suggested Layouts](suggested-layouts.md#the-primary-slot)); MATERIALIZE then
 carries no recipe and no primary target, so the host opens the workspace with
 its primary waiting and the slot's first plan fills it. `WheelhouseViewSpec`
