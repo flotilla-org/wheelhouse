@@ -180,6 +180,9 @@ impl ViewSpecView {
                 }
                 Content::Local(legacy_cleat_command(transport, &host, &runtime_root, &daemon, &session))
             }
+            WHEELHOUSE_SLOT_CLEAT_BINDING if self.cleat_scope.read()?.is_empty() => {
+                return Err("a Cleat binding names its publication: cleat_scope is empty".to_owned());
+            }
             WHEELHOUSE_SLOT_CLEAT_BINDING => Content::Local(LocalRecipe::CleatBinding {
                 scope: self.cleat_scope.read()?,
                 name: self.cleat_name.read()?,
