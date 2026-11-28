@@ -3,7 +3,9 @@
 use super::*;
 use wheelhouse_core::managed::SlotPlan;
 use wheelhouse_core::slots::SlotInfo;
-use wheelhouse_core::suggested_layout::{CleatTransport, CommandLine, Content, Facet, LocalRecipe, RebindPolicy, ViewSpec};
+use wheelhouse_core::suggested_layout::{
+    legacy_cleat_command, CleatTransport, CommandLine, Content, Facet, LocalRecipe, RebindPolicy, ViewSpec,
+};
 use wheelhouse_core::target_resolution::SavedResolution;
 
 /// A View Spec's content: a local command (argv when argc is nonzero, else
@@ -17,9 +19,10 @@ pub const WHEELHOUSE_SLOT_URL: u32 = 2;
 pub const WHEELHOUSE_SLOT_JACKSTAY: u32 = 3;
 /// A provider facet: the facet of entity's Suggested Layout.
 pub const WHEELHOUSE_SLOT_FACET: u32 = 4;
-/// A direct Cleat packet view of a session (cleat_transport "local" or
-/// "ssh", cleat_host, cleat_runtime_root, cleat_daemon, cleat_session).
-pub const WHEELHOUSE_SLOT_CLEAT_SESSION: u32 = 5;
+/// A direct Cleat packet view of a session, through the Tender Binding of its
+/// daemon's publication (cleat_scope, cleat_name, cleat_session; cleat_socket
+/// is the Binding's socket on this machine, output only).
+pub const WHEELHOUSE_SLOT_CLEAT_BINDING: u32 = 5;
 /// An agent thread watched over the Agent View protocol (endpoint, a Local
 /// Endpoint's socket, agent_thread, and agent_transport and agent_host).
 pub const WHEELHOUSE_SLOT_AGENT_SESSION: u32 = 6;
@@ -88,14 +91,22 @@ pub struct ViewSpecView {
     /// Workspace Layouts arrange by.
     pub has_role: u32,
     pub role: Text,
-    /// WHEELHOUSE_SLOT_CLEAT_SESSION: the transport ("local" or "ssh"), the
-    /// host (the local host's name, or an ssh destination) and the session's
-    /// runtime root, daemon and name.
+    /// WHEELHOUSE_SLOT_CLEAT_BINDING: the publication's scope and name, the
+    /// session, and (output only) the Binding's socket on this machine, empty
+    /// when this machine has no Tender runtime directory to compute it from.
+    pub cleat_scope: Text,
+    pub cleat_name: Text,
+    pub cleat_socket: Text,
+    pub cleat_session: Text,
+    /// Input only, for views saved before Tender publications (#789): the
+    /// transport ("local" or "ssh"), host, runtime root and daemon a
+    /// WHEELHOUSE_SLOT_CLEAT_BINDING with no cleat_scope names. It opens as the
+    /// command that reached the session. Remove with
+    /// `suggested_layout::legacy_cleat_command`.
     pub cleat_transport: Text,
     pub cleat_host: Text,
     pub cleat_runtime_root: Text,
     pub cleat_daemon: Text,
-    pub cleat_session: Text,
     pub agent_thread: Text,
     /// WHEELHOUSE_SLOT_AGENT_SESSION: "local" (or empty) or "ssh", and the
     /// ssh destination, empty when local.
@@ -127,11 +138,14 @@ impl ViewSpecView {
             presentation: Text::borrowed(""),
             has_role: 0,
             role: Text::borrowed(""),
+            cleat_scope: Text::borrowed(""),
+            cleat_name: Text::borrowed(""),
+            cleat_socket: Text::borrowed(""),
+            cleat_session: Text::borrowed(""),
             cleat_transport: Text::borrowed(""),
             cleat_host: Text::borrowed(""),
             cleat_runtime_root: Text::borrowed(""),
             cleat_daemon: Text::borrowed(""),
-            cleat_session: Text::borrowed(""),
             agent_thread: Text::borrowed(""),
             agent_transport: Text::borrowed(""),
             agent_host: Text::borrowed(""),
@@ -155,16 +169,25 @@ impl ViewSpecView {
             WHEELHOUSE_SLOT_JACKSTAY => {
                 Content::Local(LocalRecipe::Jackstay { launcher: self.launcher.read()?, endpoint: self.endpoint.read()? })
             }
-            WHEELHOUSE_SLOT_CLEAT_SESSION => {
+            WHEELHOUSE_SLOT_CLEAT_BINDING if self.cleat_scope.read()?.is_empty() && !self.cleat_transport.read()?.is_empty() => {
                 let transport = self.cleat_transport.read()?;
-                Content::Local(LocalRecipe::CleatSession {
-                    transport: CleatTransport::parse(&transport).ok_or_else(|| format!("unknown Cleat transport {transport:?}"))?,
-                    host: self.cleat_host.read()?,
-                    runtime_root: self.cleat_runtime_root.read()?,
-                    daemon: self.cleat_daemon.read()?,
-                    session: self.cleat_session.read()?,
-                })
+                let (host, runtime_root, daemon, session) =
+                    (self.cleat_host.read()?, self.cleat_runtime_root.read()?, self.cleat_daemon.read()?, self.cleat_session.read()?);
+                let transport = CleatTransport::parse(&transport).ok_or_else(|| format!("unknown Cleat transport {transport:?}"))?;
+                if let Some(field) = wheelhouse_core::suggested_layout::invalid_legacy_cleat_field(&host, &runtime_root, &daemon, &session)
+                {
+                    return Err(format!("a saved Cleat session's {field} is unusable"));
+                }
+                Content::Local(legacy_cleat_command(transport, &host, &runtime_root, &daemon, &session))
             }
+            WHEELHOUSE_SLOT_CLEAT_BINDING if self.cleat_scope.read()?.is_empty() => {
+                return Err("a Cleat binding names its publication: cleat_scope is empty".to_owned());
+            }
+            WHEELHOUSE_SLOT_CLEAT_BINDING => Content::Local(LocalRecipe::CleatBinding {
+                scope: self.cleat_scope.read()?,
+                name: self.cleat_name.read()?,
+                session: self.cleat_session.read()?,
+            }),
             WHEELHOUSE_SLOT_AGENT_SESSION => Content::Local(LocalRecipe::AgentSession {
                 transport: agent_transport(&self.agent_transport.read()?)?,
                 host: self.agent_host.read()?,
@@ -191,13 +214,33 @@ impl ViewSpecView {
     }
 }
 
-/// Output text a ViewSpecView borrows: argv as a Text array.
-struct SpecStorage {
+/// Output text a ViewSpecView borrows: argv as a Text array, and a computed
+/// Binding socket.
+#[derive(Default)]
+pub(crate) struct SpecStorage {
     argv: Vec<Text>,
+    socket: String,
+}
+
+/// The socket of the Tender Binding of the publication `name` in `scope`: a
+/// path on this machine, whichever host carries the daemon. None where there
+/// is no Tender runtime directory to compute it under.
+#[cfg(unix)]
+fn binding_socket(scope: &str, name: &str) -> Option<String> {
+    let runtime = tender_types::paths::runtime_dir_from_env().ok()?;
+    let path = tender_types::paths::binding_path(&runtime, &tender_types::PublicationId::new(scope, name));
+    // Tender hashes a name that would not fit a socket path, but a runtime
+    // directory too long for any Binding leaves nothing to attach through.
+    path.into_os_string().into_string().ok().filter(|path| path.len() <= tender_types::paths::MAX_SOCKET_PATH)
+}
+
+#[cfg(not(unix))]
+fn binding_socket(_scope: &str, _name: &str) -> Option<String> {
+    None
 }
 
 fn recipe_view(recipe: &LocalRecipe, out: &mut ViewSpecView) -> SpecStorage {
-    let mut storage = SpecStorage { argv: Vec::new() };
+    let mut storage = SpecStorage::default();
     match recipe {
         LocalRecipe::Command { line, cwd } => {
             out.content = WHEELHOUSE_SLOT_COMMAND;
@@ -223,13 +266,13 @@ fn recipe_view(recipe: &LocalRecipe, out: &mut ViewSpecView) -> SpecStorage {
             out.launcher = Text::borrowed(launcher);
             out.endpoint = Text::borrowed(endpoint);
         }
-        LocalRecipe::CleatSession { transport, host, runtime_root, daemon, session } => {
-            out.content = WHEELHOUSE_SLOT_CLEAT_SESSION;
-            out.cleat_transport = Text::borrowed(transport.as_str());
-            out.cleat_host = Text::borrowed(host);
-            out.cleat_runtime_root = Text::borrowed(runtime_root);
-            out.cleat_daemon = Text::borrowed(daemon);
+        LocalRecipe::CleatBinding { scope, name, session } => {
+            out.content = WHEELHOUSE_SLOT_CLEAT_BINDING;
+            out.cleat_scope = Text::borrowed(scope);
+            out.cleat_name = Text::borrowed(name);
             out.cleat_session = Text::borrowed(session);
+            storage.socket = binding_socket(scope, name).unwrap_or_default();
+            out.cleat_socket = Text::borrowed(&storage.socket);
         }
         LocalRecipe::AgentSession { transport, host, endpoint, thread } => {
             out.content = WHEELHOUSE_SLOT_AGENT_SESSION;
@@ -266,14 +309,14 @@ fn spec_view(spec: &ViewSpec) -> (ViewSpecView, SpecStorage) {
             out.content = WHEELHOUSE_SLOT_FACET;
             out.entity = EntityView::of(entity);
             out.facet = Text::borrowed(facet);
-            SpecStorage { argv: Vec::new() }
+            SpecStorage::default()
         }
         Content::Local(recipe) => recipe_view(recipe, &mut out),
         Content::HostDocument { relative_to, key } => {
             out.content = WHEELHOUSE_SLOT_HOST_DOCUMENT;
             out.relative_to = Text::borrowed(relative_to);
             out.document_key = Text::borrowed(key);
-            SpecStorage { argv: Vec::new() }
+            SpecStorage::default()
         }
     };
     out.has_presentation = spec.presentation.is_some() as u32;
@@ -328,7 +371,7 @@ pub struct SlotListView {
     pub slot_count: usize,
 }
 
-type SlotsKeep = (Vec<SlotInfo>, Vec<Option<SavedResolution>>, Vec<Vec<Text>>, Vec<Vec<ResolutionFieldView>>, Vec<SlotView>);
+type SlotsKeep = (Vec<SlotInfo>, Vec<Option<SavedResolution>>, Vec<SpecStorage>, Vec<Vec<ResolutionFieldView>>, Vec<SlotView>);
 
 /// A registered workspace's slots. Free them with wheelhouse_slots_free.
 #[no_mangle]
@@ -352,7 +395,7 @@ pub unsafe extern "C" fn wheelhouse_slots_get(
                 if !storage.argv.is_empty() {
                     (spec.argv, spec.argc) = (storage.argv.as_ptr(), storage.argv.len());
                 }
-                argv.push(storage.argv);
+                argv.push(storage);
                 SlotView {
                     key: Text::borrowed(&slot.key),
                     spec,
@@ -613,22 +656,22 @@ pub unsafe extern "C" fn wheelhouse_slot_plan(
             has_saved: plan.saved.is_some() as u32,
             saved: resolution_view(plan.saved.as_ref(), &fields),
         };
-        let mut argv = Vec::new();
+        let mut argv = SpecStorage::default();
         if let Some(update) = &plan.update {
             value.token = update.token;
             value.resolution = Text::borrowed(&update.id);
             value.has_target = update.resolution.target.is_some() as u32;
             value.target = Text::borrowed(update.resolution.target.as_deref().unwrap_or_default());
-            argv = recipe_view(&update.resolution.recipe, &mut value.recipe).argv;
-            if !argv.is_empty() {
-                (value.recipe.argv, value.recipe.argc) = (argv.as_ptr(), argv.len());
+            argv = recipe_view(&update.resolution.recipe, &mut value.recipe);
+            if !argv.argv.is_empty() {
+                (value.recipe.argv, value.recipe.argc) = (argv.argv.as_ptr(), argv.argv.len());
             }
         }
         Ok(give::<_, PlanKeep>(value, (plan, fields, argv)))
     })
     .unwrap_or(ptr::null_mut())
 }
-type PlanKeep = (SlotPlan, Vec<ResolutionFieldView>, Vec<Text>);
+type PlanKeep = (SlotPlan, Vec<ResolutionFieldView>, SpecStorage);
 
 #[no_mangle]
 pub unsafe extern "C" fn wheelhouse_slot_plan_free(plan: *mut SlotContentView) {

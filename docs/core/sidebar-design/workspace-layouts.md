@@ -100,8 +100,8 @@ slot "shell" role="shell" kind="command" cwd="{git.root}"
   Slots, so the user can remove, override or reattach them.
 - Their fields are the local recipe fields of a Suggested Layout slot (`kind`,
   `argv.<n>`, `command`, `cwd`, `path`, `url`, `launcher`, `endpoint`,
-  and `transport`, `host`, `runtime_root`, `daemon`, `session` for
-  `cleat-session`, and `endpoint`, `thread` and optional `transport`, `host`
+  and `scope`, `name`, `session` for
+  `cleat-binding`, and `endpoint`, `thread` and optional `transport`, `host`
   for `agent-session`) plus `role` and `presentation`. A literal `transport` must
   be `local` or `ssh`; one built from a fact that is neither leaves the slot
   Unavailable. A value may name a subject fact in braces,

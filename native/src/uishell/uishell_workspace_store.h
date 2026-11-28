@@ -22,10 +22,13 @@ struct UIShell_ViewSpec
   U64 argc;
   B32 has_cwd;
   String8 cwd, path, url, launcher, endpoint, presentation;
-  // A Cleat endpoint's session (WHEELHOUSE_SLOT_CLEAT_SESSION): how it is
-  // reached (local or ssh), the ssh destination, and the daemon's runtime
-  // root and name there (docs/design/remote-terminals.md).
-  String8 cleat_transport, cleat_host, cleat_runtime_root, cleat_daemon, cleat_session;
+  // A Cleat endpoint's session (WHEELHOUSE_SLOT_CLEAT_BINDING): the Tender
+  // publication of its daemon, the Binding's socket on this machine, and the
+  // session (docs/design/remote-terminals.md). The transport, host, runtime
+  // root and daemon are a view saved before Tender publications (#789); the
+  // core opens those through a command.
+  String8 cleat_scope, cleat_name, cleat_socket, cleat_session;
+  String8 cleat_transport, cleat_host, cleat_runtime_root, cleat_daemon;
   // An agent thread (WHEELHOUSE_SLOT_AGENT_SESSION), watched at `endpoint`,
   // on this machine, or over ssh on `agent_host` when `agent_transport` is
   // "ssh". A local one's transport and host are empty.

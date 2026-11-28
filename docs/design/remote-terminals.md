@@ -6,16 +6,20 @@ A crew session on another host opens as an ordinary Cleat-backed Terminal View. 
 
 ## The endpoint
 
-A direct view's View Spec names a **Cleat endpoint**, the way a Jackstay view's spec names its endpoint. The core's `cleat-session` recipe carries it from Flotilla's `action.primary.direct.*` facts. On the Terminal View the endpoint is a set of settings:
+A direct view's View Spec names a **Cleat endpoint**, the way a Jackstay view's spec names its endpoint. The core's `cleat-binding` recipe carries it from the Tender publication in Flotilla's `action.primary.direct.*` facts (#789). On the Terminal View the endpoint is a set of settings:
 
 | Setting | Meaning |
 | --- | --- |
-| `cleat_transport` | `local` or `ssh` |
+| `cleat_scope`, `cleat_name` | the Tender publication of the endpoint's daemon, for example `vessel/<id>` and `cleat/<daemon>` |
+| `cleat_socket` | the publication's Binding socket on this machine, which the core computes with `tender_types::paths::binding_path`; the endpoint attaches through it, as `cleat attach --socket` does |
+| `cleat_transport` | saved views only (before #789): `local` or `ssh` |
 | `cleat_host` | the ssh destination, which the user's ssh configuration resolves |
 | `cleat_runtime_root` | the endpoint daemon's runtime root; empty for the one Cleat discovers |
 | `cleat_daemon` | the daemon's name; empty for the default daemon |
 | `cleat_session` | the session. It is only ever attached to, never created |
 | `cleat_command` | optional: the Cleat the remote host runs, for one not on its non-interactive PATH |
+
+A Binding is a socket on this machine whichever host or container carries the daemon: Tender, which each viewer's machine runs and pairs into the fleet's Trusted Group (flotilla#4402), carries the bytes. Only publications labelled `cleat` open; Tender doesn't interpret labels. Tender closes a connection it cannot carry without sending a byte, which reads as a bridge that never streamed: the View's pill says `endpoint unavailable — click to reconnect`, not a terminal error. A saved view that still holds the host-path settings (`cleat_transport`, ...) is opened by the core through a command, not directly; that decoding can go once layouts saved before #789 have been rewritten. Of the routes below, `ssh` and `local` therefore remain only for the settings a user writes by hand.
 
 A `local` endpoint attaches through the shared connection to that runtime root and daemon, an `ssh` endpoint through the shared connection to that host, Cleat, runtime root and daemon. Every View of one session shares one attachment on it (see "Shared connections and attachments").
 
@@ -23,7 +27,7 @@ Any other transport is never guessed at. Its slot is unshown, and a View that ha
 
 `cleat_command` is a View setting only. It isn't part of the View Spec or the facts, so a published endpoint can't choose the command a remote host runs. It is for a user's own host whose non-interactive PATH lacks a new enough Cleat. A View opened from the sidebar runs `cleat` from that PATH.
 
-**Opening from the sidebar.** When a workspace subject publishes a complete direct endpoint, the core ([andamento#186](https://github.com/flotilla-org/andamento/pull/186)) resolves its primary to the `cleat-session` recipe (`WHEELHOUSE_SLOT_CLEAT_SESSION`) instead of the command recipe. Opening the subject creates the workspace with its primary waiting, and the first slot plan fills it with a terminal of that session. A Cleat session is attached to, never started, so an update always makes a new View; it never replaces a terminal in place. When the endpoint goes away, the primary falls back to the command recipe, which still opens `flotilla attach` in a local terminal. The **Direct Cleat Attach** user setting (`direct_cleat_attach`, on by default) makes the same fallback by choice while direct attach is new: off, the core prefers the command recipe (`wheelhouse_set_direct_attach`), keeping the endpoint for a subject that publishes no recipe, and turning it either way rebinds open primaries to the other way in. The Cleat session itself carries on.
+**Opening from the sidebar.** When a workspace subject publishes a complete direct endpoint, the core ([andamento#186](https://github.com/flotilla-org/andamento/pull/186)) resolves its primary to the `cleat-binding` recipe (`WHEELHOUSE_SLOT_CLEAT_BINDING`) instead of the command recipe. Opening the subject creates the workspace with its primary waiting, and the first slot plan fills it with a terminal of that session. A Cleat session is attached to, never started, so an update always makes a new View; it never replaces a terminal in place. When the endpoint goes away, the primary falls back to the command recipe, which still opens `flotilla attach` in a local terminal. The **Direct Cleat Attach** user setting (`direct_cleat_attach`, on by default) makes the same fallback by choice while direct attach is new: off, the core prefers the command recipe (`wheelhouse_set_direct_attach`), keeping the endpoint for a subject that publishes no recipe, and turning it either way rebinds open primaries to the other way in. The Cleat session itself carries on.
 
 ## The transport seam
 

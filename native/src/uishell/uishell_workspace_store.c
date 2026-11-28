@@ -39,7 +39,7 @@
 //
 //   terminal   with a command       local recipe: the command (a shell line) and cwd
 //              with a cleat_session local recipe: that Cleat endpoint's session
-//                                   (cleat_transport, cleat_host, ...); it
+//                                   (cleat_scope, cleat_name, ...); it
 //                                   is attached to, never started in place
 //              without one          wheelhouse:terminal[?cwd=..]
 //              the `primary` slot of a subject publishing workspace.primary.*:
@@ -93,7 +93,7 @@
 
 StaticAssert(WH_Content_Command == 1<<WHEELHOUSE_SLOT_COMMAND && WH_Content_File == 1<<WHEELHOUSE_SLOT_FILE &&
              WH_Content_Url == 1<<WHEELHOUSE_SLOT_URL && WH_Content_Jackstay == 1<<WHEELHOUSE_SLOT_JACKSTAY &&
-             WH_Content_Facet == 1<<WHEELHOUSE_SLOT_FACET && WH_Content_CleatSession == 1<<WHEELHOUSE_SLOT_CLEAT_SESSION &&
+             WH_Content_Facet == 1<<WHEELHOUSE_SLOT_FACET && WH_Content_CleatSession == 1<<WHEELHOUSE_SLOT_CLEAT_BINDING &&
              WH_Content_AgentSession == 1<<WHEELHOUSE_SLOT_AGENT_SESSION,
              uishell_store_content_kinds);
 
@@ -102,18 +102,22 @@ StaticAssert(WH_Content_Command == 1<<WHEELHOUSE_SLOT_COMMAND && WH_Content_File
 // that session (docs/design/remote-terminals.md).
 read_only global String8 uishell_store_cleat_keys[] =
 {
-  str8_lit_comp("cleat_transport"), str8_lit_comp("cleat_host"), str8_lit_comp("cleat_runtime_root"),
-  str8_lit_comp("cleat_daemon"), str8_lit_comp("cleat_session"),
+  str8_lit_comp("cleat_scope"), str8_lit_comp("cleat_name"), str8_lit_comp("cleat_socket"), str8_lit_comp("cleat_session"),
+  str8_lit_comp("cleat_transport"), str8_lit_comp("cleat_host"), str8_lit_comp("cleat_runtime_root"), str8_lit_comp("cleat_daemon"),
 };
 
 // The most settings one View's spec takes (uishell_store_spec_from_view):
 // a Cleat endpoint's, with the expression and cwd.
-#define UISHELL_STORE_TAKEN_MAX 8
+#define UISHELL_STORE_TAKEN_MAX 12
 
 internal String8 *
 uishell_store_cleat_fields(UIShell_ViewSpec *spec, U64 i)
 {
-  String8 *fields[] = {&spec->cleat_transport, &spec->cleat_host, &spec->cleat_runtime_root, &spec->cleat_daemon, &spec->cleat_session};
+  String8 *fields[] =
+  {
+    &spec->cleat_scope, &spec->cleat_name, &spec->cleat_socket, &spec->cleat_session,
+    &spec->cleat_transport, &spec->cleat_host, &spec->cleat_runtime_root, &spec->cleat_daemon,
+  };
   StaticAssert(ArrayCount(fields) == ArrayCount(uishell_store_cleat_keys), uishell_store_cleat_field_count);
   return fields[i];
 }
@@ -372,7 +376,7 @@ uishell_store_spec_from_view(Arena *arena, CFG_Node *view, UIShell_ViewSpec *spe
     taken[(*taken_count)++] = str8_lit("cwd");
     if(uishell_store_setting(view, str8_lit("cleat_session")).size)
     {
-      spec->content = WHEELHOUSE_SLOT_CLEAT_SESSION;
+      spec->content = WHEELHOUSE_SLOT_CLEAT_BINDING;
       for(U64 i = 0; i < ArrayCount(uishell_store_cleat_keys); i++)
       {
         *uishell_store_cleat_fields(spec, i) = uishell_store_setting(view, uishell_store_cleat_keys[i]);
@@ -626,7 +630,11 @@ uishell_store_spec_from_core(Arena *arena, WheelhouseViewSpec *s)
   spec.launcher = uishell_sidebar_string(s->launcher);
   spec.endpoint = uishell_sidebar_string(s->endpoint);
   spec.presentation = s->has_presentation ? uishell_sidebar_string(s->presentation) : str8_zero();
-  WheelhouseText cleat[] = {s->cleat_transport, s->cleat_host, s->cleat_runtime_root, s->cleat_daemon, s->cleat_session};
+  WheelhouseText cleat[] =
+  {
+    s->cleat_scope, s->cleat_name, s->cleat_socket, s->cleat_session,
+    s->cleat_transport, s->cleat_host, s->cleat_runtime_root, s->cleat_daemon,
+  };
   for(U64 i = 0; i < ArrayCount(cleat); i++) { *uishell_store_cleat_fields(&spec, i) = uishell_sidebar_string(cleat[i]); }
   spec.agent_thread = uishell_sidebar_string(s->agent_thread);
   spec.agent_transport = uishell_store_agent_transport(uishell_sidebar_string(s->agent_transport));
@@ -665,7 +673,11 @@ uishell_store_core_spec(Arena *arena, UIShell_ViewSpec *spec, WheelhouseViewSpec
   s.endpoint = uishell_sidebar_text(spec->endpoint);
   s.has_presentation = spec->presentation.size != 0;
   s.presentation = uishell_sidebar_text(spec->presentation);
-  WheelhouseText *cleat[] = {&s.cleat_transport, &s.cleat_host, &s.cleat_runtime_root, &s.cleat_daemon, &s.cleat_session};
+  WheelhouseText *cleat[] =
+  {
+    &s.cleat_scope, &s.cleat_name, &s.cleat_socket, &s.cleat_session,
+    &s.cleat_transport, &s.cleat_host, &s.cleat_runtime_root, &s.cleat_daemon,
+  };
   for(U64 i = 0; i < ArrayCount(cleat); i++) { *cleat[i] = uishell_sidebar_text(*uishell_store_cleat_fields(spec, i)); }
   s.agent_thread = uishell_sidebar_text(spec->agent_thread);
   s.agent_transport = uishell_sidebar_text(spec->agent_transport);
@@ -681,6 +693,8 @@ uishell_store_spec_match(UIShell_ViewSpec *a, UIShell_ViewSpec *b)
           a->has_cwd == b->has_cwd && str8_match(a->cwd, b->cwd, 0) && str8_match(a->path, b->path, 0) &&
           str8_match(a->url, b->url, 0) && str8_match(a->launcher, b->launcher, 0) &&
           str8_match(a->endpoint, b->endpoint, 0) && str8_match(a->presentation, b->presentation, 0) &&
+          str8_match(a->cleat_scope, b->cleat_scope, 0) && str8_match(a->cleat_name, b->cleat_name, 0) &&
+          str8_match(a->cleat_socket, b->cleat_socket, 0) &&
           str8_match(a->cleat_transport, b->cleat_transport, 0) && str8_match(a->cleat_host, b->cleat_host, 0) &&
           str8_match(a->cleat_runtime_root, b->cleat_runtime_root, 0) && str8_match(a->cleat_daemon, b->cleat_daemon, 0) &&
           str8_match(a->cleat_session, b->cleat_session, 0) && str8_match(a->agent_thread, b->agent_thread, 0) &&
@@ -700,8 +714,8 @@ uishell_store_spec_hash(U64 hash, UIShell_ViewSpec *spec)
 {
   hash = hash*33 + spec->content;
   String8 fields[] = {spec->provider, spec->kind, spec->id, spec->facet, spec->command, spec->cwd, spec->path,
-                      spec->url, spec->launcher, spec->endpoint, spec->presentation, spec->cleat_transport,
-                      spec->cleat_host, spec->cleat_runtime_root, spec->cleat_daemon, spec->cleat_session,
+                      spec->url, spec->launcher, spec->endpoint, spec->presentation, spec->cleat_scope,
+                      spec->cleat_name, spec->cleat_socket, spec->cleat_transport, spec->cleat_host, spec->cleat_runtime_root, spec->cleat_daemon, spec->cleat_session,
                       spec->agent_thread};
   for(U64 i = 0; i < ArrayCount(fields); i++) { hash = uishell_store_hash_text(hash, fields[i]); }
   // Only over ssh, so a local session's hash is the one Views saved before
@@ -736,8 +750,15 @@ uishell_store_unshown(Arena *arena, String8 key, UIShell_ViewSpec *spec)
   switch(spec->content)
   {
     case WHEELHOUSE_SLOT_COMMAND: case WHEELHOUSE_SLOT_FILE: return str8_zero();
-    case WHEELHOUSE_SLOT_CLEAT_SESSION:
+    case WHEELHOUSE_SLOT_CLEAT_BINDING:
     {
+      // A Binding is a socket on this machine: without one (no Tender runtime
+      // directory) there is nothing to attach through.
+      if(spec->cleat_scope.size != 0)
+      {
+        if(spec->cleat_socket.size == 0) { return push_str8f(arena, "Cleat session %S has no Tender Binding on this machine", spec->cleat_session); }
+        return str8_zero();
+      }
       // Cleat's ssh bridge is Unix only, and a transport Wheelhouse doesn't
       // know is never guessed at.
       B32 ssh = str8_match(spec->cleat_transport, str8_lit("ssh"), 0);
@@ -831,7 +852,7 @@ uishell_store_view_from_spec(CFG_Node *owner, String8 key, UIShell_ViewSpec *spe
       uishell_store_set_setting(view, str8_lit("agent_host"), spec->agent_host);
     }
   }
-  if(!unshown.size && spec->content == WHEELHOUSE_SLOT_CLEAT_SESSION)
+  if(!unshown.size && spec->content == WHEELHOUSE_SLOT_CLEAT_BINDING)
   {
     for(U64 i = 0; i < ArrayCount(uishell_store_cleat_keys); i++)
     {
@@ -1775,8 +1796,9 @@ uishell_store_recipe_text(Arena *arena, UIShell_ViewSpec *recipe)
     case WHEELHOUSE_SLOT_FILE: return recipe->path;
     case WHEELHOUSE_SLOT_URL: return recipe->url;
     case WHEELHOUSE_SLOT_JACKSTAY: return recipe->endpoint;
-    case WHEELHOUSE_SLOT_CLEAT_SESSION:
+    case WHEELHOUSE_SLOT_CLEAT_BINDING:
     {
+      if(recipe->cleat_scope.size) { return push_str8f(arena, "session %S on %S", recipe->cleat_session, recipe->cleat_name); }
       if(str8_match(recipe->cleat_transport, str8_lit("ssh"), 0))
       { return push_str8f(arena, "session %S on %S", recipe->cleat_session, recipe->cleat_host); }
       return push_str8f(arena, "session %S", recipe->cleat_session);
@@ -1901,7 +1923,7 @@ uishell_store_apply(UIShell_SidebarState *state, CFG_Node *owner, CFG_Node *view
   if(str8_match(view->string, str8_lit("placeholder"), 0) || switching) { keep_previous = 0; }
   // A Cleat session is attached to, not started: its View is a new one.
   B32 in_place = !shows && terminal && str8_match(kind, view->string, 0) && !keep_previous &&
-                 recipe.content != WHEELHOUSE_SLOT_CLEAT_SESSION;
+                 recipe.content != WHEELHOUSE_SLOT_CLEAT_BINDING;
   UIShell_ManagedPrepared prepared = {0};
   B32 ok = !in_place || uishell_managed_prepare(rd_view_state_from_view(rd_view_address_from_cfg(view), 0)->user_data, recipe.command, recipe.has_cwd, recipe.cwd, &prepared);
   char *error = 0;

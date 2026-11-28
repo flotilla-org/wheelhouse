@@ -505,14 +505,12 @@ fn a_subject_layout_may_list_its_primary_without_primary_facts() {
 // the primary falls back to the command recipe.
 #[test]
 fn a_direct_endpoint_opens_the_primary_as_a_cleat_session() {
-    use wheelhouse_core::suggested_layout::CleatTransport;
     let mut sidebar = subject_session();
     let direct = [
         ("action.primary.recipe", text("flotilla attach v")),
-        ("action.primary.direct.transport", text("ssh")),
-        ("action.primary.direct.host", text("robert@feta")),
-        ("action.primary.direct.runtime_root", text("/run/cleat")),
-        ("action.primary.direct.daemon", text("d1")),
+        ("action.primary.direct.publication.scope", text("vessel/v1")),
+        ("action.primary.direct.publication.name", text("cleat/d1")),
+        ("action.primary.direct.publication.label", text("cleat")),
         ("action.primary.direct.session", text("s1")),
     ];
     sidebar.feed(150, [patch(subject(), &direct, &[])]);
@@ -529,13 +527,7 @@ fn a_direct_endpoint_opens_the_primary_as_a_cleat_session() {
     assert_eq!(update.resolution.target, Some(subject().action_target().to_string()));
     assert_eq!(
         update.resolution.recipe,
-        LocalRecipe::CleatSession {
-            transport: CleatTransport::Ssh,
-            host: "robert@feta".into(),
-            runtime_root: "/run/cleat".into(),
-            daemon: "d1".into(),
-            session: "s1".into(),
-        }
+        LocalRecipe::CleatBinding { scope: "vessel/v1".into(), name: "cleat/d1".into(), session: "s1".into() }
     );
     assert!(sidebar.managed.complete_slot(worker(), "primary", update.token, true));
     assert_eq!(sidebar.plan_slot(worker(), "primary", &update.id).unwrap().state, ContentState::Current);
@@ -560,10 +552,9 @@ fn direct_attach_off_opens_the_primary_by_its_recipe() {
     sidebar.set_direct_attach(false);
     let direct = [
         ("action.primary.recipe", text("flotilla attach v")),
-        ("action.primary.direct.transport", text("ssh")),
-        ("action.primary.direct.host", text("robert@feta")),
-        ("action.primary.direct.runtime_root", text("/run/cleat")),
-        ("action.primary.direct.daemon", text("d1")),
+        ("action.primary.direct.publication.scope", text("vessel/v1")),
+        ("action.primary.direct.publication.name", text("cleat/d1")),
+        ("action.primary.direct.publication.label", text("cleat")),
         ("action.primary.direct.session", text("s1")),
     ];
     sidebar.feed(150, [patch(subject(), &direct, &[])]);
@@ -581,7 +572,7 @@ fn direct_attach_off_opens_the_primary_by_its_recipe() {
 
     sidebar.set_direct_attach(true);
     let on = sidebar.plan_slot(worker(), "primary", &opened.id).unwrap().update.unwrap();
-    assert!(matches!(on.resolution.recipe, LocalRecipe::CleatSession { ref session, .. } if session == "s1"), "{on:?}");
+    assert!(matches!(on.resolution.recipe, LocalRecipe::CleatBinding { ref session, .. } if session == "s1"), "{on:?}");
     assert!(sidebar.managed.complete_slot(worker(), "primary", on.token, true));
 
     sidebar.set_direct_attach(false);
@@ -595,10 +586,9 @@ fn direct_attach_off_opens_the_primary_by_its_recipe() {
 fn direct_attach_off_keeps_a_primary_with_no_recipe() {
     let mut sidebar = subject_session();
     let direct = [
-        ("action.primary.direct.transport", text("ssh")),
-        ("action.primary.direct.host", text("robert@feta")),
-        ("action.primary.direct.runtime_root", text("/run/cleat")),
-        ("action.primary.direct.daemon", text("d1")),
+        ("action.primary.direct.publication.scope", text("vessel/v1")),
+        ("action.primary.direct.publication.name", text("cleat/d1")),
+        ("action.primary.direct.publication.label", text("cleat")),
         ("action.primary.direct.session", text("s1")),
     ];
     sidebar.feed(150, [patch(subject(), &direct, &[])]);
@@ -609,7 +599,7 @@ fn direct_attach_off_keeps_a_primary_with_no_recipe() {
     sidebar.complete(request_id, Ok(Some(worker())));
     sidebar.observe(vec![Workspace { id: worker(), position: 0, name: "Worker".into(), selected: true }], vec![]);
     let update = sidebar.plan_slot(worker(), "primary", "").unwrap().update.unwrap();
-    assert!(matches!(update.resolution.recipe, LocalRecipe::CleatSession { .. }), "{update:?}");
+    assert!(matches!(update.resolution.recipe, LocalRecipe::CleatBinding { .. }), "{update:?}");
     assert!(sidebar.managed.complete_slot(worker(), "primary", update.token, true));
 
     sidebar.set_direct_attach(false);

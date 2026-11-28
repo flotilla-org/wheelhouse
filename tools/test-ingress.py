@@ -174,7 +174,7 @@ core.wheelhouse_snapshot_release.argtypes = [C.c_void_p]
 PROVIDER_NAME = b'wheelhouse'
 PROVIDER = Text(C.cast(C.c_char_p(PROVIDER_NAME), C.c_void_p), len(PROVIDER_NAME))
 core.wheelhouse_abi_version.restype = C.c_uint32
-assert core.wheelhouse_abi_version() == 21
+assert core.wheelhouse_abi_version() == 22
 
 lib.wheelhouse_ingress_start_recorded.argtypes = [C.c_char_p, C.c_size_t, WAKE,
     C.c_char_p, C.c_size_t, C.c_uint64, C.c_size_t, C.c_void_p, C.c_size_t]
@@ -747,8 +747,9 @@ class IngressTests(unittest.TestCase):
         path = self.endpoint(name)
         if sidebar:
             args = ('--andamento_config:' + str(sidebar), *args)
-        session = {'content': {'Local': {'CleatSession': {'transport': 'local', 'host': 'nowhere', 'runtime_root': str(Path(self.dir.name, 'cleat')),
-                                                           'daemon': 'none', 'session': 'agent-session'}}}, 'presentation': 'terminal'}
+        # No Tender runs here: the Binding is unavailable, and the View still shows the session.
+        session = {'content': {'Local': {'CleatBinding': {'scope': 'vessel/test', 'name': 'cleat/none', 'session': 'agent-session'}}},
+                   'presentation': 'terminal'}
         process, root, workspace, failure = self.launch(name, ('--andamento_socket:' if sidebar else '--automation_socket:') + path, *args, user=user, label='Automated',
                                                         specs=[workspace_seed.terminal(WAIT, ELSEWHERE), session])
         self.serve(path, process, failure)
@@ -1000,8 +1001,8 @@ class IngressTests(unittest.TestCase):
     def test_a_command_without_a_target_takes_the_caller_context(self):
         path = self.endpoint('context')
         def session(name):
-            return {'content': {'Local': {'CleatSession': {'transport': 'local', 'host': 'nowhere', 'runtime_root': str(Path(self.dir.name, 'cleat')),
-                                                           'daemon': 'none', 'session': name}}}, 'presentation': 'terminal'}
+            return {'content': {'Local': {'CleatBinding': {'scope': 'vessel/test', 'name': 'cleat/none', 'session': name}}},
+                    'presentation': 'terminal'}
         process, _, workspace, failure = self.launch('context', '--automation_socket:' + path, label='Context',
                                                      specs=[session('shared'), session('shared'), session('alone'), workspace_seed.terminal(WAIT)])
         self.serve(path, process, failure)

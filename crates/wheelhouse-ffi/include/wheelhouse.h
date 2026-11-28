@@ -801,9 +801,10 @@ typedef struct BinnacleGrid BinnacleGrid;
 // A provider facet: the facet of entity's Suggested Layout.
 #define WHEELHOUSE_SLOT_FACET 4
 
-// A direct Cleat packet view of a session (cleat_transport "local" or
-// "ssh", cleat_host, cleat_runtime_root, cleat_daemon, cleat_session).
-#define WHEELHOUSE_SLOT_CLEAT_SESSION 5
+// A direct Cleat packet view of a session, through the Tender Binding of its
+// daemon's publication (cleat_scope, cleat_name, cleat_session; cleat_socket
+// is the Binding's socket on this machine, output only).
+#define WHEELHOUSE_SLOT_CLEAT_BINDING 5
 
 // An agent thread watched over the Agent View protocol (endpoint, a Local
 // Endpoint's socket, agent_thread, and agent_transport and agent_host).
@@ -2135,14 +2136,22 @@ typedef struct {
   // Workspace Layouts arrange by.
   uint32_t has_role;
   WheelhouseText role;
-  // WHEELHOUSE_SLOT_CLEAT_SESSION: the transport ("local" or "ssh"), the
-  // host (the local host's name, or an ssh destination) and the session's
-  // runtime root, daemon and name.
+  // WHEELHOUSE_SLOT_CLEAT_BINDING: the publication's scope and name, the
+  // session, and (output only) the Binding's socket on this machine, empty
+  // when this machine has no Tender runtime directory to compute it from.
+  WheelhouseText cleat_scope;
+  WheelhouseText cleat_name;
+  WheelhouseText cleat_socket;
+  WheelhouseText cleat_session;
+  // Input only, for views saved before Tender publications (#789): the
+  // transport ("local" or "ssh"), host, runtime root and daemon a
+  // WHEELHOUSE_SLOT_CLEAT_BINDING with no cleat_scope names. It opens as the
+  // command that reached the session. Remove with
+  // `suggested_layout::legacy_cleat_command`.
   WheelhouseText cleat_transport;
   WheelhouseText cleat_host;
   WheelhouseText cleat_runtime_root;
   WheelhouseText cleat_daemon;
-  WheelhouseText cleat_session;
   WheelhouseText agent_thread;
   // WHEELHOUSE_SLOT_AGENT_SESSION: "local" (or empty) or "ssh", and the
   // ssh destination, empty when local.

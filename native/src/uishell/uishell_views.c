@@ -61,8 +61,8 @@ struct UIShell_TerminalViewState
   // its own Cleat view (uishell_cleat_attachments.c); session and provider
   // stay 0. Its connection owns reconnecting.
   UIShell_CleatViewRef *shared;
-  // A remote Cleat endpoint (cleat_transport "ssh", or one this build
-  // doesn't know). One with no connection (an unknown transport) re-reads its
+  // A remote Cleat endpoint (a Tender Binding, cleat_transport "ssh", or one
+  // this build doesn't know). One with no connection (an unknown transport) re-reads its
   // settings when asked (remote_reconnect).
   B32 remote_backend;
   B32 remote_reconnect;
@@ -4367,7 +4367,12 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     // started, so its reconnect retries the settings.
     B32 endpoint_unknown = endpoint_session.size != 0 && !str8_match(endpoint_transport, str8_lit("ssh"), 0) &&
                            !str8_match(endpoint_transport, str8_lit("local"), 0);
-    B32 remote_backend = endpoint_session.size != 0 && (endpoint_unknown || str8_match(endpoint_transport, str8_lit("ssh"), 0));
+    // A Tender Binding (#789) is reached through a socket on this machine,
+    // whichever host carries the daemon; it is a bridge that can fail like ssh.
+    B32 endpoint_binding = endpoint_session.size != 0 && wh_view_setting(ctx, str8_lit("cleat_scope")).size != 0;
+    if(endpoint_binding) { endpoint_unknown = 0; }
+    B32 remote_backend = endpoint_session.size != 0 &&
+                         (endpoint_binding || endpoint_unknown || str8_match(endpoint_transport, str8_lit("ssh"), 0));
     if(endpoint_unknown)
     {
       log_user_errorf("Terminal endpoint %S: unknown cleat_transport \"%S\"", endpoint_session, endpoint_transport);
@@ -4398,9 +4403,11 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     {
       UIShell_CleatRoute route =
       {
-        .ssh = remote_backend,
-        .host = remote_backend ? wh_view_setting(ctx, str8_lit("cleat_host")) : str8_zero(),
-        .command = remote_backend ? wh_view_setting(ctx, str8_lit("cleat_command")) : str8_zero(),
+        .binding = endpoint_binding,
+        .socket = endpoint_binding ? wh_view_setting(ctx, str8_lit("cleat_socket")) : str8_zero(),
+        .ssh = remote_backend && !endpoint_binding,
+        .host = remote_backend && !endpoint_binding ? wh_view_setting(ctx, str8_lit("cleat_host")) : str8_zero(),
+        .command = remote_backend && !endpoint_binding ? wh_view_setting(ctx, str8_lit("cleat_command")) : str8_zero(),
         .runtime_root = endpoint_root,
         .daemon = daemon_name,
       };
@@ -4563,7 +4570,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
     if(tv->remote_backend && connection_state == CLEAT_SESSION_STREAMING && !tv->remote_warning_logged)
     {
       // The admission warning belongs in diagnostics, never in the content.
-      if(transport.warning.size != 0) { log_infof("Remote terminal %S: %S\n", wh_view_setting(ctx, str8_lit("cleat_host")), transport.warning); }
+      if(transport.warning.size != 0) { log_infof("Remote terminal %S: %S\n", wh_view_setting(ctx, str8_lit("cleat_host")).size ? wh_view_setting(ctx, str8_lit("cleat_host")) : wh_view_setting(ctx, str8_lit("cleat_name")), transport.warning); }
       tv->remote_warning_logged = 1;
     }
     // A shared connection decides when its transport has given up: one that
@@ -4572,7 +4579,7 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
                                                                (connection_state == CLEAT_SESSION_DISCONNECTED && !transport.retrying)));
     if(given_up && !tv->remote_disconnect_logged)
     {
-      log_infof("Remote terminal %S disconnected: %S\n", wh_view_setting(ctx, str8_lit("cleat_host")), transport.error);
+      log_infof("Remote terminal %S disconnected: %S\n", wh_view_setting(ctx, str8_lit("cleat_host")).size ? wh_view_setting(ctx, str8_lit("cleat_host")) : wh_view_setting(ctx, str8_lit("cleat_name")), transport.error);
       tv->remote_disconnect_logged = 1;
     }
     // Waiting on a role grant, or on the connection to decide.
@@ -4594,7 +4601,11 @@ WH_VIEW_UI_FUNCTION_DEF(terminal)
             str8_lit("session closed");
         }break;
       }
-      if(given_up)
+      // Tender closes a Binding it cannot carry with no bytes: the endpoint is
+      // unavailable, which is no terminal error.
+      B32 binding = shared_connection != 0 && shared_connection->route.binding;
+      if(given_up && binding) { status_text = str8_lit("endpoint unavailable — click to reconnect"); }
+      else if(given_up)
       {
         status_text = transport.error.size != 0 ? push_str8f(scratch.arena, "disconnected: %S — click to reconnect", transport.error) :
                                                    str8_lit("disconnected — click to reconnect");

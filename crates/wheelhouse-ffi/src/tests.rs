@@ -142,10 +142,9 @@ fn a_direct_cleat_primary_reaches_c_and_cleat_slots_round_trip() {
             fact("flotilla.vessel", "worker"),
             fact("display.label", "worker"),
             fact("action.primary.recipe", "flotilla attach worker"),
-            fact("action.primary.direct.transport", "ssh"),
-            fact("action.primary.direct.host", "robert@feta"),
-            fact("action.primary.direct.runtime_root", "/run/cleat"),
-            fact("action.primary.direct.daemon", "d1"),
+            fact("action.primary.direct.publication.scope", "vessel/worker"),
+            fact("action.primary.direct.publication.name", "cleat/d1"),
+            fact("action.primary.direct.publication.label", "cleat"),
             fact("action.primary.direct.session", "s1"),
         ]
         .join(",");
@@ -171,39 +170,61 @@ fn a_direct_cleat_primary_reaches_c_and_cleat_slots_round_trip() {
         let workspace = WorkspaceInput { id: id.into(), position: 0, name: text("worker"), selected: 1 };
         assert_eq!(wheelhouse_observe(h, &workspace, 1, ptr::null(), 0, &mut error), 1);
 
-        let cleat_fields = |spec: &ViewSpecView| {
-            [&spec.cleat_transport, &spec.cleat_host, &spec.cleat_runtime_root, &spec.cleat_daemon, &spec.cleat_session]
-                .map(|field| field.read().unwrap())
-        };
+        let cleat_fields =
+            |spec: &ViewSpecView| [&spec.cleat_scope, &spec.cleat_name, &spec.cleat_session].map(|field| field.read().unwrap());
         let plan = wheelhouse_slot_plan(h, id.into(), text("primary"), text(""), &mut error);
-        assert_eq!(((*plan).state, (*plan).recipe.content), (WHEELHOUSE_CONTENT_UPDATING, WHEELHOUSE_SLOT_CLEAT_SESSION));
-        assert_eq!(cleat_fields(&(*plan).recipe), ["ssh", "robert@feta", "/run/cleat", "d1", "s1"]);
+        assert_eq!(((*plan).state, (*plan).recipe.content), (WHEELHOUSE_CONTENT_UPDATING, WHEELHOUSE_SLOT_CLEAT_BINDING));
+        assert_eq!(cleat_fields(&(*plan).recipe), ["vessel/worker", "cleat/d1", "s1"]);
+        // The Binding's socket is computed here, under this account's Tender
+        // runtime directory (unix only).
+        #[cfg(unix)]
+        {
+            let socket = (*plan).recipe.cleat_socket.read().unwrap();
+            let runtime = tender_types::paths::runtime_dir_from_env().unwrap();
+            let expected = tender_types::paths::binding_path(&runtime, &tender_types::PublicationId::new("vessel/worker", "cleat/d1"));
+            assert_eq!(socket, expected.to_str().unwrap());
+        }
         assert_eq!((*plan).recipe.command.read().unwrap(), "");
         wheelhouse_slot_plan_free(plan);
 
         let mut spec: ViewSpecView = std::mem::zeroed();
-        spec.content = WHEELHOUSE_SLOT_CLEAT_SESSION;
-        spec.cleat_transport = text("local");
-        spec.cleat_host = text("feta");
-        spec.cleat_runtime_root = text("/run/cleat");
-        spec.cleat_daemon = text("d2");
+        spec.content = WHEELHOUSE_SLOT_CLEAT_BINDING;
+        spec.cleat_scope = text("vessel/other");
+        spec.cleat_name = text("cleat/d2");
         spec.cleat_session = text("s2");
         assert_eq!(wheelhouse_slot_set(h, id.into(), text("u:crew"), &spec, WHEELHOUSE_REBIND_REPLACE, &mut error), 1);
         let slots = wheelhouse_slots_get(h, id.into(), &mut error);
         let crew = slice((*slots).slots, (*slots).slot_count).unwrap().iter().find(|slot| slot.key.read().unwrap() == "u:crew").unwrap();
-        assert_eq!(crew.spec.content, WHEELHOUSE_SLOT_CLEAT_SESSION);
-        assert_eq!(cleat_fields(&crew.spec), ["local", "feta", "/run/cleat", "d2", "s2"]);
+        assert_eq!(crew.spec.content, WHEELHOUSE_SLOT_CLEAT_BINDING);
+        assert_eq!(cleat_fields(&crew.spec), ["vessel/other", "cleat/d2", "s2"]);
         wheelhouse_slots_free(slots);
         assert!(error.is_null());
-        // An unknown transport, an empty field and an option are refused.
-        for (transport, session) in [("mosh", "s2"), ("ssh", ""), ("ssh", "-oProxyCommand=x")] {
-            spec.cleat_transport = text(transport);
+        // An empty field and an option are refused.
+        for (scope, session) in [("", "s2"), ("vessel/other", ""), ("vessel/other", "-oProxyCommand=x")] {
+            spec.cleat_scope = text(scope);
             spec.cleat_session = text(session);
             assert_eq!(wheelhouse_slot_set(h, id.into(), text("u:bad"), &spec, WHEELHOUSE_REBIND_REPLACE, &mut error), 0);
             assert!(!error.is_null());
             wheelhouse_string_free(error);
             error = ptr::null_mut();
         }
+
+        // A view saved before Tender publications names the host path; it
+        // opens as the command that reached the session.
+        let mut legacy: ViewSpecView = std::mem::zeroed();
+        legacy.content = WHEELHOUSE_SLOT_CLEAT_BINDING;
+        legacy.cleat_transport = text("local");
+        legacy.cleat_host = text("feta");
+        legacy.cleat_runtime_root = text("/run/cleat");
+        legacy.cleat_daemon = text("d2");
+        legacy.cleat_session = text("s2");
+        assert_eq!(wheelhouse_slot_set(h, id.into(), text("u:old"), &legacy, WHEELHOUSE_REBIND_REPLACE, &mut error), 1);
+        let slots = wheelhouse_slots_get(h, id.into(), &mut error);
+        let old = slice((*slots).slots, (*slots).slot_count).unwrap().iter().find(|slot| slot.key.read().unwrap() == "u:old").unwrap();
+        assert_eq!(old.spec.content, WHEELHOUSE_SLOT_COMMAND);
+        let argv = slice(old.spec.argv, old.spec.argc).unwrap().iter().map(|arg| arg.read().unwrap()).collect::<Vec<_>>();
+        assert_eq!(argv, ["cleat", "--runtime-root", "/run/cleat", "--server", "d2", "attach", "--no-create", "--", "s2"]);
+        wheelhouse_slots_free(slots);
         wheelhouse_destroy(h);
     }
 }
@@ -1902,5 +1923,16 @@ fn host_documents_reach_c_and_pin() {
         assert_eq!(wheelhouse_slot_pin(h, id.into(), text(&docked), &mut error), 0, "pinned already");
         wheelhouse_string_free(error);
         wheelhouse_destroy(h);
+    }
+}
+
+// Scope and name may hold `/` and `.`: Tender's own encoding keeps the
+// Binding's socket one file directly under its bindings directory.
+#[test]
+fn a_binding_socket_stays_under_the_bindings_directory() {
+    let runtime = std::path::Path::new("/run/user/1000/tender");
+    for (scope, name) in [("../x", "cleat/../d"), ("vessel/a b", "cleat/\u{7}"), ("vessel/v", &"n".repeat(300))] {
+        let path = tender_types::paths::binding_path(runtime, &tender_types::PublicationId::new(scope, name));
+        assert_eq!(path.parent(), Some(tender_types::paths::bindings_dir(runtime).as_path()), "{scope:?} {name:?}");
     }
 }

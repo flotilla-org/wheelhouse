@@ -63,30 +63,30 @@ Each fact is `layout.slot.<key>.<field>`.
 | `rebind` | text | `replace` (default), `keep-previous` or `ask`: what happens to the live instance when the resolution changes. |
 | `state` | text | `ready` or `held`. Required for a provider facet; optional (default `ready`) for a local recipe. |
 | `target` | text | Identity of the backing instance. Required for a ready provider facet; optional for a local recipe. |
-| `kind` | text | Recipe kind: `command`, `file`, `url`, `jackstay`, `cleat-session`, `agent-session` or `agent-document`. |
+| `kind` | text | Recipe kind: `command`, `file`, `url`, `jackstay`, `cleat-binding`, `agent-session` or `agent-document`. |
 | `argv.<n>` | text | `command`: argument `n`, contiguous from `0` ([andamento#134](https://github.com/flotilla-org/andamento/issues/134)). |
 | `command` | text | `command`: shell command line, used only when no `argv.*` is present. |
 | `cwd` | text | `command`: optional working directory. |
 | `path` | text | `file`: path to open. |
 | `url` | text | `url`: URL to open, including a Luchs page. |
 | `launcher`, `endpoint` | text | `jackstay`: Jackstay launcher and stream endpoint. |
-| `transport` | text | `cleat-session`: `local` or `ssh`. `agent-session`: optional, `local` (the default) or `ssh`. |
-| `host` | text | `cleat-session`: the local host's name (`local`) or the ssh destination (`ssh`). `agent-session`: the ssh destination; absent when local. |
-| `runtime_root`, `daemon`, `session` | text | `cleat-session`: the Cleat runtime root, the daemon serving the session, and the session. A frontend shows it as a direct Cleat packet view. |
+| `transport` | text | `agent-session`: optional, `local` (the default) or `ssh`. |
+| `host` | text | `agent-session`: the ssh destination; absent when local. |
+| `scope`, `name`, `session` | text | `cleat-binding`: the scope and name of the Tender publication of the daemon serving the session, and the session. A frontend shows it as a direct Cleat packet view through the publication's Binding on its own machine ([#789](https://github.com/flotilla-org/wheelhouse/issues/789)). |
 | `endpoint`, `thread` | text | `agent-session`: the producer's Local Endpoint socket, on this machine or on `host`, and the thread an Agent View watches there ([#691](https://github.com/flotilla-org/wheelhouse/issues/691)). `agent-document` reaches its thread the same way. |
 | `key` | text | `agent-document`, and a host-relative slot: the thread's state document, such as `checklist` ([#692](https://github.com/flotilla-org/wheelhouse/issues/692)). |
 | `relative_to` | text | A host-relative slot: the key of the slot whose agent session it shows document `key` of ([#706](https://github.com/flotilla-org/wheelhouse/issues/706)). |
 
-A `cleat-session`'s `host`, `runtime_root`, `daemon` and `session` must each
-be usable as one argument: nonempty, not starting with `-` (so a host never
-passes one to ssh or cleat as an option) and without control characters; all
-but `runtime_root`, a path, also without whitespace. Any other value is an
-invalid spec.
+A `cleat-binding`'s `scope`, `name` and `session` must each be nonempty and
+without control characters; the `session` also must not start with `-` (so a
+host never passes it to `cleat` as an option) or hold whitespace. The scope and
+name are Tender identity text and may hold `/`. Any other value is an invalid
+spec. The host-path `cleat-session` kind of earlier releases is no longer read.
 
 An `agent-session` over `ssh` reaches its producer through OpenSSH's
 unix-socket forwarding (`ssh -N -L <local>:<endpoint> <host>`), so the far host
 needs only sshd ([#737](https://github.com/flotilla-org/wheelhouse/issues/737)).
-Its `host` follows the `cleat-session` rule, and its `endpoint` is an absolute
+Its `host` is one argument, nonempty and not starting with `-`, and its `endpoint` is an absolute
 path without control characters or `:`, which `-L` reads as a separator. A
 local session has no `host`.
 
@@ -107,7 +107,7 @@ turns it into the `agent-document` its host resolves to now. `relative_to`
 follows the slot key rules and never names the slot itself.
 
 An entity's **Facets** are the slots of its own Suggested Layout, named by
-their keys: an agent might publish `terminal` (`cleat-session`),
+their keys: an agent might publish `terminal` (`cleat-binding`),
 `conversation` (`agent-session`) and `page` (`url`). A slot showing a Facet of
 an entity that publishes a layout can switch to any of them in place
 ([Slots and arrangements](slots-and-arrangements.md)); the frontend offers
@@ -150,18 +150,23 @@ An entity publishing `workspace.primary.state` has a slot with the key
 | `workspace.primary.target` | `target` |
 | `action.primary.recipe` | `command` (shell text), kind `command` |
 | `git.root` | `cwd` |
-| `action.primary.direct.transport`, `.host`, `.runtime_root`, `.daemon`, `.session` | kind `cleat-session` and its fields, preferred over the command |
+| `action.primary.direct.publication.scope`, `.publication.name`, `.publication.label`, `.session` | kind `cleat-binding` and its fields, preferred over the command |
 
-A provider that can reach the primary's Cleat session directly
-([flotilla#2106](https://github.com/flotilla-org/flotilla/pull/2106))
-publishes all five `action.primary.direct.*` facts; otherwise it publishes
-only `action.primary.direct.reason`, saying why not. When all five are present
-and usable (a known transport, and fields as a `cleat-session` slot needs),
-the primary resolves to a
-`cleat-session` recipe, a direct Cleat packet view of that session
+A provider whose host publishes the primary's Cleat daemon through Tender
+([flotilla#4401](https://github.com/flotilla-org/flotilla/issues/4401))
+publishes the four `action.primary.direct.*` facts above; otherwise it
+publishes only `action.primary.direct.reason`, saying why not (for example "no
+Tender instance reachable"). When all four are present and usable (fields as a
+`cleat-binding` slot needs, and a `publication.label` of `cleat`: Tender
+doesn't interpret labels, so Wheelhouse opens only the publications it
+recognises), the primary resolves to a `cleat-binding` recipe, a direct Cleat
+packet view of that session
 ([wheelhouse#104](https://github.com/flotilla-org/wheelhouse/issues/104)).
-Anything less (none, some, or an unknown transport) leaves the command recipe
-as the fallback. The target is the same either way. Materializing such a
+The viewer binds the publication through its own Tender instance, so the
+recipe is a socket on this machine whichever host or container carries the
+vessel. Anything less (none, some, or a publication of another label) leaves
+the command recipe as the fallback. The host-path facts (`transport`, `host`,
+`runtime_root`, `daemon`) of earlier releases are no longer read. The target is the same either way. Materializing such a
 workspace carries no recipe: the host opens it with its primary waiting, and
 the slot's first plan fills it with the Cleat session.
 
@@ -307,8 +312,8 @@ The Wheelhouse decisions leave these open. The schema does not settle them.
 - **Recipe kinds.** Flotilla's `attach` and `view` recipe kinds from
   andamento#134 are not slot kinds yet; an attach is published as a `command`.
   A Luchs page is a `url`. Whether either needs its own kind is open. The
-  primary slot reads the `action.primary.direct.*` Cleat endpoint; other
-  slots may publish kind `cleat-session` themselves.
+  primary slot reads the `action.primary.direct.*` Cleat publication; other
+  slots may publish kind `cleat-binding` themselves.
 - **Labels.** A View Spec holds only what defines the content, so there is no
   slot label. Tab titles come from the facet entity's `display.label` or the
   recipe. Whether a provider may suggest a title is open.

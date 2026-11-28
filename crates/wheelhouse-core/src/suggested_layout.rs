@@ -24,10 +24,9 @@ const KEY_PRIMARY_TARGET: &str = "workspace.primary.target";
 const KEY_PRIMARY_RECIPE: &str = "action.primary.recipe";
 const KEY_PRIMARY_CWD: &str = "git.root";
 const KEY_ACTION_TARGET: &str = "action.primary.target";
-const KEY_DIRECT_TRANSPORT: &str = "action.primary.direct.transport";
-const KEY_DIRECT_HOST: &str = "action.primary.direct.host";
-const KEY_DIRECT_RUNTIME_ROOT: &str = "action.primary.direct.runtime_root";
-const KEY_DIRECT_DAEMON: &str = "action.primary.direct.daemon";
+const KEY_DIRECT_PUBLICATION_SCOPE: &str = "action.primary.direct.publication.scope";
+const KEY_DIRECT_PUBLICATION_NAME: &str = "action.primary.direct.publication.name";
+const KEY_DIRECT_PUBLICATION_LABEL: &str = "action.primary.direct.publication.label";
 const KEY_DIRECT_SESSION: &str = "action.primary.direct.session";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,6 +97,7 @@ pub enum Content {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "LocalRecipeRepr")]
 pub enum LocalRecipe {
     Command {
         line: CommandLine,
@@ -113,14 +113,13 @@ pub enum LocalRecipe {
         launcher: String,
         endpoint: String,
     },
-    /// A direct Cleat packet view of `session`, served by `daemon` under
-    /// `runtime_root` on `host` (the local host's name, or an ssh
-    /// destination).
-    CleatSession {
-        transport: CleatTransport,
-        host: String,
-        runtime_root: String,
-        daemon: String,
+    /// A direct Cleat packet view of `session`, served by the daemon that
+    /// Tender publishes as `name` in `scope`. The viewer binds it through its
+    /// own Tender instance, so it is a socket on this machine whichever host
+    /// carries the session (`wheelhouse-ffi` computes the path).
+    CleatBinding {
+        scope: String,
+        name: String,
         session: String,
     },
     /// An agent thread watched over the Agent View protocol (#691): its
@@ -165,6 +164,125 @@ impl LocalRecipe {
     }
 }
 
+/// What a saved [`LocalRecipe`] decodes from: the recipe's own shapes, and the
+/// host-path `CleatSession` that layouts saved before Tender publications
+/// (#789) hold. It opens through the command recipe it names, the way the
+/// session was reached; the primary's own command is not in a saved layout.
+///
+/// Tracked in wheelhouse#794. Remove `CleatSession` here, with [`legacy_cleat_command`], once layouts
+/// saved before #789 have been rewritten by a release that no longer decodes
+/// it: one generation of releases after this one.
+#[derive(serde::Deserialize)]
+enum LocalRecipeRepr {
+    Command {
+        line: CommandLine,
+        cwd: Option<String>,
+    },
+    File {
+        path: String,
+    },
+    Url {
+        url: String,
+    },
+    Jackstay {
+        launcher: String,
+        endpoint: String,
+    },
+    CleatBinding {
+        scope: String,
+        name: String,
+        session: String,
+    },
+    CleatSession {
+        transport: CleatTransport,
+        host: String,
+        runtime_root: String,
+        daemon: String,
+        session: String,
+    },
+    AgentSession {
+        #[serde(default)]
+        transport: CleatTransport,
+        #[serde(default)]
+        host: String,
+        endpoint: String,
+        thread: String,
+    },
+    AgentDocument {
+        #[serde(default)]
+        transport: CleatTransport,
+        #[serde(default)]
+        host: String,
+        endpoint: String,
+        thread: String,
+        key: String,
+    },
+}
+
+impl From<LocalRecipeRepr> for LocalRecipe {
+    fn from(repr: LocalRecipeRepr) -> Self {
+        match repr {
+            LocalRecipeRepr::Command { line, cwd } => Self::Command { line, cwd },
+            LocalRecipeRepr::File { path } => Self::File { path },
+            LocalRecipeRepr::Url { url } => Self::Url { url },
+            LocalRecipeRepr::Jackstay { launcher, endpoint } => Self::Jackstay { launcher, endpoint },
+            LocalRecipeRepr::CleatBinding { scope, name, session } => Self::CleatBinding { scope, name, session },
+            // A field no host could pass on as one argument opens nothing.
+            LocalRecipeRepr::CleatSession { transport, host, runtime_root, daemon, session } => {
+                if invalid_legacy_cleat_field(&host, &runtime_root, &daemon, &session).is_some() {
+                    return Self::Command { line: CommandLine::Argv(vec!["false".to_owned()]), cwd: None };
+                }
+                legacy_cleat_command(transport, &host, &runtime_root, &daemon, &session)
+            }
+            LocalRecipeRepr::AgentSession { transport, host, endpoint, thread } => Self::AgentSession { transport, host, endpoint, thread },
+            LocalRecipeRepr::AgentDocument { transport, host, endpoint, thread, key } => {
+                Self::AgentDocument { transport, host, endpoint, thread, key }
+            }
+        }
+    }
+}
+
+/// The command that opens a host-path Cleat session as the old direct
+/// recipe reached it: `cleat attach` on this machine, or over ssh. It never
+/// creates the session. See [`LocalRecipeRepr`] for when this can go.
+pub fn legacy_cleat_command(transport: CleatTransport, host: &str, runtime_root: &str, daemon: &str, session: &str) -> LocalRecipe {
+    let mut cleat: Vec<String> = vec!["cleat".to_owned()];
+    if !runtime_root.is_empty() {
+        cleat.extend(["--runtime-root".to_owned(), runtime_root.to_owned()]);
+    }
+    if !daemon.is_empty() {
+        cleat.extend(["--server".to_owned(), daemon.to_owned()]);
+    }
+    cleat.extend(["attach", "--no-create", "--", session].map(str::to_owned));
+    let argv = match transport {
+        CleatTransport::Local => cleat,
+        // The remote shell re-parses the words after the host, so each is quoted.
+        CleatTransport::Ssh => {
+            let remote = cleat.iter().map(|word| shell_word(word)).collect::<Vec<_>>().join(" ");
+            ["ssh", "-t", "--"].map(str::to_owned).into_iter().chain([host.to_owned(), remote]).collect()
+        }
+    };
+    LocalRecipe::Command { line: CommandLine::Argv(argv), cwd: None }
+}
+
+/// The first host-path Cleat session field a host could not pass on as one
+/// argument: each is nonempty, never starts with `-`, and has no control
+/// characters; all but the runtime root, a path, also have no whitespace.
+/// Part of the shim [`LocalRecipeRepr`] describes.
+pub fn invalid_legacy_cleat_field(host: &str, runtime_root: &str, daemon: &str, session: &str) -> Option<&'static str> {
+    let word = |text: &str, spaces: bool| {
+        !text.is_empty() && !text.starts_with('-') && !text.chars().any(|c| c.is_control() || (!spaces && c.is_whitespace()))
+    };
+    [("host", host, false), ("runtime_root", runtime_root, true), ("daemon", daemon, false), ("session", session, false)]
+        .into_iter()
+        .find(|(_, text, spaces)| !word(text, *spaces))
+        .map(|(field, ..)| field)
+}
+
+fn shell_word(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\\''"))
+}
+
 /// How a frontend reaches a Cleat session's daemon, or an agent's producer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -191,17 +309,20 @@ impl CleatTransport {
     }
 }
 
-/// The first Cleat session field a host could not pass on as one argument,
-/// if any. Each is nonempty, never starts with `-` (so it is never read as
-/// an option to ssh or cleat) and has no control characters; all but the
-/// runtime root, a path, also have no whitespace.
-pub fn invalid_cleat_field(host: &str, runtime_root: &str, daemon: &str, session: &str) -> Option<&'static str> {
-    let word = |text: &str, spaces: bool| {
-        !text.is_empty() && !text.starts_with('-') && !text.chars().any(|c| c.is_control() || (!spaces && c.is_whitespace()))
+/// The first Cleat binding field a host could not use, if any. Each is
+/// nonempty and has no control characters; the session also never starts with
+/// `-`, so it is never read as an option to `cleat`. The scope and name are
+/// Tender identity text (`vessel/<id>`, `cleat/<daemon>`): they reach a socket
+/// path only through Tender's own encoding, so they may hold `/`.
+pub fn invalid_cleat_field(scope: &str, name: &str, session: &str) -> Option<&'static str> {
+    let word = |text: &str, option_safe: bool| {
+        !text.is_empty()
+            && !(option_safe && text.starts_with('-'))
+            && !text.chars().any(|c| c.is_control() || (option_safe && c.is_whitespace()))
     };
-    [("host", host, false), ("runtime_root", runtime_root, true), ("daemon", daemon, false), ("session", session, false)]
+    [("scope", scope, false), ("name", name, false), ("session", session, true)]
         .into_iter()
-        .find(|(_, text, spaces)| !word(text, *spaces))
+        .find(|(_, text, option_safe)| !word(text, *option_safe))
         .map(|(field, ..)| field)
 }
 
@@ -483,26 +604,28 @@ fn primary_slot(entity: &EntityRef, facts: &FactMap) -> Slot {
     }
 }
 
+/// The label of a publication this opens: Tender doesn't interpret labels, so
+/// the application checks them (#789).
+pub const CLEAT_PUBLICATION_LABEL: &str = "cleat";
+
 /// The primary's direct Cleat endpoint (wheelhouse#104), preferred over its
-/// command recipe: all five `action.primary.direct.*` facts, with a known
-/// transport and fields [`invalid_cleat_field`] accepts. `None` when the
-/// provider publishes none (only `action.primary.direct.reason`) or an
-/// incomplete or unusable one; the primary then opens through its command
+/// command recipe: the Tender publication of its session's daemon
+/// (`action.primary.direct.publication.{scope,name,label}` and
+/// `action.primary.direct.session`), when the label is `cleat` and the fields
+/// are ones [`invalid_cleat_field`] accepts. `None` when the provider
+/// publishes none (only `action.primary.direct.reason`) or an incomplete,
+/// foreign or unusable one; the primary then opens through its command
 /// recipe.
 pub(crate) fn direct_primary<S: AsRef<str>>(text: impl Fn(&'static str) -> Option<S>) -> Option<LocalRecipe> {
     let field = |key| text(key).map(|value| value.as_ref().to_owned());
-    let (host, runtime_root, daemon, session) =
-        (field(KEY_DIRECT_HOST)?, field(KEY_DIRECT_RUNTIME_ROOT)?, field(KEY_DIRECT_DAEMON)?, field(KEY_DIRECT_SESSION)?);
-    if invalid_cleat_field(&host, &runtime_root, &daemon, &session).is_some() {
+    if field(KEY_DIRECT_PUBLICATION_LABEL)? != CLEAT_PUBLICATION_LABEL {
         return None;
     }
-    Some(LocalRecipe::CleatSession {
-        transport: CleatTransport::parse(&field(KEY_DIRECT_TRANSPORT)?)?,
-        host,
-        runtime_root,
-        daemon,
-        session,
-    })
+    let (scope, name, session) = (field(KEY_DIRECT_PUBLICATION_SCOPE)?, field(KEY_DIRECT_PUBLICATION_NAME)?, field(KEY_DIRECT_SESSION)?);
+    if invalid_cleat_field(&scope, &name, &session).is_some() {
+        return None;
+    }
+    Some(LocalRecipe::CleatBinding { scope, name, session })
 }
 
 fn provider_slot(f: &Facts, key: &str) -> Result<Slot, LayoutError> {
@@ -587,15 +710,12 @@ fn recipe(f: &Facts, key: &str) -> Result<LocalRecipe, LayoutError> {
         "file" => LocalRecipe::File { path: required("path")? },
         "url" => LocalRecipe::Url { url: required("url")? },
         "jackstay" => LocalRecipe::Jackstay { launcher: required("launcher")?, endpoint: required("endpoint")? },
-        "cleat-session" => {
-            let transport = required("transport")?;
-            let transport = CleatTransport::parse(&transport).ok_or_else(|| invalid(&at("transport"), &transport))?;
-            let (host, runtime_root, daemon, session) =
-                (required("host")?, required("runtime_root")?, required("daemon")?, required("session")?);
-            if let Some(field) = invalid_cleat_field(&host, &runtime_root, &daemon, &session) {
+        "cleat-binding" => {
+            let (scope, name, session) = (required("scope")?, required("name")?, required("session")?);
+            if let Some(field) = invalid_cleat_field(&scope, &name, &session) {
                 return Err(invalid(&at(field), &required(field)?));
             }
-            LocalRecipe::CleatSession { transport, host, runtime_root, daemon, session }
+            LocalRecipe::CleatBinding { scope, name, session }
         }
         kind @ ("agent-session" | "agent-document") => {
             let transport = match f.text(&at("transport"))? {

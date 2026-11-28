@@ -323,9 +323,8 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
       // Managed primary content, as a workspace subject's provider publishes it.
       {"workspace.primary.state", "ready"}, {"workspace.primary.target", "crew-7@1"},
       {"action.primary.recipe", "printf R; read answer"},
-      {"action.primary.direct.transport", "ssh"}, {"action.primary.direct.host", "crew@fleet-3"},
-      {"action.primary.direct.runtime_root", "/var/lib/cleat"}, {"action.primary.direct.daemon", "work"},
-      {"action.primary.direct.session", "crew-7"},
+      {"action.primary.direct.publication.scope", "vessel/crew-7"}, {"action.primary.direct.publication.name", "cleat/work"},
+      {"action.primary.direct.publication.label", "cleat"}, {"action.primary.direct.session", "crew-7"},
     };
     WheelhouseFact producer[ArrayCount(direct)] = {0};
     for(U64 i = 0; i < ArrayCount(direct); i++)
@@ -360,24 +359,26 @@ uishell_managed_content_diagnostics(RD_WindowState *ws)
     direct_view = tree.root->tabs.first ? rd_cfg_from_view(tree.root->tabs.first->v) : &cfg_nil_node;
     char *expected[][2] =
     {
-      {"cleat_transport", "ssh"}, {"cleat_host", "crew@fleet-3"}, {"cleat_runtime_root", "/var/lib/cleat"},
-      {"cleat_daemon", "work"}, {"cleat_session", "crew-7"},
+      {"cleat_scope", "vessel/crew-7"}, {"cleat_name", "cleat/work"}, {"cleat_session", "crew-7"},
     };
     B32 endpoint = str8_match(direct_view->string, str8_lit("terminal"), 0) && rd_expr_from_cfg(direct_view).size == 0;
     for(U64 i = 0; i < ArrayCount(expected); i++)
     { endpoint = endpoint && str8_match(rd_cfg_setting_child(direct_view, str8_cstring(expected[i][0]))->first->string, str8_cstring(expected[i][1]), 0); }
+    // The core computes the Binding's socket under this account's Tender
+    // runtime directory (where there is one).
+    endpoint = endpoint && (OS_WINDOWS || rd_cfg_setting_child(direct_view, str8_lit("cleat_socket"))->first->string.size != 0);
     ManagedCheck(endpoint, "its first plan makes the primary a terminal of the endpoint's session");
     UIShell_ViewSpec spec = {0};
     String8 taken[UISHELL_STORE_TAKEN_MAX];
     U64 taken_count = 0;
     ManagedCheck(uishell_store_spec_from_view(scratch.arena, direct_view, &spec, taken, &taken_count) &&
-                 spec.content == WHEELHOUSE_SLOT_CLEAT_SESSION && str8_match(spec.cleat_session, str8_lit("crew-7"), 0),
+                 spec.content == WHEELHOUSE_SLOT_CLEAT_BINDING && str8_match(spec.cleat_session, str8_lit("crew-7"), 0),
                  "the endpoint view's spec reads back as a Cleat session");
     UIShell_ViewSpec typo = spec;
-    typo.cleat_transport = str8_lit("ssh ");
-    ManagedCheck(uishell_store_unshown(scratch.arena, str8_lit("primary"), &spec).size == 0 &&
+    typo.cleat_socket = str8_zero();
+    ManagedCheck((OS_WINDOWS || uishell_store_unshown(scratch.arena, str8_lit("primary"), &spec).size == 0) &&
                  uishell_store_unshown(scratch.arena, str8_lit("primary"), &typo).size != 0,
-                 "an unknown endpoint transport is unshown, never guessed at");
+                 "an endpoint with no Binding socket on this machine is unshown");
     WheelhouseSlotContent *plan = wheelhouse_slot_plan(opened.core, uishell_sidebar_workspace(uishell_workspace_id_from_cfg(direct_workspace)),
       uishell_sidebar_text(str8_lit("primary")), uishell_sidebar_text(rd_cfg_setting_child(direct_view, str8_lit("applied"))->first->string), 0);
     ManagedCheck(plan && plan->state == WHEELHOUSE_CONTENT_CURRENT, "the next plan finds the endpoint view current");
