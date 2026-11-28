@@ -169,7 +169,7 @@ impl LocalRecipe {
 /// (#789) hold. It opens through the command recipe it names, the way the
 /// session was reached; the primary's own command is not in a saved layout.
 ///
-/// Remove `CleatSession` here, with [`legacy_cleat_command`], once layouts
+/// Tracked in wheelhouse#794. Remove `CleatSession` here, with [`legacy_cleat_command`], once layouts
 /// saved before #789 have been rewritten by a release that no longer decodes
 /// it: one generation of releases after this one.
 #[derive(serde::Deserialize)]
