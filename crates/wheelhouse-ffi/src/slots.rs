@@ -229,7 +229,9 @@ pub(crate) struct SpecStorage {
 fn binding_socket(scope: &str, name: &str) -> Option<String> {
     let runtime = tender_types::paths::runtime_dir_from_env().ok()?;
     let path = tender_types::paths::binding_path(&runtime, &tender_types::PublicationId::new(scope, name));
-    path.into_os_string().into_string().ok()
+    // Tender hashes a name that would not fit a socket path, but a runtime
+    // directory too long for any Binding leaves nothing to attach through.
+    path.into_os_string().into_string().ok().filter(|path| path.len() <= tender_types::paths::MAX_SOCKET_PATH)
 }
 
 #[cfg(not(unix))]
