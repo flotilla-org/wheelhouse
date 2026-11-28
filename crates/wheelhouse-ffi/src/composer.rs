@@ -3,7 +3,7 @@
 use super::*;
 use std::sync::Arc;
 
-use wheelhouse_agent::{Completion, Endpoint, Key, Popup, RowKind, Search, FILE_LIMIT, VISIBLE_ROWS};
+use fearnought_client::{Completion, Endpoint, Key, Popup, RowKind, Search, FILE_LIMIT, VISIBLE_ROWS};
 use wheelhouse_rich_text::Typed;
 
 use crate::agent_watch::route;
@@ -192,7 +192,7 @@ pub struct WheelhouseComposerPopup {
 
 pub const WHEELHOUSE_COMPOSER_VISIBLE_ROWS: usize = VISIBLE_ROWS;
 
-type PopupKeep = (Vec<wheelhouse_agent::Row>, String, Vec<WheelhouseComposerRow>);
+type PopupKeep = (Vec<fearnought_client::Row>, String, Vec<WheelhouseComposerRow>);
 
 /// Free it with wheelhouse_composer_popup_free.
 #[no_mangle]

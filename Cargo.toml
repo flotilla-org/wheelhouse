@@ -14,8 +14,6 @@ members = [
     "crates/wheelhouse-tables",
     "crates/wheelhouse-wasm",
     "crates/wheelhouse-text",
-    "crates/conversation-events",
-    "crates/wheelhouse-agent",
     "crates/wheelhouse-surface",
 ]
 # tools/scenario is a workspace of its own: it pins Flotilla's crates by git
@@ -44,6 +42,9 @@ rigging-http-client = { git = "https://github.com/flotilla-org/rigging", branch 
 rigging-http-wire = { git = "https://github.com/flotilla-org/rigging", branch = "main" }
 # Tender's Binding paths (#789), at the revision flotilla pins for the publication it reads.
 tender-types = { git = "https://github.com/flotilla-org/rigging", branch = "main" }
+# Fearnought holds the Agent View protocol crates.
+conversation-events = { git = "https://github.com/flotilla-org/fearnought", branch = "main" }
+fearnought-client = { git = "https://github.com/flotilla-org/fearnought", branch = "main" }
 ansi_term = "0.12"
 crossterm = "0.28.1"
 insta = "1"
@@ -53,8 +54,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 unicode-width = "0.1.14"
 
-conversation-events = { path = "crates/conversation-events" }
-wheelhouse-agent = { path = "crates/wheelhouse-agent" }
 wheelhouse-core = { path = "crates/wheelhouse-core" }
 wheelhouse-rich-text = { path = "crates/wheelhouse-rich-text" }
 wheelhouse-stream = { path = "crates/wheelhouse-stream" }

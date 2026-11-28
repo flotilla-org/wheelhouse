@@ -319,8 +319,8 @@ dependencies = [
 [[package]]
 name = "conversation-events"
 version = "0.1.0"
+source = "git+https://github.com/flotilla-org/fearnought?branch=main#2a055de0d28c987d0dcb596ec1b8a2037bb63c19"
 dependencies = [
- "hegeltest",
  "serde",
  "serde_json",
 ]
@@ -476,6 +476,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
+name = "fearnought-client"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/fearnought?branch=main#2a055de0d28c987d0dcb596ec1b8a2037bb63c19"
+dependencies = [
+ "conversation-events",
+ "flotilla-cbor",
+ "reqwest",
+ "rigging-http-client",
+ "rigging-http-wire",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -565,17 +580,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
 
 [[package]]
-name = "futures-macro"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.5",
-]
-
-[[package]]
 name = "futures-sink"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -594,7 +598,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
  "futures-core",
- "futures-macro",
  "futures-task",
  "pin-project-lite",
  "slab",
@@ -2475,23 +2478,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wheelhouse-agent"
-version = "0.1.0"
-dependencies = [
- "axum",
- "conversation-events",
- "flotilla-cbor",
- "futures-util",
- "hegeltest",
- "reqwest",
- "rigging-http-client",
- "rigging-http-wire",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "wheelhouse-arrangement-oracle"
 version = "0.1.0"
 dependencies = [
@@ -2522,10 +2508,10 @@ dependencies = [
  "binnacle-ffi",
  "binnacle-memory",
  "conversation-events",
+ "fearnought-client",
  "hegeltest",
  "serde_json",
  "tender-types",
- "wheelhouse-agent",
  "wheelhouse-core",
  "wheelhouse-rich-text",
  "wheelhouse-tables",

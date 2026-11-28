@@ -4,7 +4,7 @@ use super::*;
 use std::sync::Arc;
 
 use conversation_events::{FileKind, FileMatch, TaskOutput};
-use wheelhouse_agent::{Endpoint, Output, Search, Wake};
+use fearnought_client::{Endpoint, Output, Search, Wake};
 
 use crate::agent_input::ticket;
 use wheelhouse_core::suggested_layout::CleatTransport;

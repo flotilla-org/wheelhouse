@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use conversation_events::Event;
-use wheelhouse_agent::{retry_after, Connection, Endpoint, Route, Update, Watch};
+use fearnought_client::{retry_after, Connection, Endpoint, Route, Update, Watch};
 use wheelhouse_core::suggested_layout::{invalid_agent_field, CleatTransport};
 use wheelhouse_rich_text::{RichText, SubscriptionId};
 
