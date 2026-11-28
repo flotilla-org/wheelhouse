@@ -176,11 +176,14 @@ fn a_direct_cleat_primary_reaches_c_and_cleat_slots_round_trip() {
         assert_eq!(((*plan).state, (*plan).recipe.content), (WHEELHOUSE_CONTENT_UPDATING, WHEELHOUSE_SLOT_CLEAT_BINDING));
         assert_eq!(cleat_fields(&(*plan).recipe), ["vessel/worker", "cleat/d1", "s1"]);
         // The Binding's socket is computed here, under this account's Tender
-        // runtime directory.
-        let socket = (*plan).recipe.cleat_socket.read().unwrap();
-        let runtime = tender_types::paths::runtime_dir_from_env().unwrap();
-        let expected = tender_types::paths::binding_path(&runtime, &tender_types::PublicationId::new("vessel/worker", "cleat/d1"));
-        assert_eq!(socket, expected.to_str().unwrap());
+        // runtime directory (unix only).
+        #[cfg(unix)]
+        {
+            let socket = (*plan).recipe.cleat_socket.read().unwrap();
+            let runtime = tender_types::paths::runtime_dir_from_env().unwrap();
+            let expected = tender_types::paths::binding_path(&runtime, &tender_types::PublicationId::new("vessel/worker", "cleat/d1"));
+            assert_eq!(socket, expected.to_str().unwrap());
+        }
         assert_eq!((*plan).recipe.command.read().unwrap(), "");
         wheelhouse_slot_plan_free(plan);
 
