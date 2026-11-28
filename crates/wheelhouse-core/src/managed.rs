@@ -74,12 +74,10 @@ impl Resolved {
                 field(launcher);
                 field(endpoint);
             }
-            LocalRecipe::CleatSession { transport, host, runtime_root, daemon, session } => {
-                field("cleat-session");
-                field(transport.as_str());
-                field(host);
-                field(runtime_root);
-                field(daemon);
+            LocalRecipe::CleatBinding { scope, name, session } => {
+                field("cleat-binding");
+                field(scope);
+                field(name);
                 field(session);
             }
             LocalRecipe::AgentSession { transport, host, endpoint, thread } => {

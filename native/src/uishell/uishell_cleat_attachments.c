@@ -36,14 +36,17 @@ uishell_terminal_provider_wake(void *user_data)
 #define UISHELL_CLEAT_PROVIDER_FEATURES (CLEAT_PROVIDER_FEATURE_CELL_SNAPSHOTS|CLEAT_PROVIDER_FEATURE_STRUCTURED_MOUSE_INPUT|\
                                          CLEAT_PROVIDER_FEATURE_RENDER_UPDATES|CLEAT_PROVIDER_FEATURE_IMAGE_STATE)
 
-// Where a daemon is: `ssh` reaches `host` (running `command`, the Cleat
-// there, when it isn't the one on the remote PATH); `local` is this host's
-// socket. Runtime root and daemon name select the daemon; empty is Cleat's
-// default.
+// Where a daemon is: `binding` is the socket of a Tender Binding on this
+// machine (#789), whichever host carries the daemon; `ssh` reaches `host`
+// (running `command`, the Cleat there, when it isn't the one on the remote
+// PATH); `local` is this host's socket. Runtime root and daemon name select
+// the daemon; empty is Cleat's default.
 typedef struct UIShell_CleatRoute UIShell_CleatRoute;
 struct UIShell_CleatRoute
 {
   B32 ssh;
+  B32 binding;
+  String8 socket;
   String8 host;
   String8 command;
   String8 runtime_root;
@@ -122,7 +125,7 @@ global U64 uishell_cleat_touch_seq = 0;
 internal B32
 uishell_cleat_route_match(UIShell_CleatRoute a, UIShell_CleatRoute b)
 {
-  return a.ssh == b.ssh && str8_match(a.host, b.host, 0) && str8_match(a.command, b.command, 0) &&
+  return a.ssh == b.ssh && a.binding == b.binding && str8_match(a.socket, b.socket, 0) && str8_match(a.host, b.host, 0) && str8_match(a.command, b.command, 0) &&
     str8_match(a.runtime_root, b.runtime_root, 0) && str8_match(a.daemon, b.daemon, 0);
 }
 
@@ -170,7 +173,22 @@ uishell_cleat_route_open(UIShell_CleatRoute route)
     .backend = CLEAT_PROVIDER_BACKEND_DAEMON,
   };
   cleat_provider *provider = 0;
-  if(!route.ssh)
+  if(route.binding)
+  {
+    // Tender closes a Binding it cannot carry without sending a byte: the
+    // connection then reads as never streamed, and the endpoint as unavailable.
+    if(route.socket.size == 0) { log_user_errorf("Cleat endpoint: no Tender Binding on this machine"); }
+    else
+    {
+      cleat_provider_transport transport =
+      {
+        .size = sizeof(transport), .kind = CLEAT_TRANSPORT_UNIX_SOCKET, .socket_path = route.socket.str, .socket_path_len = route.socket.size,
+      };
+      provider = cleat_provider_open_transport(&desc, &transport);
+      if(provider == 0) { log_user_errorf("Cleat endpoint: could not open the Tender Binding %S", route.socket); }
+    }
+  }
+  else if(!route.ssh)
   {
     desc.runtime_root = route.runtime_root.size != 0 ? route.runtime_root.str : 0;
     desc.runtime_root_len = route.runtime_root.size;
@@ -231,6 +249,8 @@ uishell_cleat_connection_from_route(UIShell_CleatRoute route)
   UIShell_CleatConnection *connection = push_array(arena, UIShell_CleatConnection, 1);
   connection->arena = arena;
   connection->route.ssh = route.ssh;
+  connection->route.binding = route.binding;
+  connection->route.socket = push_str8_copy(arena, route.socket);
   connection->route.host = push_str8_copy(arena, route.host);
   connection->route.command = push_str8_copy(arena, route.command);
   connection->route.runtime_root = push_str8_copy(arena, route.runtime_root);
@@ -537,7 +557,7 @@ uishell_cleat_connection_reopen(UIShell_CleatConnection *connection)
 internal void
 uishell_cleat_connection_watch(UIShell_CleatConnection *connection)
 {
-  if(!connection->route.ssh || connection->given_up || connection->provider == 0) { return; }
+  if(!(connection->route.ssh || connection->route.binding) || connection->given_up || connection->provider == 0) { return; }
   B32 any_disconnected = 0;
   for(UIShell_CleatAttachment *a = uishell_cleat_attachments; a != 0; a = a->next)
   {

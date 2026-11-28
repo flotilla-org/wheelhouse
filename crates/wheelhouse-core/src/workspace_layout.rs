@@ -67,12 +67,10 @@ pub enum RecipeTemplate {
         launcher: String,
         endpoint: String,
     },
-    /// `transport` is `local` or `ssh` once substituted.
-    CleatSession {
-        transport: String,
-        host: String,
-        runtime_root: String,
-        daemon: String,
+    /// The Tender publication of a Cleat daemon, and a session on it.
+    CleatBinding {
+        scope: String,
+        name: String,
         session: String,
     },
     /// No `transport` is `local`; `host` is empty for it.
@@ -493,14 +491,13 @@ impl RecipeTemplate {
             RecipeTemplate::Jackstay { launcher, endpoint } => {
                 LocalRecipe::Jackstay { launcher: text(launcher)?, endpoint: text(endpoint)? }
             }
-            // An unknown transport or an unusable field is as unresolved as a
-            // missing fact.
-            RecipeTemplate::CleatSession { transport, host, runtime_root, daemon, session } => {
-                let (host, runtime_root, daemon, session) = (text(host)?, text(runtime_root)?, text(daemon)?, text(session)?);
-                if invalid_cleat_field(&host, &runtime_root, &daemon, &session).is_some() {
+            // An unusable field is as unresolved as a missing fact.
+            RecipeTemplate::CleatBinding { scope, name, session } => {
+                let (scope, name, session) = (text(scope)?, text(name)?, text(session)?);
+                if invalid_cleat_field(&scope, &name, &session).is_some() {
                     return None;
                 }
-                LocalRecipe::CleatSession { transport: CleatTransport::parse(&text(transport)?)?, host, runtime_root, daemon, session }
+                LocalRecipe::CleatBinding { scope, name, session }
             }
             RecipeTemplate::AgentSession { transport, host, endpoint, thread } => {
                 let transport = match transport {
@@ -558,8 +555,8 @@ fn parse_slot(node: &KdlNode) -> Result<TemplateSlot, TemplateConfigError> {
             "endpoint",
             "transport",
             "host",
-            "runtime_root",
-            "daemon",
+            "scope",
+            "name",
             "session",
             "thread",
         ],
@@ -587,13 +584,9 @@ fn parse_slot(node: &KdlNode) -> Result<TemplateSlot, TemplateConfigError> {
         "file" => RecipeTemplate::File { path: required("path")? },
         "url" => RecipeTemplate::Url { url: required("url")? },
         "jackstay" => RecipeTemplate::Jackstay { launcher: required("launcher")?, endpoint: required("endpoint")? },
-        "cleat-session" => RecipeTemplate::CleatSession {
-            transport: required("transport")?,
-            host: required("host")?,
-            runtime_root: required("runtime_root")?,
-            daemon: required("daemon")?,
-            session: required("session")?,
-        },
+        "cleat-binding" => {
+            RecipeTemplate::CleatBinding { scope: required("scope")?, name: required("name")?, session: required("session")? }
+        }
         "agent-session" => RecipeTemplate::AgentSession {
             transport: text("transport")?,
             host: text("host")?,
@@ -741,13 +734,7 @@ pub(crate) fn validate(kind: &str, slots: &[TemplateSlot], layouts: &[LayoutDefi
             RecipeTemplate::File { path } => vec![path],
             RecipeTemplate::Url { url } => vec![url],
             RecipeTemplate::Jackstay { launcher, endpoint } => vec![launcher, endpoint],
-            RecipeTemplate::CleatSession { transport, host, runtime_root, daemon, session } => {
-                // A literal transport is checked now; one naming a fact, when built.
-                if !transport.contains('{') && CleatTransport::parse(transport).is_none() {
-                    return Err(invalid(format!("workspace {kind} template slot {} has unknown transport {transport:?}", slot.name)));
-                }
-                vec![transport, host, runtime_root, daemon, session]
-            }
+            RecipeTemplate::CleatBinding { scope, name, session } => vec![scope, name, session],
             RecipeTemplate::AgentSession { transport, host, endpoint, thread } => {
                 if let Some(transport) = transport.as_ref().filter(|t| !t.contains('{') && CleatTransport::parse(t).is_none()) {
                     return Err(invalid(format!("workspace {kind} template slot {} has unknown transport {transport:?}", slot.name)));
@@ -914,32 +901,23 @@ mod tests {
         assert_eq!(vessel.layouts[1].matchers("1"), Some(&[][..]), "a matcher-less tab panel is allowed");
     }
 
-    // A transport named by a fact is checked when the recipe is built: one
-    // that is neither local nor ssh leaves the slot unresolved.
     #[test]
-    fn a_cleat_session_template_builds_from_facts() {
+    fn a_cleat_binding_template_builds_from_facts() {
         let crew = workspace(
             r#"workspace kind="vessel" {
-              slot "crew" kind="cleat-session" transport="{t}" host="{h}" runtime_root="/run/cleat" daemon="d" session="{s}"
+              slot "crew" kind="cleat-binding" scope="{p}" name="cleat/d" session="{s}"
             }"#,
         )
         .expect("parses");
         let build = |pairs: &[(&str, &str)]| crew.slots[0].recipe.build(&facts(pairs));
         assert_eq!(
-            build(&[("t", "ssh"), ("h", "robert@feta"), ("s", "s1")]),
-            Some(LocalRecipe::CleatSession {
-                transport: CleatTransport::Ssh,
-                host: "robert@feta".into(),
-                runtime_root: "/run/cleat".into(),
-                daemon: "d".into(),
-                session: "s1".into(),
-            })
+            build(&[("p", "vessel/7"), ("s", "s1")]),
+            Some(LocalRecipe::CleatBinding { scope: "vessel/7".into(), name: "cleat/d".into(), session: "s1".into() })
         );
-        assert_eq!(build(&[("t", "mosh"), ("h", "robert@feta"), ("s", "s1")]), None);
-        assert_eq!(build(&[("t", "local"), ("h", "feta")]), None);
-        // An empty fact, or one a host would read as an option, is unusable.
-        assert_eq!(build(&[("t", "ssh"), ("h", ""), ("s", "s1")]), None);
-        assert_eq!(build(&[("t", "ssh"), ("h", "-oProxyCommand=x"), ("s", "s1")]), None);
+        assert_eq!(build(&[("s", "s1")]), None);
+        // An empty fact, or a session a host would read as an option, is unusable.
+        assert_eq!(build(&[("p", ""), ("s", "s1")]), None);
+        assert_eq!(build(&[("p", "vessel/7"), ("s", "-oProxyCommand=x")]), None);
     }
 
     // A template without a transport is a local session, as it was before
@@ -1010,8 +988,8 @@ mod tests {
             (r#"layout "a" default=true { tabs; }"#, "unknown layout property"),
             (r#"layout "a" { hide role="agent"; tabs; }"#, "a property on hide"),
             (r#"layout "a" { tabs { slots { match "k" valeu="v"; }; }; }"#, "unknown match property"),
-            (r#"slot "a" kind="cleat-session" transport="ssh" host="h" runtime_root="r" daemon="d""#, "cleat without session"),
-            (r#"slot "a" kind="cleat-session" transport="mosh" host="h" runtime_root="r" daemon="d" session="s""#, "transport"),
+            (r#"slot "a" kind="cleat-binding" scope="s" name="n""#, "cleat without session"),
+            (r#"slot "a" kind="cleat-session" transport="ssh" host="h" runtime_root="r" daemon="d" session="s""#, "the host-path kind"),
             (r#"slot "a" kind="agent-session" transport="mosh" endpoint="e" thread="t""#, "agent transport"),
             (r#"layout "a" glyph="" { tabs; }"#, "an empty glyph"),
             (r#"layout "a" glyph="ninechars" { tabs; }"#, "a long glyph"),

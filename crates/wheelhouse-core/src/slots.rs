@@ -503,9 +503,9 @@ fn check_spec(spec: &ViewSpec) -> Result<(), String> {
                 return Err(format!("a view spec's agent {field} can't be reached over {}", transport.as_str()));
             }
         }
-        Content::Local(LocalRecipe::CleatSession { host, runtime_root, daemon, session, .. }) => {
-            if let Some(field) = suggested_layout::invalid_cleat_field(host, runtime_root, daemon, session) {
-                return Err(format!("a view spec's Cleat {field} must be one nonempty argument, not starting with -"));
+        Content::Local(LocalRecipe::CleatBinding { scope, name, session }) => {
+            if let Some(field) = suggested_layout::invalid_cleat_field(scope, name, session) {
+                return Err(format!("a view spec's Cleat {field} must be nonempty text without control characters"));
             }
         }
         Content::Local(_) => {}

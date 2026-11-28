@@ -484,7 +484,7 @@ checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 [[package]]
 name = "flotilla-cbor"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/rigging?branch=main#1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd"
+source = "git+https://github.com/flotilla-org/rigging?branch=main#1cff03aff228c57cc4598fa80260fc3845cd97c6"
 dependencies = [
  "cbor2",
  "serde",
@@ -1541,7 +1541,7 @@ dependencies = [
 [[package]]
 name = "rigging-condition"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/rigging?branch=main#1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd"
+source = "git+https://github.com/flotilla-org/rigging?branch=main#1cff03aff228c57cc4598fa80260fc3845cd97c6"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1550,7 +1550,7 @@ dependencies = [
 [[package]]
 name = "rigging-http-client"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/rigging?branch=main#1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd"
+source = "git+https://github.com/flotilla-org/rigging?branch=main#1cff03aff228c57cc4598fa80260fc3845cd97c6"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1563,7 +1563,7 @@ dependencies = [
 [[package]]
 name = "rigging-http-serve"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/rigging?branch=main#1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd"
+source = "git+https://github.com/flotilla-org/rigging?branch=main#1cff03aff228c57cc4598fa80260fc3845cd97c6"
 dependencies = [
  "axum",
  "getrandom 0.3.4",
@@ -1579,7 +1579,7 @@ dependencies = [
 [[package]]
 name = "rigging-http-wire"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/rigging?branch=main#1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd"
+source = "git+https://github.com/flotilla-org/rigging?branch=main#1cff03aff228c57cc4598fa80260fc3845cd97c6"
 dependencies = [
  "axum",
  "flotilla-cbor",
@@ -1588,9 +1588,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rigging-paths"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/rigging?branch=main#1cff03aff228c57cc4598fa80260fc3845cd97c6"
+dependencies = [
+ "rigging-process",
+]
+
+[[package]]
 name = "rigging-process"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/rigging?branch=main#1e28bbbbb8c64a7ab9b4fe59c29331075440bdbd"
+source = "git+https://github.com/flotilla-org/rigging?branch=main#1cff03aff228c57cc4598fa80260fc3845cd97c6"
 dependencies = [
  "async-trait",
  "libc",
@@ -2022,6 +2030,18 @@ dependencies = [
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tender-types"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/rigging?branch=main#1cff03aff228c57cc4598fa80260fc3845cd97c6"
+dependencies = [
+ "libc",
+ "rigging-paths",
+ "rigging-process",
+ "serde",
+ "sha2",
 ]
 
 [[package]]
@@ -2504,6 +2524,7 @@ dependencies = [
  "conversation-events",
  "hegeltest",
  "serde_json",
+ "tender-types",
  "wheelhouse-agent",
  "wheelhouse-core",
  "wheelhouse-rich-text",

@@ -3686,7 +3686,7 @@ impl ControllerState {
     pub(crate) fn primary_is_direct(&self, entity: &EntityRef) -> bool {
         matches!(
             self.desired_content(&EntityId::Entity(entity.clone())),
-            Some(DesiredContent::Ready(Resolved { recipe: suggested_layout::LocalRecipe::CleatSession { .. }, .. }))
+            Some(DesiredContent::Ready(Resolved { recipe: suggested_layout::LocalRecipe::CleatBinding { .. }, .. }))
         )
     }
 

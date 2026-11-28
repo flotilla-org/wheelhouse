@@ -236,7 +236,7 @@ pub fn content_kind(spec: &ViewSpec) -> String {
     }
     match &spec.content {
         Content::ProviderFacet { facet, .. } => facet.clone(),
-        Content::Local(LocalRecipe::Command { .. } | LocalRecipe::CleatSession { .. }) => "terminal".into(),
+        Content::Local(LocalRecipe::Command { .. } | LocalRecipe::CleatBinding { .. }) => "terminal".into(),
         Content::Local(LocalRecipe::Jackstay { .. }) => "jackstay".into(),
         Content::Local(LocalRecipe::File { .. }) => "text".into(),
         Content::Local(LocalRecipe::AgentSession { .. }) => "conversation".into(),
@@ -268,7 +268,7 @@ fn view_node(workspace: WorkspaceId, slot: &SlotInfo, selected: bool) -> Node {
             cwd: cwd.clone(),
             ..Terminal::default()
         }),
-        Content::Local(LocalRecipe::CleatSession { session, .. }) => {
+        Content::Local(LocalRecipe::CleatBinding { session, .. }) => {
             Some(Terminal { session: Some(session.clone()), ..Terminal::default() })
         }
         _ => None,

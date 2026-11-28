@@ -340,11 +340,15 @@ change layout, so a host built against ABI 9 must be rebuilt.
 
 ## From ABI 8
 
-ABI 9 adds a content kind, `WHEELHOUSE_SLOT_CLEAT_SESSION`: a direct Cleat
-packet view of a session (wheelhouse#104). A View Spec gains its fields at the
-end: `cleat_transport` (`local` or `ssh`), `cleat_host`,
-`cleat_runtime_root`, `cleat_daemon` and `cleat_session`. A primary slot
-resolves to one when its provider publishes a direct endpoint
+ABI 9 adds a content kind, `WHEELHOUSE_SLOT_CLEAT_BINDING`: a direct Cleat
+packet view of a session (wheelhouse#104) through the Tender Binding of its
+daemon's publication (wheelhouse#789). A View Spec gains its fields at the
+end: `cleat_scope`, `cleat_name`, `cleat_socket` (output only: the Binding's
+socket on this machine) and `cleat_session`. A view saved before #789 carries
+`cleat_transport`, `cleat_host`, `cleat_runtime_root` and `cleat_daemon`
+instead, which the core reads as input only and opens through a command (the
+shim can go once layouts saved before #789 have been rewritten). A primary
+slot resolves to one when its provider publishes a direct publication
 ([Suggested Layouts](suggested-layouts.md#the-primary-slot)); MATERIALIZE then
 carries no recipe and no primary target, so the host opens the workspace with
 its primary waiting and the slot's first plan fills it. `WheelhouseViewSpec`

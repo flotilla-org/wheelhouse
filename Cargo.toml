@@ -42,6 +42,8 @@ flotilla-cbor = { git = "https://github.com/flotilla-org/rigging", branch = "mai
 rigging-http-serve = { git = "https://github.com/flotilla-org/rigging", branch = "main" }
 rigging-http-client = { git = "https://github.com/flotilla-org/rigging", branch = "main", default-features = false }
 rigging-http-wire = { git = "https://github.com/flotilla-org/rigging", branch = "main" }
+# Tender's Binding paths (#789), at the revision flotilla pins for the publication it reads.
+tender-types = { git = "https://github.com/flotilla-org/rigging", branch = "main" }
 ansi_term = "0.12"
 crossterm = "0.28.1"
 insta = "1"
