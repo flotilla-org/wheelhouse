@@ -4,9 +4,9 @@
 //! producer accepted; what the producer does with it shows in the
 //! conversation's own stream.
 use super::*;
+use fearnought_client::{Endpoint, Post, PostStatus};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use wheelhouse_agent::{Endpoint, Post, PostStatus};
 
 use crate::agent_watch::route;
 
