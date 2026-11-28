@@ -1922,3 +1922,14 @@ fn host_documents_reach_c_and_pin() {
         wheelhouse_destroy(h);
     }
 }
+
+// Scope and name may hold `/` and `.`: Tender's own encoding keeps the
+// Binding's socket one file directly under its bindings directory.
+#[test]
+fn a_binding_socket_stays_under_the_bindings_directory() {
+    let runtime = std::path::Path::new("/run/user/1000/tender");
+    for (scope, name) in [("../x", "cleat/../d"), ("vessel/a b", "cleat/\u{7}"), ("vessel/v", &"n".repeat(300))] {
+        let path = tender_types::paths::binding_path(runtime, &tender_types::PublicationId::new(scope, name));
+        assert_eq!(path.parent(), Some(tender_types::paths::bindings_dir(runtime).as_path()), "{scope:?} {name:?}");
+    }
+}

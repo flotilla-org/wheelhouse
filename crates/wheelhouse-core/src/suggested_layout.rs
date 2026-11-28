@@ -227,7 +227,11 @@ impl From<LocalRecipeRepr> for LocalRecipe {
             LocalRecipeRepr::Url { url } => Self::Url { url },
             LocalRecipeRepr::Jackstay { launcher, endpoint } => Self::Jackstay { launcher, endpoint },
             LocalRecipeRepr::CleatBinding { scope, name, session } => Self::CleatBinding { scope, name, session },
+            // A field no host could pass on as one argument opens nothing.
             LocalRecipeRepr::CleatSession { transport, host, runtime_root, daemon, session } => {
+                if invalid_legacy_cleat_field(&host, &runtime_root, &daemon, &session).is_some() {
+                    return Self::Command { line: CommandLine::Argv(vec!["false".to_owned()]), cwd: None };
+                }
                 legacy_cleat_command(transport, &host, &runtime_root, &daemon, &session)
             }
             LocalRecipeRepr::AgentSession { transport, host, endpoint, thread } => Self::AgentSession { transport, host, endpoint, thread },

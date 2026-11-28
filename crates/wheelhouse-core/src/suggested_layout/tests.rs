@@ -533,10 +533,18 @@ fn a_saved_host_path_cleat_session_decodes_to_its_command() {
         serde_json::from_str::<LocalRecipe>(local).unwrap(),
         argv(&["cleat", "--runtime-root", "/run/cleat", "--server", "d1", "attach", "--no-create", "--", "s1"])
     );
-    let ssh = r#"{"CleatSession":{"transport":"ssh","host":"robert@feta","runtime_root":"/run/cleat","daemon":"","session":"it's"}}"#;
+    let hostile = r#"{"CleatSession":{"transport":"local","host":"feta","runtime_root":"/run/cleat","daemon":"-x","session":"s1"}}"#;
+    assert_eq!(serde_json::from_str::<LocalRecipe>(hostile).unwrap(), argv(&["false"]));
+    let ssh = r#"{"CleatSession":{"transport":"ssh","host":"robert@feta","runtime_root":"/run/cleat","daemon":"d1","session":"it's"}}"#;
     assert_eq!(
         serde_json::from_str::<LocalRecipe>(ssh).unwrap(),
-        argv(&["ssh", "-t", "--", "robert@feta", r"'cleat' '--runtime-root' '/run/cleat' 'attach' '--no-create' '--' 'it'\''s'"])
+        argv(&[
+            "ssh",
+            "-t",
+            "--",
+            "robert@feta",
+            r"'cleat' '--runtime-root' '/run/cleat' '--server' 'd1' 'attach' '--no-create' '--' 'it'\''s'"
+        ])
     );
 }
 
