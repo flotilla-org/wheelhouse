@@ -9,5 +9,8 @@ members:
   - alias: binnacle
     url: https://github.com/flotilla-org/binnacle
     roles: [code]
+  - alias: fearnought
+    url: https://github.com/flotilla-org/fearnought
+    roles: [code]
 image:
   layers: [rust, zig, display-x11]
